@@ -11871,18 +11871,37 @@ const Dashboard: React.FC<DashboardProps> = ({
       const flatten = (nodes: TreeNode[]): TreeNode[] =>
         nodes.flatMap((n) => [n, ...(n.children ? flatten(n.children) : [])]);
 
-      const allItems: SelectableItem[] = [...flatten(classHierarchy), ...individuals];
-      const item = allItems.find((i: SelectableItem) => i.id === nodeId);
-      if (item) {
-        let tab = "Classes";
-        if ("types" in item) tab = "Individuals";
-
-        setEntitiesTab(tab);
-        setSelectedItem(item);
-        setMainTab("Entities");
+      // Search every entity pool so properties/datatypes land on their own tab,
+      // not just classes and individuals.
+      const pools: Array<{ tab: string; items: SelectableItem[] }> = [
+        { tab: "Classes", items: flatten(classHierarchy) },
+        { tab: "Individuals", items: individuals },
+        { tab: "ObjectProperties", items: [...flatten(objectPropertyHierarchy), ...objectProperties] },
+        { tab: "DataProperties", items: [...flatten(dataPropertyHierarchy), ...dataProperties] },
+        { tab: "AnnotationProperties", items: [...flatten(annotationPropertyHierarchy), ...annotationProperties] },
+        { tab: "Datatypes", items: datatypes },
+      ];
+      for (const pool of pools) {
+        const item = pool.items.find((i: SelectableItem) => i.id === nodeId);
+        if (item) {
+          setEntitiesTab(pool.tab);
+          setSelectedItem(item);
+          setMainTab("Entities");
+          return;
+        }
       }
     },
-    [classHierarchy, individuals],
+    [
+      classHierarchy,
+      individuals,
+      objectPropertyHierarchy,
+      objectProperties,
+      dataPropertyHierarchy,
+      dataProperties,
+      annotationPropertyHierarchy,
+      annotationProperties,
+      datatypes,
+    ],
   );
 
   const findClassNodeById = useCallback(

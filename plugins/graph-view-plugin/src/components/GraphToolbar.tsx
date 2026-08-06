@@ -22,8 +22,8 @@ import {
   MinusSquare,
   Save,
   TrendingUp,
-  Crosshair,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Boxes
 } from 'lucide-react';
 import type { EdgeType, VisualizationType, OntologyNode } from '../types';
 import { OntographLayoutType, VowlDisplayOptions, DEFAULT_VOWL_OPTIONS } from '../viewMemory';
@@ -91,9 +91,7 @@ export interface GraphToolbarProps {
   showFilters: boolean;
   showSettings: boolean;
   showPropertyPanel: boolean;
-  showLocalGraph: boolean;
   showAnalytics: boolean;
-  localGraphFollowSelection: boolean;
   showGrid: boolean;
   physicsEnabled: boolean;
   showLegend: boolean;
@@ -131,13 +129,11 @@ export interface GraphToolbarProps {
   onToggleFilters: () => void;
   onToggleSettings: () => void;
   onToggleExplorer: () => void;
-  onToggleLocal: () => void;
   onToggleInsights: () => void;
   onToggleGrid: () => void;
   onTogglePhysics: () => void;
   onToggleLegend: () => void;
   onToggleNavigator: () => void;
-  onSetFollowSelection: (v: boolean) => void;
   onEnterFocus: () => void;
   onExitFocus: () => void;
   onExport: (format: 'svg' | 'png') => void;
@@ -191,15 +187,15 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
         <button
           data-testid="graph-preset-network"
           onClick={props.onPresetNetwork}
-          style={props.visualizationType === 'force' ? styles.btnActive : styles.btn}
-          title="Network view — force-directed graph with subClassOf and property edges"
+          style={props.webglRenderer ? styles.btnActive : styles.btn}
+          title="Network view — force-directed graph on the WebGL engine (modules, focus, ask)"
         >
           Network
         </button>
         <button
           data-testid="graph-preset-tree"
           onClick={props.onPresetTree}
-          style={props.visualizationType === 'ontograph' ? styles.btnActive : styles.btn}
+          style={!props.webglRenderer && props.visualizationType === 'ontograph' ? styles.btnActive : styles.btn}
           title="Tree view — class hierarchy layout (OntoCode hierarchy style)"
         >
           Tree
@@ -270,29 +266,6 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
       <div style={styles.divider} />
 
       <button
-        data-testid="graph-local-toggle"
-        onClick={props.onToggleLocal}
-        style={props.showLocalGraph ? styles.btnActive : styles.btn}
-        title="OntoCode local graph — N-hop neighborhood of selected node"
-      >
-        <Crosshair size={16} />
-        Local
-      </button>
-      {props.showLocalGraph && (
-        <label
-          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer', padding: '0 4px' }}
-          title="Local graph follows your selection"
-        >
-          <input
-            type="checkbox"
-            checked={props.localGraphFollowSelection}
-            onChange={(e) => props.onSetFollowSelection(e.target.checked)}
-            data-testid="graph-local-follow"
-          />
-          Follow
-        </label>
-      )}
-      <button
         data-testid="graph-insights-toggle"
         onClick={props.onToggleInsights}
         style={props.showAnalytics ? styles.btnActive : styles.btn}
@@ -340,7 +313,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
               backgroundColor: '#3b82f6',
               animation: 'graphToolbarPulse 1.6s ease-in-out infinite'
             }}
-            title="All view options moved here"
+            title="Layout options here — including Hierarchy (Tree), Radial, Grid, and Clustered views"
           />
         )}
       </button>
@@ -368,8 +341,16 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
           <div style={sectionTitle}>Visualization</div>
           <div style={sectionRow}>
             <select
-              value={props.visualizationType}
-              onChange={(e) => props.onSetVisualizationType(e.target.value as VisualizationType)}
+              data-testid="graph-mode-select"
+              value={props.webglRenderer ? 'webgl' : props.visualizationType}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === 'webgl') {
+                  if (!props.webglRenderer) props.onToggleWebGL();
+                } else {
+                  props.onSetVisualizationType(value as VisualizationType);
+                }
+              }}
               style={{
                 padding: '6px 12px',
                 border: '1px solid var(--border)',
@@ -381,15 +362,16 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
                 width: '100%',
                 fontWeight: 500
               }}
-              title="Select visualization type"
+              title="Switch layout — Network, VOWL, or Hierarchy (Tree/Radial/Grid/Clustered)"
             >
-              <option value="force">Network (Force-Directed)</option>
-              <option value="ontograph">Hierarchy (Tree Layout)</option>
+              <option value="webgl" disabled={!props.webglSupported}>
+                Network (WebGL{props.webglSupported ? '' : ' — unavailable'})
+              </option>
               <option value="vowl">VOWL</option>
-              <option value="spatial3d">3D Spatial Graph</option>
+              <option value="ontograph">Hierarchy (Tree Layout)</option>
             </select>
           </div>
-          {props.visualizationType === 'ontograph' && (
+          {props.visualizationType === 'ontograph' && !props.webglRenderer && (
             <div style={{ ...sectionRow, marginTop: 6 }}>
               <button onClick={props.onFit} style={styles.toolbarIconBtn} title="Home - Reset View">
                 <Home size={14} />
@@ -429,36 +411,20 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
               >
                 <GitBranch size={14} />
               </button>
+              <button
+                onClick={() => props.onSetOntographLayout('cluster')}
+                style={props.ontographLayoutType === 'cluster' ? styles.toolbarIconBtnActive : styles.toolbarIconBtn}
+                title="Clustered Layout — groups classes by structural community"
+              >
+                <Boxes size={14} />
+              </button>
               <button onClick={props.onResetZoom} style={styles.toolbarIconBtn} title="Reset Zoom">
                 <Maximize size={14} />
               </button>
             </div>
           )}
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              fontSize: 12,
-              marginTop: 8,
-              cursor: props.webglSupported ? 'pointer' : 'not-allowed',
-              opacity: props.webglSupported ? 1 : 0.5
-            }}
-            title={props.webglSupported
-              ? 'High-performance WebGL renderer for large graphs (beta). Editing and VOWL notation stay on the standard renderer.'
-              : 'WebGL is not available on this device'}
-          >
-            <input
-              type="checkbox"
-              data-testid="graph-webgl-toggle"
-              checked={props.webglRenderer}
-              disabled={!props.webglSupported}
-              onChange={props.onToggleWebGL}
-            />
-            WebGL renderer (beta, large graphs)
-          </label>
 
-          {(props.visualizationType === 'vowl' || props.visualizationType === 'force') && (
+          {props.visualizationType === 'vowl' && !props.webglRenderer && (
             <>
               <div style={sectionTitle}>Notation &amp; density</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
@@ -588,6 +554,15 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
                         data-testid="graph-show-property-loops"
                       />
                       Property loops
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Clicking a class shows only it and its neighborhood — right-click a node to expand the neighborhood from there">
+                      <input
+                        type="checkbox"
+                        checked={!!props.vowlDisplayOptions.isolateOnSelect}
+                        onChange={(e) => props.onChangeVowlOptions({ isolateOnSelect: e.target.checked })}
+                        data-testid="graph-isolate-on-select"
+                      />
+                      Isolate on click
                     </label>
                     <button
                       type="button"
