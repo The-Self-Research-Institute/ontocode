@@ -388,14 +388,53 @@ export const searchNodesWithPaths = (
   const nodesToShow = new Set<string>();
   const nodesToExpand = new Set<string>();
 
+  // Build the parent/child index ONCE and reuse it for every match, instead of calling
+  // findPathToNode()/getChildren() per match (each of which re-scans all nodes/edges, or
+  // in findPathToNode's case rebuilds the whole index). On a large ontology with many
+  // matches this turned a single keystroke into O(matches * (nodes + edges)) work — easily
+  // reaching millions of operations and freezing the tab (see buildChildrenParentsIndex's
+  // note above for the same anti-pattern).
+  const { childrenOf, parentsOf } = buildHierarchyIndex(nodes, edges);
+
+  const pathToRoot = (targetId: string): string[] => {
+    const prev = new Map<string, string | null>();
+    prev.set(targetId, null);
+    const queue: string[] = [targetId];
+    let root: string | null = null;
+
+    while (queue.length > 0) {
+      const current = queue.shift() as string;
+      const parents = parentsOf.get(current);
+      if (!parents || parents.length === 0) {
+        root = current;
+        break;
+      }
+      for (const parent of parents) {
+        if (prev.has(parent)) continue;
+        prev.set(parent, current);
+        queue.push(parent);
+      }
+    }
+
+    const path: string[] = [];
+    let cursor: string | null = root ?? targetId;
+    const guard = new Set<string>();
+    while (cursor !== null && !guard.has(cursor)) {
+      path.push(cursor);
+      guard.add(cursor);
+      cursor = prev.get(cursor) ?? null;
+    }
+    return path;
+  };
+
   for (const node of matchingNodes) {
-    const path = findPathToNode(node.id, edges, nodes);
+    const path = pathToRoot(node.id);
     for (const id of path) nodesToShow.add(id);
     // Expand all ancestors (everything except the match itself) so the match is reachable.
     for (let i = 0; i < path.length - 1; i++) nodesToExpand.add(path[i]);
 
     // Show immediate children for context.
-    for (const child of getChildren(node.id, edges, nodes)) nodesToShow.add(child);
+    for (const child of childrenOf.get(node.id) ?? []) nodesToShow.add(child);
     nodesToExpand.add(node.id);
   }
 

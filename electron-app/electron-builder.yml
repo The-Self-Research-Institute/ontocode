@@ -120,7 +120,7 @@ linux:
     - target: deb
       arch:
         - x64
-  icon: build-assets/icon.png
+  icon: build-assets/icon-512.png
   category: Development
   maintainer: "OntoCode <pranesh@coretopia.com>"
   description: "OntoCode — OWL Ontology Editor for Desktop"
