@@ -65,6 +65,9 @@ import {
   searchNodesWithPaths,
   expandAll as expandAllNodes,
   collapseAll as collapseAllNodes,
+  expandSeedsOneLevel,
+  collapseSeedsOneLevel,
+  expandSeedsToDepth,
   initialGraphVisibility,
   smartInitialGraphVisibility,
   getExpansionStats,
@@ -813,6 +816,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, []);
   const [filters, setFilters] = useState<GraphFilters>(DEFAULT_FILTERS);
   const [searchQuery, setSearchQuery] = useState('');
+  /** Under each graph search hit, how many descendant levels to keep in the filter focus set (0–5). */
+  const [searchFilterDepth, setSearchFilterDepth] = useState(5);
+  /** Dim non-matches in place, or hide them from the graph entirely. */
+  const [searchFilterMode, setSearchFilterMode] = useState<'dim' | 'hide'>('hide');
+  /** Nodes in the active filter focus (matches + path + depth). Used for dimming and hide. */
+  const [searchFocusIds, setSearchFocusIds] = useState<Set<string>>(() => new Set());
+  const preFilterVisibilityRef = useRef<{ visible: Set<string>; expanded: Set<string> } | null>(null);
   const [sidebarSearchTerm, setSidebarSearchTerm] = useState('');
 
   // VOWL Controls
@@ -1359,9 +1369,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     if (GRAPH_DEBUG) console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
 
-    // Search filter: instead of hiding non-matching nodes, keep all visible nodes.
-    // Matching nodes are highlighted via the visual update effect (glow/stroke).
-    // The searchQuery is tracked in state and applied as a visual highlight only.
+    // Graph search already restricts hierarchy visibility (handleSearch → nodesToShow).
+    // Non-matching nodes are hidden; matching nodes may also be highlighted below.
 
     // Sidebar search filter - filters the visible graph
     if (sidebarSearchTerm) {
@@ -5592,6 +5601,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return base && base !== 'none' ? base : null;
       })
       .style('opacity', (n: any) => {
+        // Dim mode: keep all rendered nodes, fade anything outside the filter focus.
+        if (searchQuery && searchFilterMode === 'dim' && searchFocusIds.size > 0) {
+          return searchFocusIds.has(n.id) ? 1 : 0.12;
+        }
         if (searchLower) {
           return isSearchMatch(n) ? 1 : 0.2;
         }
@@ -5605,6 +5618,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // and this node isn't in its immediate neighborhood.
     g.selectAll<SVGGElement, any>('.node')
       .style('opacity', (n: any) => {
+        if (searchQuery && searchFilterMode === 'dim' && searchFocusIds.size > 0) {
+          return searchFocusIds.has(n.id) ? 1 : 0.12;
+        }
         if (!selectionActive) return 1;
         return focusNodeIds.has(n.id) ? 1 : 0.1;
       });
@@ -5616,7 +5632,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return focusEdgeIds.has(d.id) ? 1 : 0.1;
       });
 
-  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery, vowlChipDensityOk]);
+  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery, searchFilterMode, searchFocusIds, vowlChipDensityOk]);
 
   // Pulse animation class on selected node groups (CSS keyframes in svg <style>).
   // Separate effect: this sweep only depends on selection, so hover moves
@@ -5843,32 +5859,171 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   }, [allNodes, allEdges, showHierarchyDialog, updateHierarchyState]);
 
-  const handleSearch = useCallback((query: string) => {
-    if (!query) {
-      // Clear search — restore full expanded view
-      const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
-      updateHierarchyState(() => ({
-        visible: newVisibleIds,
-        expanded: newExpandedIds
-      }));
+  const handleSearch = useCallback((query: string, depth: number = searchFilterDepth, mode: 'dim' | 'hide' = searchFilterMode) => {
+    if (!query.trim()) {
+      const restored = preFilterVisibilityRef.current;
+      preFilterVisibilityRef.current = null;
+      if (restored) {
+        updateHierarchyState(() => ({
+          visible: new Set(restored.visible),
+          expanded: new Set(restored.expanded)
+        }));
+      } else {
+        const { newExpandedIds, newVisibleIds } = smartInitialGraphVisibility(allNodes, allEdges);
+        updateHierarchyState(() => ({
+          visible: newVisibleIds,
+          expanded: newExpandedIds
+        }));
+      }
       setSearchQuery('');
+      setSearchFocusIds(new Set());
       return;
     }
 
-    const { nodesToShow, nodesToExpand } = searchNodesWithPaths(
+    const { matchingNodes, nodesToShow, nodesToExpand } = searchNodesWithPaths(
       query,
       allNodes,
-      allEdges
+      allEdges,
+      { includeAncestors: true, childDepth: depth }
     );
 
-    updateHierarchyState(() => ({
-      visible: new Set(nodesToShow),
-      expanded: new Set(nodesToExpand)
-    }));
+    setSearchFocusIds(new Set(nodesToShow));
     setSearchQuery(query);
 
-    console.log(`[Search] Found ${nodesToShow.size} nodes for query: "${query}"`);
-  }, [allNodes, allEdges, updateHierarchyState]);
+    if (mode === 'hide') {
+      if (!preFilterVisibilityRef.current) {
+        preFilterVisibilityRef.current = {
+          visible: new Set(visibleNodeIds),
+          expanded: new Set(expandedNodeIds)
+        };
+      }
+      updateHierarchyState(() => ({
+        visible: new Set(nodesToShow),
+        expanded: new Set(nodesToExpand)
+      }));
+    } else {
+      updateHierarchyState((prev) => {
+        const visible = new Set(prev.visible);
+        const expanded = new Set(prev.expanded);
+        for (const id of nodesToShow) visible.add(id);
+        for (const id of nodesToExpand) expanded.add(id);
+        return { visible, expanded };
+      });
+    }
+
+    console.log(
+      `[Search] mode=${mode} matches=${matchingNodes.length} focus=${nodesToShow.size} depth=${depth}`
+    );
+  }, [allNodes, allEdges, updateHierarchyState, searchFilterDepth, searchFilterMode, visibleNodeIds, expandedNodeIds]);
+
+  const getDepthSeeds = useCallback((): string[] => {
+    if (selectedNodes.size > 0) return Array.from(selectedNodes);
+    if (searchFocusIds.size > 0) {
+      const q = searchQuery.trim().toLowerCase();
+      if (q) {
+        const matches = allNodes
+          .filter((n) => searchFocusIds.has(n.id) && (
+            (n.label?.toLowerCase().includes(q)) || n.id.toLowerCase().includes(q)
+          ))
+          .map((n) => n.id);
+        if (matches.length > 0) return matches;
+      }
+      return Array.from(searchFocusIds);
+    }
+    return [];
+  }, [selectedNodes, searchFocusIds, searchQuery, allNodes]);
+
+  const handleExpandOneDepth = useCallback(() => {
+    const seeds = getDepthSeeds();
+    if (seeds.length === 0) return;
+    const { newExpandedIds, newVisibleIds } = expandSeedsOneLevel(
+      seeds, expandedNodeIds, visibleNodeIds, allEdges, allNodes
+    );
+    updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+    setSearchFocusIds((prev) => {
+      const next = new Set(searchFilterMode === 'hide' ? newVisibleIds : prev);
+      if (searchFilterMode === 'dim') {
+        for (const id of seeds) next.add(id);
+        for (const id of newVisibleIds) {
+          if (!visibleNodeIds.has(id)) next.add(id);
+        }
+      }
+      return next;
+    });
+  }, [getDepthSeeds, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode]);
+
+  const handleCollapseOneDepth = useCallback(() => {
+    const seeds = getDepthSeeds();
+    if (seeds.length === 0) return;
+    const { newExpandedIds, newVisibleIds } = collapseSeedsOneLevel(
+      seeds, expandedNodeIds, visibleNodeIds, allEdges, allNodes
+    );
+    updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+    if (searchFilterMode === 'hide') {
+      setSearchFocusIds(new Set(newVisibleIds));
+    } else {
+      setSearchFocusIds((prev) => {
+        const next = new Set(prev);
+        for (const id of prev) {
+          if (!newVisibleIds.has(id) && !seeds.includes(id)) next.delete(id);
+        }
+        return next;
+      });
+    }
+  }, [getDepthSeeds, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode]);
+
+  const handleDeepDive = useCallback((depth: number = searchFilterDepth) => {
+    const seeds = getDepthSeeds();
+    if (seeds.length === 0) return;
+    const { newExpandedIds, newVisibleIds } = expandSeedsToDepth(
+      seeds, depth, expandedNodeIds, visibleNodeIds, allEdges, allNodes
+    );
+    updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+    setSearchFocusIds((prev) => {
+      if (searchFilterMode === 'hide') return new Set(newVisibleIds);
+      const next = new Set(prev);
+      for (const id of newVisibleIds) next.add(id);
+      return next;
+    });
+  }, [getDepthSeeds, searchFilterDepth, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode]);
+
+  const handleFilterModeChange = useCallback((mode: 'dim' | 'hide') => {
+    setSearchFilterMode(mode);
+    if (!searchQuery.trim()) return;
+    if (mode === 'hide') {
+      if (!preFilterVisibilityRef.current) {
+        preFilterVisibilityRef.current = {
+          visible: new Set(visibleNodeIds),
+          expanded: new Set(expandedNodeIds)
+        };
+      }
+      const focus = searchFocusIds.size > 0
+        ? searchFocusIds
+        : searchNodesWithPaths(searchQuery, allNodes, allEdges, {
+            includeAncestors: true,
+            childDepth: searchFilterDepth
+          }).nodesToShow;
+      updateHierarchyState((prev) => ({
+        visible: new Set(focus),
+        expanded: new Set([...prev.expanded].filter((id) => focus.has(id)))
+      }));
+      setSearchFocusIds(new Set(focus));
+    } else {
+      const restored = preFilterVisibilityRef.current;
+      if (restored) {
+        updateHierarchyState(() => ({
+          visible: new Set([...restored.visible, ...searchFocusIds]),
+          expanded: new Set(restored.expanded)
+        }));
+      } else {
+        updateHierarchyState((prev) => {
+          const visible = new Set(prev.visible);
+          for (const id of searchFocusIds) visible.add(id);
+          return { visible, expanded: prev.expanded };
+        });
+      }
+    }
+  }, [searchQuery, visibleNodeIds, expandedNodeIds, searchFocusIds, allNodes, allEdges, searchFilterDepth, updateHierarchyState]);
 
   const applyOntologyMutations = useCallback(async (ops: OntologyMutationOp[]) => {
     if (!projectId) {
@@ -7603,18 +7758,132 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             </div>
             <input
               type="text"
-              placeholder="Search node (shows path and children)..."
+              placeholder="Search / filter nodes…"
               value={searchQuery}
               onChange={(e) => handleSearch(e.target.value)}
               style={styles.searchInput}
             />
+
+            {/* Dim vs Hide */}
+            <div style={{ display: 'flex', gap: 6, padding: '0 12px 8px' }}>
+              {([
+                { id: 'dim' as const, label: 'Dim' },
+                { id: 'hide' as const, label: 'Hide' }
+              ]).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => handleFilterModeChange(opt.id)}
+                  title={opt.id === 'dim'
+                    ? 'Keep other nodes visible but faded'
+                    : 'Show only filtered / focused nodes'}
+                  style={{
+                    flex: 1,
+                    padding: '6px 8px',
+                    borderRadius: 6,
+                    border: searchFilterMode === opt.id ? '1px solid #4f46e5' : '1px solid #cbd5e1',
+                    background: searchFilterMode === opt.id ? '#eef2ff' : '#fff',
+                    color: searchFilterMode === opt.id ? '#3730a3' : '#475569',
+                    fontWeight: 600,
+                    fontSize: 12,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '0 12px 8px', fontSize: 12, color: '#475569' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Depth for search focus and Deep dive (0–5)">
+                Depth
+                <select
+                  value={searchFilterDepth}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setSearchFilterDepth(next);
+                    if (searchQuery.trim()) handleSearch(searchQuery, next, searchFilterMode);
+                  }}
+                  style={{ border: '1px solid #cbd5e1', borderRadius: 4, padding: '2px 6px' }}
+                >
+                  {[0, 1, 2, 3, 4, 5].map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </label>
+              <span style={{ color: '#64748b' }}>
+                {searchFilterMode === 'hide' ? 'Others hidden' : 'Others dimmed'}
+              </span>
+            </div>
+
+            {/* Deep dive + one-depth step controls (selection or search matches) */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 12px 10px' }}>
+              <button
+                type="button"
+                onClick={() => handleDeepDive(searchFilterDepth)}
+                disabled={getDepthSeeds().length === 0}
+                title="Expand selected nodes (or search matches) to the Depth value"
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  background: '#fff',
+                  fontSize: 12,
+                  cursor: getDepthSeeds().length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: getDepthSeeds().length === 0 ? 0.5 : 1
+                }}
+              >
+                Deep dive
+              </button>
+              <button
+                type="button"
+                onClick={handleCollapseOneDepth}
+                disabled={getDepthSeeds().length === 0}
+                title="Collapse one depth under selection / matches"
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  background: '#fff',
+                  fontSize: 12,
+                  cursor: getDepthSeeds().length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: getDepthSeeds().length === 0 ? 0.5 : 1
+                }}
+              >
+                −1 depth
+              </button>
+              <button
+                type="button"
+                onClick={handleExpandOneDepth}
+                disabled={getDepthSeeds().length === 0}
+                title="Expand one depth under selection / matches"
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #cbd5e1',
+                  background: '#fff',
+                  fontSize: 12,
+                  cursor: getDepthSeeds().length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: getDepthSeeds().length === 0 ? 0.5 : 1
+                }}
+              >
+                +1 depth
+              </button>
+            </div>
+            <div style={{ padding: '0 12px 8px', fontSize: 11, color: '#94a3b8' }}>
+              Select node(s) for deep dive / ±1, or rely on search matches.
+            </div>
+
             {searchQuery && (
               <div style={{ padding: '12px', background: '#f0f9ff', borderRadius: '8px', margin: '12px' }}>
                 <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: '4px' }}>
-                  Search Results
+                  {searchFilterMode === 'hide'
+                    ? 'Hide mode — only focused nodes shown'
+                    : 'Dim mode — other nodes faded'}
                 </div>
                 <div style={{ fontSize: '13px', color: '#0c4a6e' }}>
                   {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)}
+                  {searchFocusIds.size > 0 ? ` · focus ${searchFocusIds.size}` : ''}
                 </div>
                 <button
                   onClick={() => handleSearch('')}
@@ -7629,7 +7898,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                     fontSize: '12px'
                   }}
                 >
-                  Clear & Show Roots
+                  Clear filter
                 </button>
               </div>
             )}

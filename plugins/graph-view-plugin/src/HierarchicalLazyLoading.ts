@@ -358,18 +358,30 @@ export const findPathToNode = (
 };
 
 /**
- * Search nodes and return paths to all matching nodes.
- * Auto-expands the path so matches are visible in the tree.
+ * Search nodes and compute a filtered visibility set: matches (+ optional ancestors
+ * and a bounded subtree under each match). Unrelated branches are excluded so the
+ * graph can hide everything else.
  */
+export type SearchVisibilityOptions = {
+  /** Keep ancestor path to each match (needed for hierarchy layouts). Default true. */
+  includeAncestors?: boolean;
+  /** Levels of descendants under each match to include. Default 0 (match only / + ancestors). */
+  childDepth?: number;
+};
+
 export const searchNodesWithPaths = (
   query: string,
   nodes: OntologyNode[],
-  edges: OntologyEdge[]
+  edges: OntologyEdge[],
+  options: SearchVisibilityOptions = {}
 ): {
   matchingNodes: OntologyNode[];
   nodesToShow: Set<string>;
   nodesToExpand: Set<string>;
 } => {
+  const includeAncestors = options.includeAncestors !== false;
+  const childDepth = Math.max(0, options.childDepth ?? 0);
+
   if (!query) {
     return {
       matchingNodes: [],
@@ -427,18 +439,163 @@ export const searchNodesWithPaths = (
     return path;
   };
 
-  for (const node of matchingNodes) {
-    const path = pathToRoot(node.id);
-    for (const id of path) nodesToShow.add(id);
-    // Expand all ancestors (everything except the match itself) so the match is reachable.
-    for (let i = 0; i < path.length - 1; i++) nodesToExpand.add(path[i]);
+  const addDescendantsToDepth = (startId: string, depth: number) => {
+    if (depth <= 0) return;
+    let frontier = [startId];
+    nodesToExpand.add(startId);
+    for (let d = 0; d < depth; d++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const child of childrenOf.get(id) ?? []) {
+          if (!nodesToShow.has(child)) {
+            nodesToShow.add(child);
+            next.push(child);
+          }
+          nodesToExpand.add(id);
+        }
+      }
+      frontier = next;
+      if (frontier.length === 0) break;
+    }
+  };
 
-    // Show immediate children for context.
-    for (const child of childrenOf.get(node.id) ?? []) nodesToShow.add(child);
-    nodesToExpand.add(node.id);
+  for (const node of matchingNodes) {
+    nodesToShow.add(node.id);
+
+    if (includeAncestors) {
+      const path = pathToRoot(node.id);
+      for (const id of path) nodesToShow.add(id);
+      // Expand all ancestors so the match is reachable in hierarchy UIs.
+      for (let i = 0; i < path.length - 1; i++) nodesToExpand.add(path[i]);
+    }
+
+    addDescendantsToDepth(node.id, childDepth);
   }
 
   return { matchingNodes, nodesToShow, nodesToExpand };
+};
+
+/**
+ * Expand each seed by exactly one child level (show direct children).
+ */
+export const expandSeedsOneLevel = (
+  seedIds: Iterable<string>,
+  expandedNodeIds: Set<string>,
+  visibleNodeIds: Set<string>,
+  edges: OntologyEdge[],
+  nodes?: OntologyNode[]
+): { newExpandedIds: Set<string>; newVisibleIds: Set<string> } => {
+  const newVisibleIds = new Set(visibleNodeIds);
+  const newExpandedIds = new Set(expandedNodeIds);
+  for (const id of seedIds) {
+    const children = getChildren(id, edges, nodes);
+    if (children.length === 0) continue;
+    for (const child of children) newVisibleIds.add(child);
+    newExpandedIds.add(id);
+  }
+  return { newExpandedIds, newVisibleIds };
+};
+
+/**
+ * Collapse one depth under the seeds: hide the deepest currently-visible layer
+ * in each seed's visible subtree (and un-expand parents that become leaves).
+ */
+export const collapseSeedsOneLevel = (
+  seedIds: Iterable<string>,
+  expandedNodeIds: Set<string>,
+  visibleNodeIds: Set<string>,
+  edges: OntologyEdge[],
+  nodes?: OntologyNode[]
+): { newExpandedIds: Set<string>; newVisibleIds: Set<string> } => {
+  const seeds = Array.from(seedIds);
+  if (seeds.length === 0) {
+    return { newExpandedIds: new Set(expandedNodeIds), newVisibleIds: new Set(visibleNodeIds) };
+  }
+
+  const { childrenOf } = buildHierarchyIndex(nodes ?? [], edges);
+  const depthOf = new Map<string, number>();
+  const queue: string[] = [];
+  for (const id of seeds) {
+    if (!visibleNodeIds.has(id)) continue;
+    depthOf.set(id, 0);
+    queue.push(id);
+  }
+
+  let maxDepth = 0;
+  while (queue.length > 0) {
+    const id = queue.shift() as string;
+    const depth = depthOf.get(id) ?? 0;
+    if (depth > maxDepth) maxDepth = depth;
+    if (!expandedNodeIds.has(id)) continue;
+    for (const child of childrenOf.get(id) ?? []) {
+      if (!visibleNodeIds.has(child) || depthOf.has(child)) continue;
+      depthOf.set(child, depth + 1);
+      queue.push(child);
+    }
+  }
+
+  if (maxDepth === 0) {
+    return { newExpandedIds: new Set(expandedNodeIds), newVisibleIds: new Set(visibleNodeIds) };
+  }
+
+  const newVisibleIds = new Set(visibleNodeIds);
+  const newExpandedIds = new Set(expandedNodeIds);
+  for (const [id, depth] of depthOf) {
+    if (depth === maxDepth) {
+      newVisibleIds.delete(id);
+      newExpandedIds.delete(id);
+    }
+  }
+  // Parents that no longer show any visible child stop counting as expanded.
+  for (const [id, depth] of depthOf) {
+    if (depth !== maxDepth - 1) continue;
+    const kids = childrenOf.get(id) ?? [];
+    const anyVisibleChild = kids.some((c) => newVisibleIds.has(c));
+    if (!anyVisibleChild) newExpandedIds.delete(id);
+  }
+
+  return { newExpandedIds, newVisibleIds };
+};
+
+/**
+ * From seeds, reveal descendants up to `depth` (BFS). Depth 0 = seeds only (ensure visible).
+ */
+export const expandSeedsToDepth = (
+  seedIds: Iterable<string>,
+  depth: number,
+  expandedNodeIds: Set<string>,
+  visibleNodeIds: Set<string>,
+  edges: OntologyEdge[],
+  nodes?: OntologyNode[]
+): { newExpandedIds: Set<string>; newVisibleIds: Set<string> } => {
+  const newVisibleIds = new Set(visibleNodeIds);
+  const newExpandedIds = new Set(expandedNodeIds);
+  const { childrenOf } = buildHierarchyIndex(nodes ?? [], edges);
+
+  let frontier = Array.from(seedIds);
+  for (const id of frontier) newVisibleIds.add(id);
+
+  const maxDepth = Math.max(0, depth);
+  for (let d = 0; d < maxDepth; d++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const children = childrenOf.get(id) ?? getChildren(id, edges, nodes);
+      if (children.length === 0) continue;
+      newExpandedIds.add(id);
+      for (const child of children) {
+        if (!newVisibleIds.has(child)) {
+          newVisibleIds.add(child);
+          next.push(child);
+        } else {
+          next.push(child);
+        }
+      }
+    }
+    frontier = next;
+    if (frontier.length === 0) break;
+  }
+
+  return { newExpandedIds, newVisibleIds };
 };
 
 /**
