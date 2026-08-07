@@ -540,15 +540,17 @@ function findJdk17Home() {
     if (process.env.JAVA17_HOME && fs.existsSync(process.env.JAVA17_HOME)) {
         return process.env.JAVA17_HOME;
     }
-    // Common Windows install roots for Adoptium/Oracle JDK 17 — same pattern
-    // this build already assumes for JDK 21 (see the desktop build checklist).
-    const candidateRoots = [
-        'C:\\Program Files\\Eclipse Adoptium',
-        'C:\\Program Files\\Java',
-    ];
+    // Common install roots per platform for Adoptium/Oracle/distro-packaged JDK 17 —
+    // same pattern this build already assumes for JDK 21 (see the desktop build
+    // checklist). Linux entries cover both apt's openjdk-17-jdk (java-17-openjdk-*)
+    // and Adoptium's own .deb (temurin-17-jdk-*).
+    const candidateRoots = process.platform === 'win32'
+        ? ['C:\\Program Files\\Eclipse Adoptium', 'C:\\Program Files\\Java']
+        : ['/usr/lib/jvm'];
+    const namePattern = process.platform === 'win32' ? /^jdk-17/i : /^(java-17-openjdk|temurin-17-jdk|jdk-17)/i;
     for (const root of candidateRoots) {
         if (!fs.existsSync(root)) continue;
-        const match = fs.readdirSync(root).find(name => /^jdk-17/i.test(name));
+        const match = fs.readdirSync(root).find(name => namePattern.test(name));
         if (match) return path.join(root, match);
     }
     return null;

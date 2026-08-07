@@ -2781,6 +2781,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   ]);
 
   const filteredData = React.useMemo(() => {
+    const perfStart = performance.now();
+    let perfNodesVisited = 0;
     const trimmedQuery = searchQuery.trim();
     const lowercasedQuery = trimmedQuery.toLowerCase();
     let regex: RegExp | null = null;
@@ -2861,7 +2863,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       const results: SelectableItem[] = [];
+      const addedIds = new Set<string>();
       for (const item of items) {
+        perfNodesVisited++;
         // Skip null/undefined items
         if (!item || !item.id) {
           continue;
@@ -2885,12 +2889,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           const childResults = filterRecursively(children);
           if (childResults.length > 0) {
             results.push({ ...item, children: childResults, hasChildren: true } as any);
+            addedIds.add(item.id);
             matches = true;
           }
         }
-        if (matches && !results.find((r) => r.id === item.id)) {
+        if (matches && !addedIds.has(item.id)) {
           // Ensure children is always an array when adding to results
           results.push({ ...item, children: children.length > 0 ? children : [] } as any);
+          addedIds.add(item.id);
         }
       }
       return results;
@@ -2902,7 +2908,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       return [];
     }
 
-    return filterRecursively(sourceData);
+    const result = filterRecursively(sourceData);
+    const perfDuration = performance.now() - perfStart;
+    if (perfDuration > 50 || perfNodesVisited > 5000) {
+      console.log(
+        `[PERF] Dashboard hierarchy filter ("${trimmedQuery}"): visited ${perfNodesVisited} tree nodes in ${perfDuration.toFixed(1)}ms`,
+      );
+    }
+    return result;
   }, [searchQuery, sourceData, entitiesTab, searchOptions]);
 
   const fetchReasonerBundle = useCallback(

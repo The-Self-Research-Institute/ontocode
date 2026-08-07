@@ -149,6 +149,21 @@ const EntityHierarchy = ({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const { state: collaborationState, publishCursor } = useCollaboration();
 
+  // Search input is decoupled from searchQuery so keystrokes stay instant even
+  // when the underlying tree filter (Dashboard's filterRecursively, O(materialized
+  // node count) which can be far larger than the entity count on ontologies with
+  // heavy multi-parent classes) takes a while — the filter only runs after typing pauses.
+  const [searchInputValue, setSearchInputValue] = useState(searchQuery);
+  useEffect(() => {
+    setSearchInputValue(searchQuery);
+  }, [searchQuery]);
+  useEffect(() => {
+    if (searchInputValue === searchQuery) return;
+    const timeoutId = setTimeout(() => onSearchQueryChange(searchInputValue), 200);
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInputValue]);
+
   // ── Virtualized rendering ─────────────────────────────────────────────────
   // Keep render cost O(visible rows) instead of O(total nodes) so the tree stays
   // smooth on large ontologies with tens of thousands of expanded entities —
@@ -835,7 +850,7 @@ const EntityHierarchy = ({
       <div className="p-2 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
           <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-secondary)' }} />
-              <input type="text" placeholder={`Search ${currentLabel.toLowerCase()}...`} value={searchQuery} onChange={e => onSearchQueryChange(e.target.value)} //
+              <input type="text" placeholder={`Search ${currentLabel.toLowerCase()}...`} value={searchInputValue} onChange={e => setSearchInputValue(e.target.value)} //
                   className="w-full pl-8 pr-3 py-1.5 border rounded-md focus:ring-1 text-sm"
                   style={{
                     borderColor: 'var(--color-border)',
