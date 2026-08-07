@@ -58,6 +58,14 @@ build() {
     echo "✓ $tag pushed"
 }
 
+# Builds run SEQUENTIALLY, one service at a time — confirmed on this machine that
+# running them concurrently makes things SLOWER, not faster: each service's
+# linux/arm64 stage is QEMU-emulated (CPU-bound), so N concurrent services means N
+# emulated builds fighting over the same cores instead of each getting the full
+# machine. One service's arm64 Maven compile alone took 33+ minutes under
+# concurrency, versus this having "worked fine without issue" run one at a time
+# previously. If you ever need concurrency back for a beefier build machine, the
+# previous approach (run_bg/wait_all backgrounding, dropped here) is in git history.
 fail() {
     echo ""
     echo "============================================"
@@ -99,15 +107,15 @@ should_build fuseki     && docker buildx build \
     -t "$REGISTRY/ontocode-fuseki:6.1.0" \
     -f fuseki-docker/Dockerfile \
     --push fuseki-docker && echo "✓ ontocode-fuseki:6.1.0 pushed"
-should_build graphdb    && build "[1/8] graphdb"     ontocode-graphdb     Dockerfile.graphdb
-should_build auth       && build "[2/8] auth"        ontocode-auth        Dockerfile.auth
-should_build gateway    && build "[3/8] gateway"     ontocode-gateway     Dockerfile.gateway
-should_build editor     && build "[4/9] editor"      ontocode-editor      Dockerfile.editor
-should_build reasoner-worker && build "[5/9] reasoner-worker" ontocode-reasoner-worker Dockerfile.reasoner-worker
-should_build swrl       && build "[6/9] swrl"        ontocode-swrl        Dockerfile.swrl
-should_build plugin     && build "[7/9] plugin"      ontocode-plugin      Dockerfile.plugin
-should_build plugin-init && build "[8/9] plugin-init" ontocode-plugin-init Dockerfile.plugin-init
-should_build web        && build "[9/9] web"         ontocode-web         Dockerfile.webapp "--no-cache"
+should_build graphdb    && build "[graphdb]"      ontocode-graphdb     Dockerfile.graphdb
+should_build auth       && build "[auth]"         ontocode-auth        Dockerfile.auth
+should_build gateway    && build "[gateway]"      ontocode-gateway     Dockerfile.gateway
+should_build editor     && build "[editor]"       ontocode-editor      Dockerfile.editor
+should_build reasoner-worker && build "[reasoner-worker]" ontocode-reasoner-worker Dockerfile.reasoner-worker
+should_build swrl       && build "[swrl]"         ontocode-swrl        Dockerfile.swrl
+should_build plugin     && build "[plugin]"       ontocode-plugin      Dockerfile.plugin
+should_build plugin-init && build "[plugin-init]" ontocode-plugin-init Dockerfile.plugin-init
+should_build web        && build "[web]"          ontocode-web         Dockerfile.webapp "--no-cache"
 
 trap - ERR
 
