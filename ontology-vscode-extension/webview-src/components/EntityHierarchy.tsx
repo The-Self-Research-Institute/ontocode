@@ -44,6 +44,9 @@ interface EntityHierarchyProps {
     hideDeprecated: boolean;
     hideBuiltins: boolean;
   }) => void;
+  /** Under each search hit, how many levels of descendants to show (0–5). Default handled by parent. */
+  searchMatchSubtreeDepth?: number;
+  onSearchMatchSubtreeDepthChange?: (depth: number) => void;
   onSelectItem: (item: SelectableItem) => void;
   onToggleNode: (nodeId: string) => void;
   onAddItem: (type: 'subclass' | 'sibling' | 'individual') => void;
@@ -108,6 +111,8 @@ const EntityHierarchy = ({
   onSearchQueryChange,
   searchOptions,
   onSearchOptionsChange,
+  searchMatchSubtreeDepth = 5,
+  onSearchMatchSubtreeDepthChange,
   onSelectItem,
   onToggleNode,
   onAddItem,
@@ -898,6 +903,21 @@ const EntityHierarchy = ({
                 />
                 Hide built-ins
               </label>
+              {onSearchMatchSubtreeDepthChange && (
+                <label className="flex items-center gap-1" title="Under each match, show only this many descendant levels. Unrelated branches stay hidden.">
+                  Depth
+                  <select
+                    value={searchMatchSubtreeDepth}
+                    onChange={(e) => onSearchMatchSubtreeDepthChange(Number(e.target.value))}
+                    className="border rounded px-1 py-0.5 text-[10px] bg-white"
+                    style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}
+                  >
+                    {[0, 1, 2, 3, 4, 5].map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
           )}
           

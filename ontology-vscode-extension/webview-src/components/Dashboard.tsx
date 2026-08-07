@@ -1913,6 +1913,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, []);
   const [searchQuery, setSearchQuery] = useState("");
+  /** Under each search hit, show loaded descendants up to this depth; unrelated branches stay hidden. */
+  const [searchMatchSubtreeDepth, setSearchMatchSubtreeDepth] = useState(5);
   const [searchOptions, setSearchOptions] = useState({
     useRegex: false,
     searchAnnotations: false,
@@ -2855,27 +2857,47 @@ const Dashboard: React.FC<DashboardProps> = ({
       return haystack.toLowerCase().includes(lowercasedQuery);
     };
 
+    /** Clip a loaded subtree so only `maxDepth` levels of children remain (0 = leaf). */
+    const clipToDepth = (items: SelectableItem[], maxDepth: number): SelectableItem[] => {
+      if (!Array.isArray(items) || maxDepth < 0) return [];
+      return items
+        .filter((item) => item && item.id && !isDeprecated(item) && !isBuiltIn(item))
+        .map((item) => {
+          const kids = Array.isArray((item as any).children) ? (item as any).children : [];
+          if (maxDepth === 0) {
+            return {
+              ...item,
+              children: [],
+              hasChildren: Boolean((item as any).hasChildren) || kids.length > 0,
+            } as any;
+          }
+          const clipped = clipToDepth(kids, maxDepth - 1);
+          return {
+            ...item,
+            children: clipped,
+            hasChildren: clipped.length > 0 || Boolean((item as any).hasChildren),
+          } as any;
+        });
+    };
+
+    /**
+     * Search visibility:
+     * - Keep matches + ancestors on the path to matches (hide unrelated siblings).
+     * - Under each match, show loaded descendants only up to searchMatchSubtreeDepth.
+     * Without a query, keep the full (non-deprecated/non-builtin-filtered) tree.
+     */
     const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
-      // Safety check: ensure items is an array
       if (!Array.isArray(items)) {
         console.warn("[Dashboard] filterRecursively received non-array:", items);
         return [];
       }
 
       const results: SelectableItem[] = [];
-      const addedIds = new Set<string>();
       for (const item of items) {
         perfNodesVisited++;
-        // Skip null/undefined items
-        if (!item || !item.id) {
-          continue;
-        }
+        if (!item || !item.id) continue;
+        if (isDeprecated(item)) continue;
 
-        if (isDeprecated(item)) {
-          continue;
-        }
-
-        // Safely get children array
         const children = Array.isArray((item as any).children) ? (item as any).children : [];
 
         if (isBuiltIn(item) && children.length > 0) {
@@ -2883,21 +2905,29 @@ const Dashboard: React.FC<DashboardProps> = ({
           results.push(...childResults);
           continue;
         }
+        if (isBuiltIn(item)) continue;
 
-        let matches = matchesQuery(item);
-        if (children.length > 0) {
-          const childResults = filterRecursively(children);
-          if (childResults.length > 0) {
-            results.push({ ...item, children: childResults, hasChildren: true } as any);
-            addedIds.add(item.id);
-            matches = true;
-          }
+        if (!trimmedQuery) {
+          results.push(item);
+          continue;
         }
-        if (matches && !addedIds.has(item.id)) {
-          // Ensure children is always an array when adding to results
-          results.push({ ...item, children: children.length > 0 ? children : [] } as any);
-          addedIds.add(item.id);
+
+        const selfMatch = matchesQuery(item);
+        const childResults = children.length > 0 ? filterRecursively(children) : [];
+
+        if (selfMatch) {
+          // Hit: show this node; under it only a depth-limited subtree (not the whole ontology).
+          const subtree = clipToDepth(children, searchMatchSubtreeDepth);
+          results.push({
+            ...item,
+            children: subtree,
+            hasChildren: subtree.length > 0 || Boolean((item as any).hasChildren),
+          } as any);
+        } else if (childResults.length > 0) {
+          // Ancestor of a hit: keep path, hide non-matching siblings.
+          results.push({ ...item, children: childResults, hasChildren: true } as any);
         }
+        // else: unrelated — hide
       }
       return results;
     };
@@ -2916,7 +2946,40 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
     }
     return result;
-  }, [searchQuery, sourceData, entitiesTab, searchOptions]);
+  }, [searchQuery, sourceData, entitiesTab, searchOptions, searchMatchSubtreeDepth]);
+
+  // When searching: auto-expand every visible path node so hits aren't hidden behind collapsed parents.
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) return;
+
+    const ids: string[] = [];
+    const walk = (items: SelectableItem[]) => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        if (!item?.id) continue;
+        const kids = Array.isArray((item as any).children) ? (item as any).children : [];
+        if (kids.length > 0) {
+          ids.push(item.id);
+          walk(kids);
+        }
+      }
+    };
+    walk(filteredData as SelectableItem[]);
+    if (ids.length === 0) return;
+
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of ids) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? Array.from(next) : prev;
+    });
+  }, [searchQuery, filteredData]);
 
   const fetchReasonerBundle = useCallback(
     async (reasonerType: string) => {
@@ -18404,6 +18467,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                   onSearchQueryChange={setSearchQuery}
                   searchOptions={searchOptions}
                   onSearchOptionsChange={setSearchOptions}
+                  searchMatchSubtreeDepth={searchMatchSubtreeDepth}
+                  onSearchMatchSubtreeDepthChange={setSearchMatchSubtreeDepth}
                   onSelectItem={setSelectedItem}
                   onToggleNode={toggleNode}
                   onAddItem={handleAddItem}
