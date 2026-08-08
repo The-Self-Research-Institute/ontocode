@@ -106,6 +106,12 @@ export interface WebGLGraphViewProps {
    * Hide mode is handled upstream by filtering `nodes`/`edges`.
    */
   dimFocusIds?: Set<string> | null;
+  /**
+   * Bump after bulk hierarchy changes (Expand All / deep dive) so the camera
+   * re-frames once layout has nodes to measure — same role as SVG auto-fit
+   * after Tree↔Network.
+   */
+  viewportFitToken?: number;
 }
 
 /** Synthetic graph for renderer benchmarks (?bench=N or the perf harness). */
@@ -152,7 +158,8 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
   onRenameNode,
   onDeleteNode,
   onAddChildNode,
-  dimFocusIds = null
+  dimFocusIds = null,
+  viewportFitToken = 0
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
@@ -390,6 +397,26 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
       { duration: 600 }
     );
   }, []);
+
+  // Bulk expand/collapse: nodes spread under FA2 while the camera stays put —
+  // re-frame all nodes on the same cadence as SVG Tree↔Network auto-fit, plus
+  // a late pass after FA2 has had more time on larger graphs.
+  useEffect(() => {
+    if (!viewportFitToken) return;
+    const fitAll = () => {
+      const renderer = sigmaRef.current;
+      if (!renderer) return;
+      fitToNodes(renderer.getGraph().nodes());
+    };
+    const t1 = setTimeout(fitAll, 450);
+    const t2 = setTimeout(fitAll, 1800);
+    const t3 = setTimeout(fitAll, 4500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [viewportFitToken, fitToNodes]);
 
   const handleInsightSelect = useCallback((kind: InsightKind, ids: string[]) => {
     setFocus(null);

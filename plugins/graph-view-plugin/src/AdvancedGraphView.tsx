@@ -808,6 +808,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('webgl') === '1')
   );
   const [webglBannerDismissed, setWebglBannerDismissed] = useState(false);
+  // Bumped by Expand All / deep dive / ±1 so SVG + WebGL re-fit after layout.
+  const [viewportFitToken, setViewportFitToken] = useState(0);
+  const requestViewportFitAfterBulkExpand = useCallback(() => {
+    setViewportFitToken((t) => t + 1);
+  }, []);
   // ?bench=N renders a synthetic graph directly in the WebGL renderer (benchmark harness)
   const benchData = useMemo(() => {
     if (typeof window === 'undefined') return null;
@@ -5965,7 +5970,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
       return next;
     });
-  }, [getDepthSeeds, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode]);
+    requestViewportFitAfterBulkExpand();
+  }, [getDepthSeeds, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode, requestViewportFitAfterBulkExpand]);
 
   const handleCollapseOneDepth = useCallback(() => {
     const seeds = getDepthSeeds();
@@ -5985,7 +5991,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return next;
       });
     }
-  }, [getDepthSeeds, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode]);
+    requestViewportFitAfterBulkExpand();
+  }, [getDepthSeeds, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode, requestViewportFitAfterBulkExpand]);
 
   const handleDeepDive = useCallback((depth: number = searchFilterDepth) => {
     const seeds = getDepthSeeds();
@@ -6000,7 +6007,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       for (const id of newVisibleIds) next.add(id);
       return next;
     });
-  }, [getDepthSeeds, searchFilterDepth, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode]);
+    requestViewportFitAfterBulkExpand();
+  }, [getDepthSeeds, searchFilterDepth, expandedNodeIds, visibleNodeIds, allEdges, allNodes, updateHierarchyState, searchFilterMode, requestViewportFitAfterBulkExpand]);
 
   const handleFilterModeChange = useCallback((mode: 'dim' | 'hide') => {
     setSearchFilterMode(mode);
@@ -6520,6 +6528,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   };
   const handleFitRef = useRef<() => void>(() => {});
   handleFitRef.current = handleFit;
+
+  // Expand All / deep dive / ±1 bump viewportFitToken; SVG re-uses the
+  // Tree↔Network auto-fit cadence. WebGL watches the same token in its child.
+  useEffect(() => {
+    if (!viewportFitToken || webglActive) return;
+    userInteractedRef.current = false;
+    const t1 = setTimeout(() => handleFitRef.current(), 450);
+    const t2 = setTimeout(() => handleFitRef.current(), 1800);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [viewportFitToken, webglActive]);
 
   // Switching SVG modes leaves the camera wherever the previous mode was — static
   // layouts (tree/grid/radial) then render off-screen. Auto-fit after the switch:
@@ -7532,10 +7550,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             onExpandAll={() => {
               const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+              requestViewportFitAfterBulkExpand();
             }}
             onCollapseAll={() => {
               const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+              requestViewportFitAfterBulkExpand();
             }}
             onToggleEdit={() => setEditMode(!editMode)}
             onToggleSearch={() => setShowSearch(!showSearch)}
@@ -7657,6 +7677,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 onDeleteNode={startDeleteClassAction}
                 onAddChildNode={(id) => startCreateClassAction('child', id)}
                 dimFocusIds={searchFilterMode === 'dim' && searchFocusIds.size > 0 ? searchFocusIds : null}
+                viewportFitToken={viewportFitToken}
               />
             )}
             {/* SVG Canvas for Force, VOWL, OntoGraph, and projected 3D Spatial mode */}
@@ -8570,6 +8591,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   visible: newVisibleIds,
                   expanded: newExpandedIds
                 }));
+                requestViewportFitAfterBulkExpand();
                 setContextMenu({ ...contextMenu, visible: false });
               }}
             >
@@ -8583,6 +8605,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   visible: newVisibleIds,
                   expanded: newExpandedIds
                 }));
+                requestViewportFitAfterBulkExpand();
                 setContextMenu({ ...contextMenu, visible: false });
               }}
             >
