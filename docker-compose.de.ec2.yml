@@ -56,8 +56,10 @@ services:
     image: mongo:6
     container_name: ontocode-mongo
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:27017:27017"
+    # Host publish is for debug only; use 27027 so it doesn't fight a busy 27017 /
+    # double-merge with base compose. !override required so base 27017:27017 doesn't merge-append.
+    ports: !override
+      - "127.0.0.1:27027:27017"
     volumes:
       - mongo-data:/data/db
     environment:
