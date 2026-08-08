@@ -816,13 +816,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, []);
   const [filters, setFilters] = useState<GraphFilters>(DEFAULT_FILTERS);
   const [searchQuery, setSearchQuery] = useState('');
-  /** Under each graph search hit, how many descendant levels to keep in the filter focus set (0–5). */
+  /** Under each graph search hit, how many descendant levels to keep in the filter focus set (0–15). */
   const [searchFilterDepth, setSearchFilterDepth] = useState(5);
   /** Dim non-matches in place, or hide them from the graph entirely. */
   const [searchFilterMode, setSearchFilterMode] = useState<'dim' | 'hide'>('hide');
   /** Nodes in the active filter focus (matches + path + depth). Used for dimming and hide. */
   const [searchFocusIds, setSearchFocusIds] = useState<Set<string>>(() => new Set());
   const preFilterVisibilityRef = useRef<{ visible: Set<string>; expanded: Set<string> } | null>(null);
+  /** Brief status after depth / deep-dive actions (clears itself). */
+  const [searchActionHint, setSearchActionHint] = useState<string | null>(null);
+  const searchActionHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashSearchHint = useCallback((msg: string) => {
+    setSearchActionHint(msg);
+    if (searchActionHintTimerRef.current) clearTimeout(searchActionHintTimerRef.current);
+    searchActionHintTimerRef.current = setTimeout(() => setSearchActionHint(null), 2200);
+  }, []);
   const [sidebarSearchTerm, setSidebarSearchTerm] = useState('');
 
   // VOWL Controls
@@ -5498,6 +5506,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return baseWidth;
       })
       .attr('stroke-opacity', (d: any) => {
+        if (searchFilterMode === 'dim' && searchFocusIds.size > 0) {
+          const sourceId = typeof d.source === 'string' ? d.source : d.source?.id;
+          const targetId = typeof d.target === 'string' ? d.target : d.target?.id;
+          const inFocus = searchFocusIds.has(sourceId) && searchFocusIds.has(targetId);
+          return inFocus ? 1 : 0.08;
+        }
         if (selectedEdgeId) return selectedEdgeId === d.id ? 1 : 0.3;
         if (selectionActive) return focusEdgeIds.has(d.id) ? 1 : 0.08;
         if (hoveredNode) {
@@ -5602,7 +5616,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .style('opacity', (n: any) => {
         // Dim mode: keep all rendered nodes, fade anything outside the filter focus.
-        if (searchQuery && searchFilterMode === 'dim' && searchFocusIds.size > 0) {
+        // Applies for search matches and Deep dive / ±1 focus (selection seeds).
+        if (searchFilterMode === 'dim' && searchFocusIds.size > 0) {
           return searchFocusIds.has(n.id) ? 1 : 0.12;
         }
         if (searchLower) {
@@ -5618,7 +5633,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // and this node isn't in its immediate neighborhood.
     g.selectAll<SVGGElement, any>('.node')
       .style('opacity', (n: any) => {
-        if (searchQuery && searchFilterMode === 'dim' && searchFocusIds.size > 0) {
+        if (searchFilterMode === 'dim' && searchFocusIds.size > 0) {
           return searchFocusIds.has(n.id) ? 1 : 0.12;
         }
         if (!selectionActive) return 1;
@@ -7625,10 +7640,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 selectedNodeIds={selectedNodes}
                 projectId={projectId}
                 onNodeClick={(id) => {
+                  // Select only — do not navigate. Entity button / context menu use onGoToEntity.
                   const found = allNodes.find(n => n.id === id);
                   setSelectedNodes(new Set([id]));
                   if (found) setSelectedNodeInfo(found);
-                  onNodeClickRef.current?.(id);
                 }}
                 onNodeRightClick={(id, pos) => {
                   if (canEdit) setContextMenu({ visible: true, x: pos.x, y: pos.y, nodeId: id });
@@ -7641,6 +7656,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 onRenameNode={renameClassLabel}
                 onDeleteNode={startDeleteClassAction}
                 onAddChildNode={(id) => startCreateClassAction('child', id)}
+                dimFocusIds={searchFilterMode === 'dim' && searchFocusIds.size > 0 ? searchFocusIds : null}
               />
             )}
             {/* SVG Canvas for Force, VOWL, OntoGraph, and projected 3D Spatial mode */}
@@ -7749,7 +7765,42 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             )}
 
             {/* Search Panel */}
-            {showSearch && (
+            {showSearch && (() => {
+              const depthSeeds = getDepthSeeds();
+              const hasSeeds = depthSeeds.length > 0;
+              const seedStatus = selectedNodes.size > 0
+                ? `Using: ${selectedNodes.size} selected node${selectedNodes.size === 1 ? '' : 's'}`
+                : (searchQuery.trim() && searchFocusIds.size > 0)
+                  ? `Using: search matches (${searchFocusIds.size})`
+                  : searchFocusIds.size > 0
+                    ? `Using: ${searchFocusIds.size} focus node${searchFocusIds.size === 1 ? '' : 's'}`
+                    : 'Nothing selected';
+              const selectHint = webglActive
+                ? 'Click a node on the graph to select it.'
+                : 'Click a node on the graph to select it. Ctrl/Cmd+click to multi-select.';
+              const sectionLabel: React.CSSProperties = {
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                color: 'var(--text-tertiary, var(--text-secondary))',
+                marginBottom: 6
+              };
+              const actionBtn = (enabled: boolean): React.CSSProperties => ({
+                flex: '1 1 auto',
+                minWidth: 0,
+                padding: '7px 8px',
+                borderRadius: 6,
+                border: '1px solid var(--border)',
+                background: enabled ? 'var(--surface-2)' : 'var(--surface-1)',
+                color: enabled ? 'var(--text-primary)' : 'var(--text-tertiary, var(--text-secondary))',
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: enabled ? 'pointer' : 'not-allowed',
+                opacity: enabled ? 1 : 0.55,
+                textAlign: 'left' as const
+              });
+              return (
           <div style={styles.searchPanel}>
             <div style={styles.panelHeader}>
               <Search size={18} />
@@ -7764,138 +7815,213 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={styles.searchInput}
             />
 
-            {/* Dim vs Hide */}
-            <div style={{ display: 'flex', gap: 6, padding: '0 12px 8px' }}>
-              {([
-                { id: 'dim' as const, label: 'Dim' },
-                { id: 'hide' as const, label: 'Hide' }
-              ]).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => handleFilterModeChange(opt.id)}
-                  title={opt.id === 'dim'
-                    ? 'Keep other nodes visible but faded'
-                    : 'Show only filtered / focused nodes'}
-                  style={{
-                    flex: 1,
-                    padding: '6px 8px',
-                    borderRadius: 6,
-                    border: searchFilterMode === opt.id ? '1px solid #4f46e5' : '1px solid #cbd5e1',
-                    background: searchFilterMode === opt.id ? '#eef2ff' : '#fff',
-                    color: searchFilterMode === opt.id ? '#3730a3' : '#475569',
-                    fontWeight: 600,
-                    fontSize: 12,
-                    cursor: 'pointer'
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
+            {/* Filter mode: Dim vs Hide with descriptions */}
+            <div style={{ padding: '10px 12px 8px' }}>
+              <div style={sectionLabel}>Filter mode</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {([
+                  { id: 'dim' as const, label: 'Fade others', desc: 'Keep the full graph; fade non-matches' },
+                  { id: 'hide' as const, label: 'Hide others', desc: 'Show matches only; hide the rest' }
+                ]).map((opt) => {
+                  const selected = searchFilterMode === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => handleFilterModeChange(opt.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 10,
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '8px 10px',
+                        borderRadius: 8,
+                        border: selected ? '1px solid var(--accent)' : '1px solid var(--border)',
+                        background: selected ? 'var(--accent-tint)' : 'var(--surface-1)',
+                        color: 'var(--text-primary)',
+                        cursor: 'pointer',
+                        boxShadow: selected ? 'inset 0 0 0 1px var(--accent)' : 'none'
+                      }}
+                    >
+                      <span
+                        aria-hidden
+                        style={{
+                          width: 14,
+                          height: 14,
+                          marginTop: 2,
+                          borderRadius: '50%',
+                          flexShrink: 0,
+                          border: selected ? '4px solid var(--accent)' : '2px solid var(--border)',
+                          background: 'var(--surface-1)',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13, color: selected ? 'var(--accent)' : 'var(--text-primary)' }}>
+                          {opt.label}
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                          {opt.desc}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '0 12px 8px', fontSize: 12, color: '#475569' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Depth for search focus and Deep dive (0–5)">
-                Depth
+            {/* Depth */}
+            <div style={{ padding: '4px 12px 10px' }}>
+              <div style={sectionLabel}>Depth</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                <span style={{ flex: 1, lineHeight: 1.35 }}>
+                  Levels to expand with “Expand to depth” (also used when searching)
+                </span>
                 <select
                   value={searchFilterDepth}
                   onChange={(e) => {
                     const next = Number(e.target.value);
                     setSearchFilterDepth(next);
-                    if (searchQuery.trim()) handleSearch(searchQuery, next, searchFilterMode);
+                    if (searchQuery.trim()) {
+                      handleSearch(searchQuery, next, searchFilterMode);
+                      flashSearchHint(`Search depth set to ${next}`);
+                    } else if (getDepthSeeds().length > 0) {
+                      handleDeepDive(next);
+                      flashSearchHint(`Expanded to depth ${next}`);
+                    } else {
+                      flashSearchHint(`Depth set to ${next}`);
+                    }
                   }}
-                  style={{ border: '1px solid #cbd5e1', borderRadius: 4, padding: '2px 6px' }}
+                  style={{
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '4px 8px',
+                    background: 'var(--surface-1)',
+                    color: 'var(--text-primary)',
+                    flexShrink: 0
+                  }}
                 >
-                  {[0, 1, 2, 3, 4, 5].map((d) => (
-                    <option key={d} value={d}>{d}</option>
+                  {Array.from({ length: 16 }, (_, d) => d).map((d) => (
+                    <option key={d} value={d} style={{ background: 'var(--surface-1)', color: 'var(--text-primary)' }}>{d}</option>
                   ))}
                 </select>
               </label>
-              <span style={{ color: '#64748b' }}>
-                {searchFilterMode === 'hide' ? 'Others hidden' : 'Others dimmed'}
-              </span>
             </div>
 
-            {/* Deep dive + one-depth step controls (selection or search matches) */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 12px 10px' }}>
-              <button
-                type="button"
-                onClick={() => handleDeepDive(searchFilterDepth)}
-                disabled={getDepthSeeds().length === 0}
-                title="Expand selected nodes (or search matches) to the Depth value"
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: 6,
-                  border: '1px solid #cbd5e1',
-                  background: '#fff',
+            {/* Neighborhood expand/collapse */}
+            <div style={{ padding: '4px 12px 10px', borderTop: '1px solid var(--border)' }}>
+              <div style={{ ...sectionLabel, marginTop: 8 }}>Expand around selection</div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: 8 }}>
+                {selectHint}
+                {' '}Or type a search above — buttons then use search matches.
+              </div>
+              <div style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: hasSeeds ? 'var(--accent)' : 'var(--text-tertiary, var(--text-secondary))',
+                marginBottom: 8
+              }}>
+                {seedStatus}
+              </div>
+              {!hasSeeds && (
+                <div style={{
                   fontSize: 12,
-                  cursor: getDepthSeeds().length === 0 ? 'not-allowed' : 'pointer',
-                  opacity: getDepthSeeds().length === 0 ? 0.5 : 1
-                }}
-              >
-                Deep dive
-              </button>
-              <button
-                type="button"
-                onClick={handleCollapseOneDepth}
-                disabled={getDepthSeeds().length === 0}
-                title="Collapse one depth under selection / matches"
-                style={{
-                  padding: '6px 10px',
+                  color: 'var(--text-secondary)',
+                  background: 'var(--surface-2)',
+                  border: '1px dashed var(--border)',
                   borderRadius: 6,
-                  border: '1px solid #cbd5e1',
-                  background: '#fff',
-                  fontSize: 12,
-                  cursor: getDepthSeeds().length === 0 ? 'not-allowed' : 'pointer',
-                  opacity: getDepthSeeds().length === 0 ? 0.5 : 1
-                }}
-              >
-                −1 depth
-              </button>
-              <button
-                type="button"
-                onClick={handleExpandOneDepth}
-                disabled={getDepthSeeds().length === 0}
-                title="Expand one depth under selection / matches"
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: 6,
-                  border: '1px solid #cbd5e1',
-                  background: '#fff',
-                  fontSize: 12,
-                  cursor: getDepthSeeds().length === 0 ? 'not-allowed' : 'pointer',
-                  opacity: getDepthSeeds().length === 0 ? 0.5 : 1
-                }}
-              >
-                +1 depth
-              </button>
-            </div>
-            <div style={{ padding: '0 12px 8px', fontSize: 11, color: '#94a3b8' }}>
-              Select node(s) for deep dive / ±1, or rely on search matches.
+                  padding: '8px 10px',
+                  marginBottom: 8
+                }}>
+                  Select a node on the graph first — then expand or collapse its neighborhood.
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleDeepDive(searchFilterDepth);
+                    flashSearchHint(`Expanded to depth ${searchFilterDepth}`);
+                  }}
+                  disabled={!hasSeeds}
+                  title={`Expand around selection / matches out to depth ${searchFilterDepth}`}
+                  style={actionBtn(hasSeeds)}
+                >
+                  <div style={{ fontWeight: 600 }}>Expand to depth {searchFilterDepth}</div>
+                  <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-secondary)', marginTop: 2 }}>
+                    Show all neighbors within {searchFilterDepth} hop{searchFilterDepth === 1 ? '' : 's'}
+                  </div>
+                </button>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleCollapseOneDepth();
+                      flashSearchHint('Collapsed one level');
+                    }}
+                    disabled={!hasSeeds}
+                    title="Hide one level of children under the selection / matches"
+                    style={actionBtn(hasSeeds)}
+                  >
+                    <div style={{ fontWeight: 600 }}>Collapse one level</div>
+                    <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-secondary)', marginTop: 2 }}>
+                      −1 hop
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleExpandOneDepth();
+                      flashSearchHint('Expanded one level');
+                    }}
+                    disabled={!hasSeeds}
+                    title="Reveal one more level of children under the selection / matches"
+                    style={actionBtn(hasSeeds)}
+                  >
+                    <div style={{ fontWeight: 600 }}>Expand one level</div>
+                    <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--text-secondary)', marginTop: 2 }}>
+                      +1 hop
+                    </div>
+                  </button>
+                </div>
+              </div>
+              {searchActionHint && (
+                <div style={{ marginTop: 8, fontSize: 11, color: 'var(--accent)' }}>
+                  {searchActionHint}
+                </div>
+              )}
             </div>
 
             {searchQuery && (
-              <div style={{ padding: '12px', background: '#f0f9ff', borderRadius: '8px', margin: '12px' }}>
-                <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: '4px' }}>
+              <div style={{
+                padding: 12,
+                background: 'var(--accent-tint)',
+                borderRadius: 8,
+                margin: '0 12px 12px',
+                border: '1px solid var(--border)'
+              }}>
+                <div style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 4, fontWeight: 600 }}>
                   {searchFilterMode === 'hide'
-                    ? 'Hide mode — only focused nodes shown'
-                    : 'Dim mode — other nodes faded'}
+                    ? 'Hide others — only focused nodes shown'
+                    : 'Fade others — non-matches faded'}
                 </div>
-                <div style={{ fontSize: '13px', color: '#0c4a6e' }}>
+                <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>
                   {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)}
                   {searchFocusIds.size > 0 ? ` · focus ${searchFocusIds.size}` : ''}
                 </div>
                 <button
                   onClick={() => handleSearch('')}
                   style={{
-                    marginTop: '8px',
+                    marginTop: 8,
                     padding: '6px 12px',
-                    background: '#667eea',
-                    color: 'white',
+                    background: 'var(--accent)',
+                    color: '#fff',
                     border: 'none',
-                    borderRadius: '6px',
+                    borderRadius: 6,
                     cursor: 'pointer',
-                    fontSize: '12px'
+                    fontSize: 12,
+                    fontWeight: 600
                   }}
                 >
                   Clear filter
@@ -7908,7 +8034,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               </div>
             )}
           </div>
-        )}
+              );
+            })()}
 
         </div>
 
@@ -8850,11 +8977,14 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'absolute',
     top: '20px',
     left: '20px',
-    width: '300px',
+    width: '320px',
+    maxHeight: 'calc(100% - 40px)',
+    overflowX: 'hidden',
+    overflowY: 'auto',
     background: 'var(--surface-1)',
     borderRadius: '12px',
+    border: '1px solid var(--border)',
     boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
-    overflow: 'hidden',
     zIndex: 10
   },
   vowlLegendPanel: {

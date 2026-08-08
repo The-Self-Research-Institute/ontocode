@@ -10,6 +10,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Sigma from 'sigma';
+import { drawDiscNodeHover } from 'sigma/rendering';
 import Graph from 'graphology';
 import { OntologyNode, OntologyEdge } from '../types';
 import { buildGraphologyGraph } from './graphAdapter';
@@ -100,6 +101,11 @@ export interface WebGLGraphViewProps {
   onRenameNode?: (nodeId: string, newLabel: string) => void | Promise<void>;
   onDeleteNode?: (nodeId: string) => void;
   onAddChildNode?: (nodeId: string) => void;
+  /**
+   * Search-panel Dim mode: fade everything outside this focus set.
+   * Hide mode is handled upstream by filtering `nodes`/`edges`.
+   */
+  dimFocusIds?: Set<string> | null;
 }
 
 /** Synthetic graph for renderer benchmarks (?bench=N or the perf harness). */
@@ -145,7 +151,8 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
   canEdit,
   onRenameNode,
   onDeleteNode,
-  onAddChildNode
+  onAddChildNode,
+  dimFocusIds = null
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
@@ -161,6 +168,9 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
   const draggedNodeRef = useRef<string | null>(null);
   const [activeInsight, setActiveInsight] = useState<InsightKind | null>(null);
   const emphasizedIdsRef = useRef<Set<string> | null>(null);
+  /** Search-panel Dim focus — separate from insight/focus emphasis so they don't clobber each other. */
+  const dimFocusIdsRef = useRef<Set<string> | null>(null);
+  dimFocusIdsRef.current = dimFocusIds && dimFocusIds.size > 0 ? dimFocusIds : null;
   const [communitiesOn, setCommunitiesOn] = useState(false);
   const communitiesOnRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -206,16 +216,24 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
       labelRenderedSizeThreshold: 5,
       labelColor: { color: dark ? '#e7e9f0' : '#1f2430' },
       defaultEdgeColor: dark ? '#556274' : '#aab8cc',
-      zIndex: true
+      zIndex: true,
+      // Sigma's built-in hover renderer always fills the label box with white,
+      // then draws the label text using `labelColor` — in dark theme that's a
+      // light color, so the text disappears on its own white background. Force
+      // the hover label text to a fixed dark color to match the fixed white box.
+      defaultDrawNodeHover: (context, data, settings) => {
+        drawDiscNodeHover(context, data, { ...settings, labelColor: { color: '#1f2430' } });
+      }
     });
     sigmaRef.current = renderer;
     // Test hook: lets harnesses resolve node viewport coordinates
     (containerRef.current as unknown as { __sigma?: Sigma }).__sigma = renderer;
 
     // Hover: dim everything outside the hovered node's neighborhood.
-    // Insight emphasis: dim everything outside the emphasized set.
+    // Insight emphasis / search Dim: dim everything outside the focus set.
     renderer.setSetting('nodeReducer', (node, data) => {
       const res: Record<string, unknown> = { ...data };
+      const searchDim = dimFocusIdsRef.current;
       const emphasized = emphasizedIdsRef.current;
       const hovered = hoveredNodeStateRef.current;
       if (communitiesOnRef.current) {
@@ -230,16 +248,22 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
           break;
         }
       }
-      if (emphasized && !emphasized.has(node)) {
+      // Search-panel Dim takes priority over insight/focus emphasis when active
+      const focusSet = searchDim ?? emphasized;
+      if (focusSet && !focusSet.has(node)) {
         res.color = dark ? '#2a3341' : '#e5e7eb';
         res.label = '';
         res.zIndex = 0;
-      } else if (emphasized) {
-        // Ask mode: only answer nodes glow; path nodes stay normal for readability
-        const answers = askAnswersRef.current;
-        if (!answers || answers.has(node)) {
-          res.highlighted = true;
+      } else if (focusSet) {
+        if (searchDim) {
           res.zIndex = 2;
+        } else {
+          // Ask mode: only answer nodes glow; path nodes stay normal for readability
+          const answers = askAnswersRef.current;
+          if (!answers || answers.has(node)) {
+            res.highlighted = true;
+            res.zIndex = 2;
+          }
         }
       } else if (hovered && node !== hovered && !hoveredNeighborsRef.current.has(node)) {
         res.color = dark ? '#2a3341' : '#e5e7eb';
@@ -252,15 +276,17 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
     });
     renderer.setSetting('edgeReducer', (edge, data) => {
       const res: Record<string, unknown> = { ...data };
+      const searchDim = dimFocusIdsRef.current;
       const emphasized = emphasizedIdsRef.current;
       const hovered = hoveredNodeStateRef.current;
       // Typed edges are the ontology advantage — but only label the hovered neighborhood to avoid clutter
       if (!hovered || !graph.hasExtremity(edge, hovered)) {
         res.label = '';
       }
-      if (emphasized) {
+      const focusSet = searchDim ?? emphasized;
+      if (focusSet) {
         const [s, t] = graph.extremities(edge);
-        if (!emphasized.has(s) || !emphasized.has(t)) res.hidden = true;
+        if (!focusSet.has(s) || !focusSet.has(t)) res.hidden = true;
       } else if (hovered && !graph.hasExtremity(edge, hovered)) {
         res.hidden = true;
       }
@@ -335,6 +361,12 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
   useEffect(() => {
     sigmaRef.current?.refresh({ skipIndexation: true });
   }, [selectedNodeIds]);
+
+  // Keep search-panel Dim focus in sync with Sigma reducers
+  useEffect(() => {
+    dimFocusIdsRef.current = dimFocusIds && dimFocusIds.size > 0 ? dimFocusIds : null;
+    sigmaRef.current?.refresh({ skipIndexation: true });
+  }, [dimFocusIds]);
 
   // Fly the camera to frame a set of nodes (framed-graph coords: ratio 1 ≈ whole graph)
   const fitToNodes = useCallback((ids: string[]) => {
@@ -550,8 +582,10 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
   }, [persistGroups]);
 
   const hoverInfo = useMemo(() => {
-    // In focus mode the card sticks to the focus node so its actions stay reachable
-    const cardNode = hoveredNode ?? focus?.id ?? null;
+    // Prefer hover, then single selection, then focus — so Entity / actions stay reachable after click
+    const singleSelected =
+      selectedNodeIds && selectedNodeIds.size === 1 ? [...selectedNodeIds][0] : null;
+    const cardNode = hoveredNode ?? singleSelected ?? focus?.id ?? null;
     if (!cardNode || !graph.hasNode(cardNode)) return null;
     const attrs = graph.getNodeAttributes(cardNode);
     return {
@@ -561,7 +595,7 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
       degree: graph.degree(cardNode),
       module: insights.communities[cardNode]
     };
-  }, [hoveredNode, focus, graph, insights]);
+  }, [hoveredNode, selectedNodeIds, focus, graph, insights]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: 400 }}>
@@ -636,9 +670,9 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
               {focus.depth} hop{focus.depth === 1 ? '' : 's'}
               <button
                 data-testid="graph-webgl-focus-depth-up"
-                onClick={() => setFocus(f => f && { ...f, depth: Math.min(5, f.depth + 1) })}
-                disabled={focus.depth >= 5}
-                style={{ border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', padding: '0 2px', opacity: focus.depth >= 5 ? 0.4 : 1 }}
+                onClick={() => setFocus(f => f && { ...f, depth: Math.min(15, f.depth + 1) })}
+                disabled={focus.depth >= 15}
+                style={{ border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', padding: '0 2px', opacity: focus.depth >= 15 ? 0.4 : 1 }}
               >+</button>
               <button
                 data-testid="graph-webgl-focus-exit"
@@ -836,7 +870,11 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
                 key={action.testid}
                 data-testid={action.testid}
                 title={action.title}
-                onClick={action.onClick}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  action.onClick();
+                }}
                 style={{
                   padding: '2px 8px',
                   borderRadius: 10,
