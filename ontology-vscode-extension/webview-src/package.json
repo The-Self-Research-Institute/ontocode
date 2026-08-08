@@ -13,8 +13,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@esbuild/linux-x64": "^0.28.1",
-    "@rollup/rollup-linux-x64-gnu": "^4.62.4",
     "@stomp/stompjs": "^7.3.0",
     "@stripe/react-stripe-js": "^6.3.0",
     "@stripe/stripe-js": "^9.3.1",
