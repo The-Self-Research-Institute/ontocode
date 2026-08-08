@@ -1828,7 +1828,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   searchIcon: {
     position: 'absolute',
-    left: '12px',
+    // Container has padding 14px 16px; offset into the input (16 + 12)
+    left: '28px',
     top: '50%',
     transform: 'translateY(-50%)',
     color: 'var(--text-tertiary)',

@@ -57,7 +57,7 @@ interface LocalGraphViewProps {
   onActivate?: (node: OntologyNode) => void;
   /** Default neighborhood depth (1 hop). */
   initialDepth?: number;
-  /** Maximum neighborhood depth allowed by the slider (default 5). */
+  /** Maximum neighborhood depth allowed by the slider (default 15). */
   maxDepth?: number;
   /** Whether the toolbar is visible. Default true. */
   showToolbar?: boolean;
@@ -97,7 +97,7 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
   onSelect,
   onActivate,
   initialDepth = 1,
-  maxDepth = 5,
+  maxDepth = 15,
   showToolbar = true,
   height = '100%'
 }) => {
