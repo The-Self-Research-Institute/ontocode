@@ -23,6 +23,17 @@ export interface ReleaseNote {
  */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0-beta.18",
+    date: "August 8, 2026",
+    title: "Graph View — Interaction & Layout Options",
+    highlights: [
+      "TSRI-130: Graph View — Clicking a node now selects/expands it in place instead of navigating to the editor. Use the hover card's \"Go to entity\" action or the right-click menu to open a node in the editor.",
+      "TSRI-134: Graph View — Added Hierarchy (Tree), Radial, Layered, and Clustered layout options alongside the existing Network (force-directed) view, plus a Focus/Neighborhood mode centered on a selected node. Switch views from the Visualization dropdown in the toolbar.",
+      "TSRI-131: Graph View — Large ontologies show a curated ~35-node slice of the hierarchy by default for performance. Click 🌳 Expand All in the toolbar to load the full class hierarchy.",
+    ],
+    videoUrl: "",
+  },
+  {
     version: "1.1.0-beta.17",
     date: "July 31, 2026",
     title: "Startup Reliability & Reasoner Fixes",
