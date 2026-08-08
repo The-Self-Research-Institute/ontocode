@@ -89,9 +89,11 @@ services:
     environment:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?FUSEKI_ADMIN_PASSWORD is required in production}
       JVM_ARGS: "-Xmx2560m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
-    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
+    # Do NOT add --conf /config.ttl here: docker-compose.yml already mounts
+    # fuseki-config.ttl → /fuseki/configuration/ontocode.ttl. Mounting the same
+    # file again as /config.ttl and passing --conf registers /ontocode twice and
+    # Fuseki crashes with "Data service name already registered".
     volumes:
-      - ./fuseki-config.ttl:/config.ttl:ro
       - fuseki-data:/fuseki/databases
     networks:
       - ontology-net
