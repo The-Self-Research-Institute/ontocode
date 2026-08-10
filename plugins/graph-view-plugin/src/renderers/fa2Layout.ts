@@ -16,7 +16,10 @@ export function useFA2Layout(graph: Graph | null, enabled: boolean): void {
 
     const settings = forceAtlas2.inferSettings(graph);
     // Give the sim time proportional to size, capped — FA2 never stops on its own.
-    const runMs = Math.min(10000, 1500 + graph.order * 2);
+    // Large densely linked ontologies (GO) need more iterations or they settle as a blob.
+    const runMs = Math.min(20000, 1500 + graph.order * 3);
+    settings.gravity = Math.max(0.05, (settings.gravity ?? 1) * (graph.order > 400 ? 0.35 : 1));
+    settings.scalingRatio = Math.max(2, (settings.scalingRatio ?? 2) * (graph.order > 400 ? 1.8 : 1));
 
     let supervisor: FA2LayoutSupervisor | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
