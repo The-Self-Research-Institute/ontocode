@@ -7798,7 +7798,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   if (found) setSelectedNodeInfo(found);
                 }}
                 onNodeRightClick={(id, pos) => {
-                  if (canEdit) setContextMenu({ visible: true, x: pos.x, y: pos.y, nodeId: id });
+                  // Always allow context menu (Entity / Properties) — not edit-gated.
+                  setContextMenu({ visible: true, x: pos.x, y: pos.y, nodeId: id });
                 }}
                 hasNodeChildren={(id) => nodeRelationsMap.get(id)?.hasChildren ?? false}
                 isNodeExpanded={(id) => expandedNodeIds.has(id)}
@@ -8769,7 +8770,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         )}
 
-        {/* Context Menu */}
+        {/* Context Menu — lean: hover card already has Expand/Focus/Rename/Sub/Delete */}
         {contextMenu.visible && contextMenu.nodeId && (
           <div
             style={{
@@ -8782,42 +8783,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             <div style={styles.contextMenuHeader}>
               {allNodes.find(n => n.id === contextMenu.nodeId)?.label || 'Node'}
             </div>
-            {focusedNodeId ? (
-              <button
-                style={styles.contextMenuItem}
-                onClick={() => {
-                  // Walk the isolation: re-center the neighborhood on this node
-                  enterFocusMode(contextMenu.nodeId!);
-                  setContextMenu({ ...contextMenu, visible: false });
-                }}
-              >
-                Expand neighborhood here
-              </button>
-            ) : hasChildren(contextMenu.nodeId, allEdges, allNodes) && (
-              <>
-                {!expandedNodeIds.has(contextMenu.nodeId) ? (
-                  <button
-                    style={styles.contextMenuItem}
-                    onClick={() => {
-                      handleToggleExpansion(contextMenu.nodeId!);
-                      setContextMenu({ ...contextMenu, visible: false });
-                    }}
-                  >
-                    ➕ Expand children
-                  </button>
-                ) : (
-                  <button
-                    style={styles.contextMenuItem}
-                    onClick={() => {
-                      handleToggleExpansion(contextMenu.nodeId!);
-                      setContextMenu({ ...contextMenu, visible: false });
-                    }}
-                  >
-                    ➖ Collapse subtree (hide all subnodes)
-                  </button>
-                )}
-              </>
-            )}
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => {
+                if (contextMenu.nodeId) onNodeClickRef.current?.(contextMenu.nodeId);
+                setContextMenu({ ...contextMenu, visible: false });
+              }}
+            >
+              📄 Go to Entity
+            </button>
             <button
               style={styles.contextMenuItem}
               onClick={() => {
@@ -8827,15 +8801,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }}
             >
               ℹ️ View Properties
-            </button>
-            <button
-              style={styles.contextMenuItem}
-              onClick={() => {
-                if (contextMenu.nodeId) onNodeClickRef.current?.(contextMenu.nodeId);
-                setContextMenu({ ...contextMenu, visible: false });
-              }}
-            >
-              📄 Go to Entity Details
             </button>
             {allNodes.find(n => n.id === contextMenu.nodeId)?.type === 'class' && (
               <button
@@ -8862,46 +8827,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   setContextMenu({ ...contextMenu, visible: false });
                 }}
               >
-                🌿 Edit in Hierarchy Navigator
+                🌿 Hierarchy Navigator
               </button>
             )}
-            <button
-              style={{ ...styles.contextMenuItem, background: focusedNodeId === contextMenu.nodeId ? '#ede9fe' : undefined, fontWeight: focusedNodeId === contextMenu.nodeId ? 600 : 400 }}
-              onClick={() => {
-                if (contextMenu.nodeId) enterFocusMode(contextMenu.nodeId);
-                setContextMenu({ ...contextMenu, visible: false });
-              }}
-            >
-              🎯 Focus on this Class (parents + children)
-            </button>
-            <button
-              style={styles.contextMenuItem}
-              onClick={() => {
-                const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
-                updateHierarchyState(() => ({
-                  visible: newVisibleIds,
-                  expanded: newExpandedIds
-                }));
-                requestViewportFitAfterBulkExpand();
-                setContextMenu({ ...contextMenu, visible: false });
-              }}
-            >
-              🌳 Expand All
-            </button>
-            <button
-              style={styles.contextMenuItem}
-              onClick={() => {
-                const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
-                updateHierarchyState(() => ({
-                  visible: newVisibleIds,
-                  expanded: newExpandedIds
-                }));
-                requestViewportFitAfterBulkExpand();
-                setContextMenu({ ...contextMenu, visible: false });
-              }}
-            >
-              📁 Collapse All
-            </button>
           </div>
         )}
 

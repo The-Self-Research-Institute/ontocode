@@ -31,7 +31,7 @@ public class DesktopDownloadService {
     public static final String BUCKET = "desktop-installers";
     private static final String WINDOWS_PLATFORM = "windows-x64";
     private static final String[] KNOWN_PLATFORMS = {
-        WINDOWS_PLATFORM, "linux-x64", "linux-deb", "linux-arm64", "mac-arm64",
+        WINDOWS_PLATFORM, "linux-x64", "linux-deb", "linux-arm64", "linux-flatpak", "mac-arm64",
     };
 
     @Value("${ontocode.downloads.tracking-salt:ontocode-download-tracking}")
@@ -181,7 +181,7 @@ public class DesktopDownloadService {
         return switch (value.trim().toLowerCase()) {
             case "win", "windows", "windows-x64", "windows-arm64" -> "windows";
             case "mac", "macos", "osx", "darwin", "mac-arm64", "mac-x64" -> "macos";
-            case "linux", "ubuntu", "debian", "linux-x64", "linux-deb" -> "linux";
+            case "linux", "ubuntu", "debian", "linux-x64", "linux-deb", "linux-arm64", "linux-flatpak" -> "linux";
             case "android" -> "android";
             case "ios", "iphone", "ipad" -> "ios";
             default -> value.trim().toLowerCase().replaceAll("[^a-z0-9_-]", "");
