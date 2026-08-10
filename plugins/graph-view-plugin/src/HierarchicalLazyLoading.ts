@@ -16,15 +16,18 @@
 
 import type { OntologyNode, OntologyEdge } from './types';
 
-/** Edge types that participate in the asserted hierarchy. */
+/** Edge types that participate in the asserted class/property hierarchy. */
 const HIERARCHY_EDGE_TYPES: ReadonlySet<string> = new Set([
   'subClassOf',
-  'subPropertyOf',
-  'instanceOf'
+  'subPropertyOf'
 ]);
 
-const isHierarchyEdge = (edge: OntologyEdge): boolean =>
-  HIERARCHY_EDGE_TYPES.has(edge.type as string);
+/** Instance membership edges — opt-in via getChildren({ includeInstances: true }). */
+const INSTANCE_EDGE_TYPES: ReadonlySet<string> = new Set(['instanceOf']);
+
+const isHierarchyEdge = (edge: OntologyEdge, includeInstances = false): boolean =>
+  HIERARCHY_EDGE_TYPES.has(edge.type as string) ||
+  (includeInstances && INSTANCE_EDGE_TYPES.has(edge.type as string));
 
 /** True when the given node objects expose a `parent` field (precomputed by backend). */
 const nodesHaveParentField = (nodes?: OntologyNode[]): boolean =>
@@ -57,6 +60,7 @@ export const buildHierarchyIndex = (
 
   if (nodesHaveParentField(nodes)) {
     for (const node of nodes) {
+      if (node.type === 'individual') continue;
       const parent = getParentField(node);
       if (parent === null || parent === undefined || parent === '') continue;
       const parents = Array.isArray(parent) ? parent : [parent];
@@ -134,18 +138,23 @@ export const getParents = (
 };
 
 /**
- * Get immediate children of a node. Includes sub-classes, sub-properties,
- * and instance-of relationships when the node is the parent class.
+ * Get immediate children of a node. Includes sub-classes and sub-properties.
+ * Pass `{ includeInstances: true }` to also include instanceOf individuals.
  */
 export const getChildren = (
   nodeId: string,
   edges: OntologyEdge[],
-  nodes?: OntologyNode[]
+  nodes?: OntologyNode[],
+  options?: { includeInstances?: boolean }
 ): string[] => {
+  const includeInstances = options?.includeInstances === true;
   const out = new Set<string>();
 
   if (nodesHaveParentField(nodes)) {
     for (const node of nodes!) {
+      // Parent-field is for class/property hierarchy; skip individuals unless
+      // instances are explicitly requested.
+      if (!includeInstances && node.type === 'individual') continue;
       const parent = getParentField(node);
       if (parent === undefined || parent === null) continue;
       if (Array.isArray(parent)) {
@@ -157,7 +166,7 @@ export const getChildren = (
   }
 
   for (const edge of edges) {
-    if (edge.to === nodeId && isHierarchyEdge(edge)) {
+    if (edge.to === nodeId && isHierarchyEdge(edge, includeInstances)) {
       out.add(edge.from);
     }
   }
@@ -201,6 +210,7 @@ export const buildChildrenParentsIndex = (
   };
   if (hasParentField) {
     for (const node of nodes) {
+      if (node.type === 'individual') continue;
       const parent = getParentField(node);
       if (parent === undefined || parent === null) continue;
       const parents = Array.isArray(parent) ? parent : [parent];
@@ -210,7 +220,7 @@ export const buildChildrenParentsIndex = (
     }
   }
   for (const edge of edges) {
-    if (isHierarchyEdge(edge)) addChild(edge.to, edge.from);
+    if (isHierarchyEdge(edge, false)) addChild(edge.to, edge.from);
   }
   childSets.forEach((set, parentId) => {
     ensure(parentId).children = Array.from(set);
@@ -743,7 +753,8 @@ export const smartInitialGraphVisibility = (
 };
 
 /**
- * Collapse every branch — show only roots for each entity type that has a hierarchy.
+ * Collapse every branch — roots-only visibility with no expanded nodes
+ * (true invert of Expand All).
  */
 export const collapseAll = (
   nodes: OntologyNode[],
@@ -753,25 +764,13 @@ export const collapseAll = (
   newVisibleIds: Set<string>;
 } => {
   const visibleIds: string[] = [];
-  const expandedIds: string[] = [];
   for (const type of ['class', 'objectProperty', 'dataProperty', 'individual'] as const) {
     const subset = nodes.filter(n => n.type === type);
     const roots = getRootNodes(subset, edges);
     visibleIds.push(...roots);
-    // Roots alone leave VOWL empty (property roots render as edges) — show
-    // each root class with its immediate children, as the toolbar promises.
-    if (type === 'class') {
-      for (const rootId of roots) {
-        const children = getChildren(rootId, edges, nodes);
-        if (children.length > 0) {
-          expandedIds.push(rootId);
-          visibleIds.push(...children);
-        }
-      }
-    }
   }
   return {
-    newExpandedIds: new Set(expandedIds),
+    newExpandedIds: new Set<string>(),
     newVisibleIds: new Set(visibleIds)
   };
 };

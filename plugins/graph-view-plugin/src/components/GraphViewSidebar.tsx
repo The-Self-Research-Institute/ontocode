@@ -38,6 +38,8 @@ interface GraphViewSidebarProps {
     strokeDasharray?: string;
     color?: string;
   }>;
+  /** When false, hide the legend accordion entirely. */
+  showLegend?: boolean;
   vowlFilters?: {
     showExternalClasses: boolean;
     showInternalClasses: boolean;
@@ -93,6 +95,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   projectId,
   viewMode = 'force',
   vowlLegend = [],
+  showLegend = true,
   onSearchChange,
   classDistance = 50,
   datatypeDistance = 20,
@@ -1275,8 +1278,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         </div>
       )}
 
-      {/* Legend Section - Always visible with comprehensive node and edge types */}
-      {vowlLegend.length > 0 && (
+      {/* Legend Section - gated by toolbar showLegend toggle */}
+      {showLegend && vowlLegend.length > 0 && (
         <div style={styles.accordionSection}>
           <div 
             className="accordion-header"

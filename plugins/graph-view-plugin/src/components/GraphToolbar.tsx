@@ -231,7 +231,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
       <button
         onClick={props.onCollapseAll}
         style={styles.btn}
-        title="Collapse All - Show root classes with their immediate children"
+        title="Collapse All - Show only root nodes (no expanded branches)"
         disabled={props.loading || !props.hasNodes}
       >
         <MinusSquare size={16} />
