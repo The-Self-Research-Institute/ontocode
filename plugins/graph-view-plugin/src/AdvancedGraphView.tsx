@@ -78,7 +78,7 @@ import { usePrefersReducedMotion } from './hooks/usePrefersReducedMotion';
 import { loadLastView, saveLastView, loadUiPrefs, saveUiPrefs, OntographLayoutType, VowlDisplayOptions, DEFAULT_VOWL_OPTIONS } from './viewMemory';
 import { applyVowlTransform, isThingIri, vowlOriginalNodeId, buildVowlNeighborhoods, placeVowlNeighborhoods } from './vowlTransform';
 import { GraphToolbar, RELATIONSHIP_VISIBILITY_CONTROLS } from './components/GraphToolbar';
-import { WebGLGraphView, buildBenchmarkData } from './renderers/WebGLGraphView';
+import { WebGLGraphView, buildBenchmarkData, type WebGLCameraHandle } from './renderers/WebGLGraphView';
 import { isWebGLAvailable } from './renderers/graphAdapter';
 
 // D3 types
@@ -782,8 +782,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   // Hierarchy Dialog State
   const [showHierarchyDialog, setShowHierarchyDialog] = useState(false);
   const [hierarchyDialogPosition, setHierarchyDialogPosition] = useState({ x: 100, y: 100 });
+  const [hierarchyDialogSize, setHierarchyDialogSize] = useState({ width: 360, height: 480 });
   const [hierarchyRootNode, setHierarchyRootNode] = useState<OntologyNode | null>(null);
   const [isDialogMinimized, setIsDialogMinimized] = useState(false);
+  // SVG Tree hover card (mirrors WebGL hover actions when canEdit)
+  const [svgHoverCard, setSvgHoverCard] = useState<{
+    id: string;
+    label: string;
+    type: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const svgHoverClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [svgRenaming, setSvgRenaming] = useState<{ id: string; value: string } | null>(null);
+  const svgRenamingRef = useRef(svgRenaming);
+  svgRenamingRef.current = svgRenaming;
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -808,6 +821,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('webgl') === '1')
   );
   const [webglBannerDismissed, setWebglBannerDismissed] = useState(false);
+  const webglCamRef = useRef<WebGLCameraHandle>(null);
   // Bumped by Expand All / deep dive / ±1 so SVG + WebGL re-fit after layout.
   const [viewportFitToken, setViewportFitToken] = useState(0);
   const requestViewportFitAfterBulkExpand = useCallback(() => {
@@ -2717,8 +2731,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const avgNodeSize = settings.nodeSize || 20;
     
     // Force simulation configuration
-    // Use physics for force, vowl, and ontograph spring mode
-    const usePhysics = visualizationType !== 'ontograph' || ontographLayoutType === 'spring';
+    // Use physics for force, vowl, and ontograph spring mode — gated by settings.physics
+    const usePhysics =
+      settings.physics &&
+      (visualizationType !== 'ontograph' || ontographLayoutType === 'spring');
 
     // Entrance decision — once per mount, on the first data render. The bloom only
     // plays on a user's first-ever open (no persisted view), with visible physics.
@@ -5047,6 +5063,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     function handleNodeMouseOver(event: any, d: D3Node) {
       setHoveredNode(d.id);
+      if (svgHoverClearTimerRef.current) {
+        clearTimeout(svgHoverClearTimerRef.current);
+        svgHoverClearTimerRef.current = null;
+      }
+      const original = resolveVowlClone(d);
+      setSvgHoverCard({
+        id: original.id,
+        label: original.label || d.label,
+        type: original.type || d.type,
+        x: event.clientX + 12,
+        y: event.clientY + 12
+      });
 
       if (settings.tooltips) {
         // Remove any existing tooltips first
@@ -5090,6 +5118,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     function handleNodeMouseOut() {
       setHoveredNode(null);
       d3.selectAll('.graph-tooltip').remove();
+      if (svgHoverClearTimerRef.current) clearTimeout(svgHoverClearTimerRef.current);
+      svgHoverClearTimerRef.current = setTimeout(() => {
+        if (svgRenamingRef.current) return;
+        setSvgHoverCard(null);
+      }, 450);
     }
 
     // Zoom behavior
@@ -5431,7 +5464,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   // Deliberately granular deps: edit-mode toggles, click-handler identity, and label/
   // tooltip toggles update in place (refs + visual-update effect) instead of tearing
   // down and rebuilding the whole scene.
-  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions]);
+  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, settings.physics, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions]);
 
   // Auto-fit the viewport when switching to ontograph or changing its layout type
   // This ensures nodes are always in view after a layout recalculation
@@ -5690,6 +5723,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .call(zoomRef.current.transform as any, t);
   }, []);
 
+  // Focus mode: after neighborhood visibility updates, re-frame the focused set.
+  useEffect(() => {
+    if (!focusedNodeId) return;
+    const ids = focusedNodeIds ?? new Set([focusedNodeId]);
+    const timer = window.setTimeout(() => {
+      if (webglActive) {
+        webglCamRef.current?.fitToNodes([...ids]);
+      } else {
+        requestViewportFitAfterBulkExpand();
+        glideToNodeIds(ids, 1.2);
+      }
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [focusedNodeId, focusedNodeIds, webglActive, glideToNodeIds, requestViewportFitAfterBulkExpand]);
+
   // Spotlight camera: when a class is selected in VOWL, frame it with its
   // direct neighborhood so the dimmed context never cuts off satellites.
   // Isolate mode re-renders just the neighborhood and auto-fits — no glide.
@@ -5934,7 +5982,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     console.log(
       `[Search] mode=${mode} matches=${matchingNodes.length} focus=${nodesToShow.size} depth=${depth}`
     );
-  }, [allNodes, allEdges, updateHierarchyState, searchFilterDepth, searchFilterMode, visibleNodeIds, expandedNodeIds]);
+    requestViewportFitAfterBulkExpand();
+  }, [allNodes, allEdges, updateHierarchyState, searchFilterDepth, searchFilterMode, visibleNodeIds, expandedNodeIds, requestViewportFitAfterBulkExpand]);
 
   const getDepthSeeds = useCallback((): string[] => {
     if (selectedNodes.size > 0) return Array.from(selectedNodes);
@@ -6046,7 +6095,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         });
       }
     }
-  }, [searchQuery, visibleNodeIds, expandedNodeIds, searchFocusIds, allNodes, allEdges, searchFilterDepth, updateHierarchyState]);
+    requestViewportFitAfterBulkExpand();
+  }, [searchQuery, visibleNodeIds, expandedNodeIds, searchFocusIds, allNodes, allEdges, searchFilterDepth, updateHierarchyState, requestViewportFitAfterBulkExpand]);
 
   const applyOntologyMutations = useCallback(async (ops: OntologyMutationOp[]) => {
     if (!projectId) {
@@ -6271,9 +6321,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return { visible, expanded };
       });
 
-      // Select the new node
+      // Select the new node and center the camera on it
       setSelectedNodes(new Set([newIri]));
       setSelectedNodeInfo(newNode);
+      window.setTimeout(() => {
+        if (webglActive) {
+          webglCamRef.current?.fitToNodes([newIri]);
+        } else {
+          glideToNodeIds(new Set([newIri]), 1.4);
+        }
+      }, 180);
       
       // Show success feedback
       setClassActionFeedback({ type: 'success', message: `✓ Created class "${newLabel}"` });
@@ -6297,7 +6354,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     } finally {
       setClassActionLoading(false);
     }
-  }, [buildClassIri, context, projectId, requestHostClassDialog, updateHierarchyState]);
+  }, [buildClassIri, context, projectId, requestHostClassDialog, updateHierarchyState, webglActive, glideToNodeIds]);
 
   const startDeleteClassAction = useCallback((nodeId: string) => {
     if (readonly || !projectId || !canEdit || classActionLoading) {
@@ -6411,6 +6468,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     svg.transition().duration(prefersReducedMotion ? 0 : ms).ease(d3.easeCubicOut);
 
   const handleZoomIn = () => {
+    if (webglActive) {
+      webglCamRef.current?.zoomBy(1.3);
+      return;
+    }
     if (svgRef.current && zoomRef.current) {
       const svg = d3.select(svgRef.current);
       cameraTransition(svg, 300).call(
@@ -6420,6 +6481,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   };
 
   const handleZoomOut = () => {
+    if (webglActive) {
+      webglCamRef.current?.zoomBy(0.7);
+      return;
+    }
     if (svgRef.current && zoomRef.current) {
       const svg = d3.select(svgRef.current);
       cameraTransition(svg, 300).call(
@@ -6512,13 +6577,45 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     const bounds = (gRef.current as any).getBBox();
     if (!bounds || bounds.width < 1 || bounds.height < 1) return null;
-    const scale = Math.min(0.9 / Math.max(bounds.width / w, bounds.height / h), 2);
-    const tx = w / 2 - scale * (bounds.x + bounds.width / 2);
-    const ty = h / 2 - scale * (bounds.y + bounds.height / 2);
+
+    // Prefer node-circle AABB when simulation positions are available — getBBox
+    // can be inflated by long edge labels / VOWL chips.
+    let minX = bounds.x;
+    let minY = bounds.y;
+    let maxX = bounds.x + bounds.width;
+    let maxY = bounds.y + bounds.height;
+    if (simNodes && simNodes.length > 0) {
+      let found = 0;
+      let nMinX = Infinity, nMinY = Infinity, nMaxX = -Infinity, nMaxY = -Infinity;
+      const pad = Math.max(24, (settings.nodeSize || 20) * 1.2);
+      for (const n of simNodes) {
+        if ((n as any).__isChip || n.x == null || n.y == null) continue;
+        if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
+        found++;
+        nMinX = Math.min(nMinX, n.x - pad);
+        nMinY = Math.min(nMinY, n.y - pad);
+        nMaxX = Math.max(nMaxX, n.x + pad);
+        nMaxY = Math.max(nMaxY, n.y + pad);
+      }
+      if (found > 0) {
+        minX = nMinX; minY = nMinY; maxX = nMaxX; maxY = nMaxY;
+      }
+    }
+    const bw = Math.max(1, maxX - minX);
+    const bh = Math.max(1, maxY - minY);
+    let scale = Math.min(0.9 / Math.max(bw / w, bh / h), 2);
+    // Never zoom out so far that a class circle is tiny on screen
+    scale = Math.max(scale, 0.55);
+    const tx = w / 2 - scale * ((minX + maxX) / 2);
+    const ty = h / 2 - scale * ((minY + maxY) / 2);
     return d3.zoomIdentity.translate(tx, ty).scale(scale);
-  }, [visualizationType, filteredEdges]);
+  }, [visualizationType, filteredEdges, settings.nodeSize]);
 
   const handleFit = () => {
+    if (webglActive) {
+      webglCamRef.current?.fitAll();
+      return;
+    }
     if (svgRef.current && zoomRef.current) {
       const target = computeSmartFitTransform();
       if (!target) return;
@@ -6659,7 +6756,26 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     setSelectedSavedViewId('');
   }, [persistSavedViews, savedViews]);
 
-  const handleExport = (format: ExportFormat) => {
+  const handleExport = async (format: ExportFormat) => {
+    // WebGL path: always capture a PNG (SVG button still downloads .png).
+    if (webglActive) {
+      if (format === 'svg') {
+        console.info('[Graph Export] WebGL has no SVG export — downloading PNG instead.');
+      }
+      const blob = await webglCamRef.current?.capturePng();
+      if (!blob) {
+        console.error('[Graph Export] WebGL PNG capture failed');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `ontology-graph-${projectId}.png`;
+      link.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
     // Exports serialize the live DOM — make sure viewport culling never truncates them
     uncullForExportRef.current();
     if (format === 'svg' && svgRef.current) {
@@ -6685,6 +6801,30 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         clonedSvg.setAttribute('width', width.toString());
         clonedSvg.setAttribute('height', height.toString());
         clonedSvg.setAttribute('viewBox', `${bbox.x - 20} ${bbox.y - 20} ${width} ${height}`);
+
+        // Inline computed styles so CSS variables / theme colors survive export
+        const inlineComputedStyles = (source: Element, target: Element) => {
+          if (source instanceof Element && target instanceof Element) {
+            try {
+              const cs = window.getComputedStyle(source);
+              const styleBits: string[] = [];
+              for (const prop of ['fill', 'stroke', 'stroke-width', 'opacity', 'font-size', 'font-family', 'color'] as const) {
+                const v = cs.getPropertyValue(prop);
+                if (v) styleBits.push(`${prop}:${v}`);
+              }
+              if (styleBits.length) {
+                const prev = target.getAttribute('style') || '';
+                target.setAttribute('style', `${prev};${styleBits.join(';')}`);
+              }
+            } catch { /* ignore */ }
+          }
+          const sChildren = source.children;
+          const tChildren = target.children;
+          for (let i = 0; i < sChildren.length && i < tChildren.length; i++) {
+            inlineComputedStyles(sChildren[i], tChildren[i]);
+          }
+        };
+        inlineComputedStyles(svgElement, clonedSvg);
         
         // Serialize SVG
         const svgData = new XMLSerializer().serializeToString(clonedSvg);
@@ -6702,38 +6842,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         
         // Create image
         const img = new Image();
-        
-        img.onload = () => {
-          // Fill white background
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, width, height);
-          
-          // Draw SVG
-          ctx.drawImage(img, 0, 0);
-          
-          // Convert to PNG and download
-          canvas.toBlob(blob => {
-            if (blob) {
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement('a');
-              link.href = url;
-              link.download = `ontology-graph-${projectId}.png`;
-              link.click();
-              URL.revokeObjectURL(url);
-            }
-          }, 'image/png');
-        };
+        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
         
         img.onerror = (e) => {
           console.error('Failed to load SVG image for PNG export:', e);
+          URL.revokeObjectURL(url);
         };
         
-        // Encode SVG data properly (handle Unicode)
-        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(svgBlob);
-        img.src = url;
-        
-        // Clean up after image loads
         img.onload = () => {
           URL.revokeObjectURL(url);
           
@@ -6756,6 +6872,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }
           }, 'image/png');
         };
+
+        img.src = url;
       } catch (error) {
         console.error('PNG export failed:', error);
       }
@@ -7080,6 +7198,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             />
             
             <span
+              title={node.label}
               style={{
                 fontSize: '13px',
                 fontWeight: selectedNodes.has(node.id) ? '600' : '400',
@@ -7299,10 +7418,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             borderBottom: '1px solid var(--border, #e5e7eb)'
           }}
         >
-          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary, #1f2937)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary, #1f2937)', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={hierarchyRootNode.label}>
             {hierarchyRootNode.label}
           </div>
-          <div style={{ fontSize: '10px', color: 'var(--text-secondary, #9ca3af)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: '10px', color: 'var(--text-secondary, #9ca3af)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={hierarchyRootNode.id}>
             {hierarchyRootNode.id}
           </div>
         </div>
@@ -7543,6 +7662,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             onZoomOut={handleZoomOut}
             onFit={handleFit}
             onResetZoom={() => {
+              if (webglActive) {
+                webglCamRef.current?.reset();
+                return;
+              }
               if (svgRef.current && zoomRef.current) {
                 cameraTransition(d3.select(svgRef.current)).call(zoomRef.current.transform as any, d3.zoomIdentity);
               }
@@ -7559,7 +7682,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }}
             onToggleEdit={() => setEditMode(!editMode)}
             onToggleSearch={() => setShowSearch(!showSearch)}
-            onToggleFilters={() => setShowFilters(!showFilters)}
+            onToggleFilters={() => {
+              setShowFilters((prev) => {
+                const next = !prev;
+                if (next) setShowPropertyPanel(true);
+                return next;
+              });
+            }}
             onToggleSettings={() => {
               setShowSettings(!showSettings);
               setShowPropertyPanel(true); // Always show sidebar when settings clicked
@@ -7653,12 +7782,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             {/* WebGL renderer (feature-flagged spike) — high-performance path for large graphs */}
             {webglActive && (
               <WebGLGraphView
+                ref={webglCamRef}
                 nodes={benchData?.nodes ?? filteredNodes}
                 edges={benchData?.edges ?? filteredEdges}
                 dark={isDarkTheme}
                 nodeSize={settings.nodeSize}
                 selectedNodeIds={selectedNodes}
                 projectId={projectId}
+                showGrid={showGrid}
+                physicsEnabled={settings.physics}
                 onNodeClick={(id) => {
                   // Select only — do not navigate. Entity button / context menu use onGoToEntity.
                   const found = allNodes.find(n => n.id === id);
@@ -7682,6 +7814,116 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             )}
             {/* SVG Canvas for Force, VOWL, OntoGraph, and projected 3D Spatial mode */}
             {!webglActive && (
+            <>
+            {svgHoverCard && (
+              <div
+                data-testid="graph-svg-hovercard"
+                onMouseEnter={() => {
+                  if (svgHoverClearTimerRef.current) {
+                    clearTimeout(svgHoverClearTimerRef.current);
+                    svgHoverClearTimerRef.current = null;
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (svgRenamingRef.current) return;
+                  setSvgHoverCard(null);
+                }}
+                style={{
+                  position: 'fixed',
+                  left: Math.min(svgHoverCard.x, window.innerWidth - 300),
+                  top: Math.min(svgHoverCard.y, window.innerHeight - 140),
+                  zIndex: 40,
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  maxWidth: 280,
+                  border: '1px solid var(--border, #d1d5db)',
+                  backgroundColor: isDarkTheme ? '#1f2937e6' : '#ffffffe6',
+                  color: isDarkTheme ? '#e5e7eb' : '#1f2937',
+                  backdropFilter: 'blur(4px)',
+                  boxShadow: '0 8px 20px rgba(0,0,0,0.18)'
+                }}
+              >
+                {svgRenaming?.id === svgHoverCard.id ? (
+                  <input
+                    autoFocus
+                    value={svgRenaming.value}
+                    onChange={(e) => setSvgRenaming({ id: svgRenaming.id, value: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const value = svgRenaming.value.trim();
+                        setSvgRenaming(null);
+                        if (value && value !== svgHoverCard.label) renameClassLabel(svgHoverCard.id, value);
+                      } else if (e.key === 'Escape') {
+                        setSvgRenaming(null);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '2px 6px',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      border: '1px solid var(--border, #d1d5db)',
+                      backgroundColor: isDarkTheme ? '#111827' : '#ffffff',
+                      color: 'inherit',
+                      outline: 'none'
+                    }}
+                  />
+                ) : (
+                  <strong title={svgHoverCard.label}>{svgHoverCard.label}</strong>
+                )}
+                <div style={{ opacity: 0.75 }}>{svgHoverCard.type}</div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
+                  {[
+                    {
+                      label: expandedNodeIds.has(svgHoverCard.id) ? '➖ Collapse' : '➕ Expand',
+                      show: nodeRelationsMap.get(svgHoverCard.id)?.hasChildren ?? false,
+                      onClick: () => handleToggleExpansion(svgHoverCard.id)
+                    },
+                    {
+                      label: '📄 Entity',
+                      show: !!onNodeClick,
+                      onClick: () => onNodeClickRef.current?.(svgHoverCard.id)
+                    },
+                    {
+                      label: '✏️ Rename',
+                      show: canEdit && !readonly && svgHoverCard.type === 'class' && svgRenaming?.id !== svgHoverCard.id,
+                      onClick: () => setSvgRenaming({ id: svgHoverCard.id, value: svgHoverCard.label })
+                    },
+                    {
+                      label: '🌱 Sub',
+                      show: canEdit && !readonly && svgHoverCard.type === 'class',
+                      onClick: () => startCreateClassAction('child', svgHoverCard.id)
+                    },
+                    {
+                      label: '🗑 Delete',
+                      show: canEdit && !readonly && svgHoverCard.type === 'class',
+                      onClick: () => startDeleteClassAction(svgHoverCard.id)
+                    }
+                  ].filter((a) => a.show).map((action) => (
+                    <button
+                      key={action.label}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        action.onClick();
+                      }}
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: 10,
+                        fontSize: 11,
+                        cursor: 'pointer',
+                        border: '1px solid var(--border, #d1d5db)',
+                        backgroundColor: isDarkTheme ? '#111827' : '#f9fafb',
+                        color: 'inherit'
+                      }}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <svg
               ref={svgRef}
               data-testid="graph-svg"
@@ -7749,6 +7991,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 {showGrid && <rect width="100%" height="100%" fill="url(#grid)" />}
                 <g ref={gRef} />
             </svg>
+            </>
             )}
 
             {visualizationType === 'spatial3d' && (
@@ -8232,7 +8475,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }
             }}
             showClassHierarchy={showClassHierarchy}
-            vowlLegend={dynamicLegend}
+            vowlLegend={showLegend ? dynamicLegend : []}
+            showLegend={showLegend}
             onGraphNodeExpand={(nodeId) => {
               handleToggleExpansion(nodeId);
             }}
@@ -8257,9 +8501,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               position: 'fixed',
               left: `${hierarchyDialogPosition.x}px`,
               top: `${hierarchyDialogPosition.y}px`,
-              width: isDialogMinimized ? 'auto' : '300px',
-              minWidth: isDialogMinimized ? '220px' : 'auto',
-              maxHeight: isDialogMinimized ? 'auto' : '340px',
+              width: isDialogMinimized ? 'auto' : `${hierarchyDialogSize.width}px`,
+              height: isDialogMinimized ? 'auto' : `${hierarchyDialogSize.height}px`,
+              minWidth: isDialogMinimized ? '220px' : '280px',
+              minHeight: isDialogMinimized ? 'auto' : '240px',
+              maxWidth: 'calc(100vw - 16px)',
+              maxHeight: 'calc(100vh - 16px)',
               backgroundColor: 'var(--surface-1, #fff)',
               border: '1px solid var(--border, #d1d5db)',
               borderRadius: '8px',
@@ -8267,8 +8514,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               zIndex: 1000,
               display: 'flex',
               flexDirection: 'column',
-              overflow: 'hidden',
-              transition: 'all 0.2s ease-in-out'
+              overflow: 'hidden'
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -8299,9 +8545,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 const startY = e.clientY - hierarchyDialogPosition.y;
 
                 const handleMouseMove = (moveEvent: MouseEvent) => {
+                  const maxX = Math.max(0, window.innerWidth - (isDialogMinimized ? 220 : hierarchyDialogSize.width) - 8);
+                  const maxY = Math.max(0, window.innerHeight - (isDialogMinimized ? 48 : hierarchyDialogSize.height) - 8);
                   setHierarchyDialogPosition({
-                    x: moveEvent.clientX - startX,
-                    y: moveEvent.clientY - startY
+                    x: Math.min(Math.max(0, moveEvent.clientX - startX), maxX),
+                    y: Math.min(Math.max(0, moveEvent.clientY - startY), maxY)
                   });
                 };
 
@@ -8371,6 +8619,49 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
             {/* Dialog Content - Hidden when minimized */}
             {!isDialogMinimized && hierarchyNavigatorBody}
+            {!isDialogMinimized && (
+              <div
+                title="Resize"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const startX = e.clientX;
+                  const startY = e.clientY;
+                  const startW = hierarchyDialogSize.width;
+                  const startH = hierarchyDialogSize.height;
+                  const startLeft = hierarchyDialogPosition.x;
+                  const startTop = hierarchyDialogPosition.y;
+                  const handleMouseMove = (moveEvent: MouseEvent) => {
+                    const nextW = Math.min(
+                      Math.max(280, startW + (moveEvent.clientX - startX)),
+                      Math.max(280, window.innerWidth - startLeft - 8)
+                    );
+                    const nextH = Math.min(
+                      Math.max(240, startH + (moveEvent.clientY - startY)),
+                      Math.max(240, window.innerHeight - startTop - 8)
+                    );
+                    setHierarchyDialogSize({ width: nextW, height: nextH });
+                  };
+                  const handleMouseUp = () => {
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                  };
+                  document.addEventListener('mousemove', handleMouseMove);
+                  document.addEventListener('mouseup', handleMouseUp);
+                }}
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  bottom: 0,
+                  width: 16,
+                  height: 16,
+                  cursor: 'se-resize',
+                  background:
+                    'linear-gradient(135deg, transparent 50%, rgba(100,116,139,0.55) 50%)',
+                  borderBottomRightRadius: 8
+                }}
+              />
+            )}
           </div>
         )}
 

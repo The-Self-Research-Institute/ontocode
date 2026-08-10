@@ -10,7 +10,7 @@ export interface TreeLayoutOptions {
 
 /**
  * Tree Layout
- * Best for: Pure hierarchies (subClassOf, instanceOf)
+ * Best for: Pure hierarchies (subClassOf, subPropertyOf)
  * Uses D3 tree algorithm for optimal spacing
  */
 export function applyTreeLayout(
@@ -33,7 +33,7 @@ export function applyTreeLayout(
   const hasParent = new Set<string>();
 
   edges.forEach(edge => {
-    if (edge.type === 'subClassOf' || edge.type === 'instanceOf' || edge.type === 'subPropertyOf') {
+    if (edge.type === 'subClassOf' || edge.type === 'subPropertyOf') {
       // edge.from is child, edge.to is parent
       if (!children.has(edge.to)) {
         children.set(edge.to, []);

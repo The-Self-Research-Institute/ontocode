@@ -8,7 +8,7 @@
  * collaborative cursors, matrix view, export.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import Sigma from 'sigma';
 import { drawDiscNodeHover } from 'sigma/rendering';
 import Graph from 'graphology';
@@ -20,6 +20,15 @@ import { InsightChips, InsightKind } from './InsightChips';
 import { askGraph, AskResult, getUnmatchedTerms } from './askGraph';
 import { isSparqlQuery, runSparqlHighlight } from './sparqlAsk';
 import { generateSparql, mapTermsToLabels, answerQuestion } from '../services/LocalTermMapper';
+
+/** Imperative camera / export API for the parent toolbar. */
+export type WebGLCameraHandle = {
+  fitAll: () => void;
+  fitToNodes: (ids: string[]) => void;
+  zoomBy: (factor: number) => void;
+  reset: () => void;
+  capturePng: () => Promise<Blob | null>;
+};
 
 // Distinct hues for Louvain module coloring (colorblind-conscious, both themes)
 const COMMUNITY_PALETTE = [
@@ -112,6 +121,13 @@ export interface WebGLGraphViewProps {
    * after Tree↔Network.
    */
   viewportFitToken?: number;
+  /** CSS background grid on the wrapper when true. */
+  showGrid?: boolean;
+  /**
+   * When false, skip ForceAtlas2 even without saved positions.
+   * When true (default), run FA2 only if positions are absent/empty.
+   */
+  physicsEnabled?: boolean;
 }
 
 /** Synthetic graph for renderer benchmarks (?bench=N or the perf harness). */
@@ -139,7 +155,7 @@ export function buildBenchmarkData(count: number): { nodes: OntologyNode[]; edge
   return { nodes, edges };
 }
 
-export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
+export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>(function WebGLGraphView({
   nodes,
   edges,
   dark,
@@ -159,8 +175,10 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
   onDeleteNode,
   onAddChildNode,
   dimFocusIds = null,
-  viewportFitToken = 0
-}) => {
+  viewportFitToken = 0,
+  showGrid = false,
+  physicsEnabled = true
+}, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
@@ -206,8 +224,8 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
   const insightsRef = useRef(insights);
   insightsRef.current = insights;
 
-  // Layout: ForceAtlas2 in a worker, unless saved positions were provided
-  useFA2Layout(graph, !positions || positions.size === 0);
+  // Layout: ForceAtlas2 in a worker when physics is on and no saved positions
+  useFA2Layout(graph, physicsEnabled && (!positions || positions.size === 0));
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -398,16 +416,75 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
     );
   }, []);
 
+  const fitAll = useCallback(() => {
+    const renderer = sigmaRef.current;
+    if (!renderer) return;
+    fitToNodes(renderer.getGraph().nodes());
+  }, [fitToNodes]);
+
+  // Sigma: smaller ratio = zoom in. factor > 1 means zoom in for the toolbar.
+  const zoomBy = useCallback((factor: number) => {
+    const camera = sigmaRef.current?.getCamera();
+    if (!camera) return;
+    const next = Math.max(0.02, Math.min(3, camera.ratio / factor));
+    camera.animate({ ratio: next }, { duration: 250 });
+  }, []);
+
+  const resetCamera = useCallback(() => {
+    sigmaRef.current?.getCamera().animate({ x: 0.5, y: 0.5, ratio: 1.1 }, { duration: 500 });
+  }, []);
+
+  const capturePng = useCallback((): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      const renderer = sigmaRef.current;
+      const container = containerRef.current;
+      try {
+        const canvases = renderer?.getCanvases?.();
+        if (canvases) {
+          const layers = Object.values(canvases).filter(
+            (c): c is HTMLCanvasElement => !!c && c instanceof HTMLCanvasElement && c.width > 0
+          );
+          if (layers.length > 0) {
+            const w = Math.max(...layers.map(c => c.width));
+            const h = Math.max(...layers.map(c => c.height));
+            const out = document.createElement('canvas');
+            out.width = w;
+            out.height = h;
+            const ctx = out.getContext('2d');
+            if (ctx) {
+              ctx.fillStyle = dark ? '#0f172a' : '#ffffff';
+              ctx.fillRect(0, 0, w, h);
+              for (const layer of layers) ctx.drawImage(layer, 0, 0);
+              out.toBlob((blob) => resolve(blob), 'image/png');
+              return;
+            }
+          }
+        }
+        const canvas = container?.querySelector('canvas');
+        if (canvas) {
+          canvas.toBlob((blob) => resolve(blob), 'image/png');
+          return;
+        }
+      } catch (err) {
+        console.warn('[WebGLGraphView] capturePng failed', err);
+      }
+      resolve(null);
+    });
+  }, [dark]);
+
+  useImperativeHandle(ref, () => ({
+    fitAll,
+    fitToNodes,
+    zoomBy,
+    reset: resetCamera,
+    capturePng
+  }), [fitAll, fitToNodes, zoomBy, resetCamera, capturePng]);
+
   // Bulk expand/collapse: nodes spread under FA2 while the camera stays put —
   // re-frame all nodes on the same cadence as SVG Tree↔Network auto-fit, plus
   // a late pass after FA2 has had more time on larger graphs.
   useEffect(() => {
     if (!viewportFitToken) return;
-    const fitAll = () => {
-      const renderer = sigmaRef.current;
-      if (!renderer) return;
-      fitToNodes(renderer.getGraph().nodes());
-    };
     const t1 = setTimeout(fitAll, 450);
     const t2 = setTimeout(fitAll, 1800);
     const t3 = setTimeout(fitAll, 4500);
@@ -416,7 +493,7 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
       clearTimeout(t2);
       clearTimeout(t3);
     };
-  }, [viewportFitToken, fitToNodes]);
+  }, [viewportFitToken, fitAll]);
 
   const handleInsightSelect = useCallback((kind: InsightKind, ids: string[]) => {
     setFocus(null);
@@ -625,7 +702,21 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
   }, [hoveredNode, selectedNodeIds, focus, graph, insights]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: 400 }}>
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        minHeight: 400,
+        ...(showGrid
+          ? {
+              backgroundImage:
+                'linear-gradient(to right, rgba(148,163,184,0.25) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.25) 1px, transparent 1px)',
+              backgroundSize: '20px 20px'
+            }
+          : {})
+      }}
+    >
       <InsightChips
         insights={insights}
         active={activeInsight}
@@ -925,4 +1016,7 @@ export const WebGLGraphView: React.FC<WebGLGraphViewProps> = ({
       />
     </div>
   );
-};
+});
+
+WebGLGraphView.displayName = 'WebGLGraphView';
+
