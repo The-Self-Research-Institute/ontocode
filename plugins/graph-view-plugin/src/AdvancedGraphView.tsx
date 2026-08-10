@@ -70,6 +70,8 @@ import {
   expandSeedsToDepth,
   initialGraphVisibility,
   smartInitialGraphVisibility,
+  networkGraphVisibility,
+  NETWORK_VISIBILITY_NODE_BUDGET,
   getExpansionStats,
   findPathToNode
 } from './HierarchicalLazyLoading';
@@ -7624,16 +7626,33 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             onRefresh={() => fetchGraphData({ bypassCache: true })}
             onPresetNetwork={() => {
               // Network view is the WebGL engine — force-directed at scale.
+              // Never dump every class for huge ontologies (GO etc.): Expand All
+              // packs ForceAtlas2 into an illegible hairball of overlapping labels.
               setSettings(prev => prev.renderer === 'webgl' ? prev : { ...prev, renderer: 'webgl' });
-              const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
+              const { newExpandedIds, newVisibleIds, capped } = networkGraphVisibility(allNodes, allEdges);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+              requestViewportFitAfterBulkExpand();
+              if (capped) {
+                setClassActionFeedback({
+                  type: 'success',
+                  message: `Network shows ~${NETWORK_VISIBILITY_NODE_BUDGET} of ${allNodes.length} nodes — expand branches or use Expand All for more.`
+                });
+              }
             }}
             onPresetTree={() => {
               setSettings(prev => prev.renderer === 'webgl' ? { ...prev, renderer: 'svg' } : prev);
               setVisualizationType('ontograph');
               setOntographLayoutType('tree');
-              const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
+              // Tree also becomes unreadable if every GO term is forced visible.
+              const { newExpandedIds, newVisibleIds, capped } = networkGraphVisibility(allNodes, allEdges);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+              requestViewportFitAfterBulkExpand();
+              if (capped) {
+                setClassActionFeedback({
+                  type: 'success',
+                  message: `Tree shows ~${NETWORK_VISIBILITY_NODE_BUDGET} of ${allNodes.length} nodes — expand branches for more.`
+                });
+              }
             }}
             onSetVisualizationType={(next) => {
               // SVG-mode picker: leave the WebGL engine so the choice is visible.
@@ -7674,6 +7693,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               const { newExpandedIds, newVisibleIds } = expandAllNodes(allNodes);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
               requestViewportFitAfterBulkExpand();
+              if (allNodes.length > NETWORK_VISIBILITY_NODE_BUDGET) {
+                setClassActionFeedback({
+                  type: 'success',
+                  message: `Showing all ${allNodes.length} nodes — expect a dense layout; zoom in or Collapse All + expand branches for clarity.`
+                });
+              }
             }}
             onCollapseAll={() => {
               const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
@@ -7811,6 +7836,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 onAddChildNode={(id) => startCreateClassAction('child', id)}
                 dimFocusIds={searchFilterMode === 'dim' && searchFocusIds.size > 0 ? searchFocusIds : null}
                 viewportFitToken={viewportFitToken}
+                searchPanelOpen={showSearch}
               />
             )}
             {/* SVG Canvas for Force, VOWL, OntoGraph, and projected 3D Spatial mode */}

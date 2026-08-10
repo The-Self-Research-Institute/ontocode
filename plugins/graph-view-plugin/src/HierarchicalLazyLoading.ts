@@ -679,25 +679,29 @@ const SMALL_ONTOLOGY_NODE_CAP = 40;
 const INITIAL_VISIBILITY_NODE_BUDGET = 35;
 
 /**
- * Initial visibility for ontologies above SMALL_ONTOLOGY_NODE_CAP: breadth-first
- * expansion from the class hierarchy roots until INITIAL_VISIBILITY_NODE_BUDGET
- * is reached, instead of a fixed "one level" depth.
+ * Soft cap for Network / Expand All on large ontologies. Past this, ForceAtlas2
+ * + all-labels collapses into an illegible hairball (e.g. full Gene Ontology).
+ */
+export const NETWORK_VISIBILITY_NODE_BUDGET = 400;
+
+/**
+ * Breadth-first expansion from class hierarchy roots until `budget` visible
+ * nodes. Used for first paint and for Network on large graphs.
  *
  * A fixed one-level expansion assumes a bushy hierarchy (several roots, each
  * with several children) — for a narrow one (a single root/owl:Thing with one
- * direct child before it branches, common in real ontologies built around one
- * top concept) it revealed almost nothing (verified against a 82-node test
- * ontology: 1 root -> 1 child -> only 2 nodes visible). BFS-to-budget instead
- * keeps expanding deeper for narrow hierarchies and stays shallow for bushy
- * ones, landing near the same visible node count either way.
+ * direct child before it branches) it revealed almost nothing. BFS-to-budget
+ * keeps expanding deeper for narrow trees and stays shallow for bushy ones.
  */
-export const initialGraphVisibility = (
+export const expandToNodeBudget = (
   nodes: OntologyNode[],
-  edges: OntologyEdge[]
+  edges: OntologyEdge[],
+  budget: number
 ): {
   newExpandedIds: Set<string>;
   newVisibleIds: Set<string>;
 } => {
+  const cap = Math.max(1, budget);
   const owlThingIri = 'http://www.w3.org/2002/07/owl#Thing';
   const classNodes = nodes.filter(n => n.type === 'class');
   const roots = getRootNodes(classNodes, edges);
@@ -714,13 +718,13 @@ export const initialGraphVisibility = (
   let frontier = orderedRoots.slice();
   frontier.forEach(id => visible.add(id));
 
-  while (frontier.length > 0 && visible.size < INITIAL_VISIBILITY_NODE_BUDGET) {
+  while (frontier.length > 0 && visible.size < cap) {
     const nextFrontier: string[] = [];
     for (const nodeId of frontier) {
-      if (visible.size >= INITIAL_VISIBILITY_NODE_BUDGET) break;
+      if (visible.size >= cap) break;
       expanded.add(nodeId);
       for (const childId of getChildren(nodeId, edges, nodes)) {
-        if (visible.has(childId) || visible.size >= INITIAL_VISIBILITY_NODE_BUDGET) continue;
+        if (visible.has(childId) || visible.size >= cap) continue;
         visible.add(childId);
         nextFrontier.push(childId);
       }
@@ -733,6 +737,37 @@ export const initialGraphVisibility = (
   }
 
   return { newExpandedIds: expanded, newVisibleIds: visible };
+};
+
+/**
+ * Initial visibility for ontologies above SMALL_ONTOLOGY_NODE_CAP: BFS until
+ * INITIAL_VISIBILITY_NODE_BUDGET is reached.
+ */
+export const initialGraphVisibility = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): {
+  newExpandedIds: Set<string>;
+  newVisibleIds: Set<string>;
+} => expandToNodeBudget(nodes, edges, INITIAL_VISIBILITY_NODE_BUDGET);
+
+/**
+ * Network / force layout: expand fully when small; otherwise BFS to a readable budget.
+ */
+export const networkGraphVisibility = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): {
+  newExpandedIds: Set<string>;
+  newVisibleIds: Set<string>;
+  capped: boolean;
+} => {
+  if (nodes.length > 0 && nodes.length <= NETWORK_VISIBILITY_NODE_BUDGET) {
+    const full = expandAll(nodes);
+    return { ...full, capped: false };
+  }
+  const partial = expandToNodeBudget(nodes, edges, NETWORK_VISIBILITY_NODE_BUDGET);
+  return { ...partial, capped: true };
 };
 
 /**

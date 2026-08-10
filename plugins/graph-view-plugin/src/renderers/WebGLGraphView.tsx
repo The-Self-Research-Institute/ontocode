@@ -128,6 +128,12 @@ export interface WebGLGraphViewProps {
    * When true (default), run FA2 only if positions are absent/empty.
    */
   physicsEnabled?: boolean;
+  /**
+   * The host's search/filter panel (AdvancedGraphView's styles.searchPanel)
+   * covers the bottom-left corner when open — suppress the hover card
+   * instead of repositioning it, so it never renders on top of that panel.
+   */
+  searchPanelOpen?: boolean;
 }
 
 /** Synthetic graph for renderer benchmarks (?bench=N or the perf harness). */
@@ -177,7 +183,8 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   dimFocusIds = null,
   viewportFitToken = 0,
   showGrid = false,
-  physicsEnabled = true
+  physicsEnabled = true,
+  searchPanelOpen = false
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
@@ -236,9 +243,15 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       defaultEdgeType: 'arrow',
       edgeLabelSize: 10,
       edgeLabelColor: { color: dark ? '#9aa7b8' : '#64748b' },
-      labelDensity: 1,
-      labelGridCellSize: 80,
-      labelRenderedSizeThreshold: 5,
+      // Grid cell size below Sigma's own default (100) packs labels in tighter
+      // than they can fit — long entity names like "GreenPepperTopping" then
+      // overlap their neighbors. Widen the cell and tighten density so the
+      // decluttering grid actually wins ties instead of drawing both.
+      // Large graphs (GO Network): hide most labels until zoomed — otherwise
+      // thousands of labels paint over the FA2 blob.
+      labelDensity: nodes.length > 400 ? 0.25 : 0.7,
+      labelGridCellSize: nodes.length > 400 ? 220 : 160,
+      labelRenderedSizeThreshold: nodes.length > 400 ? 12 : 5,
       labelColor: { color: dark ? '#e7e9f0' : '#1f2430' },
       defaultEdgeColor: dark ? '#556274' : '#aab8cc',
       zIndex: true,
@@ -755,7 +768,10 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
           backdropFilter: 'blur(4px)'
         }}
       />
-      <div style={{ position: 'absolute', top: 38, right: 10, zIndex: 20, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+      {/* Search box above is ~26-28px tall (padding + border); 38 left only a
+          few px of clearance and the focus chip's own padding ate into it —
+          bump the gap so the two never touch regardless of font rendering. */}
+      <div style={{ position: 'absolute', top: 48, right: 10, zIndex: 20, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
         {focus && (
           <div
             data-testid="graph-webgl-focus"
@@ -879,7 +895,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
           </span>
         ))}
       </div>
-      {hoverInfo && (
+      {hoverInfo && !searchPanelOpen && (
         <div
           data-testid="graph-webgl-hovercard"
           onMouseEnter={() => {
@@ -891,6 +907,10 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
             setHoveredNode(null);
           }}
           style={{
+            // The search/filter panel (AdvancedGraphView's styles.searchPanel)
+            // is anchored bottom-left down to nearly the canvas floor — it
+            // would sit under this card, so hide the card instead of moving
+            // it (searchPanelOpen guard above), rather than fight over the corner.
             position: 'absolute',
             bottom: 10,
             left: 10,
