@@ -420,7 +420,19 @@ branch_desktop() {
   echo "[progress][$m-desktop] $(date '+%H:%M:%S') uploading available installers..."
   local DIST="$ROOT/electron-app/dist-electron"
   shopt -s nullglob
-  local win=( "$DIST"/*Setup*x64*.exe )
+  # NSIS artifact is typically "OntoCode Setup <ver>.exe" (no arch token). Also accept *x64*.
+  local win=( "$DIST"/*[Ss]etup*.exe )
+  if [[ ${#win[@]} -eq 0 ]]; then
+    win=( "$DIST"/*Setup*x64*.exe )
+  fi
+  # Drop blockmaps if a shell glob ever picks them up
+  local win_filtered=()
+  local _w
+  for _w in "${win[@]+"${win[@]}"}"; do
+    [[ "$_w" == *.blockmap ]] && continue
+    win_filtered+=("$_w")
+  done
+  win=("${win_filtered[@]+"${win_filtered[@]}"}")
   [[ ${#win[@]} -gt 0 ]] && { local f; f=$(ls -t "${win[@]}" | head -1); upload_installer "$api_base" "windows-x64" "$f" "$(basename "$f")" || fail=1; }
   local dmg_arm=( "$DIST"/*arm64*.dmg )
   [[ ${#dmg_arm[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_arm[@]}" | head -1); upload_installer "$api_base" "mac-arm64" "$f" "$(basename "$f")" || fail=1; }
