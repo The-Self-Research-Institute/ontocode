@@ -11943,9 +11943,26 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleGraphNodeClick = useCallback(
     (nodeId: string) => {
-      console.log("[DEBUG] handleGraphNodeClick called for nodeId:", nodeId);
       const flatten = (nodes: TreeNode[]): TreeNode[] =>
         nodes.flatMap((n) => [n, ...(n.children ? flatten(n.children) : [])]);
+
+      const normalizeIri = (value: string) => {
+        try {
+          return decodeURIComponent(String(value || "").trim());
+        } catch {
+          return String(value || "").trim();
+        }
+      };
+      const localName = (value: string) => {
+        const n = normalizeIri(value);
+        const hash = n.lastIndexOf("#");
+        const slash = n.lastIndexOf("/");
+        const cut = Math.max(hash, slash);
+        return cut >= 0 ? n.slice(cut + 1) : n;
+      };
+
+      const target = normalizeIri(nodeId);
+      const targetLocal = localName(target);
 
       // Search every entity pool so properties/datatypes land on their own tab,
       // not just classes and individuals.
@@ -11957,8 +11974,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         { tab: "AnnotationProperties", items: [...flatten(annotationPropertyHierarchy), ...annotationProperties] },
         { tab: "Datatypes", items: datatypes },
       ];
+
+      const matchItem = (items: SelectableItem[]) =>
+        items.find((i) => normalizeIri(i.id) === target) ||
+        items.find((i) => localName(i.id) === targetLocal && targetLocal.length > 0) ||
+        null;
+
       for (const pool of pools) {
-        const item = pool.items.find((i: SelectableItem) => i.id === nodeId);
+        const item = matchItem(pool.items);
         if (item) {
           setEntitiesTab(pool.tab);
           setSelectedItem(item);
@@ -11966,6 +11989,23 @@ const Dashboard: React.FC<DashboardProps> = ({
           return;
         }
       }
+
+      // Fallback: open Entities anyway with a synthetic selection (same as collab navigate).
+      // Graph IRIs can appear before the Entities tree has lazy-loaded that branch.
+      const label = targetLocal || target;
+      const synthetic = {
+        id: target,
+        label,
+        children: [],
+        hasChildren: false,
+      } as TreeNode;
+      setEntitiesTab("Classes");
+      setSelectedItem(synthetic);
+      setMainTab("Entities");
+      notificationService.info(
+        "Opened in Entities",
+        `${label} wasn’t in the loaded tree yet — opened by IRI`,
+      );
     },
     [
       classHierarchy,

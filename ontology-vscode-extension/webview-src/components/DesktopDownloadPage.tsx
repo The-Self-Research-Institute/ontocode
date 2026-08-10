@@ -87,6 +87,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   const [releases, setReleases] = useState<Partial<Record<PlatformKey, ReleaseInfo>>>({});
   const [linuxDeb, setLinuxDeb] = useState<ReleaseInfo | null>(null);
   const [linuxArm64, setLinuxArm64] = useState<ReleaseInfo | null>(null);
+  const [linuxFlatpak, setLinuxFlatpak] = useState<ReleaseInfo | null>(null);
   const [requirements, setRequirements] = useState<SystemRequirements | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -117,11 +118,10 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           if (!found.includes(platform)) setPlatform(found[0]);
         }
         if (data?.latest?.["linux-deb"]) setLinuxDeb(data.latest["linux-deb"]);
-        // linux-arm64 is never a top-level platform tab (still x64-Electron-shell
-        // only until every native binary it bundles — mongod, JRE — is a real
-        // ARM64 build too) — surface it as an optional secondary link instead,
-        // the same way the .deb package is offered alongside the AppImage.
+        // linux-arm64 / linux-flatpak are secondary Linux package options
+        // alongside the primary AppImage (same pattern as .deb).
         if (data?.latest?.["linux-arm64"]) setLinuxArm64(data.latest["linux-arm64"]);
+        if (data?.latest?.["linux-flatpak"]) setLinuxFlatpak(data.latest["linux-flatpak"]);
         if (data?.systemRequirements) setRequirements(data.systemRequirements);
       } catch {
         if (!cancelled) {
@@ -173,6 +173,10 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
 
   const handleArm64Download = () => {
     openExternal(`${RELEASE_BASE}/linux-arm64?clientOs=${encodeURIComponent(detectClientOs())}`);
+  };
+
+  const handleFlatpakDownload = () => {
+    openExternal(`${RELEASE_BASE}/linux-flatpak?clientOs=${encodeURIComponent(detectClientOs())}`);
   };
 
   const versionLabel = release?.version || "…";
@@ -299,6 +303,17 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             </button>
           )}
 
+          {platform === "linux-x64" && linuxFlatpak && (
+            <button
+              type="button"
+              onClick={handleFlatpakDownload}
+              className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
+            >
+              <Download size={12} />
+              Prefer Flatpak? Download the Flatpak package (v{linuxFlatpak.version})
+            </button>
+          )}
+
           {platform === "linux-x64" && linuxArm64 && (
             <button
               type="button"
@@ -306,7 +321,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
               className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
             >
               <Download size={12} />
-              On ARM64 hardware? Download the ARM64 build (v{linuxArm64.version})
+              On ARM64 hardware? Download the ARM64 AppImage (v{linuxArm64.version})
             </button>
           )}
 
