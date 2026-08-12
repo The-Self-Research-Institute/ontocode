@@ -4,14 +4,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.BindingSet;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.controller.VisualizationController;
 
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -70,6 +74,24 @@ public class OntologyMutationService {
     @Autowired @Lazy
     private MainGraphRevisionService mainGraphRevisionService;
 
+    @Autowired(required = false) @Nullable
+    private EditorReasonerCacheService editorReasonerCacheService;
+
+    // Fire-and-forget cross-service call to bust ontology-plugin-service's reasoner
+    // cache after a save — short timeouts since this must never hold up a mutation
+    // waiting on another service (see invalidateReasonerCaches()).
+    @Value("${ontology.plugin-service.url:http://localhost:8087}")
+    private String pluginServiceUrl;
+
+    private final RestTemplate reasonerCacheInvalidationRestTemplate = buildShortTimeoutRestTemplate();
+
+    private static RestTemplate buildShortTimeoutRestTemplate() {
+        SimpleClientHttpRequestFactory f = new SimpleClientHttpRequestFactory();
+        f.setConnectTimeout(3_000);
+        f.setReadTimeout(5_000);
+        return new RestTemplate(f);
+    }
+
     public OntologyMutationService(SparqlDatasetService datasetService,
                                    OntologyIndexService indexService,
                                    ProjectMetadataService metadataService,
@@ -98,6 +120,38 @@ public class OntologyMutationService {
         if (!draft) {
             storageManager.clearCodeViewCache(projectId);
         }
+    }
+
+    /**
+     * Bust every cached reasoner ontology for this project after a mutation —
+     * draft and public alike, since ontology-plugin-service's cache is keyed by
+     * plain projectId with no draft/public distinction, so a draft edit can
+     * otherwise leave a stale cached object behind for whichever scope reasons
+     * over that same key next. Without this, the reasoner can keep silently
+     * reasoning over a stale, pre-edit ontology — reporting consistency/
+     * classification results that no longer match what's actually saved.
+     */
+    private void invalidateReasonerCaches(String projectId) {
+        if (editorReasonerCacheService != null) {
+            try {
+                editorReasonerCacheService.invalidateOntology(projectId);
+            } catch (Exception e) {
+                log.warn("[MUTATION] Failed invalidating editor reasoner cache for project {}", projectId, e);
+            }
+        }
+
+        // Cross-service call, fully async — a slow/unreachable plugin-service must
+        // never block or fail the save that triggered this.
+        metadataExecutor.execute(() -> {
+            try {
+                String url = pluginServiceUrl + "/api/reasoner/clear-cache/"
+                    + URLEncoder.encode(projectId, StandardCharsets.UTF_8);
+                reasonerCacheInvalidationRestTemplate.postForEntity(url, null, Map.class);
+            } catch (Exception e) {
+                log.warn("[MUTATION] Failed busting plugin-service reasoner cache for project {} (non-fatal)",
+                    projectId, e);
+            }
+        });
     }
 
     /**
@@ -167,6 +221,7 @@ public class OntologyMutationService {
                 if (visualizationController != null) {
                     visualizationController.clearCache(projectId);
                 }
+                invalidateReasonerCaches(projectId);
                 return;
             }
 
@@ -209,6 +264,7 @@ public class OntologyMutationService {
             if (visualizationController != null) {
                 visualizationController.clearCache(projectId);
             }
+            invalidateReasonerCaches(projectId);
             log.info("[MUTATION] Graph cache cleared after mutations");
             
             // For disjoint union mutations, verify the data was inserted
@@ -317,6 +373,7 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
+        invalidateReasonerCaches(projectId);
 
         if (!draft) {
             CompletableFuture.runAsync(() -> {
@@ -371,6 +428,7 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
+        invalidateReasonerCaches(projectId);
 
         if (!draft) {
             CompletableFuture.runAsync(() -> {

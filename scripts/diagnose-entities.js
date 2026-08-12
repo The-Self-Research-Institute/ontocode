@@ -156,7 +156,7 @@ async function diagnoseEntities() {
     console.log('If metadata shows counts but endpoints return 0:');
     console.log('  1. GraphDB sync might have failed during import');
     console.log('  2. Check backend logs for SPARQL query errors');
-    console.log('  3. Try clearing the cache: POST /api/ontology/reasoner/clear-cache');
+    console.log('  3. Try clearing the cache: POST /plugin-service/api/reasoner/clear-cache');
     console.log('');
     console.log('If only some entity types are missing:');
     console.log('  1. Check if your ontology actually has those entity types defined');

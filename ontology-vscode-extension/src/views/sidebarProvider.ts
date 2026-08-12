@@ -51,16 +51,16 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
     const items: SidebarItem[] = [
       this.buildStatusItem(status),
       new SidebarItem(
-        'Insert Citation',
+        'Insert Citation (Sci2Code)',
         new vscode.ThemeIcon('book'),
-        { command: 'ontocode.insertCitation', title: 'Insert Citation' }
+        { command: 'ontocode.insertCitation', title: 'Insert Citation (Sci2Code)' }
       ),
       new SidebarItem(
         // configureZotero itself now also covers changing the key and
         // disconnecting once already connected — see zoteroApiService.ts.
-        'Configure Citation Library',
+        'Configure Zotero API Key',
         new vscode.ThemeIcon('gear'),
-        { command: 'ontocode.configureZotero', title: 'Configure Citation Library' }
+        { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' }
       ),
       new SidebarItem(
         'Open Webview',
@@ -91,21 +91,21 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
   private buildStatusItem(status: 'connected' | 'not-configured' | 'unavailable'): SidebarItem {
     if (status === 'connected') {
       return new SidebarItem(
-        'Citation Library: Connected',
+        'Zotero: Connected',
         new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green')),
-        { command: 'ontocode.configureZotero', title: 'Configure Citation Library' }
+        { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' }
       );
     }
     if (status === 'not-configured') {
       return new SidebarItem(
-        'Citation Library: Not Configured',
+        'Zotero: Not Configured',
         new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow')),
-        { command: 'ontocode.configureZotero', title: 'Configure Citation Library' },
+        { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' },
         'Click to configure'
       );
     }
     return new SidebarItem(
-      'Citation Library: Unavailable',
+      'Zotero: Unavailable',
       new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.red'))
     );
   }
