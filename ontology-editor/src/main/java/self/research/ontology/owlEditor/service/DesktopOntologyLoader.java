@@ -109,8 +109,13 @@ public class DesktopOntologyLoader {
     }
 
     /**
-     * At startup, kick off OWLAPI loading for the most recently accessed projects
-     * (up to 3) so the first project the user opens is already warm — .
+     * At startup, kick off OWLAPI loading for the most recently accessed projects so the first
+     * project the user opens is already warm. Capped at the cache's actual capacity (1 on
+     * desktop by default) — pre-warming more than that just means each later project's parse
+     * evicts and discards the previous one before the user ever gets to use it, burning CPU/disk
+     * I/O on work that gets thrown away, right during the window the user is watching the splash
+     * screen. Was hardcoded to 3 regardless of capacity; on desktop's size-1 cache that meant 2
+     * of every 3 pre-warms were wasted work competing for the same startup-critical resources.
      * Uses the existing desktopModelExecutor thread pool (max 2 concurrent loads).
      */
     @EventListener(ApplicationReadyEvent.class)
@@ -128,7 +133,7 @@ public class DesktopOntologyLoader {
                         java.time.Instant tb = b.getUpdatedAt() != null ? b.getUpdatedAt() : java.time.Instant.EPOCH;
                         return tb.compareTo(ta);
                     })
-                    .limit(3)
+                    .limit(cache.getMaxProjects())
                     .forEach(p -> {
                         try {
                             triggerLazyLoadIfNeeded(p.getId());

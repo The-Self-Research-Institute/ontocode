@@ -1,6 +1,6 @@
 /**
  * JSON-LD citation node helpers for the extension-host citation insertion
- * command (Ctrl+Shift+C / "Insert Citation").
+ * command (Ctrl+Shift+C / "Insert Citation (Sci2Code)").
  *
  * Ported from webview-src/utils/jsonLdCitation.ts (kept as a separate copy —
  * extension host and webview are different build targets). JSON-LD is not

@@ -37,7 +37,7 @@ import {
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
-import { isDesktop } from "../utils/desktop";
+import { isDesktop, prewarmDesktopReasoningServices } from "../utils/desktop";
 import { clearSessionCache } from "../utils/sessionCleanup";
 import InviteMemberModal from "./InviteMemberModal";
 import SettingsModal from "./SettingsModal";
@@ -290,6 +290,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Warm Fuseki + SWRL in the background as soon as the dashboard is visible,
+  // so their JVM startup happens during idle browsing rather than blocking
+  // the first SPARQL/graph action or reasoning run inside a project later.
+  useEffect(() => {
+    prewarmDesktopReasoningServices();
   }, []);
 
   useEffect(() => {

@@ -172,16 +172,22 @@ public class IssueReportService {
     private String buildJiraDescription(IssueReport issueReport) {
         StringBuilder sb = new StringBuilder();
         
-        // Add reporter information at the top
-        if (issueReport.getReporterUsername() != null || issueReport.getReporterEmail() != null) {
+        // Add reporter information at the top. reporterUsername/reporterEmail come from
+        // the JWT (web/VS Code, always logged in); userEmail is the email the desktop
+        // app collects directly since desktop reports are often submitted with no login.
+        String reporterDisplayEmail = issueReport.getReporterEmail() != null
+            ? issueReport.getReporterEmail()
+            : issueReport.getUserEmail();
+
+        if (issueReport.getReporterUsername() != null || reporterDisplayEmail != null) {
             sb.append("*Reported By:* ");
             if (issueReport.getReporterUsername() != null) {
                 sb.append(issueReport.getReporterUsername());
-                if (issueReport.getReporterEmail() != null) {
-                    sb.append(" (").append(issueReport.getReporterEmail()).append(")");
+                if (reporterDisplayEmail != null) {
+                    sb.append(" (").append(reporterDisplayEmail).append(")");
                 }
-            } else if (issueReport.getReporterEmail() != null) {
-                sb.append(issueReport.getReporterEmail());
+            } else if (reporterDisplayEmail != null) {
+                sb.append(reporterDisplayEmail);
             }
             sb.append("\n\n");
         }

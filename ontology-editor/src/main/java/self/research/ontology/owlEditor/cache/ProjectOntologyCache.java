@@ -70,6 +70,11 @@ public class ProjectOntologyCache {
         });
     }
 
+    /** How many projects this cache can hold at once — pre-warming more than this is pure waste. */
+    public int getMaxProjects() {
+        return maxProjects;
+    }
+
     public void put(String projectId, OWLOntology ontology, OWLReasoner reasoner,
                     OWLOntologyManager manager, boolean assertedHierarchyOnly) {
         CachedOntology existing = cache.remove(projectId);

@@ -8,8 +8,14 @@
  *   4. SWRL     (swrl.jar)       — SWRL reasoner (optional, separate JVM due to
  *                                   owlapi 4.x vs 5.x classpath conflict)
  *
- * All services are started sequentially (each waits for the previous to
- * pass a health check) then the Electron window is shown.
+ * Mongo starts first since Desktop depends on it being reachable. Fuseki and
+ * SWRL are both lazy by default — skipped at startup and started on demand
+ * the first time something actually needs them (Fuseki: a SPARQL/graph
+ * operation; SWRL: the first /api/swrl/** proxy request) — since most
+ * launches never touch either, and each is 10-30s of JVM startup that would
+ * otherwise be paid on every single cold start.
+ * Electron's window is shown once Mongo + Desktop (and Fuseki/SWRL, if not
+ * lazy) have passed their health checks.
  *
  * On quit, services are stopped in reverse order.
  */
@@ -69,7 +75,12 @@ const LAZY_FUSEKI = process.env.ONTOCODE_LAZY_FUSEKI !== '0';
 let fusekiProcess  = null;
 let fusekiStartPromise = null;
 let desktopProcess = null;
+// Lazy SWRL: skip at startup, same rationale as Fuseki — most launches never
+// touch the reasoner, so paying its ~10-30s JVM startup on every cold start
+// is pure waste. Started on demand by the first /api/swrl/** proxy request.
+const LAZY_SWRL = process.env.ONTOCODE_LAZY_SWRL !== '0';
 let swrlProcess    = null;
+let swrlStartPromise = null;
 let _logCallback   = null;
 
 // ── Port auto-detection ───────────────────────────────────────────────────────
@@ -125,8 +136,28 @@ module.exports = {
         } else {
             log('info', 'Fuseki deferred (OWLAPI-first desktop — starts when SPARQL/graph needs it)');
         }
-        await startDesktop();
-        await startSwrl();   // optional — skipped silently if swrl.jar absent
+        if (LAZY_SWRL) {
+            await startDesktop();
+            log('info', 'SWRL reasoner deferred — starts on the first /api/swrl/** request');
+        } else {
+            // Opt-out path (ONTOCODE_LAZY_SWRL=0): Desktop and SWRL are
+            // independent JVMs (split only due to an OWLAPI 4.x/5.x classpath
+            // conflict) — start them concurrently rather than back-to-back.
+            try {
+                await Promise.all([startDesktop(), startSwrl()]);   // SWRL optional — skipped silently if swrl.jar absent
+            } catch (err) {
+                // Promise.all rejects on the first failure while the other JVM may
+                // already be up or still starting — unlike a sequential await
+                // (Desktop failing would mean SWRL was never spawned at all), so
+                // clean up both here before propagating, or a Desktop-fails/
+                // SWRL-succeeds race leaks an orphaned JVM.
+                await Promise.all([
+                    stopProcess(desktopProcess, 'Desktop', 4000),
+                    stopProcess(swrlProcess, 'SWRL', 4000),
+                ]);
+                throw err;
+            }
+        }
     },
 
     async ensureFuseki() {
@@ -144,6 +175,27 @@ module.exports = {
             });
         }
         return fusekiStartPromise;
+    },
+
+    async ensureSwrl() {
+        // exitCode check: a crashed JVM is not `killed`, but it is not running either.
+        if (swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null) {
+            return { running: true, port: SWRL_PORT };
+        }
+        if (!swrlStartPromise) {
+            swrlStartPromise = startSwrl().then(() => {
+                swrlStartPromise = null;
+                // startSwrl() resolves without spawning anything if swrl.jar is
+                // missing — check the actual process state rather than assuming
+                // success just because the promise didn't reject.
+                const running = Boolean(swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null);
+                return { running, port: SWRL_PORT };
+            }).catch((err) => {
+                swrlStartPromise = null;
+                throw err;
+            });
+        }
+        return swrlStartPromise;
     },
 
     async stopAll() {
@@ -202,6 +254,25 @@ function javaBin() {
     return 'java';
 }
 
+// SWRLAPI's bundled Drools 7.x/MVEL 2.x engine references java.lang.Compiler
+// (removed in JDK 9) in a fallback path that only misfires under JDK 21's
+// stricter internals, not JDK 17's — see ontology-swrl/pom.xml. SWRL gets its
+// own dedicated JDK 17 JRE instead of sharing Desktop/Fuseki's JDK 21 one.
+function swrlJavaBin() {
+    const exe = process.platform === 'win32' ? 'java.exe' : 'java';
+    const bundled17 = path.join(RESOURCES_DIR, 'jre17', 'bin', exe);
+    if (fs.existsSync(bundled17)) return bundled17;
+    if (process.env.JAVA17_HOME) {
+        const jh = path.join(process.env.JAVA17_HOME, 'bin', exe);
+        if (fs.existsSync(jh)) return jh;
+    }
+    // Fall back to the shared JRE — SWRL will likely hit NoClassDefFoundError:
+    // java/lang/Compiler on JDK 21, but this preserves today's behavior for
+    // installs built before the dedicated SWRL JRE existed, rather than
+    // failing to launch SWRL at all.
+    return javaBin();
+}
+
 function requiredJarPath(name) {
     return path.join(RESOURCES_DIR, 'jars', name);
 }
@@ -253,15 +324,41 @@ async function startFuseki() {
     log('info', 'Starting Apache Fuseki…');
 
     // Remove stale TDB2 lock files that cause Fuseki to open datasets read-only
-    // after an unclean shutdown.
+    // after an unclean shutdown (crash, force-quit, OS kill). Every project gets
+    // its own TDB2 dataset directory under fuseki-base/databases/{projectId}/ via
+    // the admin API (dbType=tdb2) — each with its own tdb.lock — so this must glob
+    // every project's database directory, not just the one legacy shared-dataset
+    // path. Missing this meant a single project with a stale lock would fail
+    // every sync attempt forever (no amount of "Try again" clears it), since
+    // nothing else ever removes that specific file.
     const lockPaths = [
         path.join(FUSEKI_DATA_DIR, 'tdb.lock'),
         path.join(FUSEKI_DATA_DIR, 'Data-0001', 'tdb.lock'),
     ];
+    const databasesDir = path.join(FUSEKI_BASE_DIR, 'databases');
+    try {
+        if (fs.existsSync(databasesDir)) {
+            fs.readdirSync(databasesDir, { withFileTypes: true })
+                .filter(entry => entry.isDirectory())
+                .forEach(entry => {
+                    const projectDbDir = path.join(databasesDir, entry.name);
+                    lockPaths.push(
+                        path.join(projectDbDir, 'tdb.lock'),
+                        path.join(projectDbDir, 'Data-0001', 'tdb.lock'),
+                    );
+                });
+        }
+    } catch (e) {
+        log('warn', `Could not enumerate per-project Fuseki databases for lock cleanup: ${e.message}`);
+    }
+    let removedLocks = 0;
     lockPaths.forEach(p => {
-        try { if (fs.existsSync(p)) { fs.unlinkSync(p); log('info', `Removed stale lock: ${p}`); } }
+        try { if (fs.existsSync(p)) { fs.unlinkSync(p); removedLocks++; log('info', `Removed stale lock: ${p}`); } }
         catch (_) {}
     });
+    if (removedLocks > 0) {
+        log('info', `Cleared ${removedLocks} stale TDB2 lock file(s) before starting Fuseki`);
+    }
 
     const jar     = path.join(RESOURCES_DIR, 'jars', 'fuseki-server.jar');
     const logFile = path.join(LOGS_DIR, 'fuseki.log');
@@ -348,6 +445,126 @@ async function startFuseki() {
     log('ok', `Fuseki ready on port ${FUSEKI_PORT}`);
 }
 
+// Prepares a CDS-optimized launch for a Spring Boot fat jar, following Spring's
+// documented recipe (docs.spring.io/spring-boot/reference/packaging/class-data-sharing.html):
+//   1. Extract the jar into a plain-classpath layout (one-time; `-jar` fat-jar
+//      loading uses a custom classloader that dynamic CDS can't see through).
+//   2. Training run against the extracted jar: exits right after Spring's
+//      context refresh (-Dspring.context.exit=onRefresh), producing an archive
+//      that covers the actual application bean graph, not just JDK classes.
+//   3. Real launches then use that archive via -XX:SharedArchiveFile.
+// Both extraction and the archive persist across launches (only redone if
+// missing) — only regenerated after an app update replaces the jar. Any
+// failure at any step falls back to launching the original jar with no CDS
+// flags rather than blocking startup — CDS is a speed optimization, not a
+// correctness requirement.
+// Dynamic CDS (-XX:ArchiveClassesAtExit) requires a base CDS archive already
+// loaded for the JVM — normally bundled with a full JDK, but our jlink-built
+// minimal JRE (kept small deliberately) doesn't include one. Without it,
+// training silently no-ops (JVM logs a warning, produces no archive). Generate
+// it once per bundled JRE; cheap (dumps a small default classlist, not the
+// app's own classes) and safe to skip once the file exists.
+async function ensureBaseCdsArchive(javaBinPath) {
+    const jreHome     = path.dirname(path.dirname(javaBinPath));
+    // Non-standard location for this jlink-minimized JRE (verified by locating
+    // the file after a real -Xshare:dump) — a full JDK normally uses
+    // lib/server/classes.jsa instead.
+    const baseArchive = path.join(jreHome, 'bin', 'server', 'classes.jsa');
+    if (fs.existsSync(baseArchive)) return;
+    log('info', '[CDS] Generating base archive for bundled JRE (one-time)…');
+    try {
+        await runToCompletion(javaBinPath, ['-Xshare:dump'], {});
+    } catch (err) {
+        log('warn', `[CDS] Failed to generate base archive: ${err.message}`);
+    }
+}
+
+async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPath) {
+    const extractedDir = path.join(cdsDir, 'extracted');
+    const extractedJar = path.join(extractedDir, path.basename(originalJar));
+    const archiveFile  = path.join(cdsDir, `${name.toLowerCase()}.jsa`);
+    const markerFile   = path.join(cdsDir, '.java-bin');
+    const noCds = { launchJar: originalJar, cdsFlags: [] };
+
+    // .jsa archives are tied to the exact JVM build that created them — a
+    // different JVM just silently ignores an incompatible one rather than
+    // erroring, so a stale cache from before this service was pointed at a
+    // different bundled JRE (e.g. SWRL moving from JDK 21 to JDK 17) would
+    // never self-heal on its own. They're also tied to the exact application
+    // bytecode: the archive was trained against originalJar's classes, and an
+    // app update that replaces originalJar leaves the OLD extracted+archived
+    // copy in place with nothing to invalidate it — every updated user would
+    // silently keep running pre-update code indefinitely. Only trust an
+    // existing cache when the marker positively confirms it matches both this
+    // exact java binary AND this exact jar (by mtime+size) — a missing/partial
+    // marker means the cache predates this check or the source changed, so
+    // treat that as stale too rather than assuming it's still valid.
+    const jarStat = fs.statSync(originalJar);
+    const jarFingerprint = `${jarStat.mtimeMs}:${jarStat.size}`;
+    let recorded = null;
+    if (fs.existsSync(markerFile)) {
+        try { recorded = JSON.parse(fs.readFileSync(markerFile, 'utf8')); } catch { /* treat as stale below */ }
+    }
+    const isFresh = recorded && recorded.javaBin === javaBinPath && recorded.jarFingerprint === jarFingerprint;
+    if (fs.existsSync(cdsDir) && !isFresh) {
+        log('info', `[${name}] CDS cache missing/stale (JVM or jar changed) — regenerating`);
+        fs.rmSync(cdsDir, { recursive: true, force: true });
+    }
+
+    await ensureBaseCdsArchive(javaBinPath);
+
+    if (fs.existsSync(archiveFile) && fs.existsSync(extractedJar)) {
+        return { launchJar: extractedJar, cdsFlags: [`-XX:SharedArchiveFile=${archiveFile}`] };
+    }
+
+    try {
+        fs.mkdirSync(cdsDir, { recursive: true });
+        fs.writeFileSync(markerFile, JSON.stringify({ javaBin: javaBinPath, jarFingerprint }), 'utf8');
+
+        if (!fs.existsSync(extractedJar)) {
+            log('info', `[${name}] Extracting jar for CDS (one-time)…`);
+            await runToCompletion(javaBinPath, [
+                '-Djarmode=tools', '-jar', originalJar, 'extract', '--destination', extractedDir,
+            ], env);
+        }
+
+        log('info', `[${name}] Training CDS archive (one-time — this launch only, adds ~15-25s)…`);
+        const trainingLog = path.join(cdsDir, 'training.log');
+        await runToCompletion(javaBinPath, [
+            `-XX:ArchiveClassesAtExit=${archiveFile}`,
+            '-Dspring.context.exit=onRefresh',
+            '-jar', extractedJar,
+            ...springArgs,
+        ], env, trainingLog);
+
+        if (fs.existsSync(archiveFile)) {
+            return { launchJar: extractedJar, cdsFlags: [`-XX:SharedArchiveFile=${archiveFile}`] };
+        }
+        log('warn', `[${name}] CDS training did not produce an archive — continuing without it`);
+    } catch (err) {
+        log('warn', `[${name}] CDS setup failed (${err.message}) — continuing without it`);
+    }
+    return noCds;
+}
+
+function runToCompletion(bin, args, extraEnv = {}, logFile = null) {
+    return new Promise((resolve, reject) => {
+        const env = { ...process.env, ...extraEnv };
+        const p = spawn(bin, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        if (logFile) {
+            const stream = fs.createWriteStream(logFile, { flags: 'w' });
+            p.stdout.pipe(stream);
+            p.stderr.pipe(stream);
+        }
+        // Both `jarmode=tools extract` and the onRefresh training exit are
+        // expected to succeed, but a non-zero code isn't necessarily fatal here
+        // (e.g. the training run's forced early exit) — the caller checks for
+        // the actual archive/jar file on disk rather than trusting this alone.
+        p.on('exit', () => resolve());
+        p.on('error', reject);
+    });
+}
+
 async function startDesktop() {
     log('info', 'Starting Desktop service (auth + editor + plugin)…');
     const jar     = path.join(RESOURCES_DIR, 'jars', 'desktop.jar');
@@ -364,11 +581,10 @@ async function startDesktop() {
     const heaps = jvmHeaps();
     log('info', `[Desktop] JVM heap: ${heaps.desktopXmx} (system RAM: ${heaps.totalGb} GB)`);
 
-    const args = [
-        `-Xmx${heaps.desktopXmx}`,
-        '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
-        `-DLOG_DIR=${LOGS_DIR}`,
-        '-jar', jar,
+    // Spring Boot's own application args — independent of jar path / JVM CDS
+    // flags, and shared between the CDS training run and the real launch below
+    // so the two invocations can't drift out of sync.
+    const springArgs = [
         `--server.port=${DESKTOP_PORT}`,
         '--spring.profiles.active=desktop',
         `--spring.data.mongodb.uri=${mongoUri}`,
@@ -405,17 +621,51 @@ async function startDesktop() {
         '--jira.api.token=noop',
     ];
 
-    desktopProcess = spawnService('Desktop', java, args, {
+    const desktopEnv = {
         JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8',
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
-    }, logFile, { cwd: DATA_DIR });
+    };
 
-    await waitForHttp(
-        `http://127.0.0.1:${DESKTOP_PORT}/actuator/health`,
-        120000,
-        'Desktop',
+    // CDS on a Spring Boot fat jar (-jar desktop.jar) barely helps — almost all
+    // application classes load through Spring's own LaunchedURLClassLoader, not
+    // the JVM's standard classloader, and dynamic CDS only captures the latter
+    // well. Spring's documented fix: extract the jar into a plain-classpath
+    // layout, then do a real training run that exits right after context
+    // refresh. See prepareCds() below.
+    const { launchJar, cdsFlags } = await prepareCds(
+        'Desktop', jar, path.join(DATA_DIR, 'cds', 'desktop'), springArgs, desktopEnv, java,
     );
+
+    const args = [
+        `-Xmx${heaps.desktopXmx}`,
+        '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
+        ...cdsFlags,
+        `-DLOG_DIR=${LOGS_DIR}`,
+        '-jar', launchJar,
+        ...springArgs,
+    ];
+
+    desktopProcess = spawnService('Desktop', java, args, desktopEnv, logFile, { cwd: DATA_DIR });
+
+    // Spring context refresh across the merged auth+editor+plugin jar can run
+    // 15-25s with zero console output while classes load — without this the
+    // splash screen looks frozen. Heartbeat keeps the progress UI moving.
+    const startedAt = Date.now();
+    const heartbeat = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
+        log('info', `[Desktop] Still starting… (${elapsed}s)`);
+    }, 3000);
+
+    try {
+        await waitForHttp(
+            `http://127.0.0.1:${DESKTOP_PORT}/actuator/health`,
+            120000,
+            'Desktop',
+        );
+    } finally {
+        clearInterval(heartbeat);
+    }
     log('ok', `Desktop service ready on port ${DESKTOP_PORT}`);
 }
 
@@ -430,23 +680,43 @@ async function startSwrl() {
     const logFile  = path.join(LOGS_DIR, 'swrl.log');
     const mongoUri = `mongodb://127.0.0.1:${MONGO_PORT}/ontocode-desktop`;
 
-    swrlProcess = spawnService('SWRL', javaBin(), [
-        '-Xmx512m',
-        `-DLOG_DIR=${LOGS_DIR}`,
-        '-jar', jar,
+    const springArgs = [
         `--server.port=${SWRL_PORT}`,
         '--spring.profiles.active=desktop',
         `--spring.data.mongodb.uri=${mongoUri}`,
         `--app.auth-service-url=http://127.0.0.1:${DESKTOP_PORT}`,
+        // SWRL calls back into the editor (e.g. ontology export) via
+        // OntologyClientService, which defaults to the standalone
+        // docker-compose port (8083) when unset — must loop back to the
+        // merged desktop.jar's actual port instead, same fix as Desktop's
+        // own --ontology.editor.url above.
+        `--ontology.editor.service.url=http://127.0.0.1:${DESKTOP_PORT}`,
         '--jwt.secret=b250b2NvZGUtZGVza3RvcC1qd3Qtc2VjcmV0LWtleS12MQ==',
         '--app.email.enabled=false',
         '--spring.mail.host=localhost',
         '--management.health.mail.enabled=false',
-    ], {
+    ];
+
+    const swrlEnv = {
         JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8',
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
-    }, logFile);
+    };
+
+    const swrlJava = swrlJavaBin();
+    log('info', `[SWRL] Java:   ${swrlJava}`);
+
+    const { launchJar, cdsFlags } = await prepareCds(
+        'SWRL', jar, path.join(DATA_DIR, 'cds', 'swrl'), springArgs, swrlEnv, swrlJava,
+    );
+
+    swrlProcess = spawnService('SWRL', swrlJava, [
+        '-Xmx512m',
+        ...cdsFlags,
+        `-DLOG_DIR=${LOGS_DIR}`,
+        '-jar', launchJar,
+        ...springArgs,
+    ], swrlEnv, logFile);
 
     await waitForHttp(`http://127.0.0.1:${SWRL_PORT}/actuator/health`, 120000, 'SWRL');
     log('ok', `SWRL reasoner ready on port ${SWRL_PORT}`);
@@ -473,6 +743,14 @@ function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptio
         catch (e) { log('warn', `[${name}] Cannot open log file: ${e.message}`); }
     }
 
+    // Milestones that appear in a Spring Boot console during context refresh —
+    // forwarding these to the splash log keeps the progress UI moving during
+    // the ~20s of classloading/component-scan that produces no other output.
+    const PROGRESS_MARKERS = [
+        'Started', 'ERROR', 'Exception',
+        'Bootstrapping Spring Data', 'Tomcat initialized', 'Tomcat started',
+        'Root WebApplicationContext', 'Exposing', 'endpoints beneath',
+    ];
     child.stdout.on('data', (data) => {
         if (logStream) logStream.write(data);
         data.toString().split('\n').forEach(line => {
@@ -480,7 +758,7 @@ function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptio
             if (!t) return;
             if (outputBuffer.length >= 50) outputBuffer.shift();
             outputBuffer.push('[out] ' + t);
-            if (t.includes('Started') || t.includes('ERROR') || t.includes('Exception')) {
+            if (PROGRESS_MARKERS.some(marker => t.includes(marker))) {
                 log('info', `[${name}] ${t}`);
             }
         });

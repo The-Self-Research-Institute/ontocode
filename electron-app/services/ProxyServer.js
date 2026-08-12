@@ -10,8 +10,9 @@
  *   WebSocket       →  ws://127.0.0.1:18083    (collaboration)
  */
 
-const http = require('http');
-const net  = require('net');
+const http   = require('http');
+const net    = require('net');
+const svcMgr = require('./ServiceManager');
 
 const DEFAULT_PROXY_PORT = 18085;
 let PROXY_PORT   = DEFAULT_PROXY_PORT;
@@ -51,7 +52,7 @@ function rewritePath(url) {
     return url;
 }
 
-function proxyHttp(req, res) {
+async function proxyHttp(req, res) {
     req.url = rewritePath(req.url);
     const port = targetPort(req.url);
 
@@ -67,6 +68,20 @@ function proxyHttp(req, res) {
         res.writeHead(204);
         res.end();
         return;
+    }
+
+    // SWRL is lazy — not started at app launch (see ServiceManager). The first
+    // /api/swrl/** request pays its JVM startup cost here; ensureSwrl() caches
+    // the in-flight start so concurrent requests share one startup, not one each.
+    if (port === SWRL_PORT) {
+        try {
+            await svcMgr.ensureSwrl();
+        } catch (err) {
+            console.error(`[Proxy] Failed to start SWRL on demand: ${err.message}`);
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `SWRL reasoner unavailable: ${err.message}` }));
+            return;
+        }
     }
 
     const options = {

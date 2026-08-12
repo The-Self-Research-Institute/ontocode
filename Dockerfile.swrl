@@ -20,12 +20,18 @@ COPY ontology-reasoner-worker/pom.xml ./ontology-reasoner-worker/pom.xml
 COPY shared/ ./shared/
 COPY ontology-swrl/ ./ontology-swrl/
 
-# Build shared modules first (these are dependencies for all services)
+# Build shared modules first (these are dependencies for all services).
+# Parent POM defaults to Java 21, but this image is JDK 17 (required for SWRLAPI).
+# Force shared modules to Java 17 bytecode so they compile and link here.
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -Dhttp.keepAlive=false \
         -Dmaven.wagon.http.retryHandler.count=10 \
         -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-        clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp
+        clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp \
+        -Djava.version=17 \
+        -Dmaven.compiler.source=17 \
+        -Dmaven.compiler.target=17 \
+        -Dmaven.compiler.release=17
 
 # Build SWRL module - package goal includes spring-boot:repackage automatically
 RUN --mount=type=cache,target=/root/.m2 \

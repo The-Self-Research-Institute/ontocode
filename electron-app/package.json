@@ -1,6 +1,6 @@
 {
   "name": "ontocode-desktop",
-  "version": "1.1.0-beta.16",
+  "version": "1.1.0-beta.18",
   "description": "OntoCode Ontology Editor – Desktop (Electron + bundled backend)",
   "homepage": "https://ontocode.selfresearch.org",
   "author": "OntoCode",
@@ -15,6 +15,7 @@
     "dist:win": "npm run prepare-resources && npm run build-web && electron-builder --win",
     "dist:mac": "npm run prepare-resources && npm run build-web && electron-builder --mac",
     "dist:linux": "npm run prepare-resources && npm run build-web && electron-builder --linux",
+    "dist:linux:flatpak": "npm run prepare-resources && npm run build-web && electron-builder --linux flatpak",
     "dist:win:dev": "npm run prepare-resources && npm run build-web && electron-builder --win -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/win",
     "dist:mac:dev": "npm run prepare-resources && npm run build-web && electron-builder --mac -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/mac",
     "dist:linux:dev": "npm run prepare-resources && npm run build-web && electron-builder --linux -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/linux",

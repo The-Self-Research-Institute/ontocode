@@ -1123,7 +1123,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
     <div className="p-4 space-y-4">
       {/* Execution Summary Card */}
       <div className="bg-gradient-to-r from-white to-gray-50 rounded-xl border-2 border-gray-200 p-5 shadow-sm">
-        <h3 className="font-bold text-gray-800 mb-4 text-lg flex items-center gap-2">
+        <h3 className="font-bold mb-4 text-lg flex items-center gap-2" style={{ color: '#1f2937' }}>
           <BarChart2 size={20} className="text-purple-600" />
           Execution Summary
           {results.executionMode && (
@@ -1134,30 +1134,30 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
         </h3>
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-            <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Status</div>
+            <div className="text-xs uppercase tracking-wide mb-1" style={{ color: '#6b7280' }}>Status</div>
             <div className={`text-lg font-bold flex items-center gap-2 ${results.success ? 'text-green-600' : 'text-red-600'}`}>
               {results.success ? <Check size={20} /> : <X size={20} />}
               {results.success ? 'Success' : 'Failed'}
             </div>
           </div>
           <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-            <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Time</div>
-            <div className="text-lg font-bold text-gray-800">{results.executionTimeMs}ms</div>
+            <div className="text-xs uppercase tracking-wide mb-1" style={{ color: '#6b7280' }}>Time</div>
+            <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{results.executionTimeMs}ms</div>
           </div>
           <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-            <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Rules Run</div>
-            <div className="text-lg font-bold text-gray-800">{results.totalRulesExecuted}</div>
+            <div className="text-xs uppercase tracking-wide mb-1" style={{ color: '#6b7280' }}>Rules Run</div>
+            <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{results.totalRulesExecuted}</div>
           </div>
           <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-            <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Inferred</div>
+            <div className="text-xs uppercase tracking-wide mb-1" style={{ color: '#6b7280' }}>Inferred</div>
             <div className="text-lg font-bold text-purple-600">{results.inferredAxiomsCount}</div>
           </div>
         </div>
-        
+
         {/* Show executed rule names if available */}
         {results.executedRuleNames && results.executedRuleNames.length > 0 && (
           <div className="mt-4 pt-4 border-t border-gray-200">
-            <div className="text-xs text-gray-500 uppercase tracking-wide mb-2">Executed Rules</div>
+            <div className="text-xs uppercase tracking-wide mb-2" style={{ color: '#6b7280' }}>Executed Rules</div>
             <div className="flex flex-wrap gap-2">
               {results.executedRuleNames.map((name, idx) => (
                 <span key={idx} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 text-xs rounded-full border border-purple-200">
@@ -1276,10 +1276,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
           {/* Header with controls */}
           <div className="p-4 bg-gradient-to-r from-purple-50 to-white border-b-2 border-gray-100 flex flex-col gap-3">
             <div className="flex justify-between items-center">
-              <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
+              <h3 className="font-bold text-lg flex items-center gap-2" style={{ color: '#1f2937' }}>
                 <span className="text-purple-600">📚</span>
-                All Inferred Axioms 
-                <span className="text-sm font-normal text-gray-500">
+                All Inferred Axioms
+                <span className="text-sm font-normal" style={{ color: '#6b7280' }}>
                   ({searchFilter ? `${filteredAxioms.length} of ${results.inferredAxiomsCount}` : results.inferredAxiomsCount} total, {groupedAxioms.size} types)
                 </span>
               </h3>
@@ -1485,12 +1485,17 @@ interface SWRLEditorProps {
 export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) => {
 
   // State
+  // Bumped on every rules mutation so a slow, still-in-flight loadRules() call
+  // (SWRL's lazy-start can take 15-25s, easily outlasting a create/update/delete
+  // fired after it) can detect it's stale and skip overwriting fresher state.
+  const rulesVersionRef = useRef(0);
   const [rules, setRules] = useState<SwrlRule[]>([]);
   const [selectedRule, setSelectedRule] = useState<SwrlRule | null>(null);
   const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
@@ -1691,15 +1696,20 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
 
   // Load rules
   const loadRules = useCallback(async () => {
+    const myVersion = rulesVersionRef.current;
     setIsLoading(true);
-      console.log('Loaded rules:');
     try {
       const res = await apiClient.get<{ content: SwrlRule[] }>(`/api/swrl/${projectId}/rules`);
-      setRules(res.content || []);
+      // A mutation (save/delete/toggle) that started after this request would
+      // have bumped the version — its result is fresher than what we just
+      // fetched, so applying this response now would revert it.
+      if (rulesVersionRef.current === myVersion) {
+        setRules(res.content || []);
+      }
     } catch (e) {
       console.error('Failed to load rules:', e);
     } finally {
-      setIsLoading(false);
+      if (rulesVersionRef.current === myVersion) setIsLoading(false);
     }
   }, [projectId]);
 
@@ -1751,6 +1761,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     });
     setIsEditing(false);
     setValidationResult(null);
+    setSaveError(null);
     setActivePanel('editor');
   };
 
@@ -1765,12 +1776,14 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     });
     setIsEditing(true);
     setValidationResult(null);
+    setSaveError(null);
     setActivePanel('editor');
   };
 
   const handleSave = async () => {
     if (!editForm.ruleName.trim() || !editForm.ruleText.trim()) return;
     setIsSaving(true);
+    setSaveError(null);
 
     try {
       if (selectedRule) {
@@ -1778,6 +1791,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
           `/api/swrl/${projectId}/rules/${selectedRule.id}`,
           editForm
         );
+        rulesVersionRef.current++;
         setRules(rules.map(r => r.id === res.id ? res : r));
         setSelectedRule(res);
       } else {
@@ -1785,12 +1799,20 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
           `/api/swrl/${projectId}/rules`,
           editForm
         );
+        rulesVersionRef.current++;
         setRules([...rules, res]);
         setSelectedRule(res);
       }
       setIsEditing(false);
-    } catch (e) {
+    } catch (e: any) {
+      // Previously only logged to console — clicking Save on a failure looked
+      // identical to a successful no-op click, with zero feedback in the UI.
       console.error('Save failed:', e);
+      // e.data.error is a boolean flag ({error: true, message: "..."} — see
+      // SwrlController.createErrorResponse), not the text — the real message
+      // is e.data.message. Reading .error here just rendered the literal
+      // string "true" in the banner instead of the actual failure reason.
+      setSaveError(e?.data?.message || e?.message || 'Failed to save rule — please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -1800,6 +1822,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     if (!confirmDialog.ruleId) return;
     try {
       await apiClient.delete(`/api/swrl/${projectId}/rules/${confirmDialog.ruleId}`);
+      rulesVersionRef.current++;
       setRules(rules.filter(r => r.id !== confirmDialog.ruleId));
       if (selectedRule?.id === confirmDialog.ruleId) {
         setSelectedRule(null);
@@ -1823,6 +1846,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         `/api/swrl/${projectId}/rules/${rule.id}`,
         { enabled: !rule.enabled }
       );
+      rulesVersionRef.current++;
       setRules(rules.map(r => r.id === rule.id ? res : r));
       if (selectedRule?.id === rule.id) {
         setSelectedRule(res);
@@ -2274,6 +2298,15 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       </div>
                     )}
 
+                    {/* Save error — previously swallowed silently (console.error only),
+                        so a failed save looked identical to a successful no-op click */}
+                    {saveError && (
+                      <div className="px-4 py-2 flex items-center gap-2 text-sm bg-red-50 text-red-700 border-t border-red-100">
+                        <AlertCircle size={14} />
+                        {saveError}
+                      </div>
+                    )}
+
                     {/* Quick Insert */}
                     <QuickInsertPanel
                       onInsert={insertAtCursor}
@@ -2297,7 +2330,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                   </div>
 
                   {/* Action Buttons */}
-                  {isEditing && (
+                  {isEditing ? (
                     <div className="flex items-center gap-3 pt-2">
                       <button
                         onClick={() => setConfirmDialog({ isOpen: true, ruleName: selectedRule?.ruleName || '', ruleId: selectedRule?.id || '' })}
@@ -2329,7 +2362,35 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                         className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2"
                       >
                         {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        Save
+                        {/* Was always "Save" regardless of new-vs-existing, and the only
+                            way to enter edit mode for an existing rule was a small text
+                            link up near the Rule Name field — easy to miss, so users
+                            defaulted to "New Rule" instead, which created a duplicate
+                            and hit the "already exists" error on save. */}
+                        {selectedRule ? 'Update' : 'Save'}
+                      </button>
+                    </div>
+                  ) : selectedRule && (
+                    <div className="flex items-center gap-3 pt-2">
+                      <button
+                        onClick={() => setConfirmDialog({ isOpen: true, ruleName: selectedRule.ruleName, ruleId: selectedRule.id })}
+                        className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 flex items-center gap-2"
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
+                      <div className="flex-1" />
+                      <button
+                        onClick={handleTestRule}
+                        disabled={!editForm.ruleText.trim()}
+                        className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
+                      >
+                        <Play size={14} /> Test
+                      </button>
+                      <button
+                        onClick={() => setIsEditing(true)}
+                        className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 flex items-center gap-2"
+                      >
+                        <Code size={14} /> Edit
                       </button>
                     </div>
                   )}

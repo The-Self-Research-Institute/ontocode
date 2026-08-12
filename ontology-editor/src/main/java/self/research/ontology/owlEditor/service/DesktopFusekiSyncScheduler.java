@@ -27,7 +27,14 @@ public class DesktopFusekiSyncScheduler {
     private static final long OPEN_DELAY_MS = 3_000;
     private static final long MUTATION_DEBOUNCE_MS = 20_000;
     private static final long RETRY_DELAY_MS = 45_000;
-    private static final int MAX_RETRIES = 4;
+    // After this many quick retries, back off to a slower steady-state interval instead of
+    // giving up entirely. Fuseki is only started on-demand (a tab open, or the one project-open
+    // kick-off) — if that never happens to succeed in a session, silently abandoning the sync
+    // left Fuseki permanently stale for the rest of the session with no further attempts and no
+    // user-visible signal, until the next mutation happened to reschedule it. A pending sync
+    // must eventually complete once Fuseki becomes reachable, not just "usually."
+    private static final int QUICK_RETRIES = 4;
+    private static final long SLOW_RETRY_DELAY_MS = 120_000;
 
     private final ProjectImportService projectImportService;
     private final SparqlDatasetService datasetService;
@@ -115,11 +122,15 @@ public class DesktopFusekiSyncScheduler {
 
     private void scheduleRetry(String projectId) {
         AtomicInteger attempts = retryCounts.computeIfAbsent(projectId, id -> new AtomicInteger(0));
-        if (attempts.incrementAndGet() > MAX_RETRIES) {
-            log.info("[FusekiBg] Giving up silent sync for {} after {} retries (Fuseki may be offline)", projectId, MAX_RETRIES);
-            return;
+        int attemptNumber = attempts.incrementAndGet();
+        boolean slow = attemptNumber > QUICK_RETRIES;
+        if (slow && attemptNumber == QUICK_RETRIES + 1) {
+            log.info("[FusekiBg] {} still not synced after {} quick retries — backing off to a {}s interval "
+                            + "until Fuseki becomes reachable (not giving up: a pending sync must not stay stale)",
+                    projectId, QUICK_RETRIES, SLOW_RETRY_DELAY_MS / 1000);
         }
-        ScheduledFuture<?> future = executor.schedule(() -> runSync(projectId), RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
+        long delay = slow ? SLOW_RETRY_DELAY_MS : RETRY_DELAY_MS;
+        ScheduledFuture<?> future = executor.schedule(() -> runSync(projectId), delay, TimeUnit.MILLISECONDS);
         scheduled.put(projectId, future);
     }
 }

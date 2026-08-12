@@ -120,13 +120,34 @@ linux:
     - target: deb
       arch:
         - x64
-  icon: build-assets/icon.png
+  icon: build-assets/icon-512.png
   category: Development
+  maintainer: "OntoCode <pranesh@coretopia.com>"
   description: "OntoCode — OWL Ontology Editor for Desktop"
   desktop:
     Name: OntoCode
     Comment: OWL Ontology Editor
     Categories: Development;Science;
+
+# Flatpak is a separate target (needs flatpak-builder on the host).
+# Build with: npm run dist:linux:flatpak
+flatpak:
+  runtime: org.freedesktop.Platform
+  runtimeVersion: "23.08"
+  sdk: org.freedesktop.Sdk
+  base: org.electronjs.Electron2.BaseApp
+  baseVersion: "23.08"
+  finishArgs:
+    - --share=network
+    - --share=ipc
+    - --socket=x11
+    - --socket=wayland
+    - --socket=pulseaudio
+    - --device=dri
+    - --filesystem=home
+  # electron-builder schema: each entry is [from, to] (not {from,to} objects)
+  files:
+    - ["build-assets/icon-512.png", "share/icons/hicolor/512x512/apps/${appId}.png"]
 
 # ── Auto-update (electron-updater generic provider) ─────────────────────────────
 publish:

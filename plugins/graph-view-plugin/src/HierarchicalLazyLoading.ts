@@ -16,15 +16,18 @@
 
 import type { OntologyNode, OntologyEdge } from './types';
 
-/** Edge types that participate in the asserted hierarchy. */
+/** Edge types that participate in the asserted class/property hierarchy. */
 const HIERARCHY_EDGE_TYPES: ReadonlySet<string> = new Set([
   'subClassOf',
-  'subPropertyOf',
-  'instanceOf'
+  'subPropertyOf'
 ]);
 
-const isHierarchyEdge = (edge: OntologyEdge): boolean =>
-  HIERARCHY_EDGE_TYPES.has(edge.type as string);
+/** Instance membership edges — opt-in via getChildren({ includeInstances: true }). */
+const INSTANCE_EDGE_TYPES: ReadonlySet<string> = new Set(['instanceOf']);
+
+const isHierarchyEdge = (edge: OntologyEdge, includeInstances = false): boolean =>
+  HIERARCHY_EDGE_TYPES.has(edge.type as string) ||
+  (includeInstances && INSTANCE_EDGE_TYPES.has(edge.type as string));
 
 /** True when the given node objects expose a `parent` field (precomputed by backend). */
 const nodesHaveParentField = (nodes?: OntologyNode[]): boolean =>
@@ -57,6 +60,7 @@ export const buildHierarchyIndex = (
 
   if (nodesHaveParentField(nodes)) {
     for (const node of nodes) {
+      if (node.type === 'individual') continue;
       const parent = getParentField(node);
       if (parent === null || parent === undefined || parent === '') continue;
       const parents = Array.isArray(parent) ? parent : [parent];
@@ -134,18 +138,23 @@ export const getParents = (
 };
 
 /**
- * Get immediate children of a node. Includes sub-classes, sub-properties,
- * and instance-of relationships when the node is the parent class.
+ * Get immediate children of a node. Includes sub-classes and sub-properties.
+ * Pass `{ includeInstances: true }` to also include instanceOf individuals.
  */
 export const getChildren = (
   nodeId: string,
   edges: OntologyEdge[],
-  nodes?: OntologyNode[]
+  nodes?: OntologyNode[],
+  options?: { includeInstances?: boolean }
 ): string[] => {
+  const includeInstances = options?.includeInstances === true;
   const out = new Set<string>();
 
   if (nodesHaveParentField(nodes)) {
     for (const node of nodes!) {
+      // Parent-field is for class/property hierarchy; skip individuals unless
+      // instances are explicitly requested.
+      if (!includeInstances && node.type === 'individual') continue;
       const parent = getParentField(node);
       if (parent === undefined || parent === null) continue;
       if (Array.isArray(parent)) {
@@ -157,11 +166,97 @@ export const getChildren = (
   }
 
   for (const edge of edges) {
-    if (edge.to === nodeId && isHierarchyEdge(edge)) {
+    if (edge.to === nodeId && isHierarchyEdge(edge, includeInstances)) {
       out.add(edge.from);
     }
   }
   return Array.from(out);
+};
+
+/**
+ * Batched equivalent of calling getChildren()/getParents() once per node — same exact
+ * semantics as those two functions, but a single O(n+m) pass instead of O(n) calls that
+ * each re-scan every edge/node. Calling getChildren/getParents per node in a loop is
+ * O(n*m); on a large ontology (tens of thousands of nodes/edges) that reaches into the
+ * billions of operations and freezes the tab. Use this whenever relations are needed
+ * for every node at once (e.g. building a sidebar tree).
+ */
+export const buildChildrenParentsIndex = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): Map<string, { children: string[]; parents: string[] }> => {
+  const result = new Map<string, { children: string[]; parents: string[] }>();
+  const ensure = (id: string) => {
+    let entry = result.get(id);
+    if (!entry) {
+      entry = { children: [], parents: [] };
+      result.set(id, entry);
+    }
+    return entry;
+  };
+  nodes.forEach(node => ensure(node.id));
+
+  const hasParentField = nodesHaveParentField(nodes);
+
+  // Children: parent-field-derived AND edge-derived, unioned — mirrors getChildren().
+  const childSets = new Map<string, Set<string>>();
+  const addChild = (parentId: string, childId: string) => {
+    let set = childSets.get(parentId);
+    if (!set) {
+      set = new Set();
+      childSets.set(parentId, set);
+    }
+    set.add(childId);
+  };
+  if (hasParentField) {
+    for (const node of nodes) {
+      if (node.type === 'individual') continue;
+      const parent = getParentField(node);
+      if (parent === undefined || parent === null) continue;
+      const parents = Array.isArray(parent) ? parent : [parent];
+      for (const p of parents) {
+        if (p) addChild(p, node.id);
+      }
+    }
+  }
+  for (const edge of edges) {
+    if (isHierarchyEdge(edge, false)) addChild(edge.to, edge.from);
+  }
+  childSets.forEach((set, parentId) => {
+    ensure(parentId).children = Array.from(set);
+  });
+
+  // Parents: parent-field wins when present for a node — mirrors getParents()'s
+  // early return; otherwise fall back to subClassOf/subPropertyOf edges only
+  // (not instanceOf, matching getParents()'s edge-fallback branch exactly).
+  if (hasParentField) {
+    for (const node of nodes) {
+      const parent = getParentField(node);
+      ensure(node.id).parents =
+        parent === null || parent === undefined || parent === ''
+          ? []
+          : Array.isArray(parent)
+            ? Array.from(new Set(parent.filter(Boolean)))
+            : [parent];
+    }
+  } else {
+    const parentSets = new Map<string, Set<string>>();
+    for (const edge of edges) {
+      if (edge.type === 'subClassOf' || edge.type === 'subPropertyOf') {
+        let set = parentSets.get(edge.from);
+        if (!set) {
+          set = new Set();
+          parentSets.set(edge.from, set);
+        }
+        set.add(edge.to);
+      }
+    }
+    parentSets.forEach((set, nodeId) => {
+      ensure(nodeId).parents = Array.from(set);
+    });
+  }
+
+  return result;
 };
 
 /**
@@ -273,18 +368,30 @@ export const findPathToNode = (
 };
 
 /**
- * Search nodes and return paths to all matching nodes.
- * Auto-expands the path so matches are visible in the tree.
+ * Search nodes and compute a filtered visibility set: matches (+ optional ancestors
+ * and a bounded subtree under each match). Unrelated branches are excluded so the
+ * graph can hide everything else.
  */
+export type SearchVisibilityOptions = {
+  /** Keep ancestor path to each match (needed for hierarchy layouts). Default true. */
+  includeAncestors?: boolean;
+  /** Levels of descendants under each match to include. Default 0 (match only / + ancestors). */
+  childDepth?: number;
+};
+
 export const searchNodesWithPaths = (
   query: string,
   nodes: OntologyNode[],
-  edges: OntologyEdge[]
+  edges: OntologyEdge[],
+  options: SearchVisibilityOptions = {}
 ): {
   matchingNodes: OntologyNode[];
   nodesToShow: Set<string>;
   nodesToExpand: Set<string>;
 } => {
+  const includeAncestors = options.includeAncestors !== false;
+  const childDepth = Math.max(0, options.childDepth ?? 0);
+
   if (!query) {
     return {
       matchingNodes: [],
@@ -303,18 +410,202 @@ export const searchNodesWithPaths = (
   const nodesToShow = new Set<string>();
   const nodesToExpand = new Set<string>();
 
-  for (const node of matchingNodes) {
-    const path = findPathToNode(node.id, edges, nodes);
-    for (const id of path) nodesToShow.add(id);
-    // Expand all ancestors (everything except the match itself) so the match is reachable.
-    for (let i = 0; i < path.length - 1; i++) nodesToExpand.add(path[i]);
+  // Build the parent/child index ONCE and reuse it for every match, instead of calling
+  // findPathToNode()/getChildren() per match (each of which re-scans all nodes/edges, or
+  // in findPathToNode's case rebuilds the whole index). On a large ontology with many
+  // matches this turned a single keystroke into O(matches * (nodes + edges)) work — easily
+  // reaching millions of operations and freezing the tab (see buildChildrenParentsIndex's
+  // note above for the same anti-pattern).
+  const { childrenOf, parentsOf } = buildHierarchyIndex(nodes, edges);
 
-    // Show immediate children for context.
-    for (const child of getChildren(node.id, edges, nodes)) nodesToShow.add(child);
-    nodesToExpand.add(node.id);
+  const pathToRoot = (targetId: string): string[] => {
+    const prev = new Map<string, string | null>();
+    prev.set(targetId, null);
+    const queue: string[] = [targetId];
+    let root: string | null = null;
+
+    while (queue.length > 0) {
+      const current = queue.shift() as string;
+      const parents = parentsOf.get(current);
+      if (!parents || parents.length === 0) {
+        root = current;
+        break;
+      }
+      for (const parent of parents) {
+        if (prev.has(parent)) continue;
+        prev.set(parent, current);
+        queue.push(parent);
+      }
+    }
+
+    const path: string[] = [];
+    let cursor: string | null = root ?? targetId;
+    const guard = new Set<string>();
+    while (cursor !== null && !guard.has(cursor)) {
+      path.push(cursor);
+      guard.add(cursor);
+      cursor = prev.get(cursor) ?? null;
+    }
+    return path;
+  };
+
+  const addDescendantsToDepth = (startId: string, depth: number) => {
+    if (depth <= 0) return;
+    let frontier = [startId];
+    nodesToExpand.add(startId);
+    for (let d = 0; d < depth; d++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const child of childrenOf.get(id) ?? []) {
+          if (!nodesToShow.has(child)) {
+            nodesToShow.add(child);
+            next.push(child);
+          }
+          nodesToExpand.add(id);
+        }
+      }
+      frontier = next;
+      if (frontier.length === 0) break;
+    }
+  };
+
+  for (const node of matchingNodes) {
+    nodesToShow.add(node.id);
+
+    if (includeAncestors) {
+      const path = pathToRoot(node.id);
+      for (const id of path) nodesToShow.add(id);
+      // Expand all ancestors so the match is reachable in hierarchy UIs.
+      for (let i = 0; i < path.length - 1; i++) nodesToExpand.add(path[i]);
+    }
+
+    addDescendantsToDepth(node.id, childDepth);
   }
 
   return { matchingNodes, nodesToShow, nodesToExpand };
+};
+
+/**
+ * Expand each seed by exactly one child level (show direct children).
+ */
+export const expandSeedsOneLevel = (
+  seedIds: Iterable<string>,
+  expandedNodeIds: Set<string>,
+  visibleNodeIds: Set<string>,
+  edges: OntologyEdge[],
+  nodes?: OntologyNode[]
+): { newExpandedIds: Set<string>; newVisibleIds: Set<string> } => {
+  const newVisibleIds = new Set(visibleNodeIds);
+  const newExpandedIds = new Set(expandedNodeIds);
+  for (const id of seedIds) {
+    const children = getChildren(id, edges, nodes);
+    if (children.length === 0) continue;
+    for (const child of children) newVisibleIds.add(child);
+    newExpandedIds.add(id);
+  }
+  return { newExpandedIds, newVisibleIds };
+};
+
+/**
+ * Collapse one depth under the seeds: hide the deepest currently-visible layer
+ * in each seed's visible subtree (and un-expand parents that become leaves).
+ */
+export const collapseSeedsOneLevel = (
+  seedIds: Iterable<string>,
+  expandedNodeIds: Set<string>,
+  visibleNodeIds: Set<string>,
+  edges: OntologyEdge[],
+  nodes?: OntologyNode[]
+): { newExpandedIds: Set<string>; newVisibleIds: Set<string> } => {
+  const seeds = Array.from(seedIds);
+  if (seeds.length === 0) {
+    return { newExpandedIds: new Set(expandedNodeIds), newVisibleIds: new Set(visibleNodeIds) };
+  }
+
+  const { childrenOf } = buildHierarchyIndex(nodes ?? [], edges);
+  const depthOf = new Map<string, number>();
+  const queue: string[] = [];
+  for (const id of seeds) {
+    if (!visibleNodeIds.has(id)) continue;
+    depthOf.set(id, 0);
+    queue.push(id);
+  }
+
+  let maxDepth = 0;
+  while (queue.length > 0) {
+    const id = queue.shift() as string;
+    const depth = depthOf.get(id) ?? 0;
+    if (depth > maxDepth) maxDepth = depth;
+    if (!expandedNodeIds.has(id)) continue;
+    for (const child of childrenOf.get(id) ?? []) {
+      if (!visibleNodeIds.has(child) || depthOf.has(child)) continue;
+      depthOf.set(child, depth + 1);
+      queue.push(child);
+    }
+  }
+
+  if (maxDepth === 0) {
+    return { newExpandedIds: new Set(expandedNodeIds), newVisibleIds: new Set(visibleNodeIds) };
+  }
+
+  const newVisibleIds = new Set(visibleNodeIds);
+  const newExpandedIds = new Set(expandedNodeIds);
+  for (const [id, depth] of depthOf) {
+    if (depth === maxDepth) {
+      newVisibleIds.delete(id);
+      newExpandedIds.delete(id);
+    }
+  }
+  // Parents that no longer show any visible child stop counting as expanded.
+  for (const [id, depth] of depthOf) {
+    if (depth !== maxDepth - 1) continue;
+    const kids = childrenOf.get(id) ?? [];
+    const anyVisibleChild = kids.some((c) => newVisibleIds.has(c));
+    if (!anyVisibleChild) newExpandedIds.delete(id);
+  }
+
+  return { newExpandedIds, newVisibleIds };
+};
+
+/**
+ * From seeds, reveal descendants up to `depth` (BFS). Depth 0 = seeds only (ensure visible).
+ */
+export const expandSeedsToDepth = (
+  seedIds: Iterable<string>,
+  depth: number,
+  expandedNodeIds: Set<string>,
+  visibleNodeIds: Set<string>,
+  edges: OntologyEdge[],
+  nodes?: OntologyNode[]
+): { newExpandedIds: Set<string>; newVisibleIds: Set<string> } => {
+  const newVisibleIds = new Set(visibleNodeIds);
+  const newExpandedIds = new Set(expandedNodeIds);
+  const { childrenOf } = buildHierarchyIndex(nodes ?? [], edges);
+
+  let frontier = Array.from(seedIds);
+  for (const id of frontier) newVisibleIds.add(id);
+
+  const maxDepth = Math.max(0, depth);
+  for (let d = 0; d < maxDepth; d++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const children = childrenOf.get(id) ?? getChildren(id, edges, nodes);
+      if (children.length === 0) continue;
+      newExpandedIds.add(id);
+      for (const child of children) {
+        if (!newVisibleIds.has(child)) {
+          newVisibleIds.add(child);
+          next.push(child);
+        } else {
+          next.push(child);
+        }
+      }
+    }
+    frontier = next;
+    if (frontier.length === 0) break;
+  }
+
+  return { newExpandedIds, newVisibleIds };
 };
 
 /**
@@ -388,25 +679,29 @@ const SMALL_ONTOLOGY_NODE_CAP = 40;
 const INITIAL_VISIBILITY_NODE_BUDGET = 35;
 
 /**
- * Initial visibility for ontologies above SMALL_ONTOLOGY_NODE_CAP: breadth-first
- * expansion from the class hierarchy roots until INITIAL_VISIBILITY_NODE_BUDGET
- * is reached, instead of a fixed "one level" depth.
+ * Soft cap for Network / Expand All on large ontologies. Past this, ForceAtlas2
+ * + all-labels collapses into an illegible hairball (e.g. full Gene Ontology).
+ */
+export const NETWORK_VISIBILITY_NODE_BUDGET = 400;
+
+/**
+ * Breadth-first expansion from class hierarchy roots until `budget` visible
+ * nodes. Used for first paint and for Network on large graphs.
  *
  * A fixed one-level expansion assumes a bushy hierarchy (several roots, each
  * with several children) — for a narrow one (a single root/owl:Thing with one
- * direct child before it branches, common in real ontologies built around one
- * top concept) it revealed almost nothing (verified against a 82-node test
- * ontology: 1 root -> 1 child -> only 2 nodes visible). BFS-to-budget instead
- * keeps expanding deeper for narrow hierarchies and stays shallow for bushy
- * ones, landing near the same visible node count either way.
+ * direct child before it branches) it revealed almost nothing. BFS-to-budget
+ * keeps expanding deeper for narrow trees and stays shallow for bushy ones.
  */
-export const initialGraphVisibility = (
+export const expandToNodeBudget = (
   nodes: OntologyNode[],
-  edges: OntologyEdge[]
+  edges: OntologyEdge[],
+  budget: number
 ): {
   newExpandedIds: Set<string>;
   newVisibleIds: Set<string>;
 } => {
+  const cap = Math.max(1, budget);
   const owlThingIri = 'http://www.w3.org/2002/07/owl#Thing';
   const classNodes = nodes.filter(n => n.type === 'class');
   const roots = getRootNodes(classNodes, edges);
@@ -423,13 +718,13 @@ export const initialGraphVisibility = (
   let frontier = orderedRoots.slice();
   frontier.forEach(id => visible.add(id));
 
-  while (frontier.length > 0 && visible.size < INITIAL_VISIBILITY_NODE_BUDGET) {
+  while (frontier.length > 0 && visible.size < cap) {
     const nextFrontier: string[] = [];
     for (const nodeId of frontier) {
-      if (visible.size >= INITIAL_VISIBILITY_NODE_BUDGET) break;
+      if (visible.size >= cap) break;
       expanded.add(nodeId);
       for (const childId of getChildren(nodeId, edges, nodes)) {
-        if (visible.has(childId) || visible.size >= INITIAL_VISIBILITY_NODE_BUDGET) continue;
+        if (visible.has(childId) || visible.size >= cap) continue;
         visible.add(childId);
         nextFrontier.push(childId);
       }
@@ -442,6 +737,37 @@ export const initialGraphVisibility = (
   }
 
   return { newExpandedIds: expanded, newVisibleIds: visible };
+};
+
+/**
+ * Initial visibility for ontologies above SMALL_ONTOLOGY_NODE_CAP: BFS until
+ * INITIAL_VISIBILITY_NODE_BUDGET is reached.
+ */
+export const initialGraphVisibility = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): {
+  newExpandedIds: Set<string>;
+  newVisibleIds: Set<string>;
+} => expandToNodeBudget(nodes, edges, INITIAL_VISIBILITY_NODE_BUDGET);
+
+/**
+ * Network / force layout: expand fully when small; otherwise BFS to a readable budget.
+ */
+export const networkGraphVisibility = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): {
+  newExpandedIds: Set<string>;
+  newVisibleIds: Set<string>;
+  capped: boolean;
+} => {
+  if (nodes.length > 0 && nodes.length <= NETWORK_VISIBILITY_NODE_BUDGET) {
+    const full = expandAll(nodes);
+    return { ...full, capped: false };
+  }
+  const partial = expandToNodeBudget(nodes, edges, NETWORK_VISIBILITY_NODE_BUDGET);
+  return { ...partial, capped: true };
 };
 
 /**
@@ -462,7 +788,8 @@ export const smartInitialGraphVisibility = (
 };
 
 /**
- * Collapse every branch — show only roots for each entity type that has a hierarchy.
+ * Collapse every branch — roots-only visibility with no expanded nodes
+ * (true invert of Expand All).
  */
 export const collapseAll = (
   nodes: OntologyNode[],
@@ -474,7 +801,8 @@ export const collapseAll = (
   const visibleIds: string[] = [];
   for (const type of ['class', 'objectProperty', 'dataProperty', 'individual'] as const) {
     const subset = nodes.filter(n => n.type === type);
-    visibleIds.push(...getRootNodes(subset, edges));
+    const roots = getRootNodes(subset, edges);
+    visibleIds.push(...roots);
   }
   return {
     newExpandedIds: new Set<string>(),

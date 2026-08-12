@@ -7,11 +7,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpRange;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -129,12 +131,44 @@ public class DesktopDownloadController {
             GridFsResource resource = gridFsTemplate.getResource(file);
             String filename = file.getFilename();
             String contentType = detectContentType(filename);
+            long contentLength = file.getLength();
 
-            return ResponseEntity.ok()
+            // Advertise + honor byte-range requests so download managers (aria2, browsers,
+            // electron-updater) can resume and parallelize instead of falling back to one
+            // slow connection. GridFsResource's InputStream supports efficient seeking
+            // (GridFSDownloadStream.skip is chunk-aware), so this isn't a naive read-and-discard.
+            String rangeHeader = request.getHeader(HttpHeaders.RANGE);
+            if (rangeHeader == null) {
+                return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                    .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                    .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(contentLength))
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .body(new InputStreamResource(resource.getInputStream()));
+            }
+
+            List<HttpRange> ranges;
+            try {
+                ranges = HttpRange.parseRanges(rangeHeader);
+            } catch (IllegalArgumentException ex) {
+                return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    .header(HttpHeaders.CONTENT_RANGE, "bytes */" + contentLength)
+                    .build();
+            }
+            if (ranges.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    .header(HttpHeaders.CONTENT_RANGE, "bytes */" + contentLength)
+                    .build();
+            }
+
+            // Only the first range is honored — download managers issue one range per request
+            // rather than a single multi-range request, so this covers the real-world case.
+            ResourceRegion region = ranges.get(0).toResourceRegion(resource);
+            return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(file.getLength()))
+                .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                 .contentType(MediaType.parseMediaType(contentType))
-                .body(new InputStreamResource(resource.getInputStream()));
+                .body(region);
 
         } catch (Exception e) {
             log.error("Download failed for platform {}: {}", platform, e.getMessage());
