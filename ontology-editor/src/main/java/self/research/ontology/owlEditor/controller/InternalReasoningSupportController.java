@@ -55,15 +55,7 @@ public class InternalReasoningSupportController {
     public ResponseEntity<StreamingResponseBody> exportTurtle(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId) {
-        // This is reasoner-worker's primary path for fetching a project's ontology content.
-        // Desktop OWLAPI-first: serialize directly from the already-cached in-memory model, the
-        // same way Protege reasons with no external triple store involved at all — only fall
-        // back to Fuseki when there's a draft overlay (userId; the in-memory cache isn't
-        // draft-aware) or the model genuinely isn't warmed yet (cloud, or desktop before first
-        // open). Reading Fuseki unconditionally here previously returned stale or empty data
-        // whenever it wasn't already running/synced, which reasoner-worker reported as "ontology
-        // not found" (surfaced to users via ReasoningFriendlyErrors as "We could not find this
-        // project's ontology").
+
         if ((userId == null || userId.isBlank()) && owlApiContext != null && owlApiContext.hasOntology(projectId)) {
             Optional<OWLOntology> snapshot = snapshotOntology(projectId);
             if (snapshot.isPresent()) {
@@ -84,7 +76,7 @@ public class InternalReasoningSupportController {
     public ResponseEntity<StreamingResponseBody> exportNTriples(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId) {
-        // See exportTurtle() above for why the OWLAPI-first path and the fallback sync are here.
+
         if ((userId == null || userId.isBlank()) && owlApiContext != null && owlApiContext.hasOntology(projectId)) {
             Optional<OWLOntology> snapshot = snapshotOntology(projectId);
             if (snapshot.isPresent()) {
@@ -101,11 +93,6 @@ public class InternalReasoningSupportController {
                 .body(body);
     }
 
-    /**
-     * Deep-copies the live cached model into an independent manager before serializing — the
-     * live model can be mutated in-place by an edit elsewhere while this streams, and OWLAPI's
-     * internal collections aren't safe to iterate concurrently with a structural change.
-     */
     private Optional<OWLOntology> snapshotOntology(String projectId) {
         return owlApiContext.ontology(projectId).map(live -> {
             try {

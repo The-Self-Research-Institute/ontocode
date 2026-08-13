@@ -1,7 +1,4 @@
-/**
- * InfraNodue-inspired insights panel — Topics / Concepts / Gaps / Trends tabs,
- * discourse structure meter, AI-summary from local analytics data, and cluster sparklines.
- */
+
 
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import {
@@ -25,7 +22,7 @@ type TabId = 'topics' | 'concepts' | 'gaps' | 'trends';
 interface AnalyticsPanelProps {
   analytics: GraphAnalytics;
   nodes: OntologyNode[];
-  /** Visible edges — used to describe the selected node's neighborhood to the AI. */
+
   edges?: OntologyEdge[];
   selectedNode?: OntologyNode | null;
   onSelectNode?: (node: OntologyNode) => void;
@@ -115,7 +112,6 @@ function generateAiSummary(
   );
 }
 
-// Mini sparkline SVG from array of values
 const Sparkline: React.FC<{ values: number[]; color: string; width?: number; height?: number }> = ({
   values, color, width = 120, height = 28
 }) => {
@@ -147,7 +143,6 @@ const Sparkline: React.FC<{ values: number[]; color: string; width?: number; hei
   );
 };
 
-// Discourse structure focus meter
 const FocusMeter: React.FC<{ ds: DiscourseStructure; onDiversify?: () => void }> = ({ ds, onDiversify }) => {
   const meterColor = ds.label === 'focused' ? '#f59e0b' : ds.label === 'diversified' ? '#3b82f6' : '#10b981';
   return (
@@ -207,7 +202,6 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
   const [aiSummary, setAiSummary] = useState<string>('');
   const [selectedCluster, setSelectedCluster] = useState<ClusterInfo | null>(null);
 
-  // BYOK LLM insights (user supplies their own API key — no OntoCode cost)
   const [llmAction, setLlmAction] = useState<'insights' | 'ask' | 'topics' | null>(null);
   const llmLoading = llmAction !== null;
   const [llmError, setLlmError] = useState<string>('');
@@ -223,10 +217,6 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
   const [keyDraft, setKeyDraft] = useState<string>('');
   const [keySaved, setKeySaved] = useState<boolean>(hasApiKey());
 
-  // Model list per provider. The hardcoded PROVIDERS table is only ever a placeholder
-  // — shown before a key exists, or if a live fetch fails. Whenever a key is present
-  // we always ask the provider directly (see the auto-fetch effect and onBlur below),
-  // so the list stays current without needing an app update when models ship/retire.
   const [modelsList, setModelsList] = useState<KnownModel[]>(() => getProviderModels(provider));
   const [modelsSource, setModelsSource] = useState<'default' | 'live'>('default');
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
@@ -249,8 +239,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
       if (!isLive) {
         setModelsRefreshError('Could not reach the provider — showing default models instead.');
       } else if (live.length && !live.some(m => m.id === model)) {
-        // Currently-selected model isn't in the fresh list — pick one that is,
-        // otherwise the dropdown would show a model that no longer exists.
+
         setModel(live[0].id);
       }
     } catch {
@@ -260,8 +249,6 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
     }
   }, [keyDraft, model]);
 
-  // Fetch the real model list the moment settings open (if a key is already saved)
-  // and every time the provider is switched — no manual click required.
   useEffect(() => {
     if (!showKeyInput) return;
     const activeKey = keyDraft.trim() || getStoredApiKey();
@@ -279,7 +266,6 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
   const clusters = useClusterInfos(analytics, nodes);
   const maxBetweenness = Math.max(0.001, ...analytics.topConcepts.map(t => t.score));
 
-  // Sparkline values: cluster sizes in ranked order (for discourse timeline visual)
   const clusterSizeSparkline = useMemo(
     () => clusters.map(c => c.size),
     [clusters]
@@ -313,7 +299,6 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
     gaps: analytics.gaps.map(g => ({ a: g.labelA, b: g.labelB, suggestion: g.suggestion })),
   }), [analytics, nodes, clusters]);
 
-  // Neighborhood context for the selected node, fed to the AI prompts.
   const selectedNodeContext = useMemo((): SelectedNodeContext | null => {
     if (!selectedNode) return null;
     const labelById = new Map(nodes.map(n => [n.id, n.label]));
@@ -404,8 +389,6 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
     }
   }, [selectedNodeContext, llmAction, ensureKey, buildLlmRequest]);
 
-  // A suggested topic that already exists in the graph selects that node;
-  // an unknown one is copied to the clipboard as a modeling candidate.
   const handleTopicClick = useCallback((t: TopicSuggestion) => {
     const match = nodes.find(n => n.label.toLowerCase() === t.topic.toLowerCase());
     if (match) onSelectNode?.(match);
@@ -417,7 +400,6 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
     setTopicDraft(current);
   }, []);
 
-  // Commit the inline edit; an emptied topic is removed from the list.
   const commitTopicEdit = useCallback(() => {
     setTopicSuggestions(prev => {
       if (editingTopicIdx === null || editingTopicIdx >= prev.length) return prev;
@@ -478,7 +460,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
         fontFamily: 'system-ui, -apple-system, sans-serif'
       }}
     >
-      {/* Panel header */}
+      {}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px',
         borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', flexShrink: 0
@@ -510,7 +492,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
         )}
       </div>
 
-      {/* AI Summarize box */}
+      {}
       <div style={{
         borderBottom: '1px solid var(--border)', background: 'var(--surface-2)', flexShrink: 0
       }}>
@@ -560,7 +542,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
               </button>
             )}
 
-            {/* BYOK LLM insights — user supplies their own Gemini key */}
+            {}
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                 <button
@@ -590,7 +572,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                 </button>
               </div>
 
-              {/* Custom AI message — free-form question about the graph / selected node */}
+              {}
               <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
                 <textarea
                   value={question}
@@ -630,7 +612,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                 </button>
               </div>
 
-              {/* Topic suggestions for the selected node */}
+              {}
               {selectedNode && (
                 <button
                   type="button"
@@ -656,7 +638,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
 
               {showKeyInput && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 6 }}>
-                  {/* Provider Selector */}
+                  {}
                   <div>
                     <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>
                       LLM Provider
@@ -688,7 +670,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                     </div>
                   </div>
 
-                  {/* Model Selector */}
+                  {}
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 3 }}>
                       <label style={{ fontSize: 10, color: 'var(--text-secondary)', flex: 1 }}>
@@ -733,7 +715,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                     )}
                   </div>
 
-                  {/* API Key Input */}
+                  {}
                   <div>
                     <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>
                       API Key
@@ -752,7 +734,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                     />
                   </div>
 
-                  {/* Save/Remove Buttons */}
+                  {}
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button
                       type="button"
@@ -778,7 +760,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                     )}
                   </div>
 
-                  {/* Security Notice */}
+                  {}
                   <p style={{ fontSize: 10, color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.4 }}>
                     🔒 Your key is stored only in this browser and sent directly to {providersList.find(p => p.id === provider)?.label}. OntoCode never sees or stores it.
                   </p>
@@ -908,7 +890,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                       );
                     })}
                   </div>
-                  {/* Free-text: add your own topic to the list */}
+                  {}
                   <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
                     <input
                       value={newTopic}
@@ -947,7 +929,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
         )}
       </div>
 
-      {/* Tab bar */}
+      {}
       <div style={{
         display: 'flex', borderBottom: '1px solid var(--border)',
         background: 'var(--surface-2)', flexShrink: 0
@@ -973,10 +955,10 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
         ))}
       </div>
 
-      {/* Tab content */}
+      {}
       <div style={{ flex: 1, overflow: 'auto', padding: '10px 12px' }}>
 
-        {/* ─── TOPICS tab ─── */}
+        {}
         {activeTab === 'topics' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
@@ -1002,7 +984,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                 padding: '8px 10px', marginBottom: 4,
                 boxShadow: selectedCluster?.id === c.id ? `0 0 0 1px ${c.color}44` : 'none'
               }}>
-                {/* Cluster pill */}
+                {}
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 6 }}>
                   <span style={{
                     padding: '3px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
@@ -1021,7 +1003,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                   </div>
                 </div>
 
-                {/* Sparkline */}
+                {}
                 {idx === 0 && (
                   <div style={{ marginBottom: 6 }}>
                     <Sparkline
@@ -1033,7 +1015,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                   </div>
                 )}
 
-                {/* Actions */}
+                {}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flex: 1 }}>
                     {c.size} concepts
@@ -1068,7 +1050,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
           </div>
         )}
 
-        {/* ─── CONCEPTS tab ─── */}
+        {}
         {activeTab === 'concepts' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
@@ -1116,7 +1098,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
           </div>
         )}
 
-        {/* ─── GAPS tab ─── */}
+        {}
         {activeTab === 'gaps' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
@@ -1171,10 +1153,10 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
           </div>
         )}
 
-        {/* ─── TRENDS tab ─── */}
+        {}
         {activeTab === 'trends' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {/* Cluster size bars (trending chart) */}
+            {}
             <div>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>
@@ -1197,7 +1179,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
 
               {clusters.length > 0 && (
                 <>
-                  {/* Top cluster pill */}
+                  {}
                   <div style={{
                     display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 3,
                     padding: '4px 8px', background: `${clusters[0].color}18`,
@@ -1214,7 +1196,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                     ))}
                   </div>
 
-                  {/* Sparkline chart */}
+                  {}
                   <div style={{ background: 'var(--surface-2)', borderRadius: 6, padding: '6px 8px', marginBottom: 8 }}>
                     <Sparkline values={clusterSizeSparkline} color={clusters[0].color} width={228} height={32} />
                   </div>
@@ -1222,7 +1204,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
               )}
             </div>
 
-            {/* Discourse Timeline slider */}
+            {}
             <div style={{
               background: 'var(--surface-2)', border: '1px solid var(--border)',
               borderRadius: 8, padding: '10px 12px'
@@ -1248,7 +1230,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
               </div>
             </div>
 
-            {/* Discourse Structure meter */}
+            {}
             <div style={{
               background: 'var(--surface-2)', border: '1px solid var(--border)',
               borderRadius: 8, padding: '10px 12px'
@@ -1283,7 +1265,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
               </div>
             </div>
 
-            {/* Cluster size distribution */}
+            {}
             <div style={{
               background: 'var(--surface-2)', border: '1px solid var(--border)',
               borderRadius: 8, padding: '10px 12px'
@@ -1312,7 +1294,7 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
         )}
       </div>
 
-      {/* Footer: cluster coloring toggle */}
+      {}
       <div style={{
         padding: '8px 12px', borderTop: '1px solid var(--border)',
         background: 'var(--surface-2)', flexShrink: 0,

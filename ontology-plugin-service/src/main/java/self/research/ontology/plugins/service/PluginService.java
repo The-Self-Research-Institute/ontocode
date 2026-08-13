@@ -48,8 +48,7 @@ public class PluginService {
 
     public Page<PluginDTO> searchPlugins(String query, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "totalDownloads"));
-        // Escape PCRE metacharacters so user input is treated as a literal search term,
-        // not a regex — prevents ReDoS via patterns like (a+)+ or catastrophic backtracking.
+
         String safeQuery = query == null ? "" : query.replaceAll("[\\\\^$.|?*+()\\[\\]{}]", "\\\\$0");
         Page<Plugin> plugins = pluginRepository.searchPlugins(safeQuery, pageable);
         return plugins.map(this::toDTO);
@@ -72,11 +71,9 @@ public class PluginService {
         PluginVersion pluginVersion = versionRepository.findByPluginIdAndVersion(pluginId, version)
             .orElseThrow(() -> new PluginNotFoundException("Plugin version not found: " + pluginId + "@" + version));
 
-        // Increment download count
         pluginVersion.setDownloads((pluginVersion.getDownloads() != null ? pluginVersion.getDownloads() : 0L) + 1);
         versionRepository.save(pluginVersion);
 
-        // Also increment total downloads on main plugin
         pluginRepository.findByPluginId(pluginId).ifPresent(plugin -> {
             plugin.setTotalDownloads((plugin.getTotalDownloads() != null ? plugin.getTotalDownloads() : 0L) + 1);
             pluginRepository.save(plugin);
@@ -90,7 +87,6 @@ public class PluginService {
         try {
             log.info("Publishing plugin: {} version: {}", request.getPluginId(), request.getVersion());
 
-            // Upload VSIX file to storage
             PluginMetadata metadata = PluginMetadata.builder()
                 .pluginId(request.getPluginId())
                 .version(request.getVersion())
@@ -105,7 +101,6 @@ public class PluginService {
                 metadata
             );
 
-            // Create or update plugin
             Plugin plugin = pluginRepository.findByPluginId(request.getPluginId())
                 .orElse(Plugin.builder()
                     .pluginId(request.getPluginId())
@@ -130,7 +125,6 @@ public class PluginService {
 
             pluginRepository.save(plugin);
 
-            // Create or update plugin version
             PluginVersion version = versionRepository.findByPluginIdAndVersion(request.getPluginId(), request.getVersion())
                 .orElse(PluginVersion.builder()
                     .pluginId(request.getPluginId())
@@ -138,8 +132,7 @@ public class PluginService {
                     .downloads(0L)
                     .publishedAt(LocalDateTime.now())
                     .build());
-            
-            // Update version fields (for both new and existing versions)
+
             version.setChangelog(request.getChangelog());
             version.setVsixFileId(fileId);
             version.setFileSize(vsixFile.getSize());

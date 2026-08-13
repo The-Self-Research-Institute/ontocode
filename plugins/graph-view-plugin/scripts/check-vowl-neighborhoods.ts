@@ -1,8 +1,4 @@
-/**
- * Headless check: FOAF-like graph → VOWL transform → neighborhood separation.
- * Run: npx --yes ts-node --transpile-only scripts/check-vowl-neighborhoods.ts
- * (from plugins/graph-view-plugin)
- */
+
 import {
   applyVowlTransform,
   buildVowlNeighborhoods,
@@ -26,7 +22,6 @@ function ok(msg: string) {
   console.log('OK  ', msg);
 }
 
-// Minimal FOAF-shaped graph (mirrors test-harness + GraphDataFetchService output)
 const nodes: OntologyNode[] = [
   { id: THING, label: 'Thing', type: 'class', uri: THING },
   { id: FOAF + 'Agent', label: 'Agent', type: 'class' },
@@ -42,39 +37,38 @@ const nodes: OntologyNode[] = [
 ];
 
 const edges: OntologyEdge[] = [
-  // Synthetic orphan adoption (sidebar) — must be dropped in VOWL
+
   { id: 'orphan-Agent', from: FOAF + 'Agent', to: THING, type: 'subClassOf', label: 'subClassOf', metadata: { synthetic: true } },
   { id: 'orphan-Doc', from: FOAF + 'Document', to: THING, type: 'subClassOf', label: 'subClassOf', metadata: { synthetic: true } },
   { id: 'orphan-OA', from: FOAF + 'OnlineAccount', to: THING, type: 'subClassOf', label: 'subClassOf', metadata: { synthetic: true } },
   { id: 'orphan-Proj', from: FOAF + 'Project', to: THING, type: 'subClassOf', label: 'subClassOf', metadata: { synthetic: true } },
-  // Real hierarchy
+
   { id: 'Person-Agent', from: FOAF + 'Person', to: FOAF + 'Agent', type: 'subClassOf', label: 'subClassOf' },
   { id: 'Image-Doc', from: FOAF + 'Image', to: FOAF + 'Document', type: 'subClassOf', label: 'subClassOf' },
   { id: 'Group-Agent', from: FOAF + 'Group', to: FOAF + 'Agent', type: 'subClassOf', label: 'subClassOf' },
-  // Equivalent → merge
+
   { id: 'eq-Person', from: FOAF + 'Person', to: SCHEMA + 'Person', type: 'equivalentClass', label: 'equivalentClass' },
   { id: 'eq-Doc', from: FOAF + 'Document', to: SCHEMA + 'CreativeWork', type: 'equivalentClass', label: 'equivalentClass' },
-  // page (no domain → Thing, range Document) — must survive transform as Thing clone → Document
+
   { id: 'page', from: THING, to: FOAF + 'Document', type: 'propertyRelation', label: 'page', metadata: { propertyType: 'objectProperty', vowlOnly: true } },
-  // Object props
+
   { id: 'knows', from: FOAF + 'Person', to: FOAF + 'Person', type: 'propertyRelation', label: 'knows', metadata: { propertyType: 'objectProperty' } },
   { id: 'img', from: FOAF + 'Person', to: FOAF + 'Image', type: 'propertyRelation', label: 'img', metadata: { propertyType: 'objectProperty' } },
   { id: 'account', from: FOAF + 'Agent', to: FOAF + 'OnlineAccount', type: 'propertyRelation', label: 'account', metadata: { propertyType: 'objectProperty' } },
-  // Same class + unknown range: both must converge on one local Thing.
+
   { id: 'currentProject', from: FOAF + 'Person', to: THING, type: 'propertyRelation', label: 'current project', metadata: { propertyType: 'objectProperty' } },
   { id: 'pastProject', from: FOAF + 'Person', to: THING, type: 'propertyRelation', label: 'past project', metadata: { propertyType: 'objectProperty' } },
-  // Domain-less data props → Thing / Literal (vowlOnly)
+
   { id: 'nick', from: THING, to: LIT, type: 'propertyRelation', label: 'nickname', metadata: { propertyType: 'dataProperty', vowlOnly: true } },
   { id: 'title', from: THING, to: LIT, type: 'propertyRelation', label: 'title', metadata: { propertyType: 'dataProperty', vowlOnly: true } },
   { id: 'name', from: THING, to: LIT, type: 'propertyRelation', label: 'name', metadata: { propertyType: 'dataProperty', vowlOnly: true } },
-  // Class-scoped data props
+
   { id: 'geek', from: FOAF + 'Person', to: LIT, type: 'propertyRelation', label: 'geekcode', metadata: { propertyType: 'dataProperty' } },
   { id: 'acctName', from: FOAF + 'OnlineAccount', to: LIT, type: 'propertyRelation', label: 'account name', metadata: { propertyType: 'dataProperty' } }
 ];
 
 const { nodes: vn, edges: ve } = applyVowlTransform(nodes, edges);
 
-// 1. Thing is grouped by class neighborhood
 const thingNodes = vn.filter(n => isThingIri(n.id) || n.label === 'Thing');
 const currentProject = ve.find(e => e.id === 'currentProject');
 const pastProject = ve.find(e => e.id === 'pastProject');
@@ -91,19 +85,16 @@ if (ownerThing?.metadata?.vowlOwnerHub !== FOAF + 'Person') {
 if (thingNodes.some(n => n.id === THING)) fail('Global Thing should be replaced by neighborhood-local Things');
 ok('Unknown-range properties share one Thing per class neighborhood');
 
-// 2. Literal split
 const litNodes = vn.filter(n => n.type === 'datatype');
 const sharedLit = litNodes.find(n => n.id === LIT);
 if (sharedLit) fail('Shared Literal hub still present');
 if (litNodes.length < 3) fail(`Expected multiple Literal clones, got ${litNodes.length}`);
 ok(`Literal split into ${litNodes.length} per-property nodes`);
 
-// 3. No subClassOf → Thing
 const badSub = ve.filter(e => e.type === 'subClassOf' && (isThingIri(e.to) || e.to.includes('owl#Thing')));
 if (badSub.length) fail(`subClassOf→Thing still present: ${badSub.map(e => e.id).join(',')}`);
 ok('Dropped all subClassOf→Thing (including synthetic orphans)');
 
-// 4. Equivalent merge
 if (vn.some(n => n.id === SCHEMA + 'Person') && vn.some(n => n.id === FOAF + 'Person')) {
   fail('Equivalent Person classes were not merged');
 }
@@ -129,7 +120,6 @@ if (pageEdge.to !== FOAF + 'Document' && pageEdge.to !== doc.id) {
 }
 ok('page property present (Document-local Thing → Document)');
 
-// 5. Neighborhoods are separate (property hubs — not every subclass leaf)
 const neighborhoods = buildVowlNeighborhoods(vn, ve);
 if (neighborhoods.length < 3) {
   fail(`Expected ≥3 neighborhoods (separate hubs), got ${neighborhoods.length}: ${neighborhoods.map(n => n.hubId).join(', ')}`);
@@ -145,7 +135,6 @@ ok(`${neighborhoods.length} separate neighborhoods: ${neighborhoods.map(n => {
   return `${short}(${n.memberIds.length})`;
 }).join(', ')}`);
 
-// 6. Property-linked hubs stay compact (OntoCode VOWL) — not canvas-wide, not glued
 const placed = placeVowlNeighborhoods(neighborhoods, 1200, 800, vn, ve);
 const subclassPairs = new Set<string>();
 const propLinked = new Set<string>();
@@ -171,7 +160,7 @@ for (let i = 0; i < classHubIds.length; i++) {
     if (!pa || !pb) continue;
     const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
     minHubDist = Math.min(minHubDist, d);
-    // Only score pairs that share a direct property edge
+
     const linked = ve.some(
       e => e.type === 'propertyRelation' &&
         ((e.from === a && e.to === b) || (e.from === b && e.to === a))
@@ -187,7 +176,6 @@ if (maxLinkedDist > 900) {
 }
 ok(`Compact property-hub layout (min ${minHubDist === Infinity ? 'n/a' : minHubDist.toFixed(0)}px, linked max ${maxLinkedDist.toFixed(0)}px)`);
 
-// 7. Subclass children sit on concentric rings outside the property star (~195 with empty inner)
 const OUTER_MIN = 200;
 const OUTER_MAX = 320;
 const INNER_MIN = 110;
@@ -215,7 +203,7 @@ if (agentHub && docHub) {
     if (d < OUTER_MIN || d > OUTER_MAX) fail(`Image (subclass) should sit on OUTER ring (~195px), got ${d.toFixed(0)}`);
     ok(`Image on OUTER subclass ring around Document (${d.toFixed(0)}px)`);
   }
-  // Literals around Person should be INNER (~100px base)
+
   const geekEdge = ve.find(e => e.label === 'geekcode');
   if (geekEdge && personPos) {
     const litPos = placed.get(geekEdge.to) || placed.get(geekEdge.from);

@@ -17,29 +17,6 @@ import self.research.ontology.auth.service.StripeService;
 
 import java.time.LocalDateTime;
 
-/**
- * Receives and processes Stripe webhook events.
- *
- * Security design:
- * 1. This endpoint is explicitly excluded from JWT authentication (see SecurityConfig).
- * 2. EVERY request is validated against the Stripe-Signature header before processing.
- *    Requests with invalid or missing signatures are rejected with HTTP 400.
- * 3. The raw request body bytes are passed directly to the signature verifier —
- *    no deserialization occurs before verification.
- * 4. Idempotency: each event ID is stored in MongoDB. Duplicate events are silently ignored.
- * 5. Response timing: we always respond quickly (200/400) regardless of processing outcome
- *    to prevent Stripe from retrying valid events due to slow handlers.
- *
- * Billing sync model (high level):
- * - Subscription state is driven primarily by Stripe webhooks (subscription + invoice events).
- * - Card payments typically settle immediately; US bank debits (ACH) can take several days.
- *   While pending, Stripe may emit {@code invoice.payment_action_required} or leave the invoice open;
- *   when funds settle you receive {@code invoice.paid} / {@code invoice.payment_succeeded}.
- * - If a delayed debit ultimately fails, {@code invoice.payment_failed} runs the same path as cards:
- *   we mark the account {@code past_due}, sync workspaces, and email the billing contact.
- * - For full reconciliation beyond this (disputes, partial refunds, Connect), extend handlers and
- *   consider periodic reconciliation jobs against the Stripe API.
- */
 @RestController
 @RequestMapping("/api/billing")
 public class StripeWebhookController {
@@ -54,18 +31,11 @@ public class StripeWebhookController {
         this.stripeEventRepository = stripeEventRepository;
     }
 
-    /**
-     * Stripe webhook receiver.
-     *
-     * @param payload   raw HTTP body (must be the original bytes, not parsed)
-     * @param sigHeader Stripe-Signature header value
-     */
     @PostMapping("/webhook")
     public ResponseEntity<String> handleWebhook(
             @RequestBody byte[] payload,
             @RequestHeader("Stripe-Signature") String sigHeader) {
 
-        // ── Step 1: Verify Stripe signature ──────────────────────────────────
         Event event;
         try {
             event = stripeService.constructWebhookEvent(payload, sigHeader);
@@ -74,7 +44,6 @@ public class StripeWebhookController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid signature");
         }
 
-        // ── Step 2: Atomic idempotency lock via unique index ────────────────
         StripeEvent record = new StripeEvent(event.getId(), event.getType());
         record.setStatus("processing");
         try {
@@ -84,7 +53,6 @@ public class StripeWebhookController {
             return ResponseEntity.ok("Already processed");
         }
 
-        // ── Step 3: Dispatch to handler ───────────────────────────────────────
         try {
             dispatch(event);
             record.setStatus("processed");
@@ -94,14 +62,13 @@ public class StripeWebhookController {
             record.setStatus("failed");
             record.setErrorMessage(e.getMessage());
             record.setProcessedAt(LocalDateTime.now());
-            // Persist failure record, then return 200 so Stripe doesn't retry indefinitely.
-            // Failures should be investigated via the stripe_events collection.
+
         }
 
         try {
             stripeEventRepository.save(record);
         } catch (Exception e) {
-            // Do not force Stripe retries for persistence issues after processing.
+
             log.error("Failed to persist final status for Stripe event {}: {}", event.getId(), e.getMessage(), e);
         }
         return ResponseEntity.ok("Received");

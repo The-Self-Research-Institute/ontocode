@@ -15,8 +15,7 @@ public class SecurityConfig {
     @Bean
     public SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
         http
-                // CORS is handled entirely by corsEarlySetFilter (WebFilter at HIGHEST_PRECEDENCE),
-                // which runs before Spring Security and handles preflight directly.
+
                 .cors(cors -> cors.disable())
 
                 .csrf(csrf -> csrf.disable())

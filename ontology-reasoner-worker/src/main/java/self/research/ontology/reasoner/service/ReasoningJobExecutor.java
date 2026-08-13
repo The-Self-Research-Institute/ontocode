@@ -168,7 +168,6 @@ public class ReasoningJobExecutor {
                     .map(OWLClassExpression::asOWLClass)
                     .collect(Collectors.toList());
 
-            // Typed to both C and complementOf(C)
             for (OWLClass namedType : namedTypes) {
                 if (assertedTypes.contains(df.getOWLObjectComplementOf(namedType))) {
                     Map<String, Object> issue = new HashMap<>();
@@ -182,7 +181,6 @@ public class ReasoningJobExecutor {
                 }
             }
 
-            // Typed to two classes declared disjoint with each other
             for (int i = 0; i < namedTypes.size(); i++) {
                 OWLClass typeA = namedTypes.get(i);
                 Set<OWLClass> disjointWithA = ontology.getDisjointClassesAxioms(typeA).stream()
@@ -276,12 +274,6 @@ public class ReasoningJobExecutor {
         }
     }
 
-    /**
-     * Same contract as the synchronous /reasoner/{projectId}/inferred-axioms endpoint
-     * (ReasonerService.getInferredAxioms + ReasonerController.formatAxiom in
-     * ontology-plugin-service) — kept in parity so callers get identical field names
-     * regardless of whether the worker or the request thread computed the result.
-     */
     private Map<String, Object> executeInferredAxioms(ReasoningJob job) throws Exception {
         ReasonerType type = parseReasonerType(job.getReasonerType());
         try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
@@ -447,13 +439,11 @@ public class ReasoningJobExecutor {
         return entity.getIRI().getShortForm();
     }
 
-    // ─── Hierarchy job implementations ───────────────────────────────────────
-
     private static final int INITIAL_HIERARCHY_DEPTH = 3;
 
     private Map<String, Object> executeHierarchy(ReasoningJob job) throws Exception {
         ReasonerType type = parseReasonerType(job.getReasonerType());
-        // HermiT binary-compat: use Openllet; ELK is fine for class hierarchy
+
         if (type == ReasonerType.HERMIT) type = ReasonerType.OPENLLET;
         try (OntologySessionService.ReasoningSession session =
                      sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
@@ -487,7 +477,7 @@ public class ReasoningJobExecutor {
 
     private Map<String, Object> executeObjPropHierarchy(ReasoningJob job) throws Exception {
         ReasonerType type = parseReasonerType(job.getReasonerType());
-        // ELK has no property hierarchy — use Openllet
+
         if (type == ReasonerType.ELK || type == ReasonerType.HERMIT) type = ReasonerType.OPENLLET;
         try (OntologySessionService.ReasoningSession session =
                      sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {

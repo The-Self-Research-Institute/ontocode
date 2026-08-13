@@ -31,67 +31,50 @@ public class User {
     private Set<String> roles = new HashSet<>();
     private boolean enabled = false;
 
-    // Email verification
     private String verificationToken;
     private LocalDateTime verificationTokenExpiry;
 
-    // Password reset
     private String passwordResetToken;
     private LocalDateTime passwordResetTokenExpiry;
 
-    // Account lockout
     private int failedLoginAttempts = 0;
     private LocalDateTime lockoutEndTime;
 
-    // Audit fields
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime lastLoginAt;
 
-    // Last opened context (for auto-restore across devices)
     private String lastOpenedProjectId;
     private String lastOpenedProjectName;
     private String lastOpenedFileId;
     private String lastOpenedFileName;
 
-    // Stripe Billing
     private String stripeCustomerId;
     private String stripeSubscriptionId;
-    private String subscriptionStatus;   // active, trialing, past_due, canceled, unpaid
-    private String subscriptionPlanId;   // Stripe price ID
-    private String subscriptionPlanName; // FREE, PRO, ENTERPRISE
-    private String billingInterval;      // monthly, yearly
+    private String subscriptionStatus;
+    private String subscriptionPlanId;
+    private String subscriptionPlanName;
+    private String billingInterval;
     private LocalDateTime subscriptionCurrentPeriodEnd;
     private boolean autoRenewEnabled = true;
     private LocalDateTime subscriptionCanceledAt;
-    /**
-     * Set to true the first time this account creates ANY paid subscription
-     * (whether or not the trial completed). Stripe itself does not track
-     * trial eligibility per customer, so we enforce one-trial-per-account
-     * server-side: if this is true, {@code setTrialPeriodDays} is omitted on
-     * subsequent subscription creations. Bug #39 / #40.
-     */
+
     private boolean hasUsedFreeTrial = false;
     private LocalDateTime firstSubscriptionAt;
-    // Pending billing interval downgrade — annual→monthly queued for next renewal
+
     private String pendingBillingInterval;
     private LocalDateTime pendingBillingIntervalDate;
-    // Pending checkout lock — cleared once checkout.session.completed fires
+
     private String pendingCheckoutSessionId;
     private LocalDateTime pendingCheckoutCreatedAt;
-    // Subscription-create lock — claimed atomically to prevent a double-submit
-    // (e.g. retried /subscribe request) from creating two Stripe subscriptions.
-    // Cleared once the create attempt finishes (success or failure); stale
-    // locks expire after StripeService.CREATION_LOCK_TTL_SECONDS.
+
     private LocalDateTime subscriptionCreationLockedAt;
 
-    // Constructors
     public User() {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
     }
 
-    // Account lockout methods
     public boolean isAccountLocked() {
         if (lockoutEndTime == null) {
             return false;
@@ -99,7 +82,7 @@ public class User {
         if (LocalDateTime.now().isBefore(lockoutEndTime)) {
             return true;
         }
-        // Auto-unlock if time has passed
+
         lockoutEndTime = null;
         failedLoginAttempts = 0;
         return false;
@@ -118,14 +101,13 @@ public class User {
         this.lockoutEndTime = null;
     }
 
-    // Token expiration methods
     public boolean isVerificationTokenExpired() {
-        return verificationTokenExpiry != null && 
+        return verificationTokenExpiry != null &&
                LocalDateTime.now().isAfter(verificationTokenExpiry);
     }
 
     public boolean isPasswordResetTokenExpired() {
-        return passwordResetTokenExpiry != null && 
+        return passwordResetTokenExpiry != null &&
                LocalDateTime.now().isAfter(passwordResetTokenExpiry);
     }
 
@@ -139,7 +121,6 @@ public class User {
         this.passwordResetTokenExpiry = null;
     }
 
-    // Getters and Setters
     public String getId() {
         return id;
     }

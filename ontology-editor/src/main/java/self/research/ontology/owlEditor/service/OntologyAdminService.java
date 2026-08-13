@@ -224,20 +224,20 @@ public class OntologyAdminService {
 
     public void updatePrefixes(String projectId, Map<String, String> prefixes) {
         try (RepositoryConnection conn = datasetService.getConnection()) {
-            // Remove prefixes that were explicitly set to empty
+
             for (Map.Entry<String, String> entry : prefixes.entrySet()) {
                 String prefix = entry.getKey();
                 if (prefix != null && prefix.endsWith(":")) {
                     prefix = prefix.substring(0, prefix.length() - 1);
                 }
-                
+
                 if (entry.getValue() == null || entry.getValue().isBlank()) {
                     if (prefix != null) {
                         conn.removeNamespace(prefix);
                     }
                 }
             }
-            // Set/update prefixes with values
+
             for (Map.Entry<String, String> entry : prefixes.entrySet()) {
                 String prefix = entry.getKey();
                 if (prefix != null && prefix.endsWith(":")) {

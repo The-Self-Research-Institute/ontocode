@@ -40,22 +40,21 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
     try {
       const response = await apiClient.get(`/api/shares/project/${projectId}`);
       console.log('[ShareDialog] Fetch response:', response);
-      
+
       if (response && response.share) {
         setShareData(response.share);
       } else if (response && response.success === false) {
-        // Share doesn't exist, create new one
+
         console.log('[ShareDialog] No share found, creating new one');
         await createShare();
       } else {
-        // Share doesn't exist, create new one
+
         console.log('[ShareDialog] No share found, creating new one');
         await createShare();
       }
     } catch (err: any) {
       console.error('[ShareDialog] Failed to fetch share data:', err);
-      // If share doesn't exist (404, 500, or any error), create it
-      // Backend may return 500 if share record doesn't exist
+
       if (err?.status === 404 || err?.status === 500 || err?.message?.includes('not found')) {
         console.log('[ShareDialog] Share not found or error occurred, creating new one');
         await createShare();
@@ -77,7 +76,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
         permission: 'view'
       });
       console.log('[ShareDialog] Create response:', response);
-      
+
       if (response && response.share) {
         setShareData(response.share);
       } else {
@@ -85,7 +84,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
       }
     } catch (err: any) {
       console.error('[ShareDialog] Failed to create share:', err);
-      const errorMsg = err?.response?.status === 500 
+      const errorMsg = err?.response?.status === 500
         ? 'Server error: Please ensure backend services are running'
         : (err?.message || 'Unknown error');
       setError('Failed to create share link: ' + errorMsg);
@@ -95,7 +94,6 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
   const addEmail = async () => {
     if (!newEmail || !shareData) return;
 
-    // Basic email validation
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
       setError('Please enter a valid email address');
       return;
@@ -103,7 +101,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
 
     setIsLoading(true);
     setError('');
-    
+
     try {
       console.log('[ShareDialog] Adding email:', newEmail, 'with permission:', selectedPermission);
       const response = await apiClient.post('/api/shares/add-email', {
@@ -112,7 +110,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
         permission: selectedPermission
       });
       console.log('[ShareDialog] Add email response:', response);
-      
+
       if (response && response.share) {
         setShareData(response.share);
         setNewEmail('');
@@ -133,7 +131,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
 
     setIsLoading(true);
     setError('');
-    
+
     try {
       console.log('[ShareDialog] Removing email:', email);
       const response = await apiClient.post('/api/shares/remove-email', {
@@ -141,7 +139,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
         email
       });
       console.log('[ShareDialog] Remove email response:', response);
-      
+
       if (response && response.share) {
         setShareData(response.share);
       } else {
@@ -157,7 +155,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
 
   const copyLink = () => {
     if (!shareData) return;
-    
+
     const fullLink = `${window.location.origin}/share/${shareData.shareLink}`;
     navigator.clipboard.writeText(fullLink).then(() => {
       setIsCopied(true);
@@ -188,7 +186,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
           </div>
         ) : (
           <>
-            {/* Add Email Section */}
+            {}
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Mail size={14} className="inline mr-1" />
@@ -224,7 +222,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
               </p>
             </div>
 
-            {/* Shared With List */}
+            {}
             {shareData && shareData.sharedWithEmails.length > 0 && (
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -248,14 +246,14 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
               </div>
             )}
 
-            {/* Error Message */}
+            {}
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
 
-            {/* Close Button */}
+            {}
             <div className="flex justify-end">
               <button
                 onClick={onClose}

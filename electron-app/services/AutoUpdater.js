@@ -1,7 +1,4 @@
-/**
- * Auto-update via electron-updater (generic provider).
- * Checks the OntoCode API for latest.yml; user must click to download/install.
- */
+
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -52,7 +49,6 @@ function updaterCacheDir() {
     return path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'ontocode-desktop-updater');
 }
 
-/** Resolve the downloaded NSIS installer from electron-updater's cache. */
 function resolveCachedInstallerPath() {
     const cacheDir = updaterCacheDir();
     const pendingDir = path.join(cacheDir, 'pending');
@@ -80,7 +76,6 @@ function resolveCachedInstallerPath() {
     return null;
 }
 
-/** Windows CreateProcess often refuses extensionless PE files — copy to .exe first. */
 function ensureInstallerExePath(sourcePath) {
     if (sourcePath.toLowerCase().endsWith('.exe')) return sourcePath;
     const dest = path.join(path.dirname(sourcePath), 'OntoCode-Update-Installer.exe');
@@ -110,7 +105,6 @@ function spawnDetached(cmd, args) {
     });
 }
 
-/** Launch NSIS installer directly (bypasses electron-updater path/extension bugs). */
 async function launchCachedInstaller(installerPath) {
     const exePath = ensureInstallerExePath(installerPath);
     const args = ['--updated', '--force-run'];

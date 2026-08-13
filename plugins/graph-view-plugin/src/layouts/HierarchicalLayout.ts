@@ -16,11 +16,7 @@ export interface HierarchicalLayoutOptions {
   levelSeparation?: number;
   siblingSeparation?: number;
   orientation?: 'vertical' | 'horizontal';
-  /**
-   * For multi-parent (DAG) hierarchies, repeat the child under each parent.
-   * Default true (matches OntoCode hierarchy behavior).
-   * Set false to assign the child to a single canonical parent (first asserted).
-   */
+
   duplicateMultiParent?: boolean;
 }
 
@@ -30,14 +26,6 @@ const HIERARCHY_TYPES: ReadonlySet<string> = new Set([
   'subPropertyOf'
 ]);
 
-/**
- * Hierarchical Tree Layout (Sugiyama-style).
- * Best for class hierarchies and taxonomies.
- *
- * Multi-parent safe: by default a child appearing under N parents is rendered
- * under each parent (positions averaged for the canonical instance).
- * Cycle safe: a global visited set prevents infinite recursion.
- */
 export function applyHierarchicalLayout(
   nodes: OntologyNode[],
   edges: OntologyEdge[],
@@ -55,7 +43,6 @@ export function applyHierarchicalLayout(
   const positionMap = new Map<string, { x: number; y: number }>();
   if (nodes.length === 0) return positionMap;
 
-  // Build parent → children adjacency (multi-parent safe).
   const parentToChildren = new Map<string, string[]>();
   const childToParents = new Map<string, string[]>();
   const nodeById = new Map<string, OntologyNode>();
@@ -75,7 +62,6 @@ export function applyHierarchicalLayout(
     else if (!p.includes(parent)) p.push(parent);
   }
 
-  // Roots = nodes with no parent in the hierarchy index.
   const roots: OntologyNode[] = nodes.filter(node => {
     const parents = childToParents.get(node.id);
     return !parents || parents.length === 0;
@@ -85,7 +71,6 @@ export function applyHierarchicalLayout(
     return applyGridLayout(nodes, width, height);
   }
 
-  // Build forest. Cycle safe via visited set; multi-parent honored via duplicateMultiParent.
   const positionsAccumulator = new Map<string, { sumX: number; sumY: number; count: number }>();
   const recordPosition = (id: string, x: number, y: number): void => {
     const existing = positionsAccumulator.get(id);
@@ -111,7 +96,7 @@ export function applyHierarchicalLayout(
     const treeNode: D3HierNode = { ...node, depth, children: [] };
     const childIds = parentToChildren.get(nodeId) ?? [];
     for (const childId of childIds) {
-      // If duplicate disabled, only follow the first asserted parent.
+
       if (!duplicateMultiParent) {
         const parents = childToParents.get(childId);
         if (parents && parents[0] !== nodeId) continue;
@@ -153,7 +138,6 @@ export function applyHierarchicalLayout(
     currentX += treeWidth + 100;
   }
 
-  // Average positions across multi-parent occurrences.
   for (const [id, agg] of positionsAccumulator) {
     positionMap.set(id, {
       x: agg.sumX / agg.count,
@@ -161,7 +145,6 @@ export function applyHierarchicalLayout(
     });
   }
 
-  // Place orphan nodes that never appeared (e.g. islands) in a fallback grid below.
   const placedCount = positionMap.size;
   if (placedCount < nodes.length) {
     const orphans = nodes.filter(n => !positionMap.has(n.id));
@@ -176,7 +159,6 @@ export function applyHierarchicalLayout(
   return positionMap;
 }
 
-/** Simple grid fallback used when no hierarchy edges exist. */
 function applyGridLayout(
   nodes: OntologyNode[],
   width: number,

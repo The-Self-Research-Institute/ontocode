@@ -15,10 +15,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Heap-aware LRU caches for editor reasoner GET paths (ontology + class hierarchy trees).
- * Oldest project evicted first (A before B) when heap is pressured or over capacity.
- */
 @Slf4j
 @Service
 public class EditorReasonerCacheService {
@@ -72,7 +68,6 @@ public class EditorReasonerCacheService {
         }
     }
 
-    /** Before loading a new project ontology — evict oldest (not necessarily this project) if needed. */
     public void prepareForOntologyLoad(String projectId) {
         synchronized (ontologies) {
             if (ontologies.containsKey(projectId)) {
@@ -121,10 +116,6 @@ public class EditorReasonerCacheService {
         }
     }
 
-    /**
-     * Stop reasoning for a project: dispose warmed reasoners and drop hierarchy cache,
-     * but keep the ontology object cached for faster restart.
-     */
     public void stopReasoning(String projectId, String reasonerType) {
         Optional<OWLOntology> ontOpt = getOntology(projectId);
         ontOpt.ifPresent(ont -> {

@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 public class EmailService {
 
     private static final Logger log = LoggerFactory.getLogger(EmailService.class);
-    
+
     @Autowired
     private JavaMailSender mailSender;
 
@@ -34,15 +34,12 @@ public class EmailService {
         log.info("✓ SMTP Email service initialized");
     }
 
-    /**
-     * Send invitation email to the invitee
-     */
     public void sendInvitationEmail(self.research.ontology.auth.model.Invitation invitation) {
-        // Generate both VS Code extension and webview links using configured base URL
+
         String webviewLink = baseUrl + "/?token=" + invitation.getInvitationToken();
-        // Use correct extension identifier: publisher.extensionName
+
         String vscodeInvitationLink = "vscode://self.ontocode-extension/invite?token=" + invitation.getInvitationToken();
-        
+
         String htmlContent = String.format("""
             <!DOCTYPE html>
             <html>
@@ -149,24 +146,24 @@ public class EmailService {
                         <p><strong>%s</strong> (%s) has invited you to join the workspace <strong>"%s"</strong> on OntoCode.</p>
                         <p>OntoCode is a collaborative ontology editor that helps teams create and manage knowledge graphs together.</p>
                         <p>Your assigned role: <span class="badge">%s</span></p>
-                        
+
                         <div class="token-box">
                             <strong>🔑 Your Invitation Token:</strong>
                             <div class="token-value">%s</div>
                             <p style="margin: 8px 0 0 0; font-size: 12px; color: #92400e;">Copy this token to accept the invitation via VS Code Command Palette</p>
                         </div>
-                        
+
                         <div class="info-box">
                             <strong>🎯 Choose how to accept:</strong>
                             <p style="margin: 10px 0 5px 0; font-size: 14px;">For the best experience with VS Code integration:</p>
                         </div>
-                        
+
                         <div class="options">
                             <a href="%s" class="button" style="color: white; text-decoration: none;">🚀 Open in VS Code</a>
                             <br>
                             <a href="%s" class="button button-secondary" style="color: white; text-decoration: none;">🌐 Open in Webview</a>
                         </div>
-                        
+
                         <div class="steps">
                             <strong>📋 Alternative: Manual Setup via Command Palette</strong>
                             <p style="margin: 10px 0 5px 0; font-size: 13px;">If the buttons don't work, follow these steps in VS Code:</p>
@@ -178,7 +175,7 @@ public class EmailService {
                                 <li class="step-item">Press Enter to accept the invitation</li>
                             </ol>
                         </div>
-                        
+
                         <div style="background-color: #f9fafb; padding: 15px; border-radius: 6px; margin: 20px 0;">
                             <p style="margin: 0 0 10px 0; font-size: 13px; color: #6b7280;"><strong>Direct Links:</strong></p>
                             <p style="margin: 5px 0 2px 0; font-size: 11px; color: #6b7280;">Webview Link:</p>
@@ -186,7 +183,7 @@ public class EmailService {
                             <p style="margin: 5px 0 2px 0; font-size: 11px; color: #6b7280;">VS Code Deep Link:</p>
                             <p style="margin: 0; font-size: 12px; word-break: break-all; color: #4b5563; font-family: monospace; background: white; padding: 8px; border-radius: 4px;">%s</p>
                         </div>
-                        
+
                         <p class="footer">
                             If you didn't expect this invitation, you can safely ignore this email.
                         </p>
@@ -211,10 +208,10 @@ public class EmailService {
             log.info("📧 Webview link: {}", webviewLink);
             log.info("📧 VS Code invitation link: {}", vscodeInvitationLink);
             log.info("📧 From email: {}", fromEmail);
-            
+
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
+
             helper.setFrom(fromEmail, "OntoCode Team");
             helper.setTo(invitation.getInviteeEmail());
             helper.setSubject(String.format("You're invited to join %s on OntoCode", invitation.getWorkspaceName()));
@@ -237,12 +234,9 @@ public class EmailService {
         }
     }
 
-    /**
-     * Send email verification link to user
-     */
     public void sendVerificationEmail(String to, String token) {
         String verificationUrl = baseUrl + "/verify-email?token=" + token;
-        
+
         String htmlContent = String.format("""
             <!DOCTYPE html>
             <html>
@@ -307,10 +301,10 @@ public class EmailService {
 
         try {
             log.info("Sending verification email to: {}", to);
-            
+
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
+
             helper.setFrom(fromEmail, "OntoCode Team");
             helper.setTo(to);
             helper.setSubject("OntoCode: Please Verify Your Email Address");
@@ -327,12 +321,9 @@ public class EmailService {
         }
     }
 
-    /**
-     * Send password reset link to user
-     */
     public void sendPasswordResetEmail(String to, String token) {
         String resetUrl = baseUrl + "/reset-password?token=" + token;
-        
+
         String htmlContent = String.format("""
             <!DOCTYPE html>
             <html>
@@ -406,10 +397,10 @@ public class EmailService {
 
         try {
             log.info("Sending password reset email to: {}", to);
-            
+
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
+
             helper.setFrom(fromEmail, "OntoCode Team");
             helper.setTo(to);
             helper.setSubject("OntoCode: Password Reset Request");
@@ -426,9 +417,6 @@ public class EmailService {
         }
     }
 
-    /**
-     * Send password change notification email
-     */
     public void sendPasswordChangeEmail(String to, String username) {
         String htmlContent = String.format("""
             <!DOCTYPE html>
@@ -519,17 +507,17 @@ public class EmailService {
                 </div>
             </body>
             </html>
-            """, 
+            """,
             username,
             java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("MMMM dd, yyyy 'at' hh:mm a"))
         );
 
         try {
             log.info("Sending password change notification email to: {}", to);
-            
+
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            
+
             helper.setFrom(fromEmail, "OntoCode Security");
             helper.setTo(to);
             helper.setSubject("OntoCode: Password Changed Successfully");
@@ -545,10 +533,6 @@ public class EmailService {
             throw new RuntimeException("Failed to send password change email", e);
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Billing / Subscription emails
-    // ─────────────────────────────────────────────────────────────────────────
 
     public void sendTrialStartedEmail(String to, String username, String planName, String trialEndDate, String billingPortalUrl) {
         String plan = toDisplayName(planName);
@@ -798,10 +782,6 @@ public class EmailService {
         sendHtml(to, "OntoCode " + plan + " renews on " + renewalDate + " — " + amountFormatted, html);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Private helpers
-    // ─────────────────────────────────────────────────────────────────────────
-
     private String toDisplayName(String planName) {
         if (planName == null) return "Professional";
         return switch (planName.toUpperCase()) {
@@ -859,9 +839,6 @@ public class EmailService {
         }
     }
 
-    /**
-     * Notify a user that they have been granted access to a project.
-     */
     public void sendProjectAccessEmail(String toEmail, String toUsername, String projectName,
                                        String role, String grantedByUsername) {
         String projectUrl = baseUrl + "/projects";

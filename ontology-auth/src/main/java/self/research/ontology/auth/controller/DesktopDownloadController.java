@@ -34,25 +34,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Serves OntoCode Desktop installer files stored in GridFS.
- *
- * Upload (admin only):
- *   POST /api/downloads/upload?platform=windows-x64&version=1.0.1&releaseNotes=...
- *
- * Download (public — no auth required):
- *   GET  /api/downloads/windows-x64
- *
- * Version / update feed (public):
- *   GET  /api/downloads/info
- *   GET  /api/downloads/updates/win/latest.yml   (electron-updater generic provider)
- *
- * Analytics (public, privacy-friendly — IP stored as SHA-256 hash only):
- *   POST /api/downloads/track?platform=windows-x64&event=page_view&clientOs=macos
- *
- * List available (public):
- *   GET  /api/downloads
- */
 @RestController
 @RequestMapping("/api/downloads")
 @CrossOrigin(originPatterns = "*")
@@ -133,10 +114,6 @@ public class DesktopDownloadController {
             String contentType = detectContentType(filename);
             long contentLength = file.getLength();
 
-            // Advertise + honor byte-range requests so download managers (aria2, browsers,
-            // electron-updater) can resume and parallelize instead of falling back to one
-            // slow connection. GridFsResource's InputStream supports efficient seeking
-            // (GridFSDownloadStream.skip is chunk-aware), so this isn't a naive read-and-discard.
             String rangeHeader = request.getHeader(HttpHeaders.RANGE);
             if (rangeHeader == null) {
                 return ResponseEntity.ok()
@@ -161,8 +138,6 @@ public class DesktopDownloadController {
                     .build();
             }
 
-            // Only the first range is honored — download managers issue one range per request
-            // rather than a single multi-range request, so this covers the real-world case.
             ResourceRegion region = ranges.get(0).toResourceRegion(resource);
             return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")

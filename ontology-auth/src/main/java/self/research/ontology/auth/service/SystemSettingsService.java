@@ -16,8 +16,6 @@ public class SystemSettingsService {
 
     private final SystemSettingsRepository repo;
 
-    // In-memory cache — refreshed on every write; reads always hit this first.
-    // Stale for at most one JVM restart (acceptable: settings change rarely).
     private final AtomicReference<SystemSettings> cache = new AtomicReference<>();
 
     public SystemSettingsService(SystemSettingsRepository repo) {
@@ -46,18 +44,15 @@ public class SystemSettingsService {
         return saved;
     }
 
-    /** True when maintenance is currently active and the email is NOT in the allowed list. */
     public boolean isBlockedByMaintenance(String email) {
         SystemSettings s = get();
         return s.isMaintenanceCurrentlyActive() && !s.isAllowedDuringMaintenance(email);
     }
 
-    /** True when the email's domain is in the enterprise domain bypass list. */
     public boolean isEnterpriseDomain(String email) {
         return get().isEnterpriseDomain(email);
     }
 
-    /** True when the email matches an enterprise domain or explicit email allowlist. */
     public boolean isEnterpriseBypass(String email) {
         return get().isEnterpriseBypass(email);
     }

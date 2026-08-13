@@ -1,6 +1,4 @@
-/**
- * Multipart upload with byte-level progress (fetch does not expose upload progress).
- */
+
 
 export interface UploadProgressInfo {
   percent: number;
@@ -103,7 +101,6 @@ export function uploadFormDataWithProgress(
   });
 }
 
-/** Splits raw bytes into fixed-size pieces — mirrors uploadOptimizer.ts's splitIntoChunks. */
 function splitIntoChunks(data: Uint8Array, chunkSize: number): Uint8Array[] {
   const chunks: Uint8Array[] = [];
   for (let offset = 0; offset < data.length; offset += chunkSize) {
@@ -117,14 +114,6 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Uploads a large payload in fixed-size chunks to /api/ontology/upload-chunk/{projectId}, so no
- * single HTTP request ever approaches a reverse-proxy's size cap (e.g. Cloudflare's 100MB limit)
- * regardless of total file size. Used by the browser/Electron desktop upload path (the VS Code
- * extension host has its own equivalent in extension.ts, since it can't import browser-only code).
- * Returns the same {ok, status, text} shape as uploadFormDataWithProgress so callers can treat
- * chunked and single-shot uploads identically.
- */
 export async function uploadBlobInChunks(
   projectId: string,
   data: Uint8Array,

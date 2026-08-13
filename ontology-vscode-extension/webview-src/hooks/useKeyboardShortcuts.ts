@@ -19,12 +19,6 @@ interface UseKeyboardShortcutsOptions {
   enabled?: boolean;
 }
 
-/**
- * Hook to manage keyboard shortcuts with VSCode/browser awareness
- *
- * This hook automatically detects if running in VSCode extension context
- * and filters out shortcuts that would conflict with VSCode/browser shortcuts.
- */
 export const useKeyboardShortcuts = ({ shortcuts, enabled = true }: UseKeyboardShortcutsOptions) => {
   const isVSCode = typeof window !== 'undefined' && !!(window as any).vscode;
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform);
@@ -32,17 +26,15 @@ export const useKeyboardShortcuts = ({ shortcuts, enabled = true }: UseKeyboardS
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     if (!enabled) return;
 
-    // Ignore if user is typing in an input/textarea
     const target = event.target as HTMLElement;
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
       return;
     }
 
     for (const shortcut of shortcuts) {
-      // Skip disabled shortcuts
+
       if (shortcut.enabled === false) continue;
 
-      // Skip shortcuts that should not work in VSCode
       if (isVSCode && shortcut.preventDefaultInVSCode) continue;
 
       const key = event.key.toLowerCase();
@@ -76,9 +68,6 @@ export const useKeyboardShortcuts = ({ shortcuts, enabled = true }: UseKeyboardS
   };
 };
 
-/**
- * Get user-friendly keyboard shortcut display string
- */
 export const getShortcutDisplay = (shortcut: KeyboardShortcut, isMac: boolean = false): string => {
   const parts: string[] = [];
 
@@ -100,11 +89,8 @@ export const getShortcutDisplay = (shortcut: KeyboardShortcut, isMac: boolean = 
   return parts.join(isMac ? '' : '+');
 };
 
-/**
- * Default keyboard shortcuts (configurable)
- */
 export const DEFAULT_SHORTCUTS = {
-  // Entity Creation
+
   ADD_SUBCLASS: {
     id: 'add-subclass',
     name: 'Add Subclass',
@@ -131,7 +117,6 @@ export const DEFAULT_SHORTCUTS = {
     preventDefaultInVSCode: false
   },
 
-  // Entity Editing
   RENAME_ENTITY: {
     id: 'rename-entity',
     name: 'Rename Entity',
@@ -156,7 +141,6 @@ export const DEFAULT_SHORTCUTS = {
     preventDefaultInVSCode: false
   },
 
-  // Copy/Paste
   COPY_ENTITY: {
     id: 'copy-entity',
     name: 'Copy Entity',
@@ -182,7 +166,6 @@ export const DEFAULT_SHORTCUTS = {
     preventDefaultInVSCode: false
   },
 
-  // Navigation
   FOCUS_SEARCH: {
     id: 'focus-search',
     name: 'Focus Search',
@@ -210,7 +193,6 @@ export const DEFAULT_SHORTCUTS = {
     preventDefaultInVSCode: false
   },
 
-  // View Modes
   TOGGLE_ASSERTED: {
     id: 'toggle-asserted',
     name: 'Toggle Asserted View',
@@ -226,7 +208,6 @@ export const DEFAULT_SHORTCUTS = {
     preventDefaultInVSCode: false
   },
 
-  // Tabs
   NEXT_TAB: {
     id: 'next-tab',
     name: 'Next Tab',
@@ -245,7 +226,6 @@ export const DEFAULT_SHORTCUTS = {
     preventDefaultInVSCode: true // VSCode uses Ctrl+Shift+Tab
   },
 
-  // Save/Undo
   SAVE: {
     id: 'save',
     name: 'Save',

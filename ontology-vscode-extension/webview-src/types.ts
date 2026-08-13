@@ -1,8 +1,6 @@
 import { LucideIcon } from 'lucide-react';
 import React from 'react';
 
-// ============ Base Entity Types ============
-
 export interface TreeNode {
   id: string;
   label: string;
@@ -83,25 +81,23 @@ export interface Axiom {
   id: string;
   type: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith' | 'DisjointUnionOf' | 'HasKey' | 'Instance';
   definition: string;
-  // Fields for restrictions (returned by backend when axiom is a restriction)
+
   isRestriction?: boolean | string;
   propertyIri?: string;
   restrictionType?: 'some' | 'only' | 'min' | 'max' | 'exactly' | 'value';
   fillerIri?: string;
   cardinality?: string | number;
-  // Fields for complex class expressions (intersection, union, complement, oneOf)
+
   isComplex?: boolean | string;
   expressionType?: 'intersection' | 'union' | 'complement' | 'oneOf';
-  // Fields for DisjointUnionOf
+
   members?: string[];
-  // Fields for HasKey
+
   properties?: string[];
-  // Fields for inferred axioms
+
   isInferred?: boolean | string;
   ontologyIri?: string;
 }
-
-// ============ Metadata Types ============
 
 export interface OntologyMetadata {
   ontologyIRI?: string;
@@ -164,8 +160,6 @@ export interface ProjectStatus {
   updatedAt: string;
 }
 
-// ============ Usage Statistics ============
-
 export interface ClassUsage {
   instanceCount: number;
   subClassCount: number;
@@ -184,8 +178,6 @@ export interface AxiomUsage {
   axiomType: string;
   count: number;
 }
-
-// ============ SPARQL Types ============
 
 export interface SparqlQuery {
   id: string;
@@ -210,8 +202,6 @@ export interface SparqlQueryResult {
   };
 }
 
-// ============ SWRL Types ============
-
 export interface SwrlRule {
   id: string;
   projectId: string;
@@ -228,7 +218,7 @@ export interface ValidationResult {
   valid: boolean;
   errorMessage: string | null;
   suggestions?: string[];
-  
+
   isValid: boolean;
   orphanClasses?: string[];
   unusedProperties?: string[];
@@ -250,8 +240,6 @@ export interface ExecutionResponse {
   inferredAxioms: InferredAxiom[];
   errorMessage: string | null;
 }
-
-// ============ Neo4j Graph Types ============
 
 export interface OntologyClassNode {
   iri: string;
@@ -282,8 +270,6 @@ export interface ClassStatistics {
   subClassCount: number;
 }
 
-// ============ Plugin System Types ============
-
 export interface PluginContext {
   projectId: string;
   ontology?: OntologyMetadata | null;
@@ -311,8 +297,6 @@ export interface PluginSettings {
   };
 }
 
-// ============ UI Types ============
-
 export type SelectableItem = TreeNode | Property | Individual | { id: string; label: string, annotations?: Record<string, string> };
 
 export interface TabConfig {
@@ -321,16 +305,12 @@ export interface TabConfig {
   icon: LucideIcon;
 }
 
-// ============ Search Types ============
-
 export interface SearchResult {
   id: string;
   label: string;
   type: 'Class' | 'ObjectProperty' | 'DatatypeProperty' | 'Individual' | 'AnnotationProperty';
   score: number;
 }
-
-// ============ API Response Types ============
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -346,8 +326,6 @@ export interface PagedResponse<T> {
   pageSize: number;
   hasMore: boolean;
 }
-
-// ============ Form Types ============
 
 export interface CreateClassRequest {
   iri: string;
@@ -391,8 +369,6 @@ export interface PropertyAssertionRequest {
   datatypeIri?: string;
 }
 
-// ============ Import/Export Types ============
-
 export interface ImportOptions {
   format: 'RDF/XML' | 'Turtle' | 'N-Triples' | 'JSON-LD';
   clearExisting: boolean;
@@ -404,8 +380,6 @@ export interface ExportOptions {
   includeImports: boolean;
   includeInferredAxioms: boolean;
 }
-
-// ============ Reasoning Types ============
 
 export interface ReasonerConfig {
   name: 'HermiT' | 'Pellet' | 'ELK' | 'Openllet';
@@ -423,8 +397,6 @@ export interface ReasoningResult {
   inconsistencies?: string[];
   executionTimeMs: number;
 }
-
-// ============ Diff/Version Types ============
 
 export interface OntologyChange {
   id: string;
@@ -446,8 +418,6 @@ export interface OntologyVersion {
   changes: OntologyChange[];
 }
 
-// ============ Collaboration Types ============
-
 export interface User {
   id: string;
   username: string;
@@ -463,8 +433,6 @@ export interface ProjectPermission {
   grantedBy: string;
 }
 
-// ============ Notification Types ============
-
 export interface Notification {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
@@ -473,8 +441,6 @@ export interface Notification {
   timestamp: string;
   read: boolean;
 }
-
-// ============ Theme Types ============
 
 export interface Theme {
   id: string;
@@ -493,8 +459,6 @@ export interface Theme {
   };
 }
 
-// ============ Editor State Types ============
-
 export interface EditorState {
   selectedItem: SelectableItem | null;
   expandedNodes: string[];
@@ -505,8 +469,6 @@ export interface EditorState {
   undoStack: OntologyChange[];
   redoStack: OntologyChange[];
 }
-
-// ============ Configuration Types ============
 
 export interface AppConfig {
   backendUrl: string;

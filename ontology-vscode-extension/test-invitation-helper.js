@@ -1,32 +1,19 @@
-/**
- * Invitation Testing Helper Script for test-web
- * 
- * USAGE:
- * 1. Run: npm run test-web
- * 2. Open OntoCode editor window
- * 3. Open browser console (F12)
- * 4. Paste this entire file into the console
- * 5. Call: testInvitation('YOUR_TOKEN_HERE')
- * 
- * This script sends the invitation token directly to the OntoCode webview iframe.
- */
+
 
 function testInvitation(token, email = null) {
     console.log('🎫 Testing invitation flow with token:', token);
-    
-    // Check deployment type first
+
     const deploymentType = localStorage.getItem('deploymentType');
     console.log('📍 Current deployment type:', deploymentType || 'cloud (default)');
-    
+
     if (!deploymentType || deploymentType === 'cloud') {
         console.warn('⚠️  WARNING: Using cloud backend! For local testing, run:');
         console.warn('   localStorage.setItem("deploymentType", "self-hosted");');
         console.warn('   location.reload();');
     }
-    
-    // Find the OntoCode webview iframe
+
     const webviewFrame = document.querySelector('iframe[title*="OntoCode"]');
-    
+
     if (!webviewFrame) {
         console.error('❌ OntoCode webview not found!');
         console.log('💡 Make sure:');
@@ -34,63 +21,59 @@ function testInvitation(token, email = null) {
         console.log('   2. The webview is fully loaded');
         return false;
     }
-    
-    // Send invitation token to webview
+
     const message = {
         type: 'invitationToken',
         token: token
     };
-    
+
     if (email) {
         message.email = email;
     }
-    
+
     webviewFrame.contentWindow.postMessage(message, '*');
-    
+
     console.log('✅ Sent invitation token to webview');
     console.log('📧 Token:', token);
     if (email) console.log('📧 Email:', email);
     console.log('⏳ Waiting for InviteAcceptPage to render...');
     console.log('👀 Watch the Network tab to see API call to /api/invitations/details/' + token);
-    
+
     return true;
 }
 
 function clearInvitation() {
     console.log('🧹 Clearing invitation state...');
-    
+
     const webviewFrame = document.querySelector('iframe[title*="OntoCode"]');
-    
+
     if (!webviewFrame) {
         console.error('❌ OntoCode webview not found!');
         return false;
     }
-    
+
     webviewFrame.contentWindow.postMessage({
         type: 'clearInvitationState'
     }, '*');
-    
+
     console.log('✅ Sent clear invitation message');
     return true;
 }
 
-// Quick test with mock token
 function quickTest() {
     const mockToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpbnZpdGF0aW9uSWQiOiJ0ZXN0LWlkIiwiZW1haWwiOiJ0ZXN0QGV4YW1wbGUuY29tIiwicm9sZSI6Im1lbWJlciJ9.test-signature';
     return testInvitation(mockToken, 'test@example.com');
 }
 
-// Helper to check backend connectivity
 function checkBackend() {
     console.log('🔍 Checking backend configuration...\n');
-    
+
     const deploymentType = localStorage.getItem('deploymentType');
     console.log('📍 Deployment type:', deploymentType || 'cloud (default)');
-    
+
     const baseUrl = deploymentType === 'self-hosted' ? 'http://localhost:80' : 'https://ontocodeapi.selfresearch.org';
     console.log('🌐 Base URL:', baseUrl);
-    
-    // Test connectivity
+
     console.log('\n🧪 Testing API connectivity...');
     fetch(baseUrl + '/api/auth/health')
         .then(response => {
@@ -106,7 +89,6 @@ function checkBackend() {
         });
 }
 
-// Helper to set local backend
 function useLocalBackend() {
     localStorage.setItem('deploymentType', 'self-hosted');
     console.log('✅ Set to use local backend (self-hosted)');

@@ -15,8 +15,6 @@ import java.util.stream.Collectors;
 @Service
 public class PlanFeatureConfigService {
 
-    // Seed defaults — only used on first startup if the collection is empty.
-    // After that, all values are read from MongoDB and can be changed there.
     @Value("${plan.pro.monthly.price:59}")
     private int defaultProMonthlyPrice;
 
@@ -94,14 +92,13 @@ public class PlanFeatureConfigService {
     private void upsertConfig(String planId, int monthlyPrice, int annualDiscountPercent, int maxMembers,
                                List<String> features, List<String> limitations) {
         PlanFeatureConfig config = repo.findByPlanId(planId).orElse(new PlanFeatureConfig(planId, monthlyPrice, annualDiscountPercent, features, limitations));
-        
-        // Always update the prices and limits from environment config
+
         config.setMonthlyPrice(monthlyPrice);
         config.setAnnualDiscountPercent(annualDiscountPercent);
         config.setMaxMembers(maxMembers);
         config.setFeatures(features);
         config.setLimitations(limitations);
-        
+
         repo.save(config);
         log.info("Upserted plan config for: {} (${}/mo, {} members max)", planId, monthlyPrice, maxMembers);
     }

@@ -46,7 +46,6 @@ console.log('\n' + '='.repeat(60));
 console.log('📦  BUNDLE SIZE REPORT');
 console.log('='.repeat(60) + '\n');
 
-// Extension bundles
 const extensionBundle = getFileSize('dist/extension.js');
 const webBundle = getFileSize('dist/web/extension.js');
 const distTotal = getDirectorySize('dist');
@@ -57,21 +56,18 @@ console.log(`   Web (dist/web/extension.js):     ${formatBytes(webBundle)}`);
 console.log(`   Total dist/ folder:              ${formatBytes(distTotal)}`);
 console.log();
 
-// Webview builds
 const webviewDistSize = getDirectorySize('webview-src/dist');
 
 console.log('🔹 Webview Build:');
 console.log(`   webview-src/dist/:               ${formatBytes(webviewDistSize)}`);
 console.log();
 
-// TypeScript output
 const outSize = getDirectorySize('out');
 
 console.log('🔹 TypeScript Output (out/):');
 console.log(`   Size:                            ${formatBytes(outSize)}`);
 console.log();
 
-// VSIX package (if exists)
 const vsixFiles = fs.readdirSync('.').filter(f => f.endsWith('.vsix'));
 if (vsixFiles.length > 0) {
   console.log('🔹 VSIX Packages:');
@@ -90,7 +86,6 @@ if (vsixFiles.length > 0) {
   console.log();
 }
 
-// Totals
 const totalSize = distTotal + webviewDistSize + outSize;
 console.log('='.repeat(60));
 console.log('📊 TOTAL SIZE BREAKDOWN:');
@@ -102,13 +97,11 @@ console.log('   ' + '-'.repeat(56));
 console.log(`   TOTAL:                           ${formatBytes(totalSize)}`);
 console.log();
 
-// Limits
 console.log('⚠️  VSIX PACKAGE LIMITS:');
 console.log('   Default limit:                   25 MB');
 console.log('   Hard maximum:                    50 MB');
 console.log();
 
-// Recommendations
 console.log('💡 RECOMMENDATIONS:');
 if (extensionBundle > 500 * 1024) {
   console.log('   ⚠️  Extension bundle >500KB - consider analyzing with webpack-bundle-analyzer');

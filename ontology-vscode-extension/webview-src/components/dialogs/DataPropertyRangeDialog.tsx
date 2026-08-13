@@ -2,10 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import type { Datatype } from '../../types';
 
-/**
- * DataPropertyRangeDialog - dialog for selecting data property ranges
- */
-
 interface DataPropertyRangeDialogProps {
   isOpen: boolean;
   onClose: () => void;

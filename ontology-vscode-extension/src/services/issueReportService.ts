@@ -24,32 +24,24 @@ class IssueReportService {
     private editorUrl: string = 'http://localhost:8083'; // Default to self-hosted
 
     constructor() {
-        // Get or create output channel for logging
+
         this.outputChannel = vscode.window.createOutputChannel('OntoCode');
     }
 
-    /**
-     * Update the editor URL based on deployment type
-     */
     setEditorUrl(url: string): void {
         this.editorUrl = url;
         console.log('[IssueReportService] Editor URL updated to:', url);
     }
 
-    /**
-     * Log an error to the output channel and buffer
-     */
     logError(message: string, error?: Error): void {
         const timestamp = new Date().toISOString();
         const logEntry = `[${timestamp}] ERROR: ${message}${error ? '\n' + error.stack : ''}`;
-        
-        // Add to buffer
+
         this.errorLogBuffer.push(logEntry);
         if (this.errorLogBuffer.length > this.MAX_LOG_BUFFER_SIZE) {
             this.errorLogBuffer.shift(); // Remove oldest entry
         }
 
-        // Log to output channel
         if (this.outputChannel) {
             this.outputChannel.appendLine(logEntry);
         }
@@ -57,13 +49,10 @@ class IssueReportService {
         console.error(message, error);
     }
 
-    /**
-     * Log info to the output channel
-     */
     logInfo(message: string): void {
         const timestamp = new Date().toISOString();
         const logEntry = `[${timestamp}] INFO: ${message}`;
-        
+
         if (this.outputChannel) {
             this.outputChannel.appendLine(logEntry);
         }
@@ -71,24 +60,17 @@ class IssueReportService {
         console.log(message);
     }
 
-    /**
-     * Get recent error logs (last 50 entries or 5000 characters)
-     */
     getRecentErrorLogs(): string {
         const recentLogs = this.errorLogBuffer.slice(-50);
         let logsText = recentLogs.join('\n');
-        
-        // Limit to 5000 characters
+
         if (logsText.length > 5000) {
             logsText = '...(truncated)\n' + logsText.substring(logsText.length - 5000);
         }
-        
+
         return logsText || 'No recent errors logged';
     }
 
-    /**
-     * Collect system information
-     */
     getSystemInfo(extensionVersion: string): IssueReportData['systemInfo'] {
         return {
             osName: process.platform,
@@ -98,23 +80,17 @@ class IssueReportService {
         };
     }
 
-    /**
-     * Show the output channel
-     */
     showOutputChannel(): void {
         if (this.outputChannel) {
             this.outputChannel.show();
         }
     }
 
-    /**
-     * Validate Jira configuration (check if backend is reachable)
-     */
     async validateJiraConnection(): Promise<{ success: boolean; message: string }> {
         try {
             const url = `${this.editorUrl}/api/v1/issues/jira/validate`;
             console.log('[IssueReportService] Validating Jira connection at:', url);
-            
+
             const response = await fetch(url, {
                 method: 'GET'
                 // credentials: 'include' // Removed - not needed for JWT auth
@@ -133,12 +109,9 @@ class IssueReportService {
         }
     }
 
-    /**
-     * Get current project context
-     */
     getCurrentProjectContext(): { projectName?: string; ontologyFilePath?: string } {
         const activeEditor = vscode.window.activeTextEditor;
-        
+
         if (!activeEditor) {
             return {};
         }
@@ -146,28 +119,20 @@ class IssueReportService {
         const filePath = activeEditor.document.uri.fsPath;
         const fileName = activeEditor.document.fileName;
 
-        // Extract project name from workspace folder
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(activeEditor.document.uri);
         const projectName = workspaceFolder?.name;
 
-        // Only include ontology file path if it's an OWL/RDF file
         const isOntologyFile = /\.(owl|rdf|ttl|n3|nt)$/i.test(fileName);
         const ontologyFilePath = isOntologyFile ? filePath : undefined;
 
         return { projectName, ontologyFilePath };
     }
 
-    /**
-     * Clear error log buffer
-     */
     clearErrorLogs(): void {
         this.errorLogBuffer = [];
         this.logInfo('Error log buffer cleared');
     }
 
-    /**
-     * Dispose resources
-     */
     dispose(): void {
         if (this.outputChannel) {
             this.outputChannel.dispose();
@@ -176,5 +141,4 @@ class IssueReportService {
     }
 }
 
-// Export singleton instance
 export const issueReportService = new IssueReportService();

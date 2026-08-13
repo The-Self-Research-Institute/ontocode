@@ -15,11 +15,6 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
-/**
- * Resolves workspace ownership for FREE-plan enforcement.
- * File-level ontology projects use hierarchical IDs {@code proj-...--fileId}; the parent
- * {@code proj-...} row may hold {@code workspaceId} when the child document does not.
- */
 @Service
 public class WorkspaceOwnershipService {
 
@@ -37,10 +32,6 @@ public class WorkspaceOwnershipService {
         this.mongoTemplate = mongoTemplate;
     }
 
-    /**
-     * Resolve workspaceId for a single project id (tries composite id, then parent before first "--").
-     * Fail-soft on repository errors (same as legacy {@code CollaborativeEditController} helper).
-     */
     public Optional<String> resolveWorkspaceIdForProject(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return Optional.empty();
@@ -58,7 +49,7 @@ public class WorkspaceOwnershipService {
             }
             int sep = projectId.indexOf("--");
             String parentId = sep > 0 ? projectId.substring(0, sep) : "";
-            // Avoid useless lookups / loops for malformed ids (e.g. "--x", or empty parent)
+
             if (parentId.isBlank() || parentId.equals(projectId)) {
                 return Optional.empty();
             }
@@ -75,9 +66,6 @@ public class WorkspaceOwnershipService {
         return Optional.empty();
     }
 
-    /**
-     * True if userId matches workspace owner. Repository failures → false (deny FREE bypass).
-     */
     public boolean isUserOwnerOfWorkspace(String userId, String workspaceId) {
         if (userId == null || workspaceId == null || workspaceId.isBlank()) {
             return false;
@@ -95,9 +83,6 @@ public class WorkspaceOwnershipService {
         }
     }
 
-    /**
-     * True if the user owns the workspace associated with this project (direct or parent project doc).
-     */
     public boolean isUserOwnerOfProject(String userId, String projectId) {
         if (userId == null) {
             return false;
@@ -112,9 +97,6 @@ public class WorkspaceOwnershipService {
         }
     }
 
-    /**
-     * True if userId is an ADMIN member of the given workspace. Repository failures → false.
-     */
     public boolean isUserAdminOfWorkspace(String userId, String workspaceId) {
         if (userId == null || workspaceId == null || workspaceId.isBlank()) {
             return false;
@@ -130,13 +112,6 @@ public class WorkspaceOwnershipService {
         }
     }
 
-    /**
-     * True if the user is a workspace-level ADMIN for the workspace associated with this project
-     * (direct or parent project doc) — same "workspace admin = privileged everywhere" convention
-     * already used by ontology-auth's ProjectController (e.g. its getProjectFiles endpoint
-     * synthesizes userProjectRole="ADMIN" for these users), so the UI shows the Approve action to
-     * them. This is the project-scoped counterpart to isUserOwnerOfProject.
-     */
     public boolean isUserAdminOfProject(String userId, String projectId) {
         if (userId == null) {
             return false;
@@ -151,10 +126,6 @@ public class WorkspaceOwnershipService {
         }
     }
 
-    /**
-     * Extract workspaceId from request URI by scanning path segments {@code proj-*}
-     * (same semantics as legacy path walk: first segment that yields a workspace wins).
-     */
     public Optional<String> resolveWorkspaceIdFromRequestPath(String uri) {
         if (uri == null || uri.isBlank()) {
             return Optional.empty();
@@ -174,7 +145,7 @@ public class WorkspaceOwnershipService {
                 }
             }
         } catch (IllegalArgumentException e) {
-            // Malformed percent-encoding in URI — legacy path logged and returned null
+
             log.debug("resolveWorkspaceIdFromRequestPath decode failed uri={}: {}", uri, e.getMessage());
         } catch (Exception e) {
             log.debug("resolveWorkspaceIdFromRequestPath failed uri={}: {}", uri, e.getMessage());
@@ -182,11 +153,6 @@ public class WorkspaceOwnershipService {
         return Optional.empty();
     }
 
-    /**
-     * Returns true if the user's role in the given project is VIEWER (read-only).
-     * Uses the parent project ID (the proj-xxx segment before any "--" suffix).
-     * Fail-open on lookup errors so editor stays accessible if auth DB is temporarily unreachable.
-     */
     public boolean isViewerInProject(String userId, String projectId) {
         if (userId == null || projectId == null || projectId.isBlank()) return false;
         String parentProjectId = projectId.contains("--")
@@ -203,10 +169,6 @@ public class WorkspaceOwnershipService {
         }
     }
 
-    /**
-     * Returns true if the user's project role is DRAFT_EDITOR — can edit their personal
-     * draft copy and raise a pull request, but cannot write directly to the public ontology.
-     */
     public boolean isDraftEditorInProject(String userId, String projectId) {
         if (userId == null || projectId == null || projectId.isBlank()) return false;
         String parentProjectId = projectId.contains("--")
@@ -223,18 +185,10 @@ public class WorkspaceOwnershipService {
         }
     }
 
-    /**
-     * Returns true if the user can publish (write) to the main ontology graph — i.e. they are
-     * OWNER, ADMIN, or EDITOR in the project. Used to gate PR approval.
-     */
     public boolean canPublishToProject(String userId, String projectId) {
         if (userId == null || projectId == null || projectId.isBlank()) return false;
         if (isUserOwnerOfProject(userId, projectId)) return true;
-        // Workspace-level ADMINs are treated as project ADMINs everywhere else (e.g.
-        // ontology-auth's ProjectController synthesizes userProjectRole="ADMIN" for them,
-        // which is what makes the frontend show the Approve action to them in the first
-        // place) — without this check, a workspace admin who isn't also an explicit
-        // per-project member got a 403 here despite seeing the Approve button.
+
         if (isUserAdminOfProject(userId, projectId)) return true;
         String parentProjectId = projectId.contains("--")
                 ? projectId.substring(0, projectId.indexOf("--"))
@@ -251,9 +205,6 @@ public class WorkspaceOwnershipService {
         }
     }
 
-    /**
-     * Extract the first proj-* segment from the request path (used to resolve project role).
-     */
     public Optional<String> resolveProjectIdFromRequestPath(String uri) {
         if (uri == null || uri.isBlank()) return Optional.empty();
         try {
@@ -267,9 +218,6 @@ public class WorkspaceOwnershipService {
         return Optional.empty();
     }
 
-    /**
-     * workspaceId query param (if present) takes precedence over path resolution — same as legacy interceptor.
-     */
     public boolean isFreePlanUserOwner(String userId, String path, String workspaceIdQueryParam) {
         if (userId == null) {
             return false;

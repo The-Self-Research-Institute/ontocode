@@ -1,8 +1,4 @@
-/**
- * DOM-less d3-force layout that writes positions into a graphology graph.
- * Proves the "keep d3 as the layout source, let Sigma render" architecture;
- * the scale-up path for 50k+ nodes is graphology-layout-forceatlas2's worker.
- */
+
 
 import { useEffect } from 'react';
 import * as d3 from 'd3';
@@ -30,7 +26,6 @@ export function useHeadlessForceLayout(graph: Graph | null, enabled: boolean): v
       .alphaDecay(large ? 0.06 : 0.03)
       .alphaMin(large ? 0.01 : 0.003);
 
-    // Throttled write-back: positions flow into graphology (Sigma re-renders reactively)
     let frame: number | null = null;
     simulation.on('tick', () => {
       if (frame != null) return;

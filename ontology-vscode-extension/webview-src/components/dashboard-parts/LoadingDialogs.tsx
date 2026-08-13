@@ -30,7 +30,7 @@ export const LoadingDialog = ({
   totalInQueue?: number;
   estimatedWaitTimeMs?: number;
   inImportQueue?: boolean;
-  /** Fuseki load finished — user can open editor while index builds in background */
+
   readyToBrowse?: boolean;
   onBrowseNow?: () => void;
   failed?: boolean;

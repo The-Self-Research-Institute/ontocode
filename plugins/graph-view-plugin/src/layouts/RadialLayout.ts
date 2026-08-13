@@ -7,11 +7,6 @@ export interface RadialLayoutOptions {
   levelDistance?: number;
 }
 
-/**
- * Radial Layout
- * Best for: Exploring relationships from a central concept
- * Places a root node at center with children in concentric circles
- */
 export function applyRadialLayout(
   nodes: OntologyNode[],
   edges: OntologyEdge[],
@@ -28,7 +23,6 @@ export function applyRadialLayout(
   const centerX = width / 2;
   const centerY = height / 2;
 
-  // Build adjacency map
   const adjacency = new Map<string, string[]>();
   edges.forEach(edge => {
     if (!adjacency.has(edge.from)) {
@@ -41,12 +35,11 @@ export function applyRadialLayout(
     adjacency.get(edge.to)!.push(edge.from); // Bidirectional for radial
   });
 
-  // Determine root node
   let root: string;
   if (rootNodeId && nodes.find(n => n.id === rootNodeId)) {
     root = rootNodeId;
   } else {
-    // Find most connected node or first class node
+
     const classNodes = nodes.filter(n => n.type === 'class');
     root = classNodes.length > 0 ? classNodes[0].id : nodes[0]?.id;
   }
@@ -55,14 +48,13 @@ export function applyRadialLayout(
     return positionMap;
   }
 
-  // BFS to assign levels
   const levels = new Map<string, number>();
   const visited = new Set<string>();
   const queue: Array<{ nodeId: string; level: number }> = [{ nodeId: root, level: 0 }];
 
   while (queue.length > 0) {
     const { nodeId, level } = queue.shift()!;
-    
+
     if (visited.has(nodeId)) continue;
     visited.add(nodeId);
     levels.set(nodeId, level);
@@ -75,7 +67,6 @@ export function applyRadialLayout(
     });
   }
 
-  // Group nodes by level
   const nodesByLevel = new Map<number, string[]>();
   levels.forEach((level, nodeId) => {
     if (!nodesByLevel.has(level)) {
@@ -84,13 +75,12 @@ export function applyRadialLayout(
     nodesByLevel.get(level)!.push(nodeId);
   });
 
-  // Position nodes
   nodesByLevel.forEach((levelNodes, level) => {
     if (level === 0) {
-      // Root at center
+
       positionMap.set(levelNodes[0], { x: centerX, y: centerY });
     } else {
-      // Other levels in circles
+
       const radius = level * levelDistance;
       const angleStep = (2 * Math.PI) / levelNodes.length;
 
@@ -103,7 +93,6 @@ export function applyRadialLayout(
     }
   });
 
-  // Position unvisited nodes (disconnected components)
   nodes.forEach(node => {
     if (!positionMap.has(node.id)) {
       const angle = Math.random() * 2 * Math.PI;

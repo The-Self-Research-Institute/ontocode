@@ -12,10 +12,6 @@ import self.research.ontology.owlEditor.config.FastOpenCondition;
 import java.io.IOException;
 import java.util.List;
 
-/**
- * Desktop OWLAPI-first mutation path: direct axiom patch when possible, otherwise
- * in-memory SPARQL UPDATE — never requires Fuseki for structured editor mutations.
- */
 @Service
 @Conditional(FastOpenCondition.class)
 public class DesktopOwlApiMutationService {
@@ -53,9 +49,6 @@ public class DesktopOwlApiMutationService {
         this.fusekiSyncScheduler = fusekiSyncScheduler;
     }
 
-    /**
-     * @return true when the mutation was applied entirely in OWLAPI (no Fuseki).
-     */
     public boolean tryApply(String projectId, List<OntologyMutationService.MutationOp> ops, String sparqlUpdate) {
         if (!owlApiFirst || ops == null || ops.isEmpty() || !ontologyCache.has(projectId)) {
             return false;
@@ -79,14 +72,7 @@ public class DesktopOwlApiMutationService {
             if (fusekiSyncScheduler != null) {
                 fusekiSyncScheduler.scheduleAfterMutation(projectId);
             }
-            // OntologyMutationService's full mutation path always calls this after a
-            // real mutation (see its invalidatePublicCodeViewCache) — this fast path
-            // bypasses that service entirely, and until now skipped this call too.
-            // Left uninvalidated, /api/ontology/export/{projectId} keeps serving the
-            // stale cached document forever (Fuseki and the live OWLAPI model both
-            // update correctly; only this file-backed export cache didn't), which is
-            // exactly what SWRL fetches its ontology from — so anything added through
-            // this fast path (e.g. new individuals) was invisible to SWRL rules.
+
             storageManager.clearCodeViewCache(projectId);
         } catch (IOException e) {
             log.warn("[OwlApiDesktop] Persist after mutation failed for {}: {}", projectId, e.getMessage());

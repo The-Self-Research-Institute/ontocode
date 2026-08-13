@@ -1,7 +1,4 @@
-/**
- * Tracks which local ontology file is open in the desktop app so reopening
- * the same path only focuses the window (VS Code–style) instead of re-importing.
- */
+
 
 export interface DesktopActiveFile {
   filePath: string;

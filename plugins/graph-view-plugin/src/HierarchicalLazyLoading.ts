@@ -1,42 +1,24 @@
-/**
- * ============================================================================
- * HIERARCHICAL LAZY LOADING MODULE
- * ============================================================================
- *
- * Production utilities for hierarchical navigation in the graph view.
- *
- * Correctness invariants enforced here:
- *   1. Multi-parent classes are preserved (a class may appear under every
- *      asserted parent).
- *   2. Cycles in the asserted hierarchy never recurse infinitely (defensive
- *      visited-sets on every traversal).
- *   3. Public API never returns duplicate IDs.
- *   4. All helpers are pure and side-effect free; no console noise in hot paths.
- */
+
 
 import type { OntologyNode, OntologyEdge } from './types';
 
-/** Edge types that participate in the asserted class/property hierarchy. */
 const HIERARCHY_EDGE_TYPES: ReadonlySet<string> = new Set([
   'subClassOf',
   'subPropertyOf'
 ]);
 
-/** Instance membership edges — opt-in via getChildren({ includeInstances: true }). */
 const INSTANCE_EDGE_TYPES: ReadonlySet<string> = new Set(['instanceOf']);
 
 const isHierarchyEdge = (edge: OntologyEdge, includeInstances = false): boolean =>
   HIERARCHY_EDGE_TYPES.has(edge.type as string) ||
   (includeInstances && INSTANCE_EDGE_TYPES.has(edge.type as string));
 
-/** True when the given node objects expose a `parent` field (precomputed by backend). */
 const nodesHaveParentField = (nodes?: OntologyNode[]): boolean =>
   Array.isArray(nodes) && nodes.length > 0 && 'parent' in (nodes[0] as unknown as Record<string, unknown>);
 
 const getParentField = (node: OntologyNode): string | string[] | null | undefined =>
   (node as unknown as { parent?: string | string[] | null }).parent;
 
-/** Build a parent→children adjacency map once for fast repeated lookups. */
 export interface HierarchyIndex {
   childrenOf: Map<string, string[]>;
   parentsOf: Map<string, string[]>;
@@ -72,8 +54,6 @@ export const buildHierarchyIndex = (
     }
   }
 
-  // Always also index hierarchy edges — covers cases where backend sends both,
-  // and where asserted edges contradict the precomputed parent field.
   for (const edge of edges) {
     if (!isHierarchyEdge(edge)) continue;
     pushUnique(parentsOf, edge.from, edge.to);
@@ -83,10 +63,6 @@ export const buildHierarchyIndex = (
   return { childrenOf, parentsOf };
 };
 
-/**
- * Find root nodes (nodes with no asserted parent in the hierarchy index).
- * Multi-parent safe; cycle safe.
- */
 export const getRootNodes = (
   nodes: OntologyNode[],
   edges: OntologyEdge[]
@@ -106,11 +82,6 @@ export const getRootNodes = (
   return roots;
 };
 
-/**
- * Get immediate parents of a node (multi-parent safe).
- * For SUBCLASS_OF / subPropertyOf: child (from) → parent (to).
- * For instanceOf: individual (from) → class (to).
- */
 export const getParents = (
   nodeId: string,
   edges: OntologyEdge[],
@@ -137,10 +108,6 @@ export const getParents = (
   return Array.from(out);
 };
 
-/**
- * Get immediate children of a node. Includes sub-classes and sub-properties.
- * Pass `{ includeInstances: true }` to also include instanceOf individuals.
- */
 export const getChildren = (
   nodeId: string,
   edges: OntologyEdge[],
@@ -152,8 +119,7 @@ export const getChildren = (
 
   if (nodesHaveParentField(nodes)) {
     for (const node of nodes!) {
-      // Parent-field is for class/property hierarchy; skip individuals unless
-      // instances are explicitly requested.
+
       if (!includeInstances && node.type === 'individual') continue;
       const parent = getParentField(node);
       if (parent === undefined || parent === null) continue;
@@ -173,14 +139,6 @@ export const getChildren = (
   return Array.from(out);
 };
 
-/**
- * Batched equivalent of calling getChildren()/getParents() once per node — same exact
- * semantics as those two functions, but a single O(n+m) pass instead of O(n) calls that
- * each re-scan every edge/node. Calling getChildren/getParents per node in a loop is
- * O(n*m); on a large ontology (tens of thousands of nodes/edges) that reaches into the
- * billions of operations and freezes the tab. Use this whenever relations are needed
- * for every node at once (e.g. building a sidebar tree).
- */
 export const buildChildrenParentsIndex = (
   nodes: OntologyNode[],
   edges: OntologyEdge[]
@@ -198,7 +156,6 @@ export const buildChildrenParentsIndex = (
 
   const hasParentField = nodesHaveParentField(nodes);
 
-  // Children: parent-field-derived AND edge-derived, unioned — mirrors getChildren().
   const childSets = new Map<string, Set<string>>();
   const addChild = (parentId: string, childId: string) => {
     let set = childSets.get(parentId);
@@ -226,9 +183,6 @@ export const buildChildrenParentsIndex = (
     ensure(parentId).children = Array.from(set);
   });
 
-  // Parents: parent-field wins when present for a node — mirrors getParents()'s
-  // early return; otherwise fall back to subClassOf/subPropertyOf edges only
-  // (not instanceOf, matching getParents()'s edge-fallback branch exactly).
   if (hasParentField) {
     for (const node of nodes) {
       const parent = getParentField(node);
@@ -259,9 +213,6 @@ export const buildChildrenParentsIndex = (
   return result;
 };
 
-/**
- * Check if a node has any children (uses precomputed `hasChildren` field if present).
- */
 export const hasChildren = (
   nodeId: string,
   edges: OntologyEdge[],
@@ -289,11 +240,6 @@ export const hasChildren = (
   return false;
 };
 
-/**
- * Get all descendants of a node (BFS, cycle safe).
- * Only traverses through expanded nodes when expandedNodeIds is provided —
- * useful for "what would I hide if I collapse this branch?".
- */
 export const getAllDescendants = (
   nodeId: string,
   edges: OntologyEdge[],
@@ -311,7 +257,7 @@ export const getAllDescendants = (
       if (visited.has(child)) continue;
       visited.add(child);
       descendants.push(child);
-      // Only descend further when this node was previously expanded.
+
       if (expandedNodeIds.has(child)) {
         queue.push(child);
       }
@@ -321,10 +267,6 @@ export const getAllDescendants = (
   return descendants;
 };
 
-/**
- * Find the shortest path from a root to the target node (cycle safe, BFS).
- * For multi-parent classes returns one valid path; ordered root → … → target.
- */
 export const findPathToNode = (
   targetId: string,
   edges: OntologyEdge[],
@@ -334,7 +276,6 @@ export const findPathToNode = (
 
   const { parentsOf } = buildHierarchyIndex(nodes ?? [], edges);
 
-  // BFS upward from target; prev map reconstructs the path.
   const prev = new Map<string, string | null>();
   prev.set(targetId, null);
   const queue: string[] = [targetId];
@@ -367,15 +308,10 @@ export const findPathToNode = (
   return path;
 };
 
-/**
- * Search nodes and compute a filtered visibility set: matches (+ optional ancestors
- * and a bounded subtree under each match). Unrelated branches are excluded so the
- * graph can hide everything else.
- */
 export type SearchVisibilityOptions = {
-  /** Keep ancestor path to each match (needed for hierarchy layouts). Default true. */
+
   includeAncestors?: boolean;
-  /** Levels of descendants under each match to include. Default 0 (match only / + ancestors). */
+
   childDepth?: number;
 };
 
@@ -410,12 +346,6 @@ export const searchNodesWithPaths = (
   const nodesToShow = new Set<string>();
   const nodesToExpand = new Set<string>();
 
-  // Build the parent/child index ONCE and reuse it for every match, instead of calling
-  // findPathToNode()/getChildren() per match (each of which re-scans all nodes/edges, or
-  // in findPathToNode's case rebuilds the whole index). On a large ontology with many
-  // matches this turned a single keystroke into O(matches * (nodes + edges)) work — easily
-  // reaching millions of operations and freezing the tab (see buildChildrenParentsIndex's
-  // note above for the same anti-pattern).
   const { childrenOf, parentsOf } = buildHierarchyIndex(nodes, edges);
 
   const pathToRoot = (targetId: string): string[] => {
@@ -475,7 +405,7 @@ export const searchNodesWithPaths = (
     if (includeAncestors) {
       const path = pathToRoot(node.id);
       for (const id of path) nodesToShow.add(id);
-      // Expand all ancestors so the match is reachable in hierarchy UIs.
+
       for (let i = 0; i < path.length - 1; i++) nodesToExpand.add(path[i]);
     }
 
@@ -485,9 +415,6 @@ export const searchNodesWithPaths = (
   return { matchingNodes, nodesToShow, nodesToExpand };
 };
 
-/**
- * Expand each seed by exactly one child level (show direct children).
- */
 export const expandSeedsOneLevel = (
   seedIds: Iterable<string>,
   expandedNodeIds: Set<string>,
@@ -506,10 +433,6 @@ export const expandSeedsOneLevel = (
   return { newExpandedIds, newVisibleIds };
 };
 
-/**
- * Collapse one depth under the seeds: hide the deepest currently-visible layer
- * in each seed's visible subtree (and un-expand parents that become leaves).
- */
 export const collapseSeedsOneLevel = (
   seedIds: Iterable<string>,
   expandedNodeIds: Set<string>,
@@ -556,7 +479,7 @@ export const collapseSeedsOneLevel = (
       newExpandedIds.delete(id);
     }
   }
-  // Parents that no longer show any visible child stop counting as expanded.
+
   for (const [id, depth] of depthOf) {
     if (depth !== maxDepth - 1) continue;
     const kids = childrenOf.get(id) ?? [];
@@ -567,9 +490,6 @@ export const collapseSeedsOneLevel = (
   return { newExpandedIds, newVisibleIds };
 };
 
-/**
- * From seeds, reveal descendants up to `depth` (BFS). Depth 0 = seeds only (ensure visible).
- */
 export const expandSeedsToDepth = (
   seedIds: Iterable<string>,
   depth: number,
@@ -608,9 +528,6 @@ export const expandSeedsToDepth = (
   return { newExpandedIds, newVisibleIds };
 };
 
-/**
- * Toggle node expansion. Adds/removes the node's descendants from the visible set.
- */
 export const toggleNodeExpansion = (
   nodeId: string,
   expandedNodeIds: Set<string>,
@@ -625,7 +542,7 @@ export const toggleNodeExpansion = (
   if (expandedNodeIds.has(nodeId)) {
     const toRemove = getAllDescendants(nodeId, edges, expandedNodeIds, nodes);
     const newVisibleIds = new Set(visibleNodeIds);
-    // Only hide a descendant if it has no other visible parent (multi-parent safety).
+
     for (const id of toRemove) {
       const parents = getParents(id, edges, nodes);
       const hasOtherVisibleParent = parents.some(
@@ -646,9 +563,6 @@ export const toggleNodeExpansion = (
   return { newExpandedIds, newVisibleIds, action: 'expanded' };
 };
 
-/**
- * Expand every node in the graph (visible = all, expanded = all).
- */
 export const expandAll = (
   nodes: OntologyNode[]
 ): {
@@ -662,37 +576,12 @@ export const expandAll = (
   };
 };
 
-/**
- * Ontologies at or below this size open fully expanded (OntoCode default for teaching files).
- * Kept low (not the ontology-size definition of "small") because full-expand renders every
- * class/property/individual as VOWL circles on a fixed-size canvas — past a few dozen nodes
- * that's a dense, illegible "hairball" rather than a readable teaching view. Above this cap,
- * initialGraphVisibility() shows roots + one level instead, same as the "large ontology" path.
- */
 const SMALL_ONTOLOGY_NODE_CAP = 40;
 
-/**
- * Target node count for initialGraphVisibility's first paint. Chosen to sit
- * comfortably under SMALL_ONTOLOGY_NODE_CAP so the curated view is visibly
- * lighter than "everything", while still being enough to look populated.
- */
 const INITIAL_VISIBILITY_NODE_BUDGET = 35;
 
-/**
- * Soft cap for Network / Expand All on large ontologies. Past this, ForceAtlas2
- * + all-labels collapses into an illegible hairball (e.g. full Gene Ontology).
- */
 export const NETWORK_VISIBILITY_NODE_BUDGET = 400;
 
-/**
- * Breadth-first expansion from class hierarchy roots until `budget` visible
- * nodes. Used for first paint and for Network on large graphs.
- *
- * A fixed one-level expansion assumes a bushy hierarchy (several roots, each
- * with several children) — for a narrow one (a single root/owl:Thing with one
- * direct child before it branches) it revealed almost nothing. BFS-to-budget
- * keeps expanding deeper for narrow trees and stays shallow for bushy ones.
- */
 export const expandToNodeBudget = (
   nodes: OntologyNode[],
   edges: OntologyEdge[],
@@ -708,8 +597,6 @@ export const expandToNodeBudget = (
   const visible = new Set<string>();
   const expanded = new Set<string>();
 
-  // owl:Thing first (if present) so it — not an unrelated orphan root — gets
-  // priority for the budget when there isn't room to expand everything.
   const orderedRoots = [
     ...(classNodes.some(n => n.id === owlThingIri) ? [owlThingIri] : []),
     ...roots.filter(r => r !== owlThingIri)
@@ -739,10 +626,6 @@ export const expandToNodeBudget = (
   return { newExpandedIds: expanded, newVisibleIds: visible };
 };
 
-/**
- * Initial visibility for ontologies above SMALL_ONTOLOGY_NODE_CAP: BFS until
- * INITIAL_VISIBILITY_NODE_BUDGET is reached.
- */
 export const initialGraphVisibility = (
   nodes: OntologyNode[],
   edges: OntologyEdge[]
@@ -751,9 +634,6 @@ export const initialGraphVisibility = (
   newVisibleIds: Set<string>;
 } => expandToNodeBudget(nodes, edges, INITIAL_VISIBILITY_NODE_BUDGET);
 
-/**
- * Network / force layout: expand fully when small; otherwise BFS to a readable budget.
- */
 export const networkGraphVisibility = (
   nodes: OntologyNode[],
   edges: OntologyEdge[]
@@ -770,10 +650,6 @@ export const networkGraphVisibility = (
   return { ...partial, capped: true };
 };
 
-/**
- * Small/medium ontologies: show the full class tree on first paint.
- * Large ontologies: lazy roots + one level to avoid heap spikes.
- */
 export const smartInitialGraphVisibility = (
   nodes: OntologyNode[],
   edges: OntologyEdge[]
@@ -787,10 +663,6 @@ export const smartInitialGraphVisibility = (
   return initialGraphVisibility(nodes, edges);
 };
 
-/**
- * Collapse every branch — roots-only visibility with no expanded nodes
- * (true invert of Expand All).
- */
 export const collapseAll = (
   nodes: OntologyNode[],
   edges: OntologyEdge[]
@@ -810,10 +682,6 @@ export const collapseAll = (
   };
 };
 
-/**
- * Build a one-line stats string for the toolbar.
- * Defensive against zero totals.
- */
 export const getExpansionStats = (
   totalNodes: number,
   visibleNodes: number,

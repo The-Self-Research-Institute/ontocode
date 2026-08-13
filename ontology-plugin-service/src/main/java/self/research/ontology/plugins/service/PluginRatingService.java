@@ -26,17 +26,13 @@ public class PluginRatingService {
     private final PluginRatingRepository ratingRepository;
     private final PluginRepository pluginRepository;
 
-    /**
-     * Add or update a rating for a plugin
-     */
     @Transactional
     public RatingResponse ratePlugin(String userId, String username, RatingRequest request) {
-        // Validate star rating
+
         if (request.getStars() < 1 || request.getStars() > 5) {
             throw new IllegalArgumentException("Stars must be between 1 and 5");
         }
 
-        // Check if user already rated this plugin
         PluginRating rating = ratingRepository.findByPluginIdAndUserId(request.getPluginId(), userId)
                 .orElse(PluginRating.builder()
                         .pluginId(request.getPluginId())
@@ -46,7 +42,6 @@ public class PluginRatingService {
                         .helpfulCount(0)
                         .build());
 
-        // Update rating
         rating.setStars(request.getStars());
         rating.setReview(request.getReview());
         rating.setMerits(request.getMerits());
@@ -56,7 +51,6 @@ public class PluginRatingService {
 
         rating = ratingRepository.save(rating);
 
-        // Update plugin's average rating
         updatePluginRating(request.getPluginId());
 
         log.info("User {} rated plugin {} with {} stars", userId, request.getPluginId(), request.getStars());
@@ -64,27 +58,18 @@ public class PluginRatingService {
         return toRatingResponse(rating);
     }
 
-    /**
-     * Get all ratings for a plugin
-     */
     public List<RatingResponse> getPluginRatings(String pluginId) {
         return ratingRepository.findByPluginId(pluginId).stream()
                 .map(this::toRatingResponse)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Get a user's rating for a plugin
-     */
     public RatingResponse getUserRating(String pluginId, String userId) {
         return ratingRepository.findByPluginIdAndUserId(pluginId, userId)
                 .map(this::toRatingResponse)
                 .orElse(null);
     }
 
-    /**
-     * Delete a user's rating
-     */
     @Transactional
     public void deleteRating(String pluginId, String userId) {
         ratingRepository.findByPluginIdAndUserId(pluginId, userId)
@@ -95,9 +80,6 @@ public class PluginRatingService {
                 });
     }
 
-    /**
-     * Mark a review as helpful
-     */
     @Transactional
     public void markReviewHelpful(String ratingId) {
         ratingRepository.findById(ratingId).ifPresent(rating -> {
@@ -106,9 +88,6 @@ public class PluginRatingService {
         });
     }
 
-    /**
-     * Get rating statistics for a plugin
-     */
     public Map<String, Object> getRatingStats(String pluginId) {
         List<PluginRating> ratings = ratingRepository.findByPluginId(pluginId);
 
@@ -121,14 +100,12 @@ public class PluginRatingService {
             return stats;
         }
 
-        // Calculate average
         double average = ratings.stream()
                 .mapToInt(PluginRating::getStars)
                 .average()
                 .orElse(0.0);
         stats.put("averageRating", Math.round(average * 10.0) / 10.0);
 
-        // Calculate distribution
         Map<Integer, Long> distribution = new HashMap<>();
         for (int i = 1; i <= 5; i++) {
             int stars = i;
@@ -137,7 +114,6 @@ public class PluginRatingService {
         }
         stats.put("distribution", distribution);
 
-        // Recommended count
         long recommendedCount = ratings.stream()
                 .filter(r -> Boolean.TRUE.equals(r.getRecommended()))
                 .count();
@@ -146,9 +122,6 @@ public class PluginRatingService {
         return stats;
     }
 
-    /**
-     * Update plugin's average rating and review count
-     */
     private void updatePluginRating(String pluginId) {
         pluginRepository.findByPluginId(pluginId).ifPresent(plugin -> {
             List<PluginRating> ratings = ratingRepository.findByPluginId(pluginId);
@@ -170,9 +143,6 @@ public class PluginRatingService {
         });
     }
 
-    /**
-     * Convert entity to response DTO
-     */
     private RatingResponse toRatingResponse(PluginRating rating) {
         return RatingResponse.builder()
                 .id(rating.getId())

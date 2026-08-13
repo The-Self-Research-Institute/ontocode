@@ -38,7 +38,6 @@ const PaymentSetupModal = lazy(() => import("./components/PaymentSetupModal"));
 const getInitialInvitationFromLocation = (): { token: string | null; email: string | null } => {
   const pathname = window.location.pathname;
 
-  // Don't treat reset-password or verify-email URLs as invitation tokens
   if (pathname.startsWith("/reset-password") || pathname.startsWith("/verify-email")) {
     return { token: null, email: null };
   }
@@ -47,16 +46,14 @@ const getInitialInvitationFromLocation = (): { token: string | null; email: stri
   let token = params.get("token") || params.get("invite");
   let email = params.get("email");
 
-  // Only grab generic ?token= if we're on an invitation/invite path or the root
   if (pathname.startsWith("/invitation") || pathname.startsWith("/invite")) {
     token = token || params.get("token") || params.get("invite");
     email = email || params.get("email");
   } else if (pathname !== "/" && pathname !== "") {
-    // For non-root, non-invitation paths, don't treat ?token= as invitation
+
     token = params.get("invite");
   }
 
-  // Support hash-based invitation links: #/invitation?token=... or #/invite?token=...
   if (window.location.hash) {
     const hashPart = window.location.hash.substring(1);
     const [path, queryString] = hashPart.split("?");
@@ -67,7 +64,6 @@ const getInitialInvitationFromLocation = (): { token: string | null; email: stri
     }
   }
 
-  // In test-web mode, token may be present on parent URL
   try {
     if (window.parent && window.parent !== window) {
       const parentParams = new URLSearchParams(window.parent.location.search);
@@ -105,7 +101,6 @@ const AppContent = () => {
     needsWorkspaceSelection,
   );
 
-  // Capture invitation params before router initialization can rewrite the URL.
   const initialInvitation = getInitialInvitationFromLocation();
 
   const [isLoginView, setIsLoginView] = useState(true);
@@ -143,12 +138,12 @@ const AppContent = () => {
   const [showAuthForInvitation, setShowAuthForInvitation] = useState(false); // Show login/signup form while keeping invite token
   const [needsDeploymentSelection, setNeedsDeploymentSelection] = useState(false);
   const [deploymentType, setDeploymentType] = useState<"self-hosted" | "cloud" | null>(() => {
-    // Desktop build: always self-hosted — never show the deployment selector.
+
     if (isDesktop()) {
       try { localStorage.setItem("deploymentType", "self-hosted"); } catch { /* ignore */ }
       return "self-hosted";
     }
-    // Auto-detect cloud mode when accessing from the cloud domain
+
     if (typeof window !== "undefined") {
       const hostname = window.location.hostname;
       if (hostname === "ontocode.selfresearch.org" || hostname === "ontocodeapi.selfresearch.org") {
@@ -156,7 +151,7 @@ const AppContent = () => {
         return "cloud";
       }
     }
-    // Restore from localStorage for returning users
+
     try {
       const stored = localStorage.getItem("deploymentType");
       if (stored === "self-hosted" || stored === "cloud") return stored;
@@ -168,7 +163,7 @@ const AppContent = () => {
   const [forceShowWorkspace, setForceShowWorkspace] = useState(false);
   const [skipWorkspaceRequested, setSkipWorkspaceRequested] = useState(false);
   const [restoredRoute, setRestoredRoute] = useState<RouteState | null>(null);
-  // Initialize reset-password state directly from the URL (same pattern as verify-email below).
+
   const _resetPath = window.location.pathname.startsWith("/reset-password");
   const _resetTokenFromUrl = _resetPath
     ? new URLSearchParams(window.location.search).get("token")
@@ -178,8 +173,7 @@ const AppContent = () => {
   >(_resetTokenFromUrl ? "resetPassword" : "login");
   const [verificationEmail, setVerificationEmail] = useState("");
   const [resetToken, setResetToken] = useState<string | null>(_resetTokenFromUrl);
-  // Initialize verify-email state directly from the URL so the verify screen
-  // shows immediately on the first render — before the auth loading spinner.
+
   const _verifyPath = window.location.pathname.startsWith("/verify-email");
   const _verifyTokenFromUrl = _verifyPath
     ? new URLSearchParams(window.location.search).get("token")
@@ -195,9 +189,8 @@ const AppContent = () => {
   const [verifyResendError, setVerifyResendError] = useState<string>("");
   const [isVerifyResending, setIsVerifyResending] = useState(false);
 
-  // Helper to check if workspace selection is required
   const shouldShowWorkspaceSelection = useCallback((): boolean => {
-    // Desktop: single-user local app — projects only, no workspace picker or billing gate.
+
     if (isDesktop()) {
       return false;
     }
@@ -210,7 +203,6 @@ const AppContent = () => {
       deploymentType: localStorage.getItem("deploymentType"),
     });
 
-    // Force show workspace if explicitly navigated to workspace route
     if (forceShowWorkspace) {
       console.log("[App] Returning true - forceShowWorkspace is set");
       return true;
@@ -233,34 +225,27 @@ const AppContent = () => {
 
     const storedDeploymentType = localStorage.getItem("deploymentType") as "self-hosted" | "cloud" | null;
 
-    // Cloud users without a workspace always need workspace selection
-    // Use both the state variable and localStorage to handle auto-detected cloud mode
     if ((deploymentType === "cloud" || storedDeploymentType === "cloud") && !user.workspaceId) {
       return true;
     }
 
-    // If user explicitly skipped workspace selection, don't show it
     if (!needsWorkspaceSelection) {
       console.log("[App] Returning false - needsWorkspaceSelection is false");
       return false;
     }
 
-    // Fall back to needsWorkspaceSelection from auth context
     return needsWorkspaceSelection;
   }, [user, needsWorkspaceSelection, forceShowWorkspace, skipWorkspaceRequested]);
 
-  // Reset local skip flag when user context is reset or workspace is explicitly selected.
   useEffect(() => {
     if (!user || !!user.workspaceId) {
       setSkipWorkspaceRequested(false);
     }
   }, [user]);
 
-  // Keep a live billing status for the active workspace so the UI can hard-block pending workspaces.
   useEffect(() => {
     let cancelled = false;
 
-    // Desktop has no billing — never fetch workspace billing status.
     if (isDesktop()) {
       setWorkspaceBillingStatus(null);
       return;
@@ -290,7 +275,7 @@ const AppContent = () => {
   }, [user?.workspaceId]);
 
   const refreshAccountSubscription = useCallback(async () => {
-    // Desktop has no billing account — the plan comes from the license file.
+
     if (isDesktop()) {
       setTrialEligible(false);
       setAccountPlanName((user?.subscriptionPlan || "FREE").toUpperCase());
@@ -353,7 +338,6 @@ const AppContent = () => {
     (workspaceBillingStatus || "").toUpperCase() === "PENDING" &&
     (user?.subscriptionPlan || "FREE").toUpperCase() !== "FREE";
 
-  // Desktop download page — independent state so it works before login too
   const [showDesktopDownload, setShowDesktopDownload] = React.useState(false);
   useEffect(() => {
     const handler = () => setShowDesktopDownload(true);
@@ -361,7 +345,6 @@ const AppContent = () => {
     return () => window.removeEventListener("navigate-desktop-download", handler);
   }, []);
 
-  // Desktop license — drives the "License expired" block screen.
   const [desktopLicense, setDesktopLicense] = React.useState<DesktopLicense | null>(null);
   useEffect(() => {
     if (!isDesktop()) return;
@@ -396,17 +379,13 @@ const AppContent = () => {
     clearLastOpenedSelection();
   }, [clearLastOpenedSelection]);
 
-  // Capture the URL the user originally navigated to, before any routing changes it.
-  // Used to detect file-editor links that should skip auto-restore.
   const initialUrlRef = useRef(window.location.pathname);
 
-  // Auto-restore last project + file when workspace becomes available (e.g. after login with auto-select)
   const autoRestoredRef = useRef(false);
-  // Set to true by clearLastOpenedSelection when the user explicitly navigates away,
-  // so any in-flight auto-restore async chain doesn't override their navigation.
+
   const autoRestoreCancelledRef = useRef(false);
   useEffect(() => {
-    // Desktop: always land on My projects first; session restore is web/cloud UX.
+
     if (isDesktop()) {
       autoRestoredRef.current = true;
       return;
@@ -417,26 +396,19 @@ const AppContent = () => {
 
     const goToDashboard = () => navigateTo({ view: "projectDashboard", projectId: null, projectName: "", fileId: null, fileName: "" });
 
-    // Tab-switch restore threshold: if the user had a file open less than 30 minutes ago,
-    // treat it as a VS Code tab-switch and restore directly to the editor.
-    // Anything older is a fresh session → restore to project library so the user can choose.
     const EDITOR_RESTORE_THRESHOLD_MS = 30 * 60 * 1000;
     const lastEditorActiveAt = Number(localStorage.getItem("ontocode_lastEditorActiveAt") || "0");
     const wasRecentlyEditing = Date.now() - lastEditorActiveAt < EDITOR_RESTORE_THRESHOLD_MS;
     const isFreshTab = !sessionStorage.getItem("ontocode_tab_active");
     sessionStorage.setItem("ontocode_tab_active", "true");
 
-    // If the user navigated directly to a file editor URL (/projects/:name/files/:file),
-    // skip auto-restore — a separate effect will resolve the names to IDs and open it.
-    // We use initialUrlRef instead of selectedProjectName/fileName because routing may have
-    // already cleared those state values by the time this effect runs.
     if (/^\/projects\/[^/]+\/files\/[^/]+/.test(initialUrlRef.current)) {
       console.log("[App] Initial URL is file editor, skipping auto-restore:", initialUrlRef.current);
       return;
     }
 
     const restoreWithIds = async (projectId: string, projectName: string, fileId: string | null, fileName: string | null) => {
-      // Validate project still exists
+
       try {
         await apiClient.get(`/api/projects/${encodeURIComponent(projectId)}`);
       } catch {
@@ -447,23 +419,22 @@ const AppContent = () => {
         }
         return;
       }
-      // User may have explicitly navigated away while the async validation was in flight
+
       if (autoRestoreCancelledRef.current) {
         console.log("[App] Auto-restore cancelled — user navigated away, skipping restore navigation");
         return;
       }
       if (fileId && fileName && wasRecentlyEditing && isFreshTab) {
-        // New browser tab with a recent editor session — restore directly to the editor.
+
         console.log("[App] Tab-switch restore: reopening last file in editor:", fileId);
         navigateTo({ view: "dashboard", projectId, projectName, fileId, fileName });
       } else {
-        // Fresh session or no recent editing — restore to project library
+
         console.log("[App] Auto-restoring last project to library:", projectId);
         navigateTo({ view: "projectLibrary", projectId, projectName, fileId: null, fileName: "" });
       }
     };
 
-    // Try backend first (cross-device), fall back to localStorage
     apiClient.get<{ projectId?: string; projectName?: string; fileId?: string; fileName?: string }>('/api/auth/last-opened')
       .then((data) => {
         if (autoRestoreCancelledRef.current) return; // User navigated away before GET returned
@@ -477,7 +448,7 @@ const AppContent = () => {
       })
       .catch(() => {
         if (autoRestoreCancelledRef.current) return; // User navigated away
-        // Fall back to localStorage only
+
         try {
           const projectId = localStorage.getItem("ontocode_lastWorkspaceProjectId");
           const projectName = localStorage.getItem("ontocode_lastWorkspaceProjectName");
@@ -490,9 +461,6 @@ const AppContent = () => {
       });
   }, [clearLastOpenedSelection, user?.workspaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // When the user navigated directly to /projects/:name/files/:file, resolve names→IDs
-  // and open the editor after login. Uses initialUrlRef so routing state changes can't
-  // invalidate the original intent.
   const urlResolvedRef = useRef(false);
   useEffect(() => {
     if (!user?.workspaceId || isDesktop()) return;
@@ -540,39 +508,28 @@ const AppContent = () => {
     return () => { cancelled = true; };
   }, [user?.workspaceId, selectedProjectId, selectedFileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-
   const currentRoute: RouteState = useMemo(() => {
-    // Deployment type must always be set first — no other screen is accessible without it
-    // (except email verification which needs its own URL-based flow)
+
     if (!deploymentType && !(emailVerifyToken && emailVerifyStatus !== "idle")) {
       return { view: "deployment", deploymentType };
     }
 
-    // While the verify-email flow is active, keep the router in a neutral state
-    // so useRouter doesn't overwrite window.location to /deployment (which would
-    // break the verify useEffect's ability to detect the original URL).
     if (emailVerifyToken && emailVerifyStatus !== "idle") {
       return { view: "login", isLoginView: true };
     }
 
-    // If we have a restored route from navigation (back/forward), use it
     if (restoredRoute) {
       console.log("[App] Using restored route:", restoredRoute.view);
       return restoredRoute;
     }
 
-    // Otherwise, calculate route based on current application state
     if (inviteToken && !showAuthForInvitation) {
       return { view: "invitation", inviteToken, showAuthForInvitation };
     }
     if (!deploymentType) {
       return { view: "deployment", deploymentType };
     }
-    // Bug #48: billing has its own URL (/billing) and must outrank the
-    // workspace-selection branch — otherwise the route is computed as
-    // 'workspace' on the next render and the URL flips back. The page is
-    // always account-level, so it doesn't depend on a workspace being
-    // chosen.
+
     if (user && showBillingPage) {
       return { view: "billing" };
     }
@@ -598,15 +555,15 @@ const AppContent = () => {
       };
     }
     if (user && !user.workspaceId) {
-      // Cloud users without a workspace must select one first
+
       const storedDeployment = localStorage.getItem("deploymentType");
       if (storedDeployment === "cloud") {
         return { view: "workspace" };
       }
-      // Self-hosted users still need to select a project
+
       return { view: "projectDashboard", projectId: null, projectName: "" };
     }
-    // Login/Signup view
+
     return {
       view: isLoginView ? "login" : "signup",
       isLoginView,
@@ -633,14 +590,11 @@ const AppContent = () => {
     shouldShowWorkspaceSelection,
   ]);
 
-  // Handle route change from browser back/forward or programmatic navigation
   const handleRouteChange = useCallback((route: RouteState, fromBrowserNav: boolean = false) => {
     console.log("[App] Handling route change:", route.view, "fromBrowserNav:", fromBrowserNav);
 
-    // Create a mutable copy of the route to update with restored IDs
     const updatedRoute = { ...route };
 
-    // Restore IDs from name-based routes (works for refresh/init and browser navigation).
     try {
       if (updatedRoute.projectName && !updatedRoute.projectId) {
         const cachedMappings = JSON.parse(sessionStorage.getItem("project_name_id_map") || "{}");
@@ -662,14 +616,12 @@ const AppContent = () => {
       console.warn("[App] Failed to restore IDs from cache:", e);
     }
 
-    // Only set restored route if this is from browser back/forward navigation
     if (fromBrowserNav) {
-      // Set the restored route AFTER updating IDs
+
       setRestoredRoute(updatedRoute);
     } else {
       setRestoredRoute(null);
 
-      // When navigating forward, cache the name→ID mappings to sessionStorage
       try {
         if (updatedRoute.projectName && updatedRoute.projectId) {
           const cachedMappings = JSON.parse(sessionStorage.getItem("project_name_id_map") || "{}");
@@ -686,19 +638,17 @@ const AppContent = () => {
       }
     }
 
-    // Update deployment type
     if (updatedRoute.deploymentType !== undefined) {
       setDeploymentType(updatedRoute.deploymentType as "self-hosted" | "cloud" | null);
     }
 
-    // Update project selection
     if (updatedRoute.projectId !== undefined) {
       setSelectedProjectId(updatedRoute.projectId);
     }
     if (updatedRoute.projectName !== undefined) {
       setSelectedProjectName(updatedRoute.projectName);
     }
-    // Explicitly clear project when navigating to dashboard
+
     if (updatedRoute.view === "projectDashboard") {
       if (updatedRoute.projectId === undefined || updatedRoute.projectId === null) {
         setSelectedProjectId(null);
@@ -706,14 +656,13 @@ const AppContent = () => {
       }
     }
 
-    // Update file selection
     if (updatedRoute.fileId !== undefined) {
       setSelectedFileId(updatedRoute.fileId);
     }
     if (updatedRoute.fileName !== undefined) {
       setSelectedFileName(updatedRoute.fileName);
     }
-    // Clear file selection when navigating to project views
+
     if (updatedRoute.view === "projectDashboard" || updatedRoute.view === "projectLibrary") {
       if (updatedRoute.fileId === undefined || updatedRoute.fileId === null) {
         setSelectedFileId(null);
@@ -721,12 +670,10 @@ const AppContent = () => {
       }
     }
 
-    // Update login/signup view
     if (updatedRoute.isLoginView !== undefined) {
       setIsLoginView(updatedRoute.isLoginView);
     }
 
-    // Update invitation state
     if (updatedRoute.inviteToken !== undefined) {
       setInviteToken(updatedRoute.inviteToken);
     }
@@ -734,13 +681,11 @@ const AppContent = () => {
       setShowAuthForInvitation(updatedRoute.showAuthForInvitation);
     }
 
-    // Update reset password state
     if (updatedRoute.resetToken) {
       setResetToken(updatedRoute.resetToken);
       setAuthSubView("resetPassword");
     }
 
-    // Update subscription plan view
     if (updatedRoute.showSubscriptionPlan !== undefined) {
       setShowSubscriptionPlan(updatedRoute.showSubscriptionPlan);
     }
@@ -748,13 +693,11 @@ const AppContent = () => {
       setShowSubscriptionPlan(true);
       setSkipWorkspaceRequested(true);
     }
-    // Browser back away from subscription: always dismiss the overlay so the
-    // user isn't snapped back to it once restoredRoute clears after 100ms.
+
     if (fromBrowserNav && updatedRoute.view !== "subscription") {
       setShowSubscriptionPlan(false);
     }
 
-    // Update billing view
     if (updatedRoute.view === 'billing') {
       setShowBillingPage(true);
     } else if (updatedRoute.view === 'subscription') {
@@ -763,7 +706,6 @@ const AppContent = () => {
       setShowBillingPage(false);
     }
 
-    // Update view-specific flags
     if (updatedRoute.view === "workspace") {
       clearLastOpenedSelection();
       setSelectedFileId(null);
@@ -786,7 +728,6 @@ const AppContent = () => {
       }
     }
 
-    // Restore non-workspace editor state when navigating to dashboard without project context
     if (updatedRoute.view === "dashboard" && !updatedRoute.projectId && !updatedRoute.projectName) {
       setSkipWorkspaceRequested(true);
       if (!updatedRoute.fileId) {
@@ -795,7 +736,6 @@ const AppContent = () => {
     }
   }, [clearLastOpenedSelection]);
 
-  // Initialize router
   const { clearHistory, navigateTo } = useRouter(currentRoute, handleRouteChange);
 
   const openAccountSubscription = useCallback(async () => {
@@ -855,8 +795,6 @@ const AppContent = () => {
     });
   }, [navigateTo, resetWorkspaceHubNavigation, user?.workspaceId]);
 
-  // While a real file is open in the editor, keep the "last active" timestamp fresh
-  // so a tab-switch restore within the session correctly lands back in the editor.
   useEffect(() => {
     if (selectedFileId && selectedFileId !== "__editor__") {
       const interval = setInterval(() => {
@@ -866,11 +804,9 @@ const AppContent = () => {
     }
   }, [selectedFileId]);
 
-  // Clear restoredRoute after it has been used in the render cycle
-  // This ensures we go back to computing routes from state after handling browser navigation
   useEffect(() => {
     if (restoredRoute) {
-      // Use a timeout to ensure the route has been fully processed
+
       const timer = setTimeout(() => {
         console.log("[App] Clearing restored route after processing");
         setRestoredRoute(null);
@@ -879,7 +815,6 @@ const AppContent = () => {
     }
   }, [restoredRoute]);
 
-  // Send webviewReady on mount to ensure extension knows webview is loaded
   useEffect(() => {
     console.log("[App] Webview mounted, sending webviewReady signal");
     if (window.vscode) {
@@ -890,18 +825,12 @@ const AppContent = () => {
     // Deployment type will be set after user selects in DeploymentSelector
   }, []);
 
-  // Ref to prevent the verify fetch from running twice in React 18 StrictMode.
-  // (useRouter's init effect changes window.location.pathname before this effect
-  //  runs, so we cannot rely on a pathname guard — use a ref instead.)
   const _verifyFetchStarted = useRef(false);
   const paymentRecoveryAttempted = useRef(false);
 
-  // Detect /verify-email?token=... URL, verify the account, and show success screen.
-  // State is already initialised from the URL above; this effect just kicks off the fetch.
   useEffect(() => {
     if (!emailVerifyToken) return;
-    // Guard against StrictMode double-invocation (ref persists across the simulated
-    // unmount/remount cycle, unlike component state).
+
     if (_verifyFetchStarted.current) return;
     _verifyFetchStarted.current = true;
 
@@ -923,7 +852,6 @@ const AppContent = () => {
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear /reset-password URL on first render (token already captured in state above).
   useEffect(() => {
     if (_resetTokenFromUrl) {
       window.history.replaceState({}, "", "/");
@@ -931,10 +859,9 @@ const AppContent = () => {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    // Check for invitation parameters in URL (query params, pathname routes, and hash-based routes)
+
     const pathname = window.location.pathname;
 
-    // Skip invitation detection for verify-email and reset-password routes
     if (pathname.startsWith("/verify-email") || pathname.startsWith("/reset-password")) {
       console.log("[App] Skipping invitation detection for path:", pathname);
       return;
@@ -944,14 +871,12 @@ const AppContent = () => {
     let token = params.get("token") || params.get("invite");
     let email = params.get("email");
 
-    // Check pathname-based route for invitation (e.g., /invitation?token=xxx or /invite?token=xxx)
     if (pathname.startsWith("/invitation") || pathname.startsWith("/invite")) {
       token = token || params.get("token") || params.get("invite");
       email = email || params.get("email");
       console.log("[App] Found invitation in pathname route:", !!token, "email:", !!email);
     }
 
-    // Check hash-based route for invitation (e.g., #/invitation?token=xxx or #/invite?token=xxx)
     if (window.location.hash) {
       const hashPart = window.location.hash.substring(1); // Remove the '#'
       const [path, queryString] = hashPart.split("?");
@@ -964,7 +889,6 @@ const AppContent = () => {
       }
     }
 
-    // Also check parent window URL (for test-web environment)
     let parentToken: string | null = null;
     let parentEmail: string | null = null;
     try {
@@ -975,7 +899,7 @@ const AppContent = () => {
         console.log("[App] Checked parent window for token:", !!parentToken, "email:", !!parentEmail);
       }
     } catch (e) {
-      // Cross-origin access blocked, ignore
+
       console.log("[App] Cannot access parent window (cross-origin)");
     }
 
@@ -993,7 +917,6 @@ const AppContent = () => {
     }
   }, []);
 
-  // Listen for pending file upload and invitation token messages from extension
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
@@ -1019,7 +942,7 @@ const AppContent = () => {
           "showAuthForInvitation:",
           showAuthForInvitation,
         );
-        // Reset any auth-related state that might block showing the invitation page
+
         setShowAuthForInvitation(false);
         setInviteToken(message.token);
         console.log("[App] 📧 Invitation token state updated, page should show now");
@@ -1067,7 +990,6 @@ const AppContent = () => {
     [navigateTo],
   );
 
-  // Browser-mode: upload a file directly via the API (no extension proxy needed)
   const uploadFileBrowserMode = useCallback(
     async (projectId: string, fileName: string, fileContent: string, fileSize: number) => {
       try {
@@ -1086,7 +1008,6 @@ const AppContent = () => {
     [],
   );
 
-  // Open a local file in browser/cloud/Electron mode (no VS Code extension)
   const handleOpenLocalFile = useCallback(async () => {
     const fileData = await openOntologyFile();
     if (!fileData) return;
@@ -1108,7 +1029,6 @@ const AppContent = () => {
     });
   }, [navigateTo, tryFocusExistingDesktopFile]);
 
-  // Windows / macOS menu: File → Open Ontology File…
   useEffect(() => {
     if (!isDesktop()) return;
     const api = (window as any).electronAPI;
@@ -1143,7 +1063,6 @@ const AppContent = () => {
     };
     api.onMenuOpenFile(applyMenuFile);
 
-    // Also handle new-file creation from OpenFileDialog (desktop, no project)
     const onElectronFileOpened = (e: Event) => {
       const data = (e as CustomEvent).detail;
       if (data) void applyMenuFile(data);
@@ -1152,7 +1071,6 @@ const AppContent = () => {
     return () => window.removeEventListener('electron:file-opened', onElectronFileOpened);
   }, [navigateTo, tryFocusExistingDesktopFile]);
 
-  // Second-instance / Finder: focus existing file without re-importing
   useEffect(() => {
     if (!isDesktop()) return;
     const api = (window as any).electronAPI;
@@ -1164,7 +1082,6 @@ const AppContent = () => {
     api.onFocusExistingFile(onFocus);
   }, [tryFocusExistingDesktopFile]);
 
-  // Desktop startup: ensure My projects is the home screen (hash routing may restore a stale editor route).
   const desktopHomeRoutedRef = useRef(false);
   useEffect(() => {
     if (!isDesktop() || !user || loading || desktopHomeRoutedRef.current) return;
@@ -1180,7 +1097,6 @@ const AppContent = () => {
     }
   }, [user, loading, selectedProjectId, selectedFileId, pendingFile, navigateTo]);
 
-  // Auto-upload for self-hosted users (no workspace)
   useEffect(() => {
     if (user && !user.workspaceId && pendingFile) {
       console.log("[App] 🚀 Auto-uploading file for self-hosted user:", pendingFile.fileName);
@@ -1197,11 +1113,10 @@ const AppContent = () => {
           skipDuplicateCheck: false,
         });
       } else {
-        // Browser / cloud / Electron: upload directly via API
+
         uploadFileBrowserMode(projectId, pendingFile.fileName, pendingFile.fileContent, pendingFile.fileSize);
       }
 
-      // Clear pending file after triggering upload
       setPendingFile(null);
     }
   }, [user, pendingFile, uploadFileBrowserMode]);
@@ -1209,7 +1124,7 @@ const AppContent = () => {
   const toggleFormView = () => {
     const newIsLogin = !isLoginView;
     setAuthSubView(newIsLogin ? "login" : "signup");
-    // Navigate using router to update browser history
+
     navigateTo({
       view: newIsLogin ? "login" : "signup",
       isLoginView: newIsLogin,
@@ -1240,18 +1155,16 @@ const AppContent = () => {
   const handleProjectSelected = (projectId: string, projectName: string) => {
     console.log("[App] Project selected:", projectId, projectName);
 
-    // Persist last selected project for auto-restore on next login
     try {
       localStorage.setItem("ontocode_lastWorkspaceProjectId", projectId);
       localStorage.setItem("ontocode_lastWorkspaceProjectName", projectName);
       localStorage.removeItem("ontocode_lastWorkspaceFileId");
       localStorage.removeItem("ontocode_lastWorkspaceFileName");
     } catch { /* ignore */ }
-    // Also persist to backend for cross-device restore
+
     apiClient.put('/api/auth/last-opened', { projectId, projectName, fileId: null, fileName: null })
       .catch(() => { /* non-critical */ });
 
-    // If there's a pending file, upload it to this project
     if (pendingFile) {
       console.log("[App] Uploading pending file to project:", pendingFile.fileName);
       if (window.vscode) {
@@ -1263,14 +1176,13 @@ const AppContent = () => {
           fileSize: pendingFile.fileSize,
         });
       } else {
-        // Browser / cloud / Electron: upload directly via API
+
         uploadFileBrowserMode(projectId, pendingFile.fileName, pendingFile.fileContent, pendingFile.fileSize);
       }
-      // Clear pending file immediately after triggering upload
+
       setPendingFile(null);
     }
 
-    // Navigate using router to update browser history
     navigateTo({
       view: "projectLibrary",
       projectId: projectId,
@@ -1282,7 +1194,7 @@ const AppContent = () => {
 
   const handleBackToProjects = () => {
     clearLastOpenedSelection();
-    // Navigate using router to update browser history
+
     navigateTo({
       view: "projectDashboard",
       projectId: null,
@@ -1307,15 +1219,13 @@ const AppContent = () => {
       pendingDesktopFilePathRef.current = null;
     }
 
-    // Persist last selected file for auto-restore on next login
     try {
       localStorage.setItem("ontocode_lastWorkspaceFileId", fileId);
       localStorage.setItem("ontocode_lastWorkspaceFileName", fileName);
-      // Record when the user last had a file open — used to decide whether to
-      // restore directly to the editor (recent tab-switch) vs project library (fresh session).
+
       localStorage.setItem("ontocode_lastEditorActiveAt", String(Date.now()));
     } catch { /* ignore */ }
-    // Also persist to backend for cross-device restore
+
     apiClient.put('/api/auth/last-opened', {
       projectId: selectedProjectId,
       projectName: selectedProjectName,
@@ -1323,7 +1233,6 @@ const AppContent = () => {
       fileName,
     }).catch(() => { /* non-critical */ });
 
-    // Navigate using router to update browser history
     navigateTo({
       view: "dashboard",
       projectId: selectedProjectId, // Preserve current project
@@ -1437,7 +1346,7 @@ const AppContent = () => {
     setSubscriptionPaymentError(null);
     try {
       if (planId.toUpperCase() === "FREE") {
-        // Free plan changes do not require Stripe. Keep this path for first-time setup.
+
         if (user?.workspaceId) {
           await updateSubscriptionPlan(planId);
         }
@@ -1494,9 +1403,7 @@ const AppContent = () => {
   const handleSkipPlan = () => {
     setShowSubscriptionPlan(false);
     resetWorkspaceHubNavigation();
-    // Explicit route — never rely on history stack.
-    // Came from billing → go back to billing.
-    // Everything else → workspace selection (new user or existing user upgrading).
+
     if (subscriptionReturnRoute === "billing") {
       setShowBillingPage(true);
       navigateTo({
@@ -1511,11 +1418,9 @@ const AppContent = () => {
       setSubscriptionReturnRoute(null);
       return;
     }
-    // Suppress WorkspaceSelection auto-trigger so it doesn't re-open the plan page.
+
     try { localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, "true"); } catch {}
-    // Pass showSubscriptionPlan: false explicitly — navigateTo merges with the current
-    // route which still has showSubscriptionPlan: true in the same render cycle, and
-    // handleRouteChange would re-apply it, keeping the subscription page open.
+
     navigateTo({
       view: "workspace",
       showSubscriptionPlan: false,
@@ -1529,9 +1434,7 @@ const AppContent = () => {
   };
 
   useEffect(() => {
-    // Only attempt payment recovery after the user is authenticated.
-    // Running before login means no auth token → billing API returns 401 →
-    // onUnauthorized fires logout() → clearSessionCache() removes the fresh token.
+
     if (!user?.token || paymentRecoveryAttempted.current) return;
     paymentRecoveryAttempted.current = true;
 
@@ -1598,17 +1501,13 @@ const AppContent = () => {
     console.log("[App] Deployment selected:", type);
     setDeploymentType(type);
 
-    // Store preference
     localStorage.setItem("deploymentType", type);
 
-    // Update apiClient base URL immediately
     updateBaseUrl(type);
     console.log("[App] API client base URL updated for deployment type:", type);
 
-    // Get the API base URL from centralized config
     const baseUrl = getGatewayUrl(type);
 
-    // Notify extension to update API URLs
     if (window.vscode) {
       window.vscode.postMessage({
         type: "setApiBaseUrl",
@@ -1617,7 +1516,6 @@ const AppContent = () => {
       });
     }
 
-    // If user is already logged in, update their role
     if (user) {
       try {
         await updateUserRole(type);
@@ -1631,7 +1529,7 @@ const AppContent = () => {
   };
 
   const handleLogout = () => {
-    // Reset all route state before logout
+
     setSelectedProjectId(null);
     setSelectedProjectName("");
     setSelectedFileId(null);
@@ -1646,17 +1544,15 @@ const AppContent = () => {
     pendingDesktopFilePathRef.current = null;
     clearDesktopActiveFile();
     (window as any).electronAPI?.clearActiveFilePath?.();
-    // Clear route history
+
     clearHistory();
-    // Keep deployment type so user doesn't need to select again
+
     logout();
   };
 
   const handleBackToProjectDashboard = () => {
     clearLastOpenedSelection();
-    // Reset state directly so showProjectDashboard condition passes immediately.
-    // Without this, currentRoute can fall to the "login" branch when selectedFileId
-    // is "__editor__", causing navigateTo to spread isLoginView:true into the route.
+
     setSelectedProjectId(null);
     setSelectedProjectName("");
     setSelectedFileId(null);
@@ -1671,7 +1567,7 @@ const AppContent = () => {
   };
 
   const handleBackToProjectLibrary = () => {
-    // Use deterministic route navigation so back works regardless of browser history state.
+
     navigateTo({
       view: "projectLibrary",
       projectId: selectedProjectId, // Preserve current project
@@ -1683,20 +1579,17 @@ const AppContent = () => {
 
   const handleInvitationAccepted = (workspaceData?: any) => {
     console.log("[App] ✅ Invitation accepted, workspace data:", workspaceData);
-    // Clear invitation state
+
     setInviteToken(null);
     setInviteEmail(null);
 
-    // Clear any previously-loaded editor state so the old workspace's file
-    // is not shown after the user lands in the new workspace.
     clearLastOpenedProjectState();
 
     if (workspaceData) {
       console.log("[App] Successfully joined workspace:", workspaceData.workspaceId || workspaceData.workspace?.id);
-      // Select the workspace the user just joined
+
       if (workspaceData.workspaceId) {
-        // Trigger workspace selection to get proper JWT with workspace context
-        // This will automatically navigate to the Project Dashboard
+
         selectWorkspace({
           workspaceId: workspaceData.workspaceId,
           workspaceName: workspaceData.workspaceName,
@@ -1709,12 +1602,12 @@ const AppContent = () => {
 
   const handleInvitationLoginRequired = (email: string) => {
     console.log("[App] ⚠️  Login required for invitation, email:", email);
-    // Store invitation token to restore after login
+
     const currentToken = inviteToken;
     setInviteEmail(email);
-    // Keep the token so user can accept invitation after logging in
+
     console.log("[App] Keeping invitation token for post-login acceptance:", currentToken);
-    // Show auth form while keeping the invite token for later
+
     setShowAuthForInvitation(true);
     setIsLoginView(true);
   };
@@ -1722,21 +1615,20 @@ const AppContent = () => {
   const handleInvitationSignupRequired = (email: string) => {
     console.log("[App] 📝 Signup required for invitation, email:", email);
     setInviteEmail(email);
-    // Show signup form while keeping the invite token for later
+
     setShowAuthForInvitation(true);
     setIsLoginView(false); // Show signup form instead of login
   };
 
   const handleInvitationError = () => {
     console.log("[App] ❌ Invitation error, clearing state and showing login");
-    // Clear invitation and go to login
+
     setInviteToken(null);
     setInviteEmail(null);
     setShowAuthForInvitation(false);
     setIsLoginView(true);
   };
 
-  // When user logs in successfully while having an invite, go back to invitation page
   useEffect(() => {
     if (user && showAuthForInvitation && inviteToken) {
       console.log("[App] User logged in with pending invitation, returning to invitation page");
@@ -1744,17 +1636,15 @@ const AppContent = () => {
     }
   }, [user, showAuthForInvitation, inviteToken]);
 
-  // Show email verification UI when arriving via /verify-email?token=...
-  // Rendered BEFORE the loading spinner so it shows immediately on first paint.
   if (emailVerifyToken && emailVerifyStatus !== "idle") {
     const handleGoToLogin = () => {
-      // Ensure deployment type is set so the login form renders (webapp = always cloud)
+
       if (!deploymentType) {
         setDeploymentType("cloud");
         localStorage.setItem("deploymentType", "cloud");
         updateBaseUrl("cloud");
       }
-      // Pre-fill the verified email in the login form
+
       setVerificationEmail(verifiedEmail);
       setEmailVerifyToken(null);
       setEmailVerifyStatus("idle");
@@ -1894,8 +1784,6 @@ const AppContent = () => {
     );
   }
 
-  // Desktop: block the app when the imported (paid) license has expired.
-  // The user must renew on the web. FREE/perpetual licenses never expire.
   if (isDesktop() && isLicenseExpired(desktopLicense)) {
     const expiredPlan = licensePlan(desktopLicense);
     return (
@@ -1931,8 +1819,6 @@ const AppContent = () => {
     );
   }
 
-  // Show invitation acceptance page if there's an invite token (whether logged in or not)
-  // But if user clicked login/signup, show auth form first
   if (inviteToken && !showAuthForInvitation) {
     console.log("[App] 🎫 Rendering InviteAcceptPage with token:", inviteToken.substring(0, 20) + "...");
     return (
@@ -1946,7 +1832,6 @@ const AppContent = () => {
     );
   }
 
-  // Debug: Log why we're not showing invitation page
   if (inviteToken) {
     console.log(
       "[App] ⚠️ Have invite token but not showing InviteAcceptPage. showAuthForInvitation:",
@@ -1954,8 +1839,6 @@ const AppContent = () => {
     );
   }
 
-  // Show reset-password form immediately when accessed via email link,
-  // bypassing the deployment-type guard (user has no context yet).
   if (!user && authSubView === "resetPassword" && resetToken) {
     return (
       <ResetPasswordForm
@@ -1969,19 +1852,10 @@ const AppContent = () => {
     );
   }
 
-  // Show deployment selector if user hasn't selected deployment type yet (regardless of login state)
   if (!deploymentType) {
     return <DeploymentSelector onSelect={handleDeploymentSelected} />;
   }
 
-  // Bug #44 / #50: BillingManagement is ALWAYS account-level (Model B —
-  // one Stripe customer per user account, workspaces inherit the plan).
-  // We pass an empty workspaceId so every API call hits the account
-  // endpoints, and isOwner is always true because it's the user's own
-  // account. Must be checked BEFORE the workspace-selection short-circuit
-  // so navigating from WorkspaceSelection actually works.
-  // Desktop download page — works before login via showDesktopDownload state.
-  // Never shown inside the desktop app itself.
   if (showDesktopDownload && !isDesktop()) {
     return (
       <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
@@ -2006,8 +1880,7 @@ const AppContent = () => {
             billingStatus: workspaceBillingStatus || "ACTIVE",
             billingInterval: (user as any).billingInterval || "monthly",
           }}
-          // Account-level billing — the user is always the owner of their
-          // own Stripe customer.
+
           isOwner={true}
           onBack={goToWorkspaceHub}
           onCancelled={goToWorkspaceHub}
@@ -2017,17 +1890,15 @@ const AppContent = () => {
     );
   }
 
-  // Show subscription plan selection before workspace selection. Billing is
-  // account-level, so a selected workspace is not required to buy or renew.
   if (user && showSubscriptionPlan && !isDesktop()) {
     const status = (accountSubscriptionStatus || "").toLowerCase();
-    // Use plan name from billing API (authoritative); fall back to JWT value only if API hasn't loaded yet.
+
     const resolvedPlanId = accountPlanName || (user.subscriptionPlan ? user.subscriptionPlan.toUpperCase() : "FREE");
     const allowCurrentPlanSelection =
       resolvedPlanId !== "FREE"
       && status !== "active"
       && status !== "trialing";
-    // Anyone who has had a paid plan before must not get a free trial again.
+
     const effectiveTrialEligible = trialEligible && resolvedPlanId === "FREE";
     if (subscriptionPageRefreshing) {
       return (
@@ -2083,12 +1954,10 @@ const AppContent = () => {
     );
   }
 
-  // Admin users bypass workspace selection entirely — they only configure the system
   if (user?.isAdmin) {
     return <AdminSettingsModal isOpen={true} onClose={() => {}} pageMode onLogout={handleLogout} />;
   }
 
-  // Show workspace selection if user is logged in but hasn't selected a workspace
   const showWorkspaceSelectionScreen =
     !isDesktop() && user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending) && !selectedFileId;
   console.log("[App] Render decision - showWorkspaceSelectionScreen:", showWorkspaceSelectionScreen);
@@ -2128,8 +1997,6 @@ const AppContent = () => {
     );
   }
 
-  // Show Project Dashboard for workspace members (both admins and non-admins)
-  // Show only when no file is selected AND (no project selected OR has pending file to upload)
   const showProjectDashboard =
     user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile);
   console.log("[App] ProjectDashboard check:", {
@@ -2172,12 +2039,7 @@ const AppContent = () => {
       </>
     );
   }
-  
 
-  // (BillingManagement render moved earlier \u2014 see top of render fn.)
-
-  // Show Project Library when a project is selected but no file is selected
-  // Available to all workspace members (both admins and non-admins)
   if (user && user.workspaceId && selectedProjectId && !selectedFileId) {
     console.log("[App] Routing to ProjectLibrary - isAdmin:", user.isAdmin, "projectId:", selectedProjectId);
     return (
@@ -2195,9 +2057,6 @@ const AppContent = () => {
     );
   }
 
-  // Show main Dashboard/Editor when:
-  // 1. Workspace member (admin or non-admin) has selected a file, OR
-  // 2. Non-workspace user (goes directly to editor without workspace flow)
   if (user) {
     console.log(
       "[App] Routing to Dashboard - isAdmin:",
@@ -2215,9 +2074,7 @@ const AppContent = () => {
           isDesktop() || user.workspaceId
             ? handleBackToProjectLibrary
             : () => {
-                // No-workspace user: must clear file/project selection too —
-                // the workspace screen only renders when !selectedFileId, so
-                // setting forceShowWorkspace alone is a dead click from the editor.
+
                 resetWorkspaceHubNavigation();
                 setForceShowWorkspace(true);
               }
@@ -2252,7 +2109,7 @@ const AppContent = () => {
       />
     );
   } else {
-    // If there's an invitation, prefill the email in login/signup and show back button
+
     const handleBackToInvitation = () => {
       navigateTo({
         view: "invitation",

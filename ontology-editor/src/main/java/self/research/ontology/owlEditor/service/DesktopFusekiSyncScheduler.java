@@ -14,10 +14,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Silent background Fuseki sync for OWLAPI-first desktop.
- * Editor open and mutations use OWLAPI only; this catches Fuseki up without blocking the UI.
- */
 @Service
 @ConditionalOnProperty(name = "ontocode.desktop.owlapi-first", havingValue = "true")
 public class DesktopFusekiSyncScheduler {
@@ -27,12 +23,7 @@ public class DesktopFusekiSyncScheduler {
     private static final long OPEN_DELAY_MS = 3_000;
     private static final long MUTATION_DEBOUNCE_MS = 20_000;
     private static final long RETRY_DELAY_MS = 45_000;
-    // After this many quick retries, back off to a slower steady-state interval instead of
-    // giving up entirely. Fuseki is only started on-demand (a tab open, or the one project-open
-    // kick-off) — if that never happens to succeed in a session, silently abandoning the sync
-    // left Fuseki permanently stale for the rest of the session with no further attempts and no
-    // user-visible signal, until the next mutation happened to reschedule it. A pending sync
-    // must eventually complete once Fuseki becomes reachable, not just "usually."
+
     private static final int QUICK_RETRIES = 4;
     private static final long SLOW_RETRY_DELAY_MS = 120_000;
 
@@ -55,12 +46,10 @@ public class DesktopFusekiSyncScheduler {
         this.datasetService = datasetService;
     }
 
-    /** After ontology open / OWLAPI warm — short delay, no debounce stacking. */
     public void scheduleAfterOpen(String projectId) {
         schedule(projectId, OPEN_DELAY_MS, false);
     }
 
-    /** After OWLAPI mutation — debounce bursts of edits into one upload. */
     public void scheduleAfterMutation(String projectId) {
         schedule(projectId, MUTATION_DEBOUNCE_MS, true);
     }
@@ -94,9 +83,7 @@ public class DesktopFusekiSyncScheduler {
                 retryCounts.remove(projectId);
                 return;
             }
-            // Lazy desktop Fuseki may not be started yet — the Electron shell
-            // launches it on demand. Probe first so we defer with one log line
-            // instead of connection-refused stack traces from the sync path.
+
             if (!datasetService.isFusekiReachable()) {
                 log.info("[FusekiBg] Fuseki not reachable yet — deferring sync for {}", projectId);
                 scheduleRetry(projectId);

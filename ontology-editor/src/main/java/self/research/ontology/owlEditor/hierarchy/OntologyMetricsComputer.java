@@ -13,15 +13,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * ontology statistics from an in-memory OWLAPI model + structural reasoner.
- */
 @Component
 public class OntologyMetricsComputer {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyMetricsComputer.class);
 
-    /** Fast-open: signature counts from parsed ontology only (no reasoner). */
     public Map<String, Object> computeAsserted(OWLOntology ontology) {
         Map<String, Object> metrics = new LinkedHashMap<>();
         Imports imp = Imports.INCLUDED;
@@ -64,10 +60,6 @@ public class OntologyMetricsComputer {
         return metrics;
     }
 
-    /**
-     * Entailed anonymous SubClassOf axioms (direct) not present in the asserted ontology.
-     * Matches "hidden GCI" using the structural reasoner already loaded for hierarchy.
-     */
     private int computeHiddenGciCount(OWLOntology ontology, OWLReasoner reasoner) {
         try {
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();

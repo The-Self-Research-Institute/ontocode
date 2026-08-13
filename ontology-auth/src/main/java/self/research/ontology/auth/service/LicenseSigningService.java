@@ -15,18 +15,6 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Issues signed desktop-license files (Ed25519).
- *
- * The web/cloud auth service signs a license payload with its private key; the
- * desktop Electron shell verifies the signature with the bundled public key.
- * The license is the single source of truth for the desktop user's identity
- * (name, email, plan, validity).
- *
- * The private key is supplied via {@code license.signing.private-key} (PEM, or
- * base64-of-PEM for env friendliness). Generate a keypair with
- * {@code node scripts/generate-license-keys.js}. NEVER commit the private key.
- */
 @Service
 public class LicenseSigningService {
 
@@ -36,15 +24,10 @@ public class LicenseSigningService {
     @Value("${license.signing.private-key:}")
     private String privateKeyConfig;
 
-    /** True when a signing key is configured (license issuance available). */
     public boolean isConfigured() {
         return privateKeyConfig != null && !privateKeyConfig.isBlank();
     }
 
-    /**
-     * Build and sign a license payload for the given identity/plan.
-     * The returned map (payload + "signature") is serialised to the .lic file.
-     */
     public Map<String, Object> issue(String name, String email, String plan,
                                      LocalDateTime expiresAt, Map<String, Object> features) {
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -61,10 +44,6 @@ public class LicenseSigningService {
         return payload;
     }
 
-    /**
-     * Deterministic string signed/verified on both sides. Must match the
-     * canonical() implementation in electron-app/main.js exactly.
-     */
     private String canonical(Map<String, Object> p) {
         return String.join("\n",
                 str(p.get("version")),
@@ -94,7 +73,7 @@ public class LicenseSigningService {
 
     private PrivateKey loadPrivateKey() throws Exception {
         String pem = privateKeyConfig.trim();
-        // Allow base64-of-PEM (env-friendly) or raw PEM.
+
         if (!pem.contains("BEGIN")) {
             pem = new String(Base64.getDecoder().decode(pem), StandardCharsets.UTF_8);
         }

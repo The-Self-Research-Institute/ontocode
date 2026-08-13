@@ -10,8 +10,6 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @Configuration("pluginCorsConfig")
 public class CorsConfig {
 
-    // When merged into ontology-desktop, auth's corsConfigurationSource takes precedence.
-    // This bean is only registered when running as a standalone plugin service.
     @Bean
     @ConditionalOnMissingBean(CorsConfigurationSource.class)
     public CorsConfigurationSource corsConfigurationSource() {

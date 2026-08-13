@@ -9,19 +9,6 @@ import self.research.ontology.owlEditor.repository.DraftSessionRepository;
 
 import java.time.LocalDateTime;
 
-/**
- * Manages copy-on-switch draft sessions.
- *
- * When a user switches to draft mode, this service:
- *   1. Blocks if an import is in progress for the project.
- *   2. Clears any stale draft graph.
- *   3. Persists a DraftSession with status=COPYING and the current main revision.
- *   4. Asynchronously copies main → draft via SPARQL INSERT WHERE.
- *   5. Marks status=READY when done (or FAILED on error).
- *
- * On publish, the caller uses SPARQL MOVE GRAPH draft → main (atomic).
- * On discard, the caller calls SparqlDatasetService.clearDraftGraph().
- */
 @Slf4j
 @Service
 public class DraftCopyService {
@@ -51,11 +38,6 @@ public class DraftCopyService {
             long mainRevisionAtCopy
     ) {}
 
-    /**
-     * Begin a draft copy for the user. Returns immediately; copy runs in background.
-     *
-     * @return InitiateResult — check {@code accepted} before trusting the other fields.
-     */
     public InitiateResult initiateCopy(String projectId, String userId) {
         var stats = importQueueManager.getQueueStats();
         if (stats.getActiveProjectIds() != null && stats.getActiveProjectIds().contains(projectId)) {
@@ -74,8 +56,7 @@ public class DraftCopyService {
         session.setBaselineAt(LocalDateTime.now());
         session.setCopyStatus(DraftCopyStatus.COPYING);
         try {
-            // Snapshot main now so the "Pull" button can later do a real three-way merge
-            // (baseline / draft / main) instead of a destructive overwrite.
+
             session.setBaselineSnapshotPath(publishMergeService.captureBaselineSnapshot(projectId, userId));
         } catch (Exception e) {
             log.warn("[DRAFT-COPY] Could not capture baseline snapshot for project {} user {}: {}",
@@ -110,17 +91,12 @@ public class DraftCopyService {
                 .orElse(DraftCopyStatus.NOT_FOUND);
     }
 
-    /** True when the user's copy-on-switch draft graph is ready for edits. */
     public boolean isReady(String projectId, String userId) {
         return sessionRepository.findByProjectIdAndUserId(projectId, userId)
                 .map(s -> s.getCopyStatus() == DraftCopyStatus.READY)
                 .orElse(false);
     }
 
-    /**
-     * Returns the main graph revision that was current when this draft copy was made.
-     * Used by the publish path to detect if main has advanced since the copy (conflict).
-     */
     public long getMainRevisionAtCopy(String projectId, String userId) {
         return sessionRepository.findByProjectIdAndUserId(projectId, userId)
                 .map(DraftSession::getBaselineMainRevision)
@@ -132,8 +108,7 @@ public class DraftCopyService {
             s.setCopyStatus(status);
             sessionRepository.save(s);
         });
-        // Evict the short-lived TTL cache in SparqlDatasetService so the next read
-        // immediately sees the new status instead of waiting for the TTL to expire.
+
         datasetService.evictDraftReadyCache(projectId, userId);
     }
 }

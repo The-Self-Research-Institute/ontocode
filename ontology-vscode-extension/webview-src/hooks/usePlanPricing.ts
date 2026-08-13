@@ -41,7 +41,6 @@ const FALLBACK: PricingMap = {
     },
 };
 
-// Module-level cache — only one HTTP request regardless of how many components mount.
 let _cache: PricingMap | null = null;
 let _trialDaysCache: number = 14;
 let _inflight: Promise<PricingMap> | null = null;

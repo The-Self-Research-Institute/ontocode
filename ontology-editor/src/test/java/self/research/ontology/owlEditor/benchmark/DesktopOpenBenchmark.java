@@ -9,10 +9,6 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/**
- * Standalone OWLAPI parse timer for {@code scripts/desktop-benchmark-open.ps1}.
- * Prints {@code PARSE_MS=<n>} on stdout.
- */
 public final class DesktopOpenBenchmark {
 
     private DesktopOpenBenchmark() {}

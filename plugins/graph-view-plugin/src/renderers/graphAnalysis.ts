@@ -1,20 +1,16 @@
-/**
- * Headless structural analysis over the graphology model — the field-validated
- * "task-first" insights: orphans (unconnected nodes), islands (disconnected
- * components), hubs (degree outliers that hairball the layout).
- */
+
 
 import Graph from 'graphology';
 import louvain from 'graphology-communities-louvain';
 
 export interface GraphInsights {
-  /** Nodes with no edges at all. */
+
   orphans: string[];
-  /** Connected components other than the largest (singletons excluded — those are orphans). */
+
   islands: string[][];
-  /** Degree outliers (>= max(10, mean + 3σ)). */
+
   hubs: string[];
-  /** Louvain community per node id. */
+
   communities: Record<string, number>;
   communityCount: number;
 }
@@ -54,7 +50,6 @@ export function analyzeGraph(graph: Graph): GraphInsights {
   const threshold = Math.max(10, mean + 3 * std);
   const hubs = graph.filterNodes(id => graph.degree(id) >= threshold);
 
-  // Louvain needs a simple undirected graph — collapse the directed multigraph
   let communities: Record<string, number> = {};
   let communityCount = 0;
   try {

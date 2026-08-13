@@ -19,23 +19,12 @@ import java.util.List;
 @Configuration
 public class GatewayCorsConfig {
 
-    /**
-     * WebFilter that runs before everything else (including Spring Security at -100).
-     *
-     * Key fix for CORS-on-error-responses: headers are set on the ORIGINAL
-     * ServerHttpResponse object BEFORE chain.filter() is called. Because
-     * ErrorWebExceptionHandler also receives the same original exchange/response,
-     * the CORS headers are already present when it writes a 504/502 error response.
-     * This is in contrast to CorsWebFilter which wraps a response decorator that
-     * ErrorWebExceptionHandler bypasses.
-     */
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
     public WebFilter corsEarlySetFilter() {
         return (exchange, chain) -> {
             String origin = exchange.getRequest().getHeaders().getOrigin();
 
-            // Preflight — answer immediately before security/routing see the request.
             boolean isPreflight = HttpMethod.OPTIONS.equals(exchange.getRequest().getMethod())
                     && exchange.getRequest().getHeaders().containsKey(HttpHeaders.ORIGIN)
                     && exchange.getRequest().getHeaders().containsKey(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD);
@@ -54,8 +43,6 @@ public class GatewayCorsConfig {
                 return res.setComplete();
             }
 
-            // Set CORS headers now, on the original response, before any downstream
-            // processing that might fail or timeout.
             if (origin != null && !origin.isEmpty()) {
                 HttpHeaders h = exchange.getResponse().getHeaders();
                 h.set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
@@ -67,12 +54,6 @@ public class GatewayCorsConfig {
         };
     }
 
-    /**
-     * GlobalFilter that runs after the routing filter for SUCCESSFUL responses.
-     * Overwrites ACAO with the echoed request origin (corrects upstream "*" values)
-     * and deduplicates any other CORS headers the backend may have added.
-     * Order is just above LOWEST_PRECEDENCE so it runs very late (after routing).
-     */
     @Bean
     @Order(Ordered.LOWEST_PRECEDENCE - 1)
     public GlobalFilter corsUpstreamHeaderStripFilter() {
@@ -84,7 +65,7 @@ public class GatewayCorsConfig {
             }
             String origin = exchange.getRequest().getHeaders().getOrigin();
             HttpHeaders headers = response.getHeaders();
-            // Re-assert the correct origin-specific value, overwriting any upstream "*".
+
             if (origin != null && !origin.isEmpty()) {
                 headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, origin);
                 headers.set(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
@@ -96,7 +77,6 @@ public class GatewayCorsConfig {
         }));
     }
 
-    /** Keep only the first (non-null) value for the given header name. */
     private static void dedup(HttpHeaders headers, String name) {
         List<String> values = headers.get(name);
         if (values != null && values.size() > 1) {
@@ -104,13 +84,6 @@ public class GatewayCorsConfig {
         }
     }
 
-    /**
-     * Error handler for gateway-generated error responses (504, 502, etc.).
-     * corsEarlySetFilter already set CORS headers on the original response before
-     * the request started, so the browser will receive them. This handler additionally
-     * re-asserts them (in case something cleared them) and writes a structured body.
-     * Order -2 runs before Spring Boot's default error handler (order -1).
-     */
     @Bean
     @Order(-2)
     public ErrorWebExceptionHandler corsErrorWebExceptionHandler() {
@@ -131,8 +104,7 @@ public class GatewayCorsConfig {
     }
 
     private static HttpStatus resolveStatus(Throwable ex) {
-        // Netty timeout types (ReadTimeoutException, ConnectTimeoutException) do NOT
-        // extend java.util.concurrent.TimeoutException — match by class name too.
+
         String className = ex.getClass().getName();
         String message = ex.getMessage();
         boolean isTimeout = ex instanceof java.util.concurrent.TimeoutException

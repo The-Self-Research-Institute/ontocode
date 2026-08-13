@@ -1,4 +1,4 @@
-// hooks/useSwrlRules.ts
+
 
 import { useState, useCallback, useEffect } from 'react';
 import swrlApiService, {
@@ -15,7 +15,7 @@ interface UseSwrlRulesResult {
   error: string | null;
   validationResult: ValidationResult | null;
   executionResult: ExecutionResponse | null;
-  
+
   loadRules: () => Promise<void>;
   validateRule: (ruleText: string) => Promise<ValidationResult>;
   createRule: (request: CreateRuleRequest) => Promise<SwrlRule>;
@@ -43,10 +43,10 @@ export function useSwrlRules(projectId: string): UseSwrlRulesResult {
 
   const loadRules = useCallback(async () => {
     if (!projectId) return;
-    
+
     setLoading(true);
     setError(null);
-    
+
     try {
       const fetchedRules = await swrlApiService.getRules(projectId);
       setRules(fetchedRules);
@@ -65,7 +65,7 @@ export function useSwrlRules(projectId: string): UseSwrlRulesResult {
     }
 
     setError(null);
-    
+
     try {
       const result = await swrlApiService.validateRule(projectId, ruleText);
       setValidationResult(result);
@@ -84,7 +84,7 @@ export function useSwrlRules(projectId: string): UseSwrlRulesResult {
 
     setLoading(true);
     setError(null);
-    
+
     try {
       const newRule = await swrlApiService.createRule(projectId, request);
       setRules(prev => [...prev, newRule]);
@@ -108,7 +108,7 @@ export function useSwrlRules(projectId: string): UseSwrlRulesResult {
 
     setLoading(true);
     setError(null);
-    
+
     try {
       const updatedRule = await swrlApiService.updateRule(projectId, ruleId, request);
       setRules(prev => prev.map(rule => rule.id === ruleId ? updatedRule : rule));
@@ -129,7 +129,7 @@ export function useSwrlRules(projectId: string): UseSwrlRulesResult {
 
     setLoading(true);
     setError(null);
-    
+
     try {
       await swrlApiService.deleteRule(projectId, ruleId);
       setRules(prev => prev.filter(rule => rule.id !== ruleId));
@@ -158,7 +158,7 @@ export function useSwrlRules(projectId: string): UseSwrlRulesResult {
 
     setLoading(true);
     setError(null);
-    
+
     try {
       const result = await swrlApiService.executeRules(projectId);
       setExecutionResult(result);

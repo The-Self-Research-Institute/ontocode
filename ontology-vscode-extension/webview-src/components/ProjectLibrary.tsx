@@ -175,7 +175,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const [userProjectRole, setUserProjectRole] = useState<string>("VIEWER");
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
   const [workspacePlan, setWorkspacePlan] = useState<string>("FREE");
-  // Refs mirror the above state so async handlers always read the latest values.
+
   const workspaceOwnerIdRef = useRef<string | null>(null);
   const workspacePlanRef = useRef<string>("FREE");
   const workspaceLoadedRef = useRef<boolean>(false);
@@ -231,8 +231,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         );
       } catch (err: any) {
         if (err?.status !== 202 && err?.status !== 200) {
-          // POST failed — the file may already be importing (e.g. auto-triggered after upload).
-          // Don't give up: poll the status API to discover actual import state.
+
           console.warn('[ProjectLibrary] Import trigger returned', err?.status, '— polling to check existing import status');
         }
       }
@@ -245,8 +244,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           apiClient.get(`/api/import-queue/position/${encodeURIComponent(ontologyProjectId)}`).catch(() => null),
           apiClient.get("/api/import-queue/stats").catch(() => null),
         ]);
-        // API returns { success: true, data: { status, ... } }; axios wraps that in res.data.
-        // Unwrap both layers so we reach the actual status fields.
+
         const envelope = res?.data || res;
         const data = envelope?.data || envelope;
         const status = data?.status || data?.state || null;
@@ -307,8 +305,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       } catch (err: any) {
         const httpStatus = err?.response?.status ?? err?.status;
         if (httpStatus === 404) {
-          // Status document doesn't exist — file was never imported or was deleted.
-          // Stop polling; don't leave the spinner running forever.
+
           clearInterval(importPollingRefs.current[file.id]);
           delete importPollingRefs.current[file.id];
           if (isMountedRef.current) {
@@ -368,7 +365,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   useEffect(() => {
     loadFiles().then(async (filesArray) => {
-      // After page refresh, resume progress cards for any imports still running on the backend.
+
       await Promise.all(filesArray.map(async (file: FileItem) => {
         const ontologyProjectId = `${projectId}--${file.id}`;
         try {
@@ -423,8 +420,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   }, [user?.workspaceId, user?.subscriptionPlan]);
 
   useEffect(() => {
-    // Reset on every mount (including StrictMode's simulated remount) so async
-    // callbacks like pollStatus don't see a stale false from the prior cleanup.
+
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
@@ -491,12 +487,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     return () => window.removeEventListener("queueStatusUpdate", handleQueueUpdate);
   }, [projectId]);
 
-  // Listen for file import completion messages from extension
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
       const message = event.data;
 
-      // Refetch files when import completes or file is ready
       if (message.type === "fileReady" || message.type === "importStatusUpdate") {
         console.log(
           "[ProjectLibrary] 📋 Received import completion message:",
@@ -508,22 +502,18 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           message.uploadedFileName,
         );
 
-        // Check if the message is for this project
         if (message.projectId === projectId || message.status?.status === "COMPLETED") {
           console.log("[ProjectLibrary] 📋 Refetching files after import completion");
           console.log("[ProjectLibrary] 📋 Current files count before refresh:", files.length);
 
-          // Retry mechanism to ensure newly uploaded file appears in list
           const fetchWithRetry = async (retries = 3, delay = 1000) => {
             for (let attempt = 1; attempt <= retries; attempt++) {
               console.log(`[ProjectLibrary] 📋 Fetch attempt ${attempt}/${retries}...`);
               const fetchedFiles = await loadFiles();
 
-              // If we're looking for a specific uploaded file, verify it's in the list
               if (message.uploadedFileId || message.uploadedFileName) {
                 let found = false;
 
-                // First try to match by fileId if available
                 if (message.uploadedFileId) {
                   found = fetchedFiles.some((f) => f.id === message.uploadedFileId);
                   console.log(
@@ -531,7 +521,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   );
                 }
 
-                // If not found by ID or no ID, try to match by filename
                 if (!found && message.uploadedFileName) {
                   const normalizedTarget = message.uploadedFileName.toLowerCase();
                   const matchedFile = fetchedFiles.find((f) => f.name.toLowerCase() === normalizedTarget);
@@ -565,7 +554,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   return false;
                 }
               } else {
-                // No specific file to look for, just refresh once
+
                 console.log("[ProjectLibrary] ✅ File list refreshed (no specific file verification)");
                 return true;
               }
@@ -584,7 +573,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     return () => window.removeEventListener("message", handleMessage);
   }, [projectId]);
 
-  // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => setOpenMenuFileId(null);
     if (openMenuFileId) {
@@ -599,7 +587,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       const response = await apiClient.get(`/api/projects/${projectId}/files`);
       console.log("[ProjectLibrary] Files response:", response);
 
-      // Handle both response.data and response.data.files structures
       const fileList = response?.files || response?.data || [];
       console.log("[ProjectLibrary] Parsed file list:", fileList);
 
@@ -629,7 +616,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
       console.log(`[ProjectLibrary] Processing file: ${targetFileName} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
 
-      // For large files (>10MB), use chunked processing
       const isLargeFile = file.size > 10 * 1024 * 1024;
 
       if (isLargeFile) {
@@ -640,7 +626,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
       console.log("[ProjectLibrary] Uploading file via multipart...");
 
-      // Build multipart FormData — streams the file directly, no base64 encoding
       const formData = new FormData();
       formData.append("file", file, targetFileName);
       formData.append("fileName", targetFileName);
@@ -649,7 +634,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         formData.append("replaceFileId", replaceFileId);
       }
 
-      // Send as multipart/form-data
       const uploadResponse = await apiClient.post(`/api/projects/${projectId}/files`, formData, {
         timeout: 600000, // 10 minute timeout for very large files
         onUploadProgress: (progressEvent) => {
@@ -678,18 +662,14 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       const responseData = (uploadResponse as any)?.data || uploadResponse;
       const uploadedFileId = responseData?.fileId || responseData?.id || null;
 
-      // Upload bytes are on the server — clear the progress UI immediately so the
-      // bar doesn't sit at 100% / "Uploading..." while loadFiles() refetches the list.
       setUploading(false);
       setUploadProgress(0);
       setProcessingFile(null);
 
-      // Refresh file list in background, then auto-start import so the user
-      // doesn't need a second click after the upload finishes.
       void loadFiles().then((files) => {
         if (uploadedFileId) {
           setSelectedFile(uploadedFileId);
-          // Auto-import: find the newly uploaded file and kick off import immediately.
+
           const newFile = files?.find((f: FileItem) => f.id === uploadedFileId);
           if (newFile) {
             void startFileImport(newFile);
@@ -703,19 +683,16 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       console.error("Error status:", error.status);
       console.error("Error data:", error.data);
 
-      // Free plan restriction (cloud workspaces only)
       if (!isDesktop() && error.status === 403 && error.data?.requiresUpgrade) {
         setShowFreePlanDialog(true);
         return;
       }
 
-      // Provide specific error messages
-      // Note: apiClient transforms errors into ApiError with status and data properties (not response.status/response.data)
       let errorMessage = "Failed to upload file";
       if (error.code === "ECONNABORTED" || error.message?.includes("timeout")) {
         errorMessage = "Upload timeout. Please try a smaller file or check your connection.";
       } else if (error.status === 413) {
-        // Storage limit exceeded or file too large
+
         const responseData = error.data;
         console.log("Storage limit response data:", responseData);
         if (responseData?.message) {
@@ -748,10 +725,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    // Reset input so selecting same file again triggers change
+
     event.target.value = "";
 
-    // Validate file size (max 1GB)
     const maxSize = 1024 * 1024 * 1024; // 1GB
     if (file.size > maxSize) {
       showToast(
@@ -761,7 +737,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       return;
     }
 
-    // Validate file type
     const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld", ".zip"];
     const fileExtension = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
     if (!validExtensions.includes(fileExtension)) {
@@ -776,7 +751,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       );
     }
 
-    // Check if file already exists in project
     try {
       console.log("[ProjectLibrary] Checking for duplicate file:", file.name);
       const checkResponse = await apiClient.get(
@@ -807,7 +781,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
       console.log("[ProjectLibrary] No duplicate found (exists=" + checkData?.exists + "), proceeding with upload");
     } catch (error: any) {
-      // If check fails, log detailed error but continue with upload for backward compatibility console.error("[ProjectLibrary] Duplicate check failed with error:", error);
+
       console.error("[ProjectLibrary] Error details:", error?.message, error?.status, error?.data);
       showToast("Unable to check for duplicates. Proceeding with upload...", "error");
     }
@@ -821,13 +795,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     setLoadingFileId(file.id);
 
     try {
-      // Cloud-only: on FREE plan, non-owners must wait until the workspace owner
-      // has opened/imported the file into GraphDB. Desktop is single-user local —
-      // no teams, no owner/member distinction (see buildDesktopUser vs Mongo owner id).
+
       if (!isDesktop()) {
-        // Wait for workspace data before deciding on plan/owner restrictions.
-        // Clicking before the async workspace API returns would wrongly treat the user
-        // as a "free non-owner" (workspaceOwnerId is null until the API responds).
+
         if (!workspaceLoadedRef.current) {
           await new Promise<void>((resolve) => {
             const check = setInterval(() => {
@@ -860,22 +830,19 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           }
           // Falls through to onFileSelect if already in GraphDB
         } else {
-          // Owner or paid plan: show import card for files not yet in GraphDB
 
-          // If we're already tracking this file's import, handle state transitions
           const existingImport = fileImportStates[file.id];
           if (existingImport) {
             if (existingImport.status === 'COMPLETED') {
               onFileSelect(file.id, file.name);
             } else if (existingImport.status === 'FAILED') {
-              // Retry the import — previous attempt may have conflicted with an auto-triggered import
+
               await startFileImport(file);
             }
-            // IMPORTING: do nothing, card already shows the state
+
             return;
           }
 
-          // Check GraphDB — only navigate immediately if already imported
           try {
             const ontologyProjectId = `${projectId}--${file.id}`;
             const graphCheck: any = await apiClient.get(
@@ -967,7 +934,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
+      {}
       <div className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
@@ -1107,7 +1074,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </div>
           </div>
 
-          {/* Upload Progress Bar */}
+          {}
           {uploading && (
             <div className="mt-4">
               <div className="flex items-center justify-between mb-2">
@@ -1162,7 +1129,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           </div>
         )}
 
-      {/* Content */}
+      {}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 overflow-y-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
         {loading ? (
           <div className="py-4">
@@ -1257,7 +1224,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                       : 'border-gray-200 cursor-pointer'
                   }`}
                 >
-                  {/* Progress bar stripe at bottom */}
+                  {}
                   {(isImporting || isCheckingGraphDB) && (
                     <div className="absolute bottom-0 left-0 right-0 h-1 bg-purple-100">
                       <div
@@ -1552,7 +1519,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         )}
       </div>
 
-      {/* Delete Confirmation Dialog */}
+      {}
       {deleteConfirm.show && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
@@ -1579,7 +1546,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         </div>
       )}
 
-      {/* New File Name Prompt (desktop) */}
+      {}
       <PromptDialog
         isOpen={showNewFileNamePrompt}
         title="New Ontology File"
@@ -1595,7 +1562,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         onCancel={() => setShowNewFileNamePrompt(false)}
       />
 
-      {/* Toast Notification */}
+      {}
       {toast.show && (
         <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
           <div
@@ -1625,7 +1592,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         </div>
       )}
 
-      {/* Report Issue Modal */}
+      {}
       {isReportIssueModalOpen && (
         <ReportIssueModal
           projectName={projectName}
@@ -1634,7 +1601,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         />
       )}
 
-      {/* Free Plan Member Open Restriction Dialog */}
+      {}
       {showOwnerMustImportDialog && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
@@ -1692,7 +1659,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         </div>
       )}
 
-      {/* Free Plan Upload Restriction Dialog */}
+      {}
       {showFreePlanDialog && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
@@ -1702,10 +1669,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             className="relative bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Top accent bar */}
+            {}
             <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500" />
 
-            {/* Header */}
+            {}
             <div className="px-6 pt-5 pb-4 flex items-start gap-4">
               <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
@@ -1731,7 +1698,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               </button>
             </div>
 
-            {/* Body */}
+            {}
             <div className="px-6 pb-5">
               <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
                 You can <span className="font-medium text-gray-800">browse and explore</span> this project, but file uploads require a <span className="font-medium text-gray-800">Pro plan</span>.
@@ -1744,7 +1711,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               </div>
             </div>
 
-            {/* Footer */}
+            {}
             <div className="px-6 pb-5 flex justify-end">
               <button
                 onClick={() => setShowFreePlanDialog(false)}

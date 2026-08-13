@@ -10,9 +10,6 @@ import self.research.ontology.owlEditor.service.ImportQueueManager;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * REST API for import queue management
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/import-queue")
@@ -25,9 +22,6 @@ public class ImportQueueController {
         this.queueManager = queueManager;
     }
 
-    /**
-     * Get queue status for a specific project
-     */
     @GetMapping("/status/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> getQueueStatus(@PathVariable String projectId) {
         try {
@@ -65,9 +59,6 @@ public class ImportQueueController {
         }
     }
 
-    /**
-     * Get overall queue statistics
-     */
     @GetMapping("/stats")
     public ResponseEntity<QueueStatusMessage.QueueStats> getQueueStats() {
         try {
@@ -80,9 +71,6 @@ public class ImportQueueController {
         }
     }
 
-    /**
-     * Get queue position for a project
-     */
     @GetMapping("/position/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> getQueuePosition(@PathVariable String projectId) {
         try {

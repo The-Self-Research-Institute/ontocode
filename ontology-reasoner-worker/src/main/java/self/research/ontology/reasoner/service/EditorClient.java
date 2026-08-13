@@ -48,7 +48,7 @@ public class EditorClient {
     }
 
     public InputStream openOntologyStream(String projectId, String userId) {
-        // N-Triples: no prefix resolution — OWLAPI parses large ontologies ~30% faster than Turtle
+
         String url = editorUrl + "/internal/reasoning/" + projectId + "/export.nt";
         if (userId != null && !userId.isBlank()) {
             try {

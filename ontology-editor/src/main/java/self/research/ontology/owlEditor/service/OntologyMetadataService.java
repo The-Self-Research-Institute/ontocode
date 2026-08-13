@@ -10,9 +10,6 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.regex.Pattern;
 
-/**
- * Service for managing ontology-level metadata: annotations, imports, and general class axioms
- */
 @Slf4j
 @Service
 public class OntologyMetadataService {
@@ -47,39 +44,24 @@ public class OntologyMetadataService {
         this.importService = importService;
     }
 
-    /**
-     * Get all metadata for an ontology
-     * Uses cached metadata from MongoDB if available to avoid expensive GraphDB queries
-     */
     public Map<String, Object> getMetadata(String projectId) {
         Map<String, Object> metadata = new HashMap<>();
 
-        // The cached metadata below is shared project-wide and only ever reflects the public
-        // graph (computed once after each direct/publish mutation). A drafter's own new
-        // classes/properties/individuals only exist in their draft graph, so serving them this
-        // cache would show stale, pre-draft counts (e.g. "Classes" badge not incrementing after
-        // a draft createClass). Skip the cache for drafters and fall through to the live query
-        // path below, which is draft-aware via SparqlDatasetService.execSelect's automatic
-        // FROM <draftGraph> injection for the current SparqlQueryContext user.
         String ctxUserId = SparqlQueryContext.getUserId();
         boolean hasDraft = ctxUserId != null && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
 
-        // 1. Check if cached metadata exists and is valid
         Optional<Map<String, Object>> cachedMetadata = hasDraft
                 ? Optional.empty() : projectMetadataService.readMeta(projectId);
 
         if (cachedMetadata.isPresent() && !cachedMetadata.get().isEmpty()) {
             Map<String, Object> cached = cachedMetadata.get();
 
-            // Reject a "complete" zero-entity cache when triples exist — that was typically a
-            // failed/partial SPARQL metrics pass that then stuck the Classes badge at 0 forever.
             boolean hasCounts = cached.containsKey("counts") || cached.containsKey("classCount")
                     || cached.containsKey("cacheComplete");
             if (hasCounts && !isUnreliableZeroCache(cached)) {
                 log.info("⚡ Using cached metadata for project {} (fast path, skipping GraphDB queries)", projectId);
                 metadata.putAll(cached);
 
-                // Always include fresh filename and status from MongoDB
                 projectMetadataService.readStatus(projectId).ifPresent(status -> {
                     metadata.put("filename", status.filename());
                     metadata.put("projectStatus", status.status());
@@ -92,29 +74,22 @@ public class OntologyMetadataService {
             }
         }
 
-        // 2. Cache miss or incomplete - compute from GraphDB (slow path)
         log.info("📊 Computing fresh metadata for project {} (slow path, querying GraphDB)", projectId);
-        // Desktop's Fuseki sync after a mutation is deferred — only pay for it here, on the
-        // actual SPARQL fallback, not on every call (this used to run unconditionally in the
-        // controller, forcing a Fuseki round-trip — and on desktop, a lazy Fuseki cold start —
-        // on every cache-hit call too, which is most of them).
+
         if (importService != null) {
             importService.syncProjectToFuseki(projectId);
         }
 
-        // Include filename and status from project metadata for UI context
         projectMetadataService.readStatus(projectId).ifPresent(status -> {
             metadata.put("filename", status.filename());
             metadata.put("projectStatus", status.status());
         });
-        
-        // Merge with dynamic metrics from GraphDB
+
         metadata.putAll(getDynamicMetrics(projectId));
-        
-        // Get ontology IRI and version IRI
+
         String ontologyIri = getOntologyIri(projectId);
         metadata.put("ontologyIRI", ontologyIri);
-        
+
         if (ontologyIri != null) {
             String query = PREFIXES + String.format("SELECT ?v WHERE { <%s> owl:versionIRI ?v }", ontologyIri);
             try {
@@ -126,17 +101,12 @@ public class OntologyMetadataService {
                 log.error("Error fetching version IRI", e);
             }
         }
-        
-        // Add other metadata components
+
         metadata.put("prefixes", getPrefixes(projectId));
         metadata.put("annotations", getOntologyAnnotations(projectId));
         metadata.put("imports", getOntologyImports(projectId));
         metadata.put("axioms", getGeneralClassAxioms(projectId));
-        
-        // Save to cache for future fast loading — but never from a drafter's request, or their
-        // draft-inclusive counts would leak into the shared cache and be served to everyone else.
-        // Also never cache a "complete" zero-count payload when the graph has triples: that usually
-        // means SPARQL metrics timed out/failed and would permanently pin the Classes badge at 0.
+
         if (!hasDraft) {
             try {
                 if (isUnreliableZeroCache(metadata) || Boolean.TRUE.equals(metadata.get("metricsFailed"))) {
@@ -160,7 +130,6 @@ public class OntologyMetadataService {
         return metadata;
     }
 
-    /** True when entity counts are all zero but the graph clearly has triples (or metricsFailed). */
     private static boolean isUnreliableZeroCache(Map<String, Object> meta) {
         if (Boolean.TRUE.equals(meta.get("metricsFailed"))) {
             return true;
@@ -205,9 +174,6 @@ public class OntologyMetadataService {
         return 0;
     }
 
-    /**
-     * Get all ontology annotations (dc:title, dc:creator, rdfs:label, rdfs:comment, etc.)
-     */
     public List<Map<String, String>> getOntologyAnnotations(String projectId) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
@@ -248,7 +214,7 @@ public class OntologyMetadataService {
                     Value valueNode = sol.getValue("value");
                     String value = valueNode.isLiteral() ? valueNode.stringValue() : valueNode.toString();
                     ann.put("value", value);
-                    
+
                     if (sol.hasBinding("lang") && !sol.getValue("lang").stringValue().isEmpty()) {
                         ann.put("language", sol.getValue("lang").stringValue());
                     }
@@ -258,7 +224,7 @@ public class OntologyMetadataService {
                             ann.put("datatype", dt);
                         }
                     }
-                    
+
                     annotations.add(ann);
                 }
             }
@@ -268,9 +234,6 @@ public class OntologyMetadataService {
         return annotations;
     }
 
-    /**
-     * Add an ontology annotation
-     */
     public void addOntologyAnnotation(String projectId, String propertyIri, String value, String language, String datatype) {
         addOntologyAnnotation(projectId, propertyIri, value, language, datatype, false, null);
     }
@@ -279,7 +242,7 @@ public class OntologyMetadataService {
                                       boolean draft, String userId) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
-            // If no ontology triple exists, create one using a stable IRI based on project ID
+
             ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
             String initUpdate = PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri);
             mutationService.applyRawUpdate(projectId, initUpdate, draft, userId);
@@ -288,7 +251,7 @@ public class OntologyMetadataService {
             }
             ontologyIri = "<" + ontologyIri + ">";
         } else {
-            // Format the ontology IRI for SPARQL
+
             ontologyIri = formatResource(ontologyIri);
         }
 
@@ -304,9 +267,6 @@ public class OntologyMetadataService {
         mutationService.applyRawUpdate(projectId, update, draft, userId);
     }
 
-    /**
-     * Update an ontology annotation
-     */
         public void updateOntologyAnnotation(
                         String projectId,
                         String propertyIri,
@@ -340,8 +300,7 @@ public class OntologyMetadataService {
                                 (originalPropertyIri != null && !originalPropertyIri.isBlank()) ? originalPropertyIri : propertyIri
                 );
         String newLiteral = formatLiteral(newValue, language, datatype);
-        
-        // Use a robust DELETE/INSERT/WHERE that matches by string value if exact match fails
+
         String update = PREFIXES + String.format("""
             DELETE {
                             %s %s ?old .
@@ -360,9 +319,6 @@ public class OntologyMetadataService {
         mutationService.applyRawUpdate(projectId, update, draft, userId);
     }
 
-    /**
-     * Delete an ontology annotation
-     */
     public void deleteOntologyAnnotation(String projectId, String propertyIri, String value, String language) {
         deleteOntologyAnnotation(projectId, propertyIri, value, language, false, null);
     }
@@ -376,8 +332,7 @@ public class OntologyMetadataService {
         ontologyIri = formatResource(ontologyIri);
 
         String prop = formatResource(propertyIri);
-        
-        // Use robust delete that matches by string value
+
         String update = PREFIXES + String.format("""
             DELETE {
               %s %s ?v .
@@ -386,7 +341,7 @@ public class OntologyMetadataService {
               %s %s ?v .
               FILTER(STR(?v) = "%s")
             }
-            """, ontologyIri, prop, 
+            """, ontologyIri, prop,
                  ontologyIri, prop, escapeString(value));
 
         mutationService.applyRawUpdate(projectId, update, draft, userId);
@@ -407,23 +362,20 @@ public class OntologyMetadataService {
         }
     }
 
-    /**
-     * Get all ontology imports
-     */
     public List<String> getOntologyImports(String projectId) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             log.warn("No ontology IRI found for project {}, returning empty imports", projectId);
             return new ArrayList<>();
         }
-        
+
         String formattedOntologyIri = formatResource(ontologyIri);
         String query = PREFIXES + String.format("""
             SELECT ?import WHERE {
               %s owl:imports ?import .
             }
             """, formattedOntologyIri);
-        
+
         List<String> imports = new ArrayList<>();
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, query);
@@ -432,13 +384,13 @@ public class OntologyMetadataService {
                 if (sol.hasBinding("import")) {
                     String importIri = sol.getValue("import").stringValue();
                     imports.add(importIri);
-                    // Log local imports for debugging
+
                     if (!importIri.startsWith("http://") && !importIri.startsWith("https://")) {
                         log.info("Local import found: {}", importIri);
                     }
                 }
             }
-            log.info("Retrieved {} imports for project {} (local: {}, remote: {})", 
+            log.info("Retrieved {} imports for project {} (local: {}, remote: {})",
                 imports.size(), projectId,
                 imports.stream().filter(i -> !i.startsWith("http://") && !i.startsWith("https://")).count(),
                 imports.stream().filter(i -> i.startsWith("http://") || i.startsWith("https://")).count());
@@ -448,10 +400,6 @@ public class OntologyMetadataService {
         return imports;
     }
 
-    /**
-     * Transitive import closure for each direct import of the active ontology.
-     * Keys are direct import IRIs; values are nested child import trees.
-     */
     public Map<String, List<Map<String, Object>>> getImportClosure(String projectId) {
         Map<String, List<String>> importGraph = loadImportGraph(projectId);
         Map<String, List<Map<String, Object>>> closure = new LinkedHashMap<>();
@@ -501,19 +449,16 @@ public class OntologyMetadataService {
         return nodes;
     }
 
-    /**
-     * Add an ontology import
-     */
     public void addOntologyImport(String projectId, String importIri) {
         addOntologyImport(projectId, importIri, false, null);
     }
 
     public void addOntologyImport(String projectId, String importIri, boolean draft, String userId) {
         log.info("Adding import '{}' to project {} (draft={})", importIri, projectId, draft);
-        
+
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
-            // If no ontology triple exists, create one using a stable IRI
+
             ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
             String initUpdate = PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri);
             mutationService.applyRawUpdate(projectId, initUpdate, draft, userId);
@@ -523,16 +468,14 @@ public class OntologyMetadataService {
             ontologyIri = formatResource(ontologyIri);
         }
 
-        // Handle relative imports (starting with ./ or ../) differently
-        // Relative imports should not be wrapped in angle brackets if they don't have a scheme
         String formattedImportIri;
         if (importIri.startsWith("./") || importIri.startsWith("../")) {
-            // For relative imports, wrap in angle brackets to make them valid RDF IRIs
+
             formattedImportIri = "<" + importIri + ">";
             log.info("Relative import detected: {}", importIri);
-        } else if (importIri.startsWith("http://") || importIri.startsWith("https://") || 
+        } else if (importIri.startsWith("http://") || importIri.startsWith("https://") ||
                    importIri.startsWith("ftp://") || importIri.startsWith("file://")) {
-            // Absolute IRIs (URLs or file:// URIs)
+
             formattedImportIri = "<" + importIri + ">";
             if (importIri.startsWith("file://")) {
                 log.info("Local file import (file://) detected: {}", importIri);
@@ -540,7 +483,7 @@ public class OntologyMetadataService {
                 log.info("Remote import detected: {}", importIri);
             }
         } else {
-            // Bare filenames or other formats - treat as relative
+
             formattedImportIri = "<./" + importIri + ">";
             log.info("Bare filename detected, converting to relative: {} -> ./{}", importIri, importIri);
         }
@@ -556,9 +499,6 @@ public class OntologyMetadataService {
         log.info("✅ Successfully added import '{}' to project {}", importIri, projectId);
     }
 
-    /**
-     * Delete an ontology import
-     */
     public void deleteOntologyImport(String projectId, String importIri) {
         deleteOntologyImport(projectId, importIri, false, null);
     }
@@ -570,11 +510,10 @@ public class OntologyMetadataService {
         }
         ontologyIri = formatResource(ontologyIri);
 
-        // Handle relative imports (starting with ./ or ../) differently
         String formattedImportIri;
         if (importIri.startsWith("./") || importIri.startsWith("../")) {
             formattedImportIri = "<" + importIri + ">";
-        } else if (importIri.startsWith("http://") || importIri.startsWith("https://") || 
+        } else if (importIri.startsWith("http://") || importIri.startsWith("https://") ||
                    importIri.startsWith("ftp://") || importIri.startsWith("file://")) {
             formattedImportIri = "<" + importIri + ">";
         } else {
@@ -593,9 +532,6 @@ public class OntologyMetadataService {
         mutationService.applyRawUpdate(projectId, update, draft, userId);
     }
 
-    /**
-     * One-time migration: convert legacy {@code ontocode.org/resource/gci} string literals into real OWL GCIs.
-     */
     private void migrateLegacyGciStrings(String projectId) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) return;
@@ -646,16 +582,12 @@ public class OntologyMetadataService {
         datasetService.execUpdate(projectId, update);
     }
 
-    /**
-     * Get all General Class Axioms (GCIs)
-     */
     public List<Map<String, Object>> getGeneralClassAxioms(String projectId) {
         migrateLegacyGciStrings(projectId);
 
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) return new ArrayList<>();
 
-        // Real OWL GCIs only: blank-node subjects in SubClassOf axioms
         String query = PREFIXES + """
             SELECT ?sub ?super WHERE {
               ?sub rdfs:subClassOf ?super .
@@ -684,17 +616,10 @@ public class OntologyMetadataService {
         return gcis;
     }
 
-    /**
-     * Add a General Class Axiom (GCI) as a real OWL blank-node SubClassOf axiom.
-     */
     public void addGCI(String projectId, String subClassExpr, String superClassExpr) {
         addGCI(projectId, subClassExpr, superClassExpr, false, null);
     }
 
-    /**
-     * Draft-aware variant: when {@code draft} is true, the axiom is written to the user's
-     * private draft graph instead of the shared/public ontology.
-     */
     public void addGCI(String projectId, String subClassExpr, String superClassExpr, boolean draft, String userId) {
         if (subClassExpr == null || subClassExpr.isBlank()) {
             throw new IllegalArgumentException("GCA sub-class expression is required");
@@ -743,21 +668,13 @@ public class OntologyMetadataService {
         }
     }
 
-    /**
-     * Delete a General Class Axiom — supports legacy string literals and real blank-node GCIs.
-     */
     public void deleteGCI(String projectId, String gciValue) {
         deleteGCI(projectId, gciValue, false, null);
     }
 
-    /**
-     * Draft-aware variant: when {@code draft} is true, the deletion is applied to the user's
-     * private draft graph instead of the shared/public ontology.
-     */
     public void deleteGCI(String projectId, String gciValue, boolean draft, String userId) {
         if (gciValue == null || gciValue.isBlank()) return;
 
-        // Legacy custom-predicate string storage
         if (gciValue.contains(" SubClassOf ")) {
             String ontologyIri = getOntologyIri(projectId);
             if (ontologyIri != null) {
@@ -778,7 +695,6 @@ public class OntologyMetadataService {
             }
         }
 
-        // Real blank-node GCI (id is STR(?sub) from queries)
         String blankNodeId = gciValue;
         if (gciValue.contains(" SubClassOf ")) {
             String subPart = gciValue.split(" SubClassOf ", 2)[0].trim();
@@ -846,9 +762,6 @@ public class OntologyMetadataService {
         return iris;
     }
 
-    /**
-     * Update ontology IRI and version IRI
-     */
     public void updateOntologyIRIs(String projectId, String newOntologyIri, String newVersionIri) {
         updateOntologyIRIs(projectId, newOntologyIri, newVersionIri, false, null);
     }
@@ -861,15 +774,15 @@ public class OntologyMetadataService {
 
         StringBuilder update = new StringBuilder(PREFIXES);
         if (formattedOld != null) {
-            // Move ALL triples from the old IRI to the new IRI (preserves annotations, imports, etc.)
+
             update.append("DELETE { ").append(formattedOld).append(" ?p ?o } ");
             update.append("INSERT { ").append(formattedNew).append(" ?p ?o } ");
             update.append("WHERE  { ").append(formattedOld).append(" ?p ?o } ;");
         }
-        // Ensure the new IRI is declared as owl:Ontology (in case old IRI had no triples)
+
         update.append("\nINSERT DATA { ").append(formattedNew).append(" a owl:Ontology . } ;");
         if (newVersionIri != null && !newVersionIri.isEmpty()) {
-            // Replace any existing versionIRI with the supplied one
+
             update.append("\nDELETE { ").append(formattedNew).append(" owl:versionIRI ?v } ");
             update.append("WHERE  { ").append(formattedNew).append(" owl:versionIRI ?v } ;");
             update.append("\nINSERT DATA { ").append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . }");
@@ -877,8 +790,6 @@ public class OntologyMetadataService {
 
         mutationService.applyRawUpdate(projectId, update.toString(), draft, userId);
 
-        // The IRI cache and shared Mongo metadata reflect the PUBLIC graph only — a draft
-        // IRI change must not leak into what other users (or this user's public view) see.
         if (!draft) {
             ontologyIriCache.put(projectId, newOntologyIri);
             projectMetadataService.readMeta(projectId).ifPresent(cached -> {
@@ -894,15 +805,11 @@ public class OntologyMetadataService {
         }
     }
 
-    /**
-     * Get dynamic metrics from GraphDB
-     */
     public Map<String, Object> getDynamicMetrics(String projectId) {
         Map<String, Object> metrics = new HashMap<>();
-        
+
         log.info("Calculating dynamic metrics for project: {}", projectId);
 
-        // ── 1. Entity type counts (single query) ──
         String typeCounts = PREFIXES + """
             SELECT ?type (COUNT(DISTINCT ?s) AS ?count) WHERE {
               ?s a ?type .
@@ -964,10 +871,9 @@ public class OntologyMetadataService {
         metrics.put("irreflexiveObjectPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#IrreflexiveProperty", 0));
         metrics.put("negativeObjectPropertyAssertionAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#NegativePropertyAssertion", 0));
         metrics.put("negativeDataPropertyAssertionAxiomCount", 0);
-        // Reuse functional count for data properties (shared OWL type)
+
         metrics.put("functionalDataPropertyAxiomCount", typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#FunctionalProperty", 0));
 
-        // ── 2. Predicate counts (single query) ──
         String predicateCounts = PREFIXES + """
             SELECT ?pred (COUNT(*) AS ?count) WHERE {
               ?s ?pred ?o .
@@ -1022,7 +928,6 @@ public class OntologyMetadataService {
         metrics.put("annotationPropertyRangeAxiomCount", rangeCount);
         metrics.put("subAnnotationPropertyOfAxiomCount", subPropCount);
 
-        // ── 3. Predicate-type join counts (single query) ──
         String predTypeCounts = PREFIXES + """
             SELECT ?ptype (COUNT(*) AS ?count) WHERE {
               ?s ?p ?o .
@@ -1049,11 +954,10 @@ public class OntologyMetadataService {
         metrics.put("dataPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#DatatypeProperty", 0));
         metrics.put("annotationAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#AnnotationProperty", 0));
 
-        // GCI count
         metrics.put("gciCount", getGCICount(projectId));
-        
+
         metrics.put("ontologyIRI", getOntologyIri(projectId));
-        
+
         return metrics;
     }
 
@@ -1137,13 +1041,9 @@ public class OntologyMetadataService {
         return 0;
     }
 
-    /**
-     * Get all prefixes
-     */
     public List<Map<String, String>> getPrefixes(String projectId) {
         Map<String, String> prefixMap = new HashMap<>();
-        
-        // 1. Try to get from MongoDB metadata
+
         boolean hasCachedPrefixes = false;
         Optional<Map<String, Object>> meta = projectMetadataService.readMeta(projectId);
         if (meta.isPresent() && meta.get().containsKey("prefixes")) {
@@ -1155,7 +1055,7 @@ public class OntologyMetadataService {
                 }
                 hasCachedPrefixes = !prefixMap.isEmpty();
             } else if (prefixesObj instanceof List) {
-                // Handle list of objects format: [{prefix: "...", namespace: "..."}, ...]
+
                 List<?> list = (List<?>) prefixesObj;
                 for (Object item : list) {
                     if (item instanceof Map) {
@@ -1171,13 +1071,9 @@ public class OntologyMetadataService {
             }
         }
 
-        // 2. Only query GraphDB if MongoDB has no cached prefixes.
-        //    All prefix mutations (add/update/delete) already update MongoDB,
-        //    so cached prefixes are always in sync. Skipping the expensive
-        //    SPARQL namespace-usage query avoids running it twice during import.
         if (!hasCachedPrefixes) {
             log.debug("No cached prefixes in MongoDB, querying GraphDB for project {}", projectId);
-            // Same reasoning as getMetadata(): only sync on the actual SPARQL fallback.
+
             if (importService != null) {
                 importService.syncProjectToFuseki(projectId);
             }
@@ -1187,8 +1083,6 @@ public class OntologyMetadataService {
             log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
         }
 
-        // Always include the standard OWL/RDF/RDFS/XSD prefixes .
-        // User-defined prefixes take precedence; we only add a standard one if not already present.
         Map<String, String> defaults = new java.util.LinkedHashMap<>();
         defaults.put("owl",   "http://www.w3.org/2002/07/owl#");
         defaults.put("rdf",   "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
@@ -1201,7 +1095,6 @@ public class OntologyMetadataService {
             prefixMap.putIfAbsent(e.getKey(), e.getValue());
         }
 
-        // Convert to list of objects for frontend compatibility
         List<Map<String, String>> result = new ArrayList<>();
         for (Map.Entry<String, String> entry : prefixMap.entrySet()) {
             Map<String, String> p = new LinkedHashMap<>();
@@ -1210,20 +1103,16 @@ public class OntologyMetadataService {
             result.add(p);
         }
 
-        // Sort by prefix name
         result.sort(Comparator.comparing(m -> m.get("prefix")));
 
         return result;
     }
 
-    /**
-     * Update or add a prefix
-     */
     public void updatePrefix(String projectId, String prefix, String iri, String oldPrefix) {
-        // 1. Update in MongoDB
+
         Optional<Map<String, Object>> metaOpt = projectMetadataService.readMeta(projectId);
         Map<String, Object> meta = metaOpt.orElse(new HashMap<>());
-        
+
         Map<String, String> prefixes = new HashMap<>();
         Object existingPrefixes = meta.get("prefixes");
         if (existingPrefixes instanceof Map) {
@@ -1244,32 +1133,26 @@ public class OntologyMetadataService {
                 }
             }
         }
-        
-        // If MongoDB prefixes are empty, try to pull from GraphDB first to avoid wiping them
+
         if (prefixes.isEmpty()) {
             log.info("MongoDB prefixes empty for project {}, pulling from GraphDB before update", projectId);
             prefixes.putAll(datasetService.getPrefixes(projectId));
         }
-        
-        // If we are renaming a prefix, remove the old one
+
         if (oldPrefix != null && !oldPrefix.equals(prefix)) {
             prefixes.remove(oldPrefix);
             datasetService.removePrefix(projectId, oldPrefix);
         }
-        
+
         prefixes.put(prefix, iri);
         meta.put("prefixes", prefixes);
         projectMetadataService.writeMeta(projectId, meta);
 
-        // 2. Also update in GraphDB (repository-wide)
         datasetService.updatePrefix(projectId, prefix, iri);
     }
 
-    /**
-     * Delete a prefix
-     */
     public void deletePrefix(String projectId, String prefix) {
-        // 1. Update in MongoDB
+
         Optional<Map<String, Object>> metaOpt = projectMetadataService.readMeta(projectId);
         if (metaOpt.isPresent()) {
             Map<String, Object> meta = metaOpt.get();
@@ -1293,7 +1176,7 @@ public class OntologyMetadataService {
                     }
                 }
             }
-            
+
             if (prefixes.containsKey(prefix)) {
                 prefixes.remove(prefix);
                 meta.put("prefixes", prefixes);
@@ -1301,20 +1184,15 @@ public class OntologyMetadataService {
             }
         }
 
-        // 2. Also remove from GraphDB
         datasetService.removePrefix(projectId, prefix);
     }
 
-    /**
-     * Get the ontology IRI for a project
-     */
     private String getOntologyIri(String projectId) {
-        // 1. Check cache
+
         if (ontologyIriCache.containsKey(projectId)) {
             return ontologyIriCache.get(projectId);
         }
 
-        // 2. Try to find an explicit owl:Ontology declaration
         String query = PREFIXES + "SELECT ?ont WHERE { ?ont a owl:Ontology } LIMIT 1";
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, query);
@@ -1326,8 +1204,7 @@ public class OntologyMetadataService {
                     return iri;
                 }
             }
-            
-            // 3. Try to find something that imports other ontologies
+
             query = PREFIXES + "SELECT ?ont WHERE { ?ont owl:imports ?any } LIMIT 1";
             rs = datasetService.execSelect(projectId, query);
             if (rs.hasNext()) {
@@ -1339,11 +1216,10 @@ public class OntologyMetadataService {
                 }
             }
 
-            // 4. Try to find something with common ontology metadata
             query = PREFIXES + """
-                SELECT ?ont WHERE { 
-                  ?ont ?p ?o . 
-                  FILTER(?p IN (rdfs:label, rdfs:comment, dc:title, dc:creator, owl:versionInfo)) 
+                SELECT ?ont WHERE {
+                  ?ont ?p ?o .
+                  FILTER(?p IN (rdfs:label, rdfs:comment, dc:title, dc:creator, owl:versionInfo))
                   # Ensure it's an IRI and not a class/property (heuristic)
                   FILTER(isIRI(?ont))
                   FILTER(!EXISTS { ?ont a owl:Class } && !EXISTS { ?ont a owl:ObjectProperty })
@@ -1368,13 +1244,12 @@ public class OntologyMetadataService {
         if (iri == null) return null;
         if (iri.startsWith("<")) return iri;
         if (iri.startsWith("_:")) return iri;
-        // A genuine SPARQL prefixed name (owl:Class, rdfs:label) has no ':', '/', or '#' after the colon.
-        // Full URIs with non-http schemes (urn:, file:, urn:uuid:) must be wrapped in < >.
+
         int colonIdx = iri.indexOf(':');
         if (colonIdx > 0) {
             String localPart = iri.substring(colonIdx + 1);
             if (!localPart.contains(":") && !localPart.contains("/") && !localPart.contains("#")) {
-                return iri; // genuine CURIE like owl:Class
+                return iri;
             }
         }
         return "<" + iri + ">";

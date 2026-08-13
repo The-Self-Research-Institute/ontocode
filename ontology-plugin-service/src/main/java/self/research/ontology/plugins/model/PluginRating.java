@@ -21,24 +21,24 @@ public class PluginRating {
     private String id;
 
     @Indexed
-    private String pluginId;  // Plugin being rated
+    private String pluginId;
 
     @Indexed
-    private String userId;  // User who gave the rating
+    private String userId;
 
-    private String username;  // Display name of user
+    private String username;
 
-    private Integer stars;  // 1-5 stars
+    private Integer stars;
 
-    private String review;  // Optional review text (merits/demerits)
+    private String review;
 
-    private String merits;  // What user likes about the plugin (optional)
+    private String merits;
 
-    private String demerits;  // What user dislikes about the plugin (optional)
+    private String demerits;
 
-    private Boolean recommended;  // Would recommend this plugin
+    private Boolean recommended;
 
-    private Integer helpfulCount;  // How many users found this review helpful
+    private Integer helpfulCount;
 
     private LocalDateTime createdAt;
 

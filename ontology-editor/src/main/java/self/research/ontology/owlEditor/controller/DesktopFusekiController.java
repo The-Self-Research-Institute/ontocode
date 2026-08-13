@@ -18,12 +18,6 @@ import self.research.ontology.owlEditor.service.StorageManager;
 
 import java.util.Map;
 
-/**
- * Fuseki sync + desktop metrics endpoints.
- *
- * Lives outside {@link DesktopController} because {@code DesktopApplication}
- * excludes that class from component scan (auth stubs are served by ontology-auth).
- */
 @RestController
 @ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")
 public class DesktopFusekiController {
@@ -50,7 +44,6 @@ public class DesktopFusekiController {
         this.storageManager = storageManager;
     }
 
-    /** Explicit Save: promote draft → ontology.current.owl, delete draft folder. */
     @PostMapping("/api/desktop/save/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> saveProject(@PathVariable String projectId) {
         log.info("[Desktop] POST /api/desktop/save/{}", projectId);
@@ -66,7 +59,6 @@ public class DesktopFusekiController {
         }
     }
 
-    /** Discard unsaved changes: delete draft, re-warm from last saved file. */
     @PostMapping("/api/desktop/discard-draft/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> discardDraft(@PathVariable String projectId) {
         log.info("[Desktop] POST /api/desktop/discard-draft/{}", projectId);
@@ -82,7 +74,6 @@ public class DesktopFusekiController {
         }
     }
 
-    /** Unsaved-changes indicator for the UI (dot on the Save button, exit prompt). */
     @GetMapping("/api/desktop/draft-status/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> draftStatus(@PathVariable String projectId) {
         return ResponseEntity.ok(Map.of("hasDraft", storageManager.hasDraft(projectId)));

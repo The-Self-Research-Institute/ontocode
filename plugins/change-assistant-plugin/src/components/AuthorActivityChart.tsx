@@ -29,15 +29,15 @@ const AuthorActivityChart: React.FC<AuthorActivityChartProps> = ({ data }) => {
       <div className="space-y-3">
         {data.map((author, idx) => {
           const percentage = (author.total / maxTotal) * 100;
-          
+
           return (
             <div key={idx} className="space-y-1">
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium text-gray-700">{author.author}</span>
                 <span className="text-gray-500">{author.total} changes</span>
               </div>
-              
-              {/* Stacked bar */}
+
+              {}
               <div className="h-6 bg-gray-100 rounded-full overflow-hidden flex">
                 <div
                   className="bg-green-500 flex items-center justify-center text-xs text-white font-medium"
@@ -61,8 +61,8 @@ const AuthorActivityChart: React.FC<AuthorActivityChartProps> = ({ data }) => {
                   {author.modifications > 0 && author.modifications}
                 </div>
               </div>
-              
-              {/* Breakdown */}
+
+              {}
               <div className="flex gap-3 text-xs text-gray-600">
                 <span className="flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-green-500"></span>

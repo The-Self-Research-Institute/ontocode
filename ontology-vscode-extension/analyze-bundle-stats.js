@@ -9,7 +9,6 @@ function analyzeStats(statsFile) {
   const stats = JSON.parse(fs.readFileSync(statsFile, 'utf8'));
   const modules = stats.modules || [];
 
-  // Get largest modules
   const sorted = modules
     .filter(m => m.name && m.size)
     .map(m => ({
@@ -33,7 +32,6 @@ function analyzeStats(statsFile) {
   const totalSize = stats.assets.find(a => a.name === 'extension.js')?.size || 0;
   console.log(`\nTotal bundle size: ${(totalSize / 1024).toFixed(2)} KB\n`);
 
-  // Group by package
   const byPackage = {};
   modules.forEach(m => {
     if (m.name && m.name.includes('node_modules')) {
@@ -61,7 +59,6 @@ function analyzeStats(statsFile) {
   console.log('='.repeat(90) + '\n');
 }
 
-// Analyze both stats files if they exist
 console.log('\n' + '='.repeat(90));
 console.log('🔍 WEBPACK BUNDLE ANALYSIS');
 console.log('='.repeat(90));

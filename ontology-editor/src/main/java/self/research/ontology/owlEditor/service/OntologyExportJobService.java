@@ -16,19 +16,6 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
-/**
- * Background job runner for ontology export. A synchronous export/download request can
- * outlive the frontend's client-side timeouts (browser axios default 10 min, VS Code
- * extension host 5 min) for a large ontology even though the backend/gateway/ingress are
- * all configured for up to 2 hours — the client gives up while the server is still working,
- * which surfaces in the browser as a misleading "blocked by CORS policy" network error since
- * no response ever completed. Submitting a job and polling its status removes that client-side
- * ceiling entirely.
- *
- * Deliberately does not reuse ProjectStatus/the /status/{projectId} model that import/reload
- * and waitForProcessingComplete() key off of — export readiness must never be confused with
- * "is the ontology loaded and ready to edit".
- */
 @Slf4j
 @Service
 public class OntologyExportJobService {
@@ -41,10 +28,7 @@ public class OntologyExportJobService {
     private final ProjectImportService importService;
 
     private final Map<String, ExportJob> jobs = new ConcurrentHashMap<>();
-    // Dedup key (projectId + "::" + format) -> jobId, so a double-click or a second tab/window
-    // reuses the in-flight (or just-finished) job instead of racing another export of the same
-    // project+format — exportOntologyForJob() writes to a fixed per-project+format path, so two
-    // concurrent runs would otherwise clobber each other's output file.
+
     private final Map<String, String> activeJobByKey = new ConcurrentHashMap<>();
 
     public OntologyExportJobService(@Qualifier("owlParsingExecutor") Executor owlParsingExecutor,
@@ -103,8 +87,7 @@ public class OntologyExportJobService {
 
         try {
             Path exportPath;
-            // Same desktop deferred-Fuseki-sync staleness as the synchronous /export endpoint —
-            // see ProjectLoadController.export(). No-ops on cloud and when already in sync.
+
             importService.syncProjectToFuseki(job.getProjectId());
             Optional<String> cachedContent = storageManager.getCodeViewCache(job.getProjectId(), job.getFormat());
             if (cachedContent.isPresent()) {
@@ -143,7 +126,6 @@ public class OntologyExportJobService {
         }
     }
 
-    /** Safety net for a job stuck in PROCESSING, plus eviction of old finished job records. */
     @Scheduled(fixedDelay = 5 * 60 * 1000)
     public void sweep() {
         Instant now = Instant.now();
@@ -166,9 +148,7 @@ public class OntologyExportJobService {
             boolean finished = job.getStatus() == ExportJob.Status.COMPLETED || job.getStatus() == ExportJob.Status.ERROR;
             return finished && job.getCompletedAt() != null
                     && Duration.between(job.getCompletedAt(), now).compareTo(FINISHED_JOB_RETENTION) > 0;
-            // Not deleting resultPath here: it's the project's own reused
-            // "ontology.original.<ext>"/"ontology.export.<ext>" export artifact,
-            // overwritten by the project's next export — nothing extra to clean up.
+
         });
     }
 

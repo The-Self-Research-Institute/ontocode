@@ -1,45 +1,10 @@
 #!/usr/bin/env node
-/**
- * =============================================================================
- * PLUGIN MANAGER - Unified Script for Managing OntoCode Plugins
- * =============================================================================
- * 
- * This single script handles all plugin management tasks:
- * - Build plugins
- * - Insert plugin metadata into MongoDB
- * - Upload bundles to GridFS
- * - Create version records
- * 
- * Usage:
- *   node manage-plugins.js [command] [options]
- * 
- * Commands:
- *   all       - Build, insert metadata, and upload bundles (default)
- *   build     - Build all plugins
- *   install   - Insert metadata and upload bundles (no build)
- *   list      - List installed plugins
- *   clean     - Remove all plugins from database
- * 
- * Options:
- *   --plugin <id>   - Process only specified plugin
- *   --force         - Force overwrite existing data
- *   --skip-build    - Skip building plugins
- * 
- * Examples:
- *   node manage-plugins.js
- *   node manage-plugins.js all
- *   node manage-plugins.js build
- *   node manage-plugins.js install --plugin fuzzy-ontology-plugin
- *   node manage-plugins.js list
- *   node manage-plugins.js clean
- */
 
 const { MongoClient, GridFSBucket } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-// Load environment variables from root .env when available
 try {
   const dotenvPath = path.resolve(__dirname, '..', '.env');
   if (fs.existsSync(dotenvPath)) {
@@ -50,10 +15,6 @@ try {
 } catch (error) {
   console.warn('⚠ Could not load .env file:', error.message);
 }
-
-// =============================================================================
-// CONFIGURATION
-// =============================================================================
 
 const MONGO_URL = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://localhost:27017';
 
@@ -72,12 +33,8 @@ const MONGO_USERNAME = process.env.MONGODB_USERNAME || process.env.MONGO_USERNAM
 const MONGO_PASSWORD = process.env.MONGODB_PASSWORD || process.env.MONGO_PASSWORD || process.env.MONGO_PASS || uriCreds.password || '';
 const MONGO_AUTH_SOURCE = process.env.MONGODB_AUTH_SOURCE || process.env.MONGO_AUTH_SOURCE || 'admin';
 const DB_NAME = process.env.MONGODB_DATABASE || process.env.MONGO_DB_NAME || 'ontology';
-// Use /app/plugins in Docker, otherwise use local path
-const PLUGINS_DIR = fs.existsSync('/app/plugins') ? '/app/plugins' : path.resolve(__dirname, '..', 'plugins');
 
-// =============================================================================
-// PLUGIN DEFINITIONS - Single source of truth
-// =============================================================================
+const PLUGINS_DIR = fs.existsSync('/app/plugins') ? '/app/plugins' : path.resolve(__dirname, '..', 'plugins');
 
 const PLUGINS = [
   {
@@ -142,10 +99,6 @@ const PLUGINS = [
   }
 ];
 
-// =============================================================================
-// UTILITIES
-// =============================================================================
-
 const colors = {
   reset: '\x1b[0m',
   bright: '\x1b[1m',
@@ -190,13 +143,9 @@ function parseArgs() {
   return result;
 }
 
-// =============================================================================
-// BUILD PLUGINS
-// =============================================================================
-
 async function buildPlugin(pluginId) {
   const pluginDir = path.join(PLUGINS_DIR, pluginId);
-  
+
   if (!fs.existsSync(pluginDir)) {
     log.error(`Plugin directory not found: ${pluginDir}`);
     return false;
@@ -210,17 +159,15 @@ async function buildPlugin(pluginId) {
 
   try {
     log.info(`Building ${pluginId}...`);
-    
-    // Install dependencies if needed
+
     const nodeModules = path.join(pluginDir, 'node_modules');
     if (!fs.existsSync(nodeModules)) {
       log.info(`  Installing dependencies...`);
       execSync('npm install', { cwd: pluginDir, stdio: 'pipe' });
     }
 
-    // Build
     execSync('npm run build', { cwd: pluginDir, stdio: 'pipe' });
-    
+
     const bundlePath = path.join(pluginDir, 'dist', 'index.js');
     if (fs.existsSync(bundlePath)) {
       const stats = fs.statSync(bundlePath);
@@ -239,7 +186,7 @@ async function buildPlugin(pluginId) {
 
 async function buildAllPlugins(plugins) {
   log.header('Building Plugins');
-  
+
   let success = 0;
   let failed = 0;
 
@@ -255,10 +202,6 @@ async function buildAllPlugins(plugins) {
   log.info(`Build complete: ${success} success, ${failed} failed`);
   return failed === 0;
 }
-
-// =============================================================================
-// DATABASE OPERATIONS
-// =============================================================================
 
 async function connectToMongo() {
   const options = {};
@@ -285,9 +228,9 @@ async function connectToMongo() {
 
 async function insertPluginMetadata(db, plugin, force = false) {
   const collection = db.collection('plugins');
-  
+
   const existing = await collection.findOne({ pluginId: plugin.pluginId });
-  
+
   const doc = {
     pluginId: plugin.pluginId,
     name: plugin.name,
@@ -333,13 +276,12 @@ async function uploadBundleToGridFS(db, bucket, plugin) {
   const bundlePath = path.join(PLUGINS_DIR, plugin.pluginId, 'dist', 'index.js');
   log.warn(`[BUNDLE PATH DEBUG] bundlePath = "${bundlePath}"`);
   log.warn(`[BUNDLE PATH DEBUG] exists = ${fs.existsSync(bundlePath)}`);
-  
-  // Also check alternate paths
+
   const altPath1 = path.join('/app/plugins', plugin.pluginId, 'dist', 'index.js');
   const altPath2 = path.join('plugins', plugin.pluginId, 'dist', 'index.js');
   log.warn(`[BUNDLE PATH DEBUG] altPath1 (/app/plugins) = "${altPath1}" exists = ${fs.existsSync(altPath1)}`);
   log.warn(`[BUNDLE PATH DEBUG] altPath2 (plugins) = "${altPath2}" exists = ${fs.existsSync(altPath2)}\n`);
-  
+
   if (!fs.existsSync(bundlePath)) {
     log.error(`  Bundle not found: ${bundlePath}`);
     return null;
@@ -347,13 +289,11 @@ async function uploadBundleToGridFS(db, bucket, plugin) {
 
   const fileName = `${plugin.pluginId}-${plugin.version}.js`;
 
-  // Remove existing file if present
   const existingFiles = await bucket.find({ filename: fileName }).toArray();
   for (const file of existingFiles) {
     await bucket.delete(file._id);
   }
 
-  // Upload new file
   return new Promise((resolve, reject) => {
     const uploadStream = bucket.openUploadStream(fileName, {
       contentType: 'application/javascript',
@@ -415,16 +355,14 @@ async function installPlugin(db, bucket, plugin, force = false) {
   log.info(`Installing ${plugin.pluginId} v${plugin.version}...`);
 
   try {
-    // 1. Insert/update metadata
+
     await insertPluginMetadata(db, plugin, force);
 
-    // 2. Upload bundle to GridFS
     const fileId = await uploadBundleToGridFS(db, bucket, plugin);
     if (!fileId) {
       return false;
     }
 
-    // 3. Create version record
     const bundlePath = path.join(PLUGINS_DIR, plugin.pluginId, 'dist', 'index.js');
     await createVersionRecord(db, plugin, fileId, bundlePath);
 
@@ -443,7 +381,7 @@ async function listPlugins(db) {
   log.header('Installed Plugins');
 
   const plugins = await db.collection('plugins').find({}).toArray();
-  
+
   if (plugins.length === 0) {
     log.info('No plugins installed');
     return;
@@ -466,8 +404,7 @@ async function cleanPlugins(db) {
 
   const pluginsResult = await db.collection('plugins').deleteMany({});
   const versionsResult = await db.collection('plugin_versions').deleteMany({});
-  
-  // Clean GridFS
+
   const bucket = new GridFSBucket(db, { bucketName: 'plugins' });
   const files = await bucket.find({}).toArray();
   for (const file of files) {
@@ -479,34 +416,28 @@ async function cleanPlugins(db) {
   log.success(`Deleted ${files.length} bundle files from GridFS`);
 }
 
-// =============================================================================
-// MAIN
-// =============================================================================
-
 async function main() {
   const args = parseArgs();
-  
-  // Debug logging FIRST
+
   console.log('=====================================');
   console.log('[DEBUG] __dirname =', __dirname);
   console.log('[DEBUG] PLUGINS_DIR =', PLUGINS_DIR);
   console.log('[DEBUG] PLUGINS_DIR exists =', fs.existsSync(PLUGINS_DIR));
   if (fs.existsSync(PLUGINS_DIR)) {
     console.log('[DEBUG] PLUGINS_DIR contents =', fs.readdirSync(PLUGINS_DIR).join(', '));
-    // Test specific plugin path
+
     const testPath = path.join(PLUGINS_DIR, 'sparql-query-plugin', 'dist', 'index.js');
     console.log('[DEBUG] Test path =', testPath);
     console.log('[DEBUG] Test path exists =', fs.existsSync(testPath));
   }
   console.log('=====================================');
-  
+
   console.log(`
 ${colors.bright}${colors.magenta}╔═══════════════════════════════════════════════════════════╗
 ║           OntoCode Plugin Manager                         ║
 ╚═══════════════════════════════════════════════════════════╝${colors.reset}
 `);
 
-  // Filter plugins if specified
   let plugins = PLUGINS;
   if (args.plugin) {
     plugins = PLUGINS.filter(p => p.pluginId === args.plugin);
@@ -517,7 +448,6 @@ ${colors.bright}${colors.magenta}╔══════════════�
     }
   }
 
-  // Connect to MongoDB (except for build-only command)
   let client = null;
   let db = null;
   let bucket = null;
@@ -542,7 +472,7 @@ ${colors.bright}${colors.magenta}╔══════════════�
   try {
     switch (args.command) {
       case 'all':
-        // Build + Install
+
         if (!args.skipBuild) {
           await buildAllPlugins(plugins);
         }

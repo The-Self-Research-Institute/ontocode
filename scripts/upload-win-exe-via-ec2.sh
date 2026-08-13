@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# SCP newest Windows Setup .exe to the mode's EC2 host, then curl-upload from there
-# to that mode's downloads API (same auth/flow as deploy-coretopia-release.sh).
-#
-# Usage: ./scripts/upload-win-exe-via-ec2.sh <dev|prod>
-# Why via EC2: home-network curl of ~700MiB often dies mid-upload; EC2→API is reliable.
-# Never prints secrets.
+
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -59,7 +54,7 @@ fi
 echo "Mode=$MODE File=$FILENAME ($MB MiB)"
 echo "API_BASE len=${#API_BASE} remote=$REMOTE_PATH"
 ssh "${ssh_opts[@]}" "$HOST" "mkdir -p '$REMOTE_TMP'"
-# Prefer rsync (resume-friendly); space-free remote name avoids OpenSSH "ambiguous target"
+
 if command -v rsync >/dev/null 2>&1; then
   echo ">>> rsync -P to EC2..."
   rsync -avP --partial --compress --timeout=120 -e "$RSYNC_RSH" \

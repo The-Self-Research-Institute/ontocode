@@ -8,11 +8,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-/**
- * Internal REST endpoint that broadcasts workspace-level events over STOMP.
- * Called by the auth service (e.g. after project deletion) to notify connected clients.
- * Not exposed to end-users — auth service calls this service-to-service.
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/internal/workspace")
@@ -21,10 +16,6 @@ public class WorkspaceEventController {
 
     private final SimpMessagingTemplate messagingTemplate;
 
-    /**
-     * Broadcast an event to all clients subscribed to a workspace topic.
-     * Body: { type: "PROJECT_DELETED", projectId: "...", deletedBy: "...", workspaceId: "..." }
-     */
     @PostMapping("/{workspaceId}/event")
     public ResponseEntity<?> broadcastWorkspaceEvent(
             @PathVariable String workspaceId,

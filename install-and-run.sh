@@ -1,7 +1,4 @@
 #!/bin/bash
-# ========================================
-# OntoCode - One-Click Installation (Linux/Mac)
-# ========================================
 
 set -e
 
@@ -11,14 +8,12 @@ echo "  OntoCode One-Click Installation"
 echo "========================================"
 echo ""
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Check if Docker is installed
 echo -e "${YELLOW}[1/6] Checking Docker...${NC}"
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}[ERROR] Docker is not installed${NC}"
@@ -26,7 +21,6 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Check if Docker is running
 if ! docker ps &> /dev/null; then
     echo -e "${RED}[ERROR] Docker is not running${NC}"
     echo "Please start Docker and try again"
@@ -34,7 +28,6 @@ if ! docker ps &> /dev/null; then
 fi
 echo -e "${GREEN}[OK] Docker is running${NC}"
 
-# Check if Node.js is installed
 echo ""
 echo -e "${YELLOW}[2/6] Checking Node.js...${NC}"
 if ! command -v node &> /dev/null; then
@@ -45,13 +38,11 @@ fi
 NODE_VERSION=$(node --version)
 echo -e "${GREEN}[OK] Node.js is installed ($NODE_VERSION)${NC}"
 
-# Stop any existing containers
 echo ""
 echo -e "${YELLOW}[3/6] Cleaning up existing containers...${NC}"
 docker compose down -v &> /dev/null || true
 echo -e "${GREEN}[OK] Cleanup complete${NC}"
 
-# Build and start all Docker services
 echo ""
 echo -e "${YELLOW}[4/6] Building and starting Docker services...${NC}"
 echo "This may take several minutes on first run..."
@@ -63,18 +54,15 @@ if [ $? -ne 0 ]; then
 fi
 echo -e "${GREEN}[OK] Docker services started successfully${NC}"
 
-# Wait for services to be ready
 echo ""
 echo -e "${YELLOW}[5/6] Waiting for services to initialize...${NC}"
 sleep 30
 echo -e "${GREEN}[OK] Services should be ready${NC}"
 
-# Build and launch VS Code web extension
 echo ""
 echo -e "${YELLOW}[6/6] Building and launching VS Code Web Extension...${NC}"
 cd ontology-vscode-extension
 
-# Check if node_modules exists, install if not
 if [ ! -d "node_modules" ]; then
     echo "Installing extension dependencies..."
     npm install
@@ -85,7 +73,6 @@ if [ ! -d "node_modules" ]; then
     fi
 fi
 
-# Build web extension bundle
 echo "Building web extension bundle..."
 npm run bundle:web
 if [ $? -ne 0 ]; then
@@ -113,7 +100,6 @@ echo "The editor will open in your default browser."
 echo ""
 echo -e "${GREEN}========================================${NC}"
 
-# Launch VS Code web extension
 npm run test-web
 
 cd ..

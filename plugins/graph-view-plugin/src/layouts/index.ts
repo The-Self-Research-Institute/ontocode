@@ -1,4 +1,4 @@
-// Layout exports
+
 export { applyHierarchicalLayout } from './HierarchicalLayout';
 export { applyCircularLayout, applyMultiRingLayout } from './CircularLayout';
 export { applyRadialLayout } from './RadialLayout';

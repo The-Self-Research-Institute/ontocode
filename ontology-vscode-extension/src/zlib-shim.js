@@ -1,7 +1,5 @@
-// Browser-compatible zlib shim - provides constants and no-op methods
-// This prevents "Cannot read properties of undefined (reading 'Z_SYNC_FLUSH')" errors
 
-// All zlib constants
+
 const constants = {
   Z_NO_FLUSH: 0,
   Z_PARTIAL_FLUSH: 1,
@@ -35,7 +33,6 @@ const constants = {
   Z_DEFLATED: 8
 };
 
-// No-op functions that return empty values or stubs
 const noop = () => {};
 const streamStub = {
   on: noop,
@@ -47,12 +44,10 @@ const streamStub = {
   removeListener: noop
 };
 
-// Export everything
 module.exports = {
   ...constants,
   constants: constants,
-  
-  // Async methods (no-op callbacks)
+
   deflate: (data, options, callback) => {
     if (typeof options === 'function') {
       callback = options;
@@ -95,8 +90,7 @@ module.exports = {
     }
     if (callback) callback(null, Buffer.alloc(0));
   },
-  
-  // Sync methods (return empty buffer)
+
   deflateSync: () => Buffer.alloc(0),
   inflateSync: () => Buffer.alloc(0),
   gzipSync: () => Buffer.alloc(0),
@@ -104,8 +98,7 @@ module.exports = {
   deflateRawSync: () => Buffer.alloc(0),
   inflateRawSync: () => Buffer.alloc(0),
   unzipSync: () => Buffer.alloc(0),
-  
-  // Stream creators (return stub objects)
+
   createDeflate: () => streamStub,
   createInflate: () => streamStub,
   createGzip: () => streamStub,
@@ -113,8 +106,7 @@ module.exports = {
   createDeflateRaw: () => streamStub,
   createInflateRaw: () => streamStub,
   createUnzip: () => streamStub,
-  
-  // Classes (minimal stubs)
+
   Deflate: function() { return streamStub; },
   Inflate: function() { return streamStub; },
   Gzip: function() { return streamStub; },

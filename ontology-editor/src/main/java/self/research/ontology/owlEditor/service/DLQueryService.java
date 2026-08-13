@@ -36,21 +36,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-/**
- * Ephemeral in-memory DL Query execution — load, reason, dispose per job.
- * No long-lived ontology/reasoner caches (unlike the legacy DLQueryController maps).
- */
 @Service
 public class DLQueryService {
 
     private static final Logger log = LoggerFactory.getLogger(DLQueryService.class);
 
-    // reasoner.getInstances()/getSubClasses()/getSuperClasses()/getEquivalentClasses() can
-    // all hang for many minutes on a large ontology — "subclasses" and "instances" are the
-    // two query types checked by default in the UI, so this isn't an edge case. Every
-    // reasoner call in this service runs through runBounded() so a DL Query never hangs the
-    // request regardless of which query types were selected; a small/simple ontology (the
-    // common case) finishes well within this budget either way.
     private static final long REASONER_QUERY_TIMEOUT_MS = 10_000;
     private final ExecutorService dlQueryExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "dl-query-get-instances-worker");
@@ -82,9 +72,6 @@ public class DLQueryService {
         this.reasonerFactory = factory;
     }
 
-    /**
-     * Run a DL query and return the API response map. All OWLAPI objects are disposed before return.
-     */
     public Map<String, Object> executeQuery(String projectId, String expression, List<String> queryTypes)
             throws Exception {
         long startTime = System.currentTimeMillis();
@@ -138,7 +125,6 @@ public class DLQueryService {
         }
     }
 
-    /** Load ontology for parse-only operations (add-to-ontology). No reasoner created. */
     public OWLOntology loadOntologyForParse(String projectId) throws Exception {
         LoadedOntology loaded = loadOntology(projectId);
         return loaded.ontology();
@@ -186,14 +172,12 @@ public class DLQueryService {
         }
         LoadedOntology loaded = loadOntology(projectId);
         OWLReasoner reasoner = reasonerFactory.createReasoner(loaded.ontology());
-        // Do not precomputeInferences() — DL queries compute lazily and precompute can OOM large ontologies.
+
         return new QuerySession(loaded.manager(), loaded.ontology(), reasoner);
     }
 
     private LoadedOntology loadOntology(String projectId) throws Exception {
-        // About to stream from Fuseki below — on desktop, Fuseki sync after a mutation is
-        // deferred (debounced up to 20s+); the frontend's tab-activation gate covers switching
-        // *to* DL Query, but not mutating while already on it. No-ops on cloud/when in sync.
+
         importService.syncProjectToFuseki(projectId);
         try {
             long tripleCount = datasetService.getDatasetSize(projectId);
@@ -273,10 +257,6 @@ public class DLQueryService {
         return null;
     }
 
-    /**
-     * Runs a reasoner call on a bounded worker thread and falls back to an empty result on
-     * timeout or error instead of ever letting a DL Query hang the request indefinitely.
-     */
     private <T> Set<T> runBounded(java.util.function.Supplier<Set<T>> work, String description,
             OWLClassExpression expr, OWLOntology ontology) {
         CompletableFuture<Set<T>> future = CompletableFuture.supplyAsync(work, dlQueryExecutor);

@@ -13,9 +13,7 @@ public class AsyncConfig {
     @Bean(name = "reasoningExecutor")
     public Executor reasoningExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        // Must be >= fast-lane + heavy-lane max concurrent (default 3 + 1), or this pool
-        // becomes a hidden bottleneck under the lane-based concurrency policy regardless
-        // of how much room the lanes think they have.
+
         executor.setCorePoolSize(4);
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(100);

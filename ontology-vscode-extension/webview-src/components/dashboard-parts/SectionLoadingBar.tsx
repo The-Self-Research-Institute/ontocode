@@ -2,29 +2,13 @@ import React from "react";
 
 import { Loader2 } from "lucide-react";
 
-
-
 export type SectionLoadingBarProps = {
 
-  /** Human-readable labels, e.g. ["classes", "metadata"] */
-
   sections: string[];
-
-  /** When false, bar animates closed (parent should keep mounted briefly). */
 
   open?: boolean;
 
 };
-
-
-
-/**
-
- * Slim non-blocking indicator while ontology sections load in the background.
-
- * Shown after the full-screen import modal closes so users know work is still in progress.
-
- */
 
 export const SectionLoadingBar: React.FC<SectionLoadingBarProps> = ({
 
@@ -36,8 +20,6 @@ export const SectionLoadingBar: React.FC<SectionLoadingBarProps> = ({
 
   if (!sections.length) return null;
 
-
-
   const label =
 
     sections.length === 1
@@ -45,8 +27,6 @@ export const SectionLoadingBar: React.FC<SectionLoadingBarProps> = ({
       ? `Loading ${sections[0]}…`
 
       : `Loading ${sections.slice(0, -1).join(", ")} and ${sections[sections.length - 1]}…`;
-
-
 
   return (
 

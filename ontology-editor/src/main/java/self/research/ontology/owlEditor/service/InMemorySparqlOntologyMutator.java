@@ -28,11 +28,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Applies SPARQL UPDATE against an in-memory RDF4J store seeded from the cached
- * OWLOntology, then reloads the result back into {@link ProjectOntologyCache}.
- * Covers mutation types that {@link OwlApiMutationPatcher} does not handle.
- */
 @Component
 @Conditional(FastOpenCondition.class)
 public class InMemorySparqlOntologyMutator {

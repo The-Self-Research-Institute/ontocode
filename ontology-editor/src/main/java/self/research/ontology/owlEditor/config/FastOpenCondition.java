@@ -4,10 +4,6 @@ import org.springframework.boot.autoconfigure.condition.AnyNestedCondition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.ConfigurationCondition;
 
-/**
- * Enables OWLAPI in-memory warm (fast-open) on desktop builds and on cloud
- * when {@code ontocode.fastopen.enabled=true} (default).
- */
 public class FastOpenCondition extends AnyNestedCondition {
 
     public FastOpenCondition() {

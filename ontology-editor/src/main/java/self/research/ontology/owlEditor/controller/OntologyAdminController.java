@@ -36,10 +36,6 @@ public class OntologyAdminController {
         this.hierarchyIndexService = hierarchyIndexService;
     }
 
-    /** Evict stale top-level class hierarchy cache for a project.
-     *  Call after deploying a fix to the orphan/hierarchy query.
-     *  GET /api/ontology/ontology/cache/evict/{projectId}
-     */
     @PostMapping("/cache/evict/{projectId:.+}")
     public ResponseEntity<?> evictHierarchyCache(@PathVariable String projectId) {
         topLevelCacheService.evict(projectId);
@@ -49,7 +45,6 @@ public class OntologyAdminController {
             "Hierarchy caches evicted and snapshot rebuild scheduled for project " + projectId));
     }
 
-    /** Evict ALL projects' top-level cache — use after a hierarchy query fix deployment. */
     @PostMapping("/cache/evict-all")
     public ResponseEntity<?> evictAllHierarchyCache() {
         topLevelCacheService.evictAll();

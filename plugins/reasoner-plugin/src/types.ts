@@ -1,6 +1,4 @@
-/**
- * Reasoner Plugin Types
- */
+
 
 export type ReasonerType = 'hermit' | 'pellet' | 'fact++' | 'elk';
 

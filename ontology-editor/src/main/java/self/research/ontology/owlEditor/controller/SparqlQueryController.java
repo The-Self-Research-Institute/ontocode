@@ -37,9 +37,6 @@ public class SparqlQueryController {
     private final SparqlQueryRepository queryRepository;
     private final OntologyMutationService mutationService;
 
-    // Desktop (lazy Fuseki): the store may still be starting when a query
-    // arrives. Only in that mode do we map connection-refused to a retryable
-    // 503 — webapp keeps its existing 400 semantics.
     @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.owlapi-first:false}")
     private boolean desktopOwlApiFirst;
 
@@ -63,8 +60,6 @@ public class SparqlQueryController {
         this.mutationService = mutationService;
     }
 
-    // ==================== Saved Queries CRUD ====================
-
     @GetMapping("/{projectId}/queries")
     public ResponseEntity<List<SparqlQueryEntity>> getSavedQueries(@PathVariable String projectId) {
         List<SparqlQueryEntity> queries = queryRepository.findByProjectId(projectId);
@@ -81,7 +76,7 @@ public class SparqlQueryController {
         entity.setQueryText(request.queryText());
         entity.setCreatedAt(new Date());
         entity.setUpdatedAt(new Date());
-        
+
         SparqlQueryEntity saved = queryRepository.save(entity);
         return ResponseEntity.ok(saved);
     }
@@ -113,9 +108,6 @@ public class SparqlQueryController {
         return ResponseEntity.notFound().build();
     }
 
-    // ==================== Query Execution ====================
-
-    // Typed response so Jackson serializes results as List<Map> not raw Object
     record SparqlHead(List<String> vars) {}
     record SparqlQueryResponse(SparqlHead head, List<Map<String, String>> results, long executionTime) {}
 
@@ -155,20 +147,13 @@ public class SparqlQueryController {
             return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
         }
         try {
-        // Route through the draft-aware path so a raw SPARQL UPDATE issued in draft mode
-        // hits the user's draft graph, not the shared main graph.
-        mutationService.applyRawUpdate(projectId, request.query(), draft, userId);
-        // Derived-cache invalidation (hierarchy snapshot, top-level classes, class
-        // details) happens inside the mutation path — the shared choke point for all writers.
 
-        // Draft edits are private — never broadcast them to other collaborators.
+        mutationService.applyRawUpdate(projectId, request.query(), draft, userId);
+
         if (draft) {
             return ResponseEntity.ok(Map.of("success", true, "draft", true));
         }
 
-        // Broadcast a generic SPARQL update notification to collaborators
-        // Since we can't parse the SPARQL to determine exact changes,
-        // we notify clients to refresh their view
         Map<String, Object> sparqlUpdateNotification = Map.of(
             "type", "SPARQL_UPDATE",
             "projectId", projectId,
@@ -198,6 +183,6 @@ public class SparqlQueryController {
     }
 
     public record SparqlRequest(String query) {}
-    
+
     public record SavedQueryRequest(String name, String queryText) {}
 }

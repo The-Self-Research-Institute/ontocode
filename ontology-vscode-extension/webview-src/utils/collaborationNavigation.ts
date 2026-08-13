@@ -1,4 +1,4 @@
-/** Resolve which Entities tab an ontology change belongs to. */
+
 export function resolveEntitiesTab(entityType?: string, changeType?: string): string {
   const type = `${entityType || ''} ${changeType || ''}`.toLowerCase();
   if (type.includes('individual')) return 'Individuals';

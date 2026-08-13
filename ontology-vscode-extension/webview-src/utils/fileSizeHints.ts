@@ -1,4 +1,4 @@
-/** Human-readable file size for upload/import hints. */
+
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -6,7 +6,6 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Short ETA guidance shown before/during import. */
 export function fileImportEtaHint(fileSizeBytes: number): string {
   const mb = fileSizeBytes / (1024 * 1024);
   if (mb < 5) return "Usually under 1 minute";

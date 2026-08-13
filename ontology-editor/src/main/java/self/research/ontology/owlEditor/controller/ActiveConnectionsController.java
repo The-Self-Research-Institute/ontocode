@@ -12,10 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/**
- * Admin-only endpoint: returns currently connected WebSocket sessions.
- * Use this to check if it's safe to run migrations or restarts.
- */
 @RestController
 @RequestMapping("/api/ontology/admin")
 public class ActiveConnectionsController {
@@ -26,10 +22,6 @@ public class ActiveConnectionsController {
         this.wsListener = wsListener;
     }
 
-    /**
-     * GET /api/ontology/admin/active-connections
-     * Returns all live WebSocket sessions grouped by unique user.
-     */
     @GetMapping("/active-connections")
     public ResponseEntity<?> getActiveConnections(
             @RequestHeader(value = "Authorization", required = false) String authHeader) {
@@ -41,14 +33,12 @@ public class ActiveConnectionsController {
         List<Map<String, Object>> sessions = wsListener.getAllActiveSessions();
         int totalConnections = wsListener.getTotalConnectionCount();
 
-        // Count unique users (a user can have multiple tabs open)
         long uniqueUsers = sessions.stream()
                 .map(s -> (String) s.get("userId"))
                 .filter(id -> id != null && !id.isBlank())
                 .distinct()
                 .count();
 
-        // Deduplicate by userId for the summary view (keep latest activity)
         List<Map<String, Object>> userSummary = sessions.stream()
                 .collect(Collectors.toMap(
                         s -> (String) s.get("userId"),

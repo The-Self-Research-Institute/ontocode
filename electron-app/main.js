@@ -1,15 +1,4 @@
-/**
- * Electron main process — OntoCode Desktop
- *
- * Start-up sequence:
- *   1. Show splash window immediately (fast — no services needed).
- *   2. Check Java 17+ is available; abort with dialog if not.
- *   3. Start MongoDB → Fuseki → OWL Editor (sequential, each health-checked).
- *   4. Close splash, open main window pointing at the local OWL Editor.
- *
- * Shutdown:
- *   Trap window-all-closed / before-quit and stop all three services.
- */
+
 
 const {
     app, BrowserWindow, ipcMain, dialog, Notification, shell, Menu, Tray,
@@ -23,16 +12,10 @@ const proxy    = require('./services/ProxyServer');
 const autoUpdater = require('./services/AutoUpdater');
 const detectJava = require('./scripts/detect-java');
 
-// ── Dev mode ─────────────────────────────────────────────────────────────────
-// Set ELECTRON_IS_DEV=1 to skip bundled service startup and point at Docker.
-// ELECTRON_DEV_API_URL overrides the backend URL (default: http://localhost:8083).
 const IS_DEV = process.env.ELECTRON_IS_DEV === '1' || (!app.isPackaged && process.env.ELECTRON_IS_DEV !== '0');
 const DEV_API_URL = process.env.ELECTRON_DEV_API_URL || 'http://localhost:8083';
 const VITE_URL    = process.env.ELECTRON_VITE_URL    || 'http://localhost:5173';
 
-// ── Single instance (VS Code–style: second launch focuses existing window) ───
-// Without this, a second OntoCode process tries to bind Mongo/Fuseki/desktop ports
-// and fails with "Startup failed" / address already in use.
 const ONTOLOGY_EXTENSIONS = new Set(['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld', 'ofn']);
 let pendingOpenFile = null;
 let pendingFocusFile = null;
@@ -179,13 +162,11 @@ if (!gotSingleInstanceLock) {
     });
 }
 
-// macOS: double-click .owl in Finder
 app.on('open-file', (event, filePath) => {
     event.preventDefault();
     openOntologyFileFromPath(filePath);
 });
 
-// ── Auth token store (encrypted at rest) ────────────────────────────────────
 const store = new Store({ encryptionKey: 'ontocode-desktop-v1' });
 
 let splashWindow = null;
@@ -193,7 +174,6 @@ let mainWindow   = null;
 let tray         = null;
 let servicesRunning = false;
 
-// ── Splash window ─────────────────────────────────────────────────────────────
 function createSplash() {
     splashWindow = new BrowserWindow({
         width:  560,
@@ -212,7 +192,6 @@ function createSplash() {
     splashWindow.on('closed', () => { splashWindow = null; });
 }
 
-// ── Main window ───────────────────────────────────────────────────────────────
 function createMainWindow() {
     mainWindow = new BrowserWindow({
         width:  1400,
@@ -221,26 +200,20 @@ function createMainWindow() {
         minHeight: 600,
         title: 'OntoCode',
         show: false,
-        // Hide the native menu bar — the React app has its own internal menu.
-        // The native menu is still accessible via Alt key on Windows.
+
         autoHideMenuBar: true,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
             webSecurity: false,
-            // Allow unload event handlers — Axios uses these to cancel
-            // in-flight XHR requests on page exit. Without this Chromium
-            // logs a [Violation] Permissions policy violation: unload.
+
             allowRunningInsecureContent: false,
         },
     });
 
-    // Remove the native application menu entirely so it doesn't appear on
-    // first render before autoHideMenuBar takes effect.
     mainWindow.setMenu(null);
 
-    // F12 / Ctrl+Shift+I — toggle DevTools in all builds (production + dev).
     mainWindow.webContents.on('before-input-event', (event, input) => {
         const isF12 = input.type === 'keyDown' && input.key === 'F12';
         const isCtrlShiftI = input.type === 'keyDown' && input.key === 'I' && input.control && input.shift;
@@ -250,11 +223,10 @@ function createMainWindow() {
         }
     });
 
-    // In production, the routing proxy merges auth + OWL editor under one URL.
     const editorUrl = IS_DEV ? DEV_API_URL : `http://127.0.0.1:${proxy.PROXY_PORT}`;
 
     if (IS_DEV) {
-        // Hot-reload mode: load Vite dev server (run `npm run dev` in webview-src first)
+
         mainWindow.loadURL(VITE_URL);
         mainWindow.webContents.openDevTools();
     } else {
@@ -297,12 +269,9 @@ function createMainWindow() {
 
     mainWindow.once('ready-to-show', showMain);
 
-    // Fallback: if ready-to-show doesn't fire within 8 seconds, show anyway
     mainWindow.webContents.once('did-finish-load', () => setTimeout(showMain, 500));
     setTimeout(showMain, 8000);
 
-    // Exit-time unsaved-draft check: if the open project still has a draft on
-    // disk, offer Save & Exit / Exit (draft kept for recovery) / Cancel.
     let closeConfirmed = false;
     mainWindow.on('close', (e) => {
         if (closeConfirmed) return;
@@ -341,30 +310,27 @@ function createMainWindow() {
     });
 }
 
-// ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
     createSplash();
 
-    // Log forwarded to splash screen
     svcMgr.onLog((level, msg) => {
         if (splashWindow && !splashWindow.isDestroyed()) {
             splashWindow.webContents.send('service-log', { level, msg });
         }
     });
 
-    // ── Start Syncthing (optional, both modes) ─────────────────────────────
     syncMgr.onLog((level, msg) => sendSplashLog(level, `[Sync] ${msg}`));
     syncMgr.start().catch(e => console.warn('Sync engine failed to start:', e.message));
 
     if (IS_DEV) {
-        // ── DEV MODE: skip bundled services, connect to Docker stack ───────
+
         sendSplashLog('info', `Dev mode — connecting to ${DEV_API_URL}…`);
         sendSplashLog('ok',   'Skipping bundled service startup (using Docker)');
         servicesRunning = false;   // desktop services not owned by this process
         createMainWindow();
         setupTray();
     } else {
-        // ── PRODUCTION MODE ────────────────────────────────────────────────
+
         sendSplashLog('info', 'Checking Java runtime…');
         const javaOk = await detectJava.check();
         if (!javaOk) {
@@ -409,11 +375,9 @@ app.whenReady().then(async () => {
     });
 });
 
-// Prevent quit while services are shutting down
 let isQuitting = false;
 let isInstallingUpdate = false;
 
-/** Stop bundled JVM/Mongo before NSIS runs — otherwise quitAndInstall can restart without applying. */
 async function installAppUpdate() {
     if (isInstallingUpdate) return { ok: false, error: 'Update already in progress' };
     isInstallingUpdate = true;
@@ -452,9 +416,6 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
 });
 
-// ── IPC handlers ──────────────────────────────────────────────────────────────
-
-/** Track the ontology file currently open in the editor (focus-only on re-open). */
 ipcMain.handle('file:getActivePath', () => activeOntologyFilePath);
 ipcMain.handle('file:setActivePath', (_event, filePath) => {
     activeOntologyFilePath = filePath ? normalizeFilePath(filePath) : '';
@@ -463,16 +424,13 @@ ipcMain.handle('file:clearActivePath', () => {
     activeOntologyFilePath = '';
 });
 
-/** Auth token storage (used by the React app via preload bridge) */
 ipcMain.handle('auth:get',   ()         => store.get('authToken', null));
 ipcMain.handle('auth:save',  (_, token) => store.set('authToken', token));
 ipcMain.handle('auth:clear', ()         => store.delete('authToken'));
 
-/** Local display-name storage (desktop-only, no account needed) */
 ipcMain.handle('profile:get',  ()      => store.get('localProfile', null));
 ipcMain.handle('profile:save', (_, p)  => store.set('localProfile', p));
 
-/** Expose backend URL to the renderer — also handles sync config:get-sync */
 function getConfig() {
     return {
         apiBaseUrl: IS_DEV ? DEV_API_URL : `http://127.0.0.1:${proxy.PROXY_PORT}`,
@@ -485,8 +443,6 @@ function getConfig() {
 ipcMain.handle('config:get', () => getConfig());
 ipcMain.on('config:get-sync', (event) => { event.returnValue = getConfig(); });
 
-// ── License system ────────────────────────────────────────────────────────────
-
 const LICENSE_PATH = path.join(app.getPath('userData'), 'license.json');
 
 function readLicense() {
@@ -495,7 +451,7 @@ function readLicense() {
             return JSON.parse(fs.readFileSync(LICENSE_PATH, 'utf8'));
         }
     } catch (_) {}
-    // Default FREE license
+
     const free = {
         version: 1, plan: 'FREE', email: '', name: 'Desktop User',
         issuedAt: new Date().toISOString(), expiresAt: null,
@@ -519,7 +475,6 @@ ipcMain.handle('license:openPurchase', (_, plan) => {
     shell.openExternal(`https://ontocode.selfresearch.org/desktop-pricing?plan=${plan || 'pro'}&device=${deviceId}`);
 });
 
-/** Open a native file dialog */
 ipcMain.handle('file:open', async () => {
     const win = mainWindow || BrowserWindow.getFocusedWindow();
     const result = await dialog.showOpenDialog(win, {
@@ -546,7 +501,6 @@ ipcMain.handle('file:open', async () => {
     return { fileName, fileContent, fileSize, filePath: resolved };
 });
 
-/** Save a file via native Save As dialog */
 ipcMain.handle('file:saveAs', async (_, { content, defaultName }) => {
     const win = mainWindow || BrowserWindow.getFocusedWindow();
     const result = await dialog.showSaveDialog(win, {
@@ -564,37 +518,30 @@ ipcMain.handle('file:saveAs', async (_, { content, defaultName }) => {
     return result.filePath;
 });
 
-/** Native OS notification */
 ipcMain.handle('notification:show', (_, { title, message }) => {
     if (Notification.isSupported()) {
         new Notification({ title, body: message }).show();
     }
 });
 
-/** Service status (used by status bar in renderer) */
 ipcMain.handle('services:status', () => svcMgr.status());
 ipcMain.handle('services:ensureFuseki', () => svcMgr.ensureFuseki());
 ipcMain.handle('services:ensureSwrl', () => svcMgr.ensureSwrl());
 
-/** Toggle DevTools from renderer menu button */
 ipcMain.on('devtools:toggle', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.toggleDevTools();
     }
 });
 
-/** Open logs directory in file manager */
 ipcMain.handle('logs:open', () => {
     shell.openPath(path.join(app.getPath('userData'), 'logs'));
 });
 
-// ── App updates (electron-updater) ────────────────────────────────────────────
 ipcMain.handle('update:getStatus', () => autoUpdater.getStatus());
 ipcMain.handle('update:check', () => autoUpdater.checkForUpdates(true));
 ipcMain.handle('update:download', () => autoUpdater.downloadUpdate());
 ipcMain.handle('update:install', () => installAppUpdate());
-
-// ── Sync / Share IPC ──────────────────────────────────────────────────────────
 
 ipcMain.handle('sync:status',        ()                          => ({ running: syncMgr.isRunning() }));
 ipcMain.handle('sync:deviceId',      ()                          => syncMgr.getDeviceId());
@@ -607,7 +554,6 @@ ipcMain.handle('sync:parseLink',     (_, { link })               => syncMgr.pars
 ipcMain.handle('sync:completion',    (_, { folderId, deviceId }) => syncMgr.folderCompletion(folderId, deviceId));
 ipcMain.handle('sync:setPaused',     (_, { folderId, paused })   => syncMgr.setFolderPaused(folderId, paused));
 
-/** Open a workspace folder picker, then share it via Syncthing. */
 ipcMain.handle('sync:shareWorkspace', async (_, { label }) => {
     const win = mainWindow || BrowserWindow.getFocusedWindow();
     const result = await dialog.showOpenDialog(win, {
@@ -621,7 +567,6 @@ ipcMain.handle('sync:shareWorkspace', async (_, { label }) => {
     return { folderPath, folderId, link };
 });
 
-// ── System tray ───────────────────────────────────────────────────────────────
 function setupTray() {
     const iconFile = path.join(__dirname, 'assets', 'tray-icon.png');
     if (!fs.existsSync(iconFile)) return;   // skip if icon not bundled yet
@@ -638,7 +583,6 @@ function setupTray() {
     tray.on('double-click', () => { focusExistingWindow(); });
 }
 
-// ── App menu ──────────────────────────────────────────────────────────────────
 function setupMenu(win) {
     const isMac = process.platform === 'darwin';
     const template = [
@@ -749,7 +693,6 @@ function setupMenu(win) {
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-// ── Splash helpers ─────────────────────────────────────────────────────────────
 function sendSplashLog(level, msg) {
     if (splashWindow && !splashWindow.isDestroyed()) {
         splashWindow.webContents.send('service-log', { level, msg });

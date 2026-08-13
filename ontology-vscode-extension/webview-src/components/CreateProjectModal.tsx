@@ -81,7 +81,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
       setMemberSearch("");
       return;
     }
-    // Pre-select owner/admin members with locked Editor role
+
     const privileged = workspaceMembers.filter(isPrivilegedMember);
     if (privileged.length > 0) {
       setSelectedMembers((prev) => {
@@ -271,7 +271,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
             member.email.toLowerCase().includes(query),
         )
       : workspaceMembers;
-    // Privileged (owner/admin) always float to top
+
     const privileged = filtered.filter(isPrivilegedMember);
     const regular = filtered.filter((m) => !isPrivilegedMember(m));
     return [...privileged, ...regular];

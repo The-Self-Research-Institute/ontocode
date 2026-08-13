@@ -15,10 +15,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Admin-only endpoints for runtime system settings.
- * All routes require ROLE_ADMIN.
- */
 @RestController
 @RequestMapping("/api/admin/settings")
 public class AdminSettingsController {
@@ -34,14 +30,12 @@ public class AdminSettingsController {
         this.enterpriseBypassService = enterpriseBypassService;
     }
 
-    /** GET /api/admin/settings — return current settings */
     @GetMapping
     public ResponseEntity<?> getSettings() {
         if (!isAdmin()) return forbidden();
         return ResponseEntity.ok(settingsService.get());
     }
 
-    /** PUT /api/admin/settings — replace full settings object */
     @PutMapping
     public ResponseEntity<?> updateSettings(@RequestBody SystemSettings body) {
         if (!isAdmin()) return forbidden();
@@ -50,7 +44,6 @@ public class AdminSettingsController {
         return ResponseEntity.ok(saved);
     }
 
-    /** PATCH /api/admin/settings/maintenance — update maintenance settings */
     @PatchMapping("/maintenance")
     public ResponseEntity<?> setMaintenance(@RequestBody Map<String, Object> body) {
         if (!isAdmin()) return forbidden();
@@ -86,7 +79,6 @@ public class AdminSettingsController {
             s.setMaintenanceEndTime(v != null && !v.isBlank() ? LocalDateTime.parse(v, fmt) : null);
         }
 
-        // Daily recurring window fields
         if (body.containsKey("dailyEnabled")) {
             s.setMaintenanceDailyEnabled(Boolean.TRUE.equals(body.get("dailyEnabled")));
         }
@@ -116,7 +108,6 @@ public class AdminSettingsController {
         ));
     }
 
-    /** PATCH /api/admin/settings/enterprise-domains — update enterprise domain bypass list */
     @PatchMapping("/enterprise-domains")
     public ResponseEntity<?> setEnterpriseDomains(@RequestBody Map<String, Object> body) {
         if (!isAdmin()) return forbidden();
@@ -137,7 +128,6 @@ public class AdminSettingsController {
         ));
     }
 
-    /** PATCH /api/admin/settings/enterprise-emails — update individual beta/partner emails */
     @PatchMapping("/enterprise-emails")
     public ResponseEntity<?> setEnterpriseEmails(@RequestBody Map<String, Object> body) {
         if (!isAdmin()) return forbidden();

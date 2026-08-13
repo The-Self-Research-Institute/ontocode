@@ -2,12 +2,6 @@ import React, { useState, useEffect } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import type { LintIssue } from "../../utils/ontologyLinter";
 
-/**
- * Blocking error dialog for code-view save failures. Unlike a toast, this cannot
- * be missed or auto-dismiss — the user must acknowledge before continuing, since
- * dismissing silently here previously masked a save that never reached the
- * ontology (see code-view-save cache-only fallback bug).
- */
 export const SaveErrorDialog = ({
   isOpen,
   error,
@@ -20,10 +14,7 @@ export const SaveErrorDialog = ({
   error: string;
   onRetry: () => void;
   onClose: () => void;
-  /** True for the save-conflict case (ontology changed elsewhere since Code View
-   * was loaded) rather than a genuine save failure — "Retry Save" would just
-   * resubmit the same now-stale content and hit the same conflict again, so this
-   * swaps it for a "Reload" action instead. */
+
   isConflict?: boolean;
   onReload?: () => void;
 }) => {
@@ -88,13 +79,6 @@ export const SaveErrorDialog = ({
   );
 };
 
-/**
- * Terminal-style "Problems" panel, docked at the bottom of the code editor —
- * deliberately NOT a blocking modal, so the user can click an issue to jump to
- * it, fix the text, and re-save without losing their place or being forced
- * through a dialog each time. Runs right before save; these are content
- * warnings (e.g. an IRI outside the ontology's namespace), not save failures.
- */
 export const LintProblemsPanel = ({
   issues,
   onJumpToLine,
@@ -228,12 +212,6 @@ export const ConfirmDialog = ({
   );
 };
 
-/**
- * Class delete confirmation: lets the user choose between deleting
- * just the target class or cascading to all its asserted descendants. Kept separate
- * from the generic ConfirmDialog above (which many other flows depend on) so this
- * radio-choice + descendant-fetch behavior can't regress unrelated confirm dialogs.
- */
 export const DeleteClassDialog = ({
   isOpen,
   onClose,
@@ -330,13 +308,6 @@ export const DeleteClassDialog = ({
   );
 };
 
-/**
- * Text-input modal replacing bare `window.prompt()` calls, which Electron's
- * renderer does not implement (only `alert`/`confirm`) — calling `prompt()` in
- * the desktop build throws "prompt() is and will not be supported" and aborts
- * the caller silently. Any flow that needs a single free-text value (e.g. a new
- * file name) on both desktop and web should use this instead.
- */
 export const PromptDialog = ({
   isOpen,
   title,
@@ -356,7 +327,7 @@ export const PromptDialog = ({
   placeholder?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** Return an error message to block submission, or null/undefined if the trimmed value is valid. */
+
   validate?: (value: string) => string | null | undefined;
   onConfirm: (value: string) => void;
   onCancel: () => void;

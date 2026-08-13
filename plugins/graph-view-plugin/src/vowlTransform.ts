@@ -1,25 +1,10 @@
-// vowlTransform.ts
-//
-// Restructures the filtered graph into real VOWL topology before rendering.
-// VOWL is not just a styling convention — its graph model differs from ours:
-//
-//  1. subClassOf edges to owl:Thing are never drawn (everything is a subclass of
-//     Thing); orphan classes float freely instead of star-wiring into a hub.
-//  2. owl:Thing is split into one small dashed node PER EDGE that touches it.
-//  3. Datatype nodes (Literal, string, …) are split into one node PER datatype
-//     property edge — each green property points at its own yellow Literal box.
-//  4. Equivalent classes are merged into a single node drawn with a double border.
-//
-// Without 1–3 every shared node becomes a high-degree hub and the force layout
-// collapses into the "hairball" look; VOWL's even spacing falls out of this
-// topology naturally.
+
 
 import type { OntologyNode, OntologyEdge } from './types';
 
 export const isThingIri = (id: string | undefined | null): boolean =>
   !!id && (id === 'owl:Thing' || id.includes('owl#Thing'));
 
-/** Suffix marker for split-out clone nodes; `metadata.cloneOf` holds the original id. */
 export const VOWL_CLONE_SEPARATOR = '__vowl__';
 
 export const vowlOriginalNodeId = (id: string): string => {
@@ -33,7 +18,7 @@ export interface VowlGraph {
 }
 
 export interface VowlTransformOptions {
-  /** Merge owl:equivalentClass into one double-border node (VOWL default). */
+
   mergeEquivalents?: boolean;
 }
 
@@ -49,12 +34,6 @@ export interface VowlNeighborhood {
   memberIds: string[];
 }
 
-/**
- * Partition the VOWL graph into VOWL-style neighborhoods.
- * Hubs = real classes that carry properties (or are roots). Pure subclass
- * leaves attach to their parent's neighborhood so Agent/Person/Document stay
- * separate without Organization/OnlineChatAccount fighting them via minSep.
- */
 export function buildVowlNeighborhoods(
   nodes: OntologyNode[],
   edges: OntologyEdge[]
@@ -75,7 +54,6 @@ export function buildVowlNeighborhoods(
   const isRealClass = (n: OntologyNode) =>
     n.type === 'class' && !isThingIri(n.id) && n.label !== 'Thing' && !(n as any).metadata?.cloneOf;
 
-  // Property/axiom degree (excludes subClassOf) — this is what makes a "visual hub"
   const propDegree = new Map<string, number>();
   const parents = new Map<string, string[]>(); // child → superclasses
   for (const e of edges) {
@@ -91,7 +69,6 @@ export function buildVowlNeighborhoods(
   const nodeById = new Map(nodes.map(n => [n.id, n]));
   const realClasses = nodes.filter(isRealClass);
 
-  // A hub is a class that owns properties, or has no superclass in-graph (root)
   const isHubClass = (id: string) => {
     const pd = propDegree.get(id) ?? 0;
     if (pd >= 1) return true;
@@ -110,7 +87,6 @@ export function buildVowlNeighborhoods(
   const assigned = new Map<string, string>(); // nodeId → hubId
   for (const h of hubIds) assigned.set(h, h);
 
-  // Attach pure subclass leaves upward to the nearest hub ancestor
   for (const n of realClasses) {
     if (assigned.has(n.id)) continue;
     let cur: string | undefined = n.id;
@@ -128,15 +104,12 @@ export function buildVowlNeighborhoods(
       cur = (parents.get(cur) || [])[0];
     }
     if (!assigned.has(n.id)) {
-      // Fallback: treat as its own hub
+
       hubIds.push(n.id);
       assigned.set(n.id, n.id);
     }
   }
 
-  // Attach Literals / single-use Things / individuals only (never walk into
-  // other hubs). A shared Thing remains its own hub so all domainless
-  // properties visibly converge on one node, matching VOWL.
   const isAttachable = (id: string) => {
     const n = nodeById.get(id);
     if (!n) return false;
@@ -158,7 +131,6 @@ export function buildVowlNeighborhoods(
     }
   }
 
-  // Leftover islands (Thing→Literal stars): own neighborhoods
   const leftovers = nodes.map(n => n.id).filter(id => !assigned.has(id));
   const seen = new Set<string>();
   for (const start of leftovers) {
@@ -196,64 +168,46 @@ const isRealClassNode = (id: string, nodeById: Map<string, OntologyNode>): boole
   return !!n && n.type === 'class' && !isThingIri(id) && n.label !== 'Thing' && !id.includes(VOWL_CLONE_SEPARATOR);
 };
 
-// ── Balloon / radial-tree geometry (Melançon & Herman) ───────────────────────
-// Screenshot-#1 look comes from short spokes + wedge packing, NOT from global
-// stress that pulls every linked hub into one hairball.
-//
-// Child i of a node with wedge ω and subtree radii rᵢ sits at:
-//   R ≥ rᵢ / sin(αᵢ / 2)     where αᵢ = ω · sᵢ / Σs
-// Equal children (pure VOWL star): R = r / sin(π/n), chord ≥ 2·CLASS_NODE_R.
 const PROP_RING_BASE = 78;
 const PROP_MIN_CHORD = 72;
 const SUBCLASS_GAP = 52;
-// Was 28 — too small since AdvancedGraphView's VOWL class circles now grow to
-// fit their label (see the node.type === 'class' sizing block there) instead
-// of staying a flat small size; 40 approximates the resulting average radius
-// for a typical ~12-char class name so packing spacing doesn't undersize and
-// let neighboring circles overlap. Still a single constant approximating
-// variable per-node radii — a full fix would thread the actual computed
-// radius through estimateClassFootprint/estimateClassCoreRadius instead.
+
 const CLASS_NODE_R = 40;
 const HUB_PAD = 48;
 const LITERAL_BOX_HALF = 42; // half-width of yellow datatype box
 
-/** Radius so n items on a circle keep ≈minChord between neighbors. */
 function starRadiusForCount(count: number, base = PROP_RING_BASE, minChord = PROP_MIN_CHORD): number {
   if (count <= 1) return base;
   const need = minChord / (2 * Math.sin(Math.PI / count));
   return Math.max(base, need);
 }
 
-/** Half-width of a property chip label at ~11px font (matches renderer). */
 function chipHalfWidth(label: string | undefined): number {
   return Math.min(96, String(label ?? '').length * 2.8 + 10);
 }
 
-/** Balloon ring: children of radii rᵢ need R so adjacent balloons don't overlap. */
 function balloonRingRadius(childRadii: number[]): number {
   const n = childRadii.length;
   if (n === 0) return 0;
   if (n === 1) return childRadii[0] + CLASS_NODE_R + 8;
-  // Equal angular slots: R · sin(π/n) ≥ (rᵢ + rᵢ₊₁) / 2  →  R ≥ (rᵢ+rᵢ₊₁)/(2·sin(π/n))
+
   let need = 0;
   for (let i = 0; i < n; i++) {
     const a = childRadii[i];
     const b = childRadii[(i + 1) % n];
     need = Math.max(need, (a + b) / (2 * Math.sin(Math.PI / n)));
   }
-  // Also clear the parent's own body
+
   need = Math.max(need, CLASS_NODE_R + Math.max(...childRadii) + 8);
   return need;
 }
 
-/** Unit vector that never collapses to (0,0) — exact overlaps must still separate. */
 function safeUnit(dx: number, dy: number): { ux: number; uy: number; dist: number } {
   const dist = Math.hypot(dx, dy);
   if (dist < 1e-6) return { ux: 1, uy: 0, dist: 0 };
   return { ux: dx / dist, uy: dy / dist, dist };
 }
 
-/** Even angular lattice: θᵢ = θ₀ + 2π·i/n (never spin individuals off-lattice). */
 function placeEvenCircle(
   ids: string[],
   cx: number,
@@ -270,10 +224,6 @@ function placeEvenCircle(
   });
 }
 
-/**
- * Grow a ring radius until every lattice point clears `occupied` by minDist.
- * Preserves even angles — WebVOWL look — instead of scattering individuals.
- */
 function placeEvenCircleClear(
   ids: string[],
   cx: number,
@@ -306,17 +256,6 @@ function placeEvenCircleClear(
   return r;
 }
 
-/**
- * Balloon star (Melançon–Herman radial tree) around one class.
- *
- * Subclasses get equal angular slots on a short outer ring whose radius is
- * derived from child-balloon radii so spokes stay short and even — the #1 look.
- * Literals/Things sit on an INNER ring at mid-angles between subclass spokes
- * (or a side lattice when alone), never competing for the same ray.
- *
- * @param outwardAngle parent→this angle; child i=0 continues outward.
- * @param wedge angular budget for this subtree (2π at roots).
- */
 function placeVowlClassStar(
   classId: string,
   x: number,
@@ -355,11 +294,8 @@ function placeVowlClassStar(
     innerDegree.set(other, (innerDegree.get(other) ?? 0) + 1);
   }
 
-  // Local child glyph radii only — grandchildren get their own short stars.
-  // Full subtree disks (true Melançon) explode on deep BFO chains; #1 does not.
   const useRs = subclasses.map(() => CLASS_NODE_R + 16);
-  // Literal boxes are ~84px wide: adjacent boxes on the ring need chord ≥ 96
-  // or the yellow boxes (and their green chips) overlap side by side.
+
   const propR = starRadiusForCount(Math.max(1, uniqInner.length), PROP_RING_BASE, 96) +
     (uniqInner.length > 0 ? LITERAL_BOX_HALF * 0.35 : 0);
   let subclassR = subclasses.length > 0
@@ -367,7 +303,7 @@ function placeVowlClassStar(
     : propR;
 
   if (subclasses.length > 0) {
-    // Equal slots inside the available wedge (full 2π at roots → classic star).
+
     const n = subclasses.length;
     const slot = wedge / n;
     const placeAt = (r: number) => {
@@ -377,7 +313,7 @@ function placeVowlClassStar(
       });
     };
     placeAt(subclassR);
-    // Grow only if a lattice point collides with a foreign placed node
+
     for (let k = 0; k < 10; k++) {
       let clear = true;
       for (const id of subclasses) {
@@ -397,7 +333,6 @@ function placeVowlClassStar(
     }
   }
 
-  // Inner literals: mid-angles between subclass spokes (interleaved), short ring.
   if (uniqInner.length > 0) {
     const ordered = [...uniqInner].sort(
       (a, b) => (innerDegree.get(b) ?? 1) - (innerDegree.get(a) ?? 1)
@@ -408,8 +343,7 @@ function placeVowlClassStar(
         ? outwardAngle - wedge / 2 + wedge / (2 * nSub)
         : outwardAngle + Math.PI / 2;
     const maxDeg = Math.max(1, ...ordered.map(id => innerDegree.get(id) ?? 1));
-    // Spoke must FIT its chip: L ≥ classR + chip width + literal clearance.
-    // "has observation temporal interval" needs a ~230px spoke; "age" ~120px.
+
     let maxChipHalf = 20;
     for (const e of edges) {
       if (e.type !== 'propertyRelation') continue;
@@ -418,7 +352,7 @@ function placeVowlClassStar(
       maxChipHalf = Math.max(maxChipHalf, chipHalfWidth(e.label));
     }
     const chipFitR = CLASS_NODE_R + maxChipHalf * 1.35 + 48;
-    // Keep subclasses OUTSIDE the chip-fit literal ring
+
     if (subclasses.length > 0 && subclassR < chipFitR + SUBCLASS_GAP) {
       subclassR = chipFitR + SUBCLASS_GAP;
       const nSub = subclasses.length;
@@ -436,8 +370,7 @@ function placeVowlClassStar(
       )
     );
     const n = ordered.length;
-    // Two-radius stagger: adjacent literal boxes alternate near/far rings so
-    // wide yellow boxes + green chips never sit shoulder-to-shoulder.
+
     const rNear = Math.max(54, innerR);
     const rFar = n >= 4 ? rNear + LITERAL_BOX_HALF + 22 : rNear;
     ordered.forEach((id, i) => {
@@ -461,11 +394,6 @@ function placeVowlClassStar(
   }
 }
 
-/**
- * Isotropic core radius: literal/Thing ring + box margin. This part of a hub
- * extends in EVERY direction, so two hub centers may never be closer than the
- * sum of their cores.
- */
 function estimateClassCoreRadius(
   classId: string,
   edges: OntologyEdge[],
@@ -485,12 +413,11 @@ function estimateClassCoreRadius(
     }
   }
   if (inner === 0) return CLASS_NODE_R + 12;
-  // Ring must fit the widest chip along its spoke, plus half a literal box.
+
   const chipFitR = CLASS_NODE_R + maxChipHalf * 1.35 + 48;
   return Math.max(starRadiusForCount(Math.max(1, inner)), chipFitR) + 48;
 }
 
-/** Neighborhood disk radius = outer star extent + class glyph. */
 function estimateClassFootprint(
   classId: string,
   childrenOf: Map<string, string[]>,
@@ -516,12 +443,6 @@ function estimateClassFootprint(
   return subclassR + CLASS_NODE_R;
 }
 
-/**
- * Stress majorization (SMACOF) over hub centers.
- * Minimizes  Σᵢⱼ wᵢⱼ·(‖xᵢ−xⱼ‖ − dᵢⱼ)²  with wᵢⱼ = 1/dᵢⱼ².
- * Each iteration is the closed-form majorizer update, which is guaranteed to
- * monotonically decrease stress — no tuning, no oscillation, no local pushes.
- */
 function stressMajorizeDisks(
   ids: string[],
   pos: Map<string, { x: number; y: number }>,
@@ -547,7 +468,7 @@ function stressMajorizeDisks(
         let dy = ys[i] - ys[j];
         let dist = Math.hypot(dx, dy);
         if (dist < 1e-6) {
-          // Deterministic tie-break for coincident points
+
           dx = Math.cos(i * 2.399963 + j);
           dy = Math.sin(i * 2.399963 + j);
           dist = 1;
@@ -567,12 +488,6 @@ function stressMajorizeDisks(
   ids.forEach((id, i) => pos.set(id, { x: xs[i], y: ys[i] }));
 }
 
-/**
- * All-pairs metric distances on the hub graph via Dijkstra, where each hub
- * edge's length is the geometric requirement rᵢ+rⱼ+pad (disk tangency).
- * Unreachable pairs get 1.6× the graph diameter so components spread apart
- * but still participate in one coherent embedding.
- */
 function hubMetricDistances(
   ids: string[],
   edgeLen: Map<string, number>, // key "i|j" with i<j (indices)
@@ -582,7 +497,7 @@ function hubMetricDistances(
   const D: number[][] = Array.from({ length: n }, () => new Array(n).fill(Infinity));
   for (let s = 0; s < n; s++) {
     D[s][s] = 0;
-    // Simple O(n²) Dijkstra — hub counts are small (tens, not thousands)
+
     const done = new Array(n).fill(false);
     for (let step = 0; step < n; step++) {
       let u = -1;
@@ -617,7 +532,6 @@ function hubMetricDistances(
   return D;
 }
 
-/** Project all class disks apart (Jacobi-style pairwise separation). */
 function projectClassDisks(
   classIds: string[],
   positions: Map<string, { x: number; y: number }>,
@@ -636,7 +550,7 @@ function projectClassDisks(
         const a = positions.get(aId);
         const b = positions.get(bId);
         if (!a || !b) continue;
-        // Parent–child on the same star: allow closer (they're on a designed ring)
+
         const parentChild =
           (hasParent.has(aId) && !hasParent.has(bId)) ||
           (hasParent.has(bId) && !hasParent.has(aId));
@@ -646,7 +560,7 @@ function projectClassDisks(
         if (parentChild) {
           sep = CLASS_NODE_R * 2 + 16;
         } else if (bothRoots) {
-          // Two hub centers: their literal rings + chips must not interleave
+
           const need = (cores.get(aId) ?? 60) + (cores.get(bId) ?? 60) + 24;
           sep = Math.max(CLASS_NODE_R * 2 + 20, Math.min(need, 460));
         } else {
@@ -673,13 +587,6 @@ function projectClassDisks(
   }
 }
 
-/**
- * Place class trees as Melançon–Herman balloons (screenshot-#1 geometry):
- *  - each subclass tree is a short-spoke star (wedge balloon)
- *  - within a property-linked hub component: densest nucleus + satellites on a ring
- *  - components themselves pack as rigid disks (no global stress hairball)
- *  - Literals on inner mid-angles; pairwise projection cleans residuals
- */
 export function placeVowlNeighborhoods(
   neighborhoods: VowlNeighborhood[],
   width: number,
@@ -692,22 +599,11 @@ export function placeVowlNeighborhoods(
   const cy = height / 2;
   const nodeById = new Map(nodes.map(n => [n.id, n]));
 
-  // Which neighborhood (buildVowlNeighborhoods' property-hub partition) owns each
-  // class. This is the authoritative grouping — a class with its own properties is
-  // its own hub even if it shares a distant subClassOf ancestor with every other
-  // hub (true of any single-rooted taxonomy, e.g. BFO/IAO-based ontologies where
-  // everything ISA owl:Thing's real-class root). Recursing the star placement
-  // purely off subClassOf ancestry — as this function used to — collapses such
-  // ontologies into ONE giant nested tree from that shared root, so property
-  // edges between unrelated branches become long canvas-spanning arcs.
   const hubOf = new Map<string, string>();
   for (const nb of neighborhoods) {
     for (const m of nb.memberIds) hubOf.set(m, nb.hubId);
   }
 
-  // Local childrenOf: only subClassOf edges that stay INSIDE one neighborhood.
-  // A subClassOf edge crossing from one hub's neighborhood into another's is a
-  // structural (taxonomic-backbone) link between hubs, not a star-recursion edge.
   const childrenOf = new Map<string, string[]>();
   const hasParent = new Set<string>();
   const structuralHubLinks: Array<[string, string]> = [];
@@ -757,8 +653,6 @@ export function placeVowlNeighborhoods(
     cores.set(id, estimateClassCoreRadius(id, edges, nodeById));
   }
 
-  // Packing radius = local star footprint only (capped). Deep trees place
-  // grandchildren as nested short stars; packing must not treat them as giant disks.
   const packR = new Map<string, number>();
   for (const id of realClassIds) {
     const local = Math.max(footprints.get(id) ?? 120, cores.get(id) ?? 60);
@@ -792,19 +686,10 @@ export function placeVowlNeighborhoods(
     }
   };
 
-  // One hub per neighborhood (buildVowlNeighborhoods' partition), not per
-  // subclass-tree root — this is what keeps property-rich hubs separate even
-  // when they share a common taxonomic ancestor.
   const hubIds = [...new Set(
     neighborhoods.filter(nb => isRealClassNode(nb.hubId, nodeById)).map(nb => nb.hubId)
   )];
 
-  // Metric graph over hubs: property links (tight — VOWL draws these directly)
-  // plus structural subClassOf-backbone links (looser — keeps taxonomically
-  // related hubs in the same neighborhood of the canvas without forcing a
-  // single nested tree). All-pairs Dijkstra + SMACOF stress majorization then
-  // finds a globally consistent embedding instead of the old "first hub at
-  // center, everything else on one circle" heuristic.
   const idIndex = new Map(hubIds.map((id, i) => [id, i]));
   const hubAdjIdx = new Map<number, Set<number>>();
   hubIds.forEach((_, i) => hubAdjIdx.set(i, new Set()));
@@ -821,15 +706,7 @@ export function placeVowlNeighborhoods(
     hubAdjIdx.get(ia)!.add(ib);
     hubAdjIdx.get(ib)!.add(ia);
   };
-  // How many distinct property connections exist between each hub pair —
-  // previously every pair got the same target length regardless of this
-  // (six shared properties between two hubs collapsed to one generic-length
-  // edge via addHubEdge's min-dedup, identical to a single shared property).
-  // Shrink the target distance for denser pairs so they land visibly closer
-  // instead of "connected" at the same arbitrary distance as everything else.
-  // classAdj is symmetric (each edge added from both sides), so this counts
-  // roughly double the true property count — harmless here since only the
-  // relative shrink factor between pairs matters, not its absolute value.
+
   const hubPairCount = new Map<string, number>();
   for (const [a, nbs] of classAdj) {
     const ha = hubOf.get(a);
@@ -854,23 +731,17 @@ export function placeVowlNeighborhoods(
       const count = hubPairCount.get(`${lo}|${hi}`) ?? 1;
       const shrink = 1 / Math.sqrt(Math.max(1, count));
       const baseLen = (cores.get(ha) ?? 60) + (cores.get(hb) ?? 60) + 60;
-      // Floor at 45% of the base length — dense pairs pull close, but the
-      // later disk-repulsion pass (below) still has room to undo any actual
-      // overlap this would otherwise force.
+
       const len = Math.max(baseLen * 0.45, baseLen * shrink);
       addHubEdge(ha, hb, len);
     }
   }
   for (const [childHub, parentHub] of structuralHubLinks) {
-    // Every structural link is a direct (single-hop) subClassOf edge between two
-    // hubs — same tightness as an ordinary subclass spoke, not a generic "distant
-    // relative" pad, or a hub with its own properties (e.g. foaf:Person under
-    // foaf:Agent) ends up pushed further from its parent than WebVOWL would.
+
     const len = (cores.get(childHub) ?? 60) + (cores.get(parentHub) ?? 60) + SUBCLASS_GAP - 12;
     addHubEdge(childHub, parentHub, len);
   }
 
-  // Seed on a circle (SMACOF needs a non-degenerate start) sized to hub count.
   const seedR = 260 + hubIds.length * 18;
   hubIds.forEach((h, i) => {
     const angle = (i / Math.max(1, hubIds.length)) * Math.PI * 2;
@@ -879,7 +750,6 @@ export function placeVowlNeighborhoods(
   const hubDist = hubMetricDistances(hubIds, edgeLen, hubAdjIdx);
   stressMajorizeDisks(hubIds, hubCenters, hubDist, 150);
 
-  // Pairwise hub-disk separation — SMACOF minimizes stress, not overlap.
   for (let pass = 0; pass < 60; pass++) {
     let moved = false;
     for (let i = 0; i < hubIds.length; i++) {
@@ -898,15 +768,6 @@ export function placeVowlNeighborhoods(
     if (!moved) break;
   }
 
-  // Hubs with ZERO connection to any other hub (no shared properties, no
-  // subclass link) still went through the SMACOF solve above like everything
-  // else — with no real edge to target, their distance to every other hub
-  // defaulted to hubMetricDistances' generic "far" fallback, which pulls them
-  // into a compromise position near the main mass rather than genuinely
-  // isolated the way real WebVOWL places disconnected classes (small circles
-  // floating alone in clearly empty space, unrelated to the main cluster's
-  // shape). Override their SMACOF position with a dedicated peripheral spot
-  // instead, same idea as the domainless-Thing fringe placement below.
   const isolatedHubIdx = hubIds
     .map((_, i) => i)
     .filter(i => (hubAdjIdx.get(i)?.size ?? 0) === 0);
@@ -943,9 +804,6 @@ export function placeVowlNeighborhoods(
     });
   }
 
-  // Draw each hub as a short-spoke star (subclasses restricted to its own
-  // neighborhood — see childrenOf above — so stars stay short even on deep
-  // single-rooted hierarchies).
   const byDensity = [...hubIds].sort((a, b) => treeWeight(b) - treeWeight(a));
   for (const h of byDensity) {
     const p = hubCenters.get(h);
@@ -959,10 +817,8 @@ export function placeVowlNeighborhoods(
   const orphanCx = cx - Math.min(320, width * 0.28);
   const orphanCy = cy + Math.min(180, height * 0.22);
 
-  // Pairwise disk projection — compact, aligned, no stacks
   projectClassDisks([...placedClasses], positions, footprints, cores, moveClassTree, hasParent);
 
-  // Leftover classes (safety)
   realClassIds.filter(id => !placedClasses.has(id)).forEach((id, i) => {
     placeVowlClassStar(
       id,
@@ -978,7 +834,6 @@ export function placeVowlNeighborhoods(
     );
   });
 
-  // Domainless Thing→Literal stars — keep them clearly outside the main cluster
   const periNbs = neighborhoods.filter(
     nb => (isThingIri(nb.hubId) || nb.hubId.includes(VOWL_CLONE_SEPARATOR)) && !positions.has(nb.hubId)
   );
@@ -989,7 +844,6 @@ export function placeVowlNeighborhoods(
     let hx = cx + Math.cos(angle) * fringeR;
     let hy = cy + Math.sin(angle) * fringeR;
 
-    // Push away from anything already placed
     for (let pass = 0; pass < 12; pass++) {
       let moved = false;
       positions.forEach(p => {
@@ -1011,7 +865,6 @@ export function placeVowlNeighborhoods(
     placeEvenCircle(members, hx, hy, starRadiusForCount(members.length, 70, 56), positions);
   });
 
-  // Final Thing–Thing clearance (class-local + peripheral)
   const thingIds = nodes
     .filter(n => isThingIri(n.id) || n.label === 'Thing' || n.id.includes(VOWL_CLONE_SEPARATOR))
     .map(n => n.id)
@@ -1028,7 +881,7 @@ export function placeVowlNeighborhoods(
         const need = 110;
         if (dist >= need) continue;
         const push = (need - dist) / 2;
-        // Prefer moving peripheral (no class owner) Things
+
         const aPeri = !nodes.find(n => n.id === thingIds[i])?.metadata?.vowlOwnerHub;
         const bPeri = !nodes.find(n => n.id === thingIds[j])?.metadata?.vowlOwnerHub;
         if (aPeri && !bPeri) {
@@ -1045,14 +898,12 @@ export function placeVowlNeighborhoods(
     if (!moved) break;
   }
 
-  // Literals must not sit on foreign class circles (yellow-on-blue overlaps).
-  // Own-hub literals stay on their designed ring; everything else is pushed out.
   const litIds = nodes
     .filter(n => n.type === 'datatype' || n.label === 'Literal')
     .map(n => n.id)
     .filter(id => positions.has(id));
   const classIdsAll = realClassIds.filter(id => positions.has(id));
-  // Which class owns each literal? The property edge endpoint that is a class.
+
   const litOwner = new Map<string, string>();
   for (const e of edges) {
     if (e.type !== 'propertyRelation') continue;
@@ -1069,7 +920,7 @@ export function placeVowlNeighborhoods(
         const cp = positions.get(cid)!;
         const dx = lp.x - cp.x;
         const dy = lp.y - cp.y;
-        // AABB: literal box ~48×16, class circle ~28
+
         const overlapX = 48 + CLASS_NODE_R + 10 - Math.abs(dx);
         const overlapY = 16 + CLASS_NODE_R + 8 - Math.abs(dy);
         if (overlapX <= 0 || overlapY <= 0) continue;
@@ -1097,19 +948,17 @@ export function placeVowlNeighborhoods(
   return positions;
 }
 
-
 export function applyVowlTransform(
   inputNodes: OntologyNode[],
   inputEdges: OntologyEdge[],
   options: VowlTransformOptions = {}
 ): VowlGraph {
   const mergeEquivalents = options.mergeEquivalents !== false;
-  // Shallow-clone so simulation-side mutation never leaks back into React state
+
   let nodes: OntologyNode[] = inputNodes.map(n => ({ ...n }));
   let edges: OntologyEdge[] = inputEdges.map(e => ({ ...e }));
   const nodeById = new Map(nodes.map(n => [n.id, n]));
 
-  // ── 1. Merge equivalent classes (union-find over equivalentClass edges) ──
   if (mergeEquivalents) {
   const parent = new Map<string, string>();
   const find = (x: string): string => {
@@ -1132,7 +981,7 @@ export function applyVowlTransform(
     if (e.type !== 'equivalentClass') continue;
     const a = nodeById.get(e.from);
     const b = nodeById.get(e.to);
-    // Only merge class↔class equivalences (equivalentProperty reuses this edge type)
+
     if (a?.type === 'class' && b?.type === 'class' && !isThingIri(a.id) && !isThingIri(b.id)) {
       union(a.id, b.id);
     }
@@ -1148,13 +997,11 @@ export function applyVowlTransform(
   const mergedInto = new Map<string, string>();
   groups.forEach(members => {
     if (members.length < 2) return;
-    // Prefer the first declared (often ontology-local) class as the representative
+
     const rep = members[0];
     const repNode = nodeById.get(rep);
     if (!repNode) return;
-    // VOWL label style: "Document, CreativeWork" — unique display names.
-    // When two classes share the same rdfs:label (foaf:Person ≡ schema:Person),
-    // keep a single "Person" rather than "Person, Person".
+
     const labels: string[] = [];
     const seen = new Set<string>();
     for (const m of members) {
@@ -1167,7 +1014,7 @@ export function applyVowlTransform(
     }
     if (labels.length === 0) labels.push(repNode.label || localNameFromIri(rep));
     repNode.label = labels.join(', ');
-    // Slightly larger so multi-name labels fit (VOWL also grows these)
+
     repNode.size = Math.max(repNode.size ?? 20, 22 + Math.min(10, (labels.length - 1) * 4));
     repNode.metadata = {
       ...(repNode.metadata || {}),
@@ -1181,7 +1028,7 @@ export function applyVowlTransform(
     nodes = nodes.filter(n => !mergedInto.has(n.id));
     edges = edges
       .filter(e => {
-        // Drop the equivalence edge inside a merged group — it's now one node
+
         if (e.type !== 'equivalentClass') return true;
         const from = mergedInto.get(e.from) ?? e.from;
         const to = mergedInto.get(e.to) ?? e.to;
@@ -1197,13 +1044,8 @@ export function applyVowlTransform(
   }
   } // end mergeEquivalents
 
-  // ── 2. Drop subClassOf → Thing (asserted or synthetic orphan adoption) ──
   edges = edges.filter(e => !(e.type === 'subClassOf' && isThingIri(e.to)));
 
-  // ── 3. Group owl:Thing by class neighborhood ──
-  // VOWL uses one Thing per owning class: all unknown-range properties from
-  // Person share one Thing, those from Document share another, etc. Properties
-  // with no class endpoint remain independent peripheral Thing stars.
   const thingNodes = nodes.filter(n => isThingIri(n.id));
   for (const thing of thingNodes) {
     const touching = edges.filter(e => e.from === thing.id || e.to === thing.id);
@@ -1240,7 +1082,6 @@ export function applyVowlTransform(
     nodes.push(...clonesByGroup.values());
   }
 
-  // ── 4. Split datatype nodes into one clone per touching edge ──
   const datatypeIds = new Set(nodes.filter(n => n.type === 'datatype').map(n => n.id));
   if (datatypeIds.size > 0) {
     const splitOriginals = new Set<string>();

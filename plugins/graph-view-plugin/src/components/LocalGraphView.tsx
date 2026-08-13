@@ -1,29 +1,4 @@
-/**
- * ============================================================================
- * LOCAL GRAPH VIEW
- * ============================================================================
- *
- * OntoCode focused neighborhood view of an ontology graph.
- *
- * Centers on a single "focus" node and renders its N-hop neighborhood with a
- * smooth force-directed layout (D3 v7). Designed for the right-pane / sidebar
- * companion view; the user keeps the main graph open and uses this to drill
- * into context without losing their place.
- *
- * Features:
- *   - Depth slider (1–5 hops)
- *   - "Follow selection" toggle so the focus snaps to whatever the user
- *     selects elsewhere in the application
- *   - Focus-fade hover (non-neighbors dim on node hover)
- *   - Node size scaled by degree
- *   - Color by entity type (matches the rest of the plugin)
- *   - Smooth zoom + pan
- *   - Pause / resume simulation
- *   - Cycle-safe BFS for neighborhood expansion
- *
- * The component is purely presentational and stateless w.r.t. the parent —
- * it never mutates the upstream nodes/edges arrays.
- */
+
 
 import React, {
   useCallback,
@@ -49,26 +24,21 @@ import { nodeAccent } from '../utils/nodePalette';
 interface LocalGraphViewProps {
   nodes: OntologyNode[];
   edges: OntologyEdge[];
-  /** Node id the local graph centers on. */
+
   focusNodeId: string | null;
-  /** Fired when the user clicks a neighbor (allows the parent to retarget). */
+
   onSelect?: (node: OntologyNode) => void;
-  /** Optional: emit when the user double-clicks (e.g. to bring node into main graph). */
+
   onActivate?: (node: OntologyNode) => void;
-  /** Default neighborhood depth (1 hop). */
+
   initialDepth?: number;
-  /** Maximum neighborhood depth allowed by the slider (default 15). */
+
   maxDepth?: number;
-  /** Whether the toolbar is visible. Default true. */
+
   showToolbar?: boolean;
-  /** Optional CSS height; defaults to 100% of the parent. */
+
   height?: number | string;
 }
-
-// Node color comes from the canonical NODE_ACCENTS palette (utils/nodePalette) via
-// nodeAccent() — this used to be its own hardcoded set of colors, different from what the
-// main graph view uses for the same entity types (e.g. individuals were green here, violet
-// there), which looked inconsistent switching between the two views.
 
 interface SimNode extends d3.SimulationNodeDatum {
   id: string;
@@ -113,7 +83,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
   const [size, setSize] = useState({ width: 480, height: 320 });
   const isDark = useIsDarkTheme();
 
-  // ----- Resize observer --------------------------------------------------
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -129,7 +98,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
     return () => obs.disconnect();
   }, []);
 
-  // ----- Compute the focused subgraph ------------------------------------
   const subgraph = useMemo(() => {
     if (!focusNodeId) {
       return { nodes: [] as SimNode[], links: [] as SimLink[] };
@@ -141,7 +109,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
       return { nodes: [], links: [] };
     }
 
-    // BFS through edges (undirected) up to `depth` hops.
     const adjacency = new Map<string, Array<{ neighbor: string; edge: OntologyEdge }>>();
     for (const edge of edges) {
       pushAdj(adjacency, edge.from, edge.to, edge);
@@ -162,7 +129,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
       }
     }
 
-    // Materialize nodes.
     const degree = new Map<string, number>();
     const includedEdges: OntologyEdge[] = [];
     for (const edge of edges) {
@@ -196,7 +162,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
     return { nodes: simNodes, links: simLinks };
   }, [nodes, edges, focusNodeId, depth]);
 
-  // ----- Build simulation -------------------------------------------------
   useEffect(() => {
     if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
@@ -209,10 +174,8 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
       return;
     }
 
-    // Zoom container.
     const root = svg.append('g').attr('class', 'lg-root');
 
-    // Setup zoom.
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 8])
@@ -280,7 +243,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
           .text(d => d.label)
       : null;
 
-    // Drag behavior.
     const drag = d3
       .drag<SVGCircleElement, SimNode>()
       .on('start', (event, d) => {
@@ -299,7 +261,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
       });
     nodeSelection.call(drag);
 
-    // Force simulation tuned for small/medium subgraphs.
     const simulation = d3
       .forceSimulation<SimNode>(subgraph.nodes)
       .force(
@@ -338,7 +299,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
     };
   }, [subgraph, size, focusNodeId, nodes, onSelect, onActivate, paused, showLabels, isDark]);
 
-  // ----- Update hover highlighting without rebuilding the simulation -----
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
@@ -369,14 +329,12 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
       });
   }, [hoveredId, subgraph.links]);
 
-  // ----- Pause / resume external control ---------------------------------
   useEffect(() => {
     if (!simulationRef.current) return;
     if (paused) simulationRef.current.stop();
     else simulationRef.current.alpha(0.4).restart();
   }, [paused]);
 
-  // ----- Reset & fit ------------------------------------------------------
   const handleReset = useCallback(() => {
     const sim = simulationRef.current;
     if (!sim) return;
@@ -390,7 +348,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
     }
   }, []);
 
-  // ----- Render -----------------------------------------------------------
   return (
     <div
       ref={containerRef}
@@ -499,10 +456,6 @@ export const LocalGraphView: React.FC<LocalGraphViewProps> = ({
   );
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function pushAdj(
   map: Map<string, Array<{ neighbor: string; edge: OntologyEdge }>>,
   from: string,
@@ -514,7 +467,6 @@ function pushAdj(
   else map.set(from, [{ neighbor: to, edge }]);
 }
 
-/** Cheap weight per edge type; structural edges get a shorter spring. */
 function edgeWeight(link: SimLink): number {
   switch (link.type) {
     case 'subClassOf':
@@ -531,10 +483,6 @@ function edgeWeight(link: SimLink): number {
   }
 }
 
-/**
- * Custom force pulling the focus node to the center of the viewport.
- * Keeps the focused entity visually anchored even as neighbors push it.
- */
 function focusForce(focusId: string | null, width: number, height: number) {
   let nodes: SimNode[] = [];
   const force = ((alpha: number) => {

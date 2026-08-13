@@ -21,15 +21,6 @@ import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * Integration tests for Member Management and Subscription Features
- * 
- * Test Categories:
- * - TC-WM: Workspace Member Management (10 test cases)
- * - TC-SUB: Subscription Management (5 test cases)
- * - TC-AC: Access Control (7 test cases)
- * - TC-VAL: Email and Role Validation (10+ test cases)
- */
 @SpringBootTest
 @AutoConfigureMockMvc
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -58,7 +49,7 @@ public class MemberAndSubscriptionTest {
 
     @BeforeEach
     public void setup() {
-        // Create test user
+
         User testUser = userRepository.findByUsername(testUsername)
                 .orElseGet(() -> {
                     User user = new User();
@@ -67,10 +58,9 @@ public class MemberAndSubscriptionTest {
                     user.setPassword("$2a$10$dummyhash");
                     return userRepository.save(user);
                 });
-        
+
         testUserId = testUser.getId();
 
-        // Create test workspace
         Workspace workspace = new Workspace();
         workspace.setWorkspaceId("member-test-workspace");
         workspace.setName("Member Test Workspace");
@@ -89,15 +79,11 @@ public class MemberAndSubscriptionTest {
         authToken = jwtUtil.generateToken(testUsername, claims);
     }
 
-    // ============================================================================
-    // MEMBER MANAGEMENT TEST CASES (TC-WM-001 to TC-WM-010)
-    // ============================================================================
-
     @Test
     @Order(1)
     @DisplayName("TC-WM-001: Add Member by Email")
     public void testAddMemberByEmail() throws Exception {
-        // Create new user to add
+
         User newMember = new User();
         newMember.setUsername("newmember");
         newMember.setEmail("newmember@example.com");
@@ -144,7 +130,7 @@ public class MemberAndSubscriptionTest {
     @Order(3)
     @DisplayName("TC-WM-003: Remove Member from Workspace")
     public void testRemoveMemberFromWorkspace() throws Exception {
-        // First add a member
+
         User member = new User();
         member.setUsername("removeme");
         member.setEmail("removeme@example.com");
@@ -155,7 +141,6 @@ public class MemberAndSubscriptionTest {
         workspace.addMember(member.getId(), member.getUsername(), member.getEmail(), Workspace.WorkspaceRole.MEMBER);
         workspaceRepository.save(workspace);
 
-        // Now remove the member
         mockMvc.perform(delete("/api/workspaces/" + testWorkspaceId + "/members/" + member.getId())
                 .header("Authorization", "Bearer " + authToken))
                 .andExpect(status().isOk())
@@ -166,7 +151,7 @@ public class MemberAndSubscriptionTest {
     @Order(4)
     @DisplayName("TC-WM-004: Update Member Role")
     public void testUpdateMemberRole() throws Exception {
-        // Add a member first
+
         User member = new User();
         member.setUsername("updaterole");
         member.setEmail("updaterole@example.com");
@@ -177,7 +162,6 @@ public class MemberAndSubscriptionTest {
         workspace.addMember(member.getId(), member.getUsername(), member.getEmail(), Workspace.WorkspaceRole.VIEWER);
         workspaceRepository.save(workspace);
 
-        // Update role to MEMBER
         UpdateMemberRoleRequest request = new UpdateMemberRoleRequest();
         request.setRole("MEMBER");
 
@@ -193,7 +177,7 @@ public class MemberAndSubscriptionTest {
     @Order(5)
     @DisplayName("TC-WM-005: Add Member Exceeding Limit")
     public void testAddMemberExceedingLimit() throws Exception {
-        // Add 10 members (FREE plan limit is 10, owner is 1)
+
         for (int i = 1; i < 10; i++) {
             User member = new User();
             member.setUsername("member" + i);
@@ -206,7 +190,6 @@ public class MemberAndSubscriptionTest {
             workspaceRepository.save(workspace);
         }
 
-        // Try to add 11th member
         User extraMember = new User();
         extraMember.setUsername("extra");
         extraMember.setEmail("extra@example.com");
@@ -265,7 +248,6 @@ public class MemberAndSubscriptionTest {
         workspace.addMember(member.getId(), member.getUsername(), member.getEmail(), Workspace.WorkspaceRole.VIEWER);
         workspaceRepository.save(workspace);
 
-        // Try to add again
         AddMemberRequest request = new AddMemberRequest();
         request.setEmail("duplicate@example.com");
         request.setRole("MEMBER");
@@ -292,7 +274,7 @@ public class MemberAndSubscriptionTest {
     @Order(9)
     @DisplayName("TC-WM-009: Non-Owner Attempts to Add Member")
     public void testNonOwnerAddsMember() throws Exception {
-        // Create a non-owner member
+
         User editor = new User();
         editor.setUsername("editor");
         editor.setEmail("editor@example.com");
@@ -309,7 +291,6 @@ public class MemberAndSubscriptionTest {
         editorClaims2.put("email", editor.getEmail());
         String editorToken = jwtUtil.generateToken(editor.getUsername(), editorClaims2);
 
-        // Try to add member as editor
         User newMember = new User();
         newMember.setUsername("newuser");
         newMember.setEmail("newuser@example.com");
@@ -341,10 +322,6 @@ public class MemberAndSubscriptionTest {
                 .andExpect(jsonPath("$.members[0].email").exists())
                 .andExpect(jsonPath("$.members[0].role").exists());
     }
-
-    // ============================================================================
-    // SUBSCRIPTION MANAGEMENT TEST CASES (TC-SUB-001 to TC-SUB-005)
-    // ============================================================================
 
     @Test
     @Order(20)
@@ -379,7 +356,7 @@ public class MemberAndSubscriptionTest {
     @Order(22)
     @DisplayName("TC-SUB-003: Downgrade Subscription")
     public void testDowngradeSubscription() throws Exception {
-        // First upgrade to PRO
+
         UpdateSubscriptionRequest upgradeRequest = new UpdateSubscriptionRequest();
         upgradeRequest.setSubscriptionPlan("ENTERPRISE");
 
@@ -389,7 +366,6 @@ public class MemberAndSubscriptionTest {
                 .content(objectMapper.writeValueAsString(upgradeRequest)))
                 .andExpect(status().isOk());
 
-        // Then downgrade to PRO
         UpdateSubscriptionRequest downgradeRequest = new UpdateSubscriptionRequest();
         downgradeRequest.setSubscriptionPlan("PRO");
 
@@ -405,7 +381,7 @@ public class MemberAndSubscriptionTest {
     @Order(23)
     @DisplayName("TC-SUB-004: Downgrade with Exceeding Usage")
     public void testDowngradeWithExceedingUsage() throws Exception {
-        // Add many members (more than FREE limit of 10)
+
         for (int i = 1; i <= 12; i++) {
             User member = new User();
             member.setUsername("submember" + i);
@@ -418,7 +394,6 @@ public class MemberAndSubscriptionTest {
             workspaceRepository.save(workspace);
         }
 
-        // Try to downgrade to FREE (which allows only 10 members)
         UpdateSubscriptionRequest request = new UpdateSubscriptionRequest();
         request.setSubscriptionPlan("FREE");
 
@@ -441,15 +416,11 @@ public class MemberAndSubscriptionTest {
                 .andExpect(jsonPath("$.subscriptionPlan").exists());
     }
 
-    // ============================================================================
-    // ACCESS CONTROL TEST CASES (TC-AC-001 to TC-AC-007)
-    // ============================================================================
-
     @Test
     @Order(30)
     @DisplayName("TC-AC-001: Owner Full Access")
     public void testOwnerFullAccess() throws Exception {
-        // Owner should be able to do everything
+
         mockMvc.perform(get("/api/workspaces/" + testWorkspaceId)
                 .header("Authorization", "Bearer " + authToken))
                 .andExpect(status().isOk());
@@ -463,7 +434,7 @@ public class MemberAndSubscriptionTest {
     @Order(31)
     @DisplayName("TC-AC-002: MEMBER Role Permissions")
     public void testEditorRolePermissions() throws Exception {
-        // Create workspace member (MEMBER)
+
         User editor = new User();
         editor.setUsername("editoraccess");
         editor.setEmail("editoraccess@example.com");
@@ -480,12 +451,10 @@ public class MemberAndSubscriptionTest {
         editorClaims.put("email", editor.getEmail());
         String editorToken = jwtUtil.generateToken(editor.getUsername(), editorClaims);
 
-        // Editor can view workspace
         mockMvc.perform(get("/api/workspaces/" + testWorkspaceId)
                 .header("Authorization", "Bearer " + editorToken))
                 .andExpect(status().isOk());
 
-        // But cannot delete workspace
         mockMvc.perform(delete("/api/workspaces/" + testWorkspaceId)
                 .header("Authorization", "Bearer " + editorToken))
                 .andExpect(status().isForbidden());
@@ -511,12 +480,10 @@ public class MemberAndSubscriptionTest {
         viewerClaims.put("email", viewer.getEmail());
         String viewerToken = jwtUtil.generateToken(viewer.getUsername(), viewerClaims);
 
-        // Viewer can view workspace
         mockMvc.perform(get("/api/workspaces/" + testWorkspaceId)
                 .header("Authorization", "Bearer " + viewerToken))
                 .andExpect(status().isOk());
 
-        // But cannot modify
         UpdateWorkspaceRequest request = new UpdateWorkspaceRequest();
         request.setName("Modified Name");
 
@@ -531,14 +498,13 @@ public class MemberAndSubscriptionTest {
     @Order(33)
     @DisplayName("TC-AC-005: Cross-Workspace Data Isolation")
     public void testCrossWorkspaceDataIsolation() throws Exception {
-        // Create another workspace
+
         Workspace otherWorkspace = new Workspace();
         otherWorkspace.setWorkspaceId("other-workspace");
         otherWorkspace.setName("Other Workspace");
         otherWorkspace.setOwnerId("other-user-id");
         workspaceRepository.save(otherWorkspace);
 
-        // Try to access it with testUser token
         mockMvc.perform(get("/api/workspaces/other-workspace")
                 .header("Authorization", "Bearer " + authToken))
                 .andExpect(status().isForbidden());
@@ -546,7 +512,7 @@ public class MemberAndSubscriptionTest {
 
     @AfterEach
     public void cleanup() {
-        // Clean up test data
+
     }
 
     @AfterAll

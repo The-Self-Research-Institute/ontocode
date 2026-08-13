@@ -10,10 +10,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Message for broadcasting graph visualization updates to connected clients.
- * Supports incremental delta updates for performance.
- */
 @Data
 @Builder
 @NoArgsConstructor
@@ -21,25 +17,25 @@ import java.util.Map;
 public class GraphUpdateMessage {
 
     public enum UpdateType {
-        /** Full graph refresh */
+
         FULL_REFRESH,
-        /** Incremental delta update */
+
         DELTA_UPDATE,
-        /** Node added */
+
         NODE_ADDED,
-        /** Node updated (label, properties changed) */
+
         NODE_UPDATED,
-        /** Node deleted */
+
         NODE_DELETED,
-        /** Edge added */
+
         EDGE_ADDED,
-        /** Edge deleted */
+
         EDGE_DELETED,
-        /** User selected a node */
+
         NODE_SELECTED,
-        /** User cursor moved */
+
         CURSOR_MOVED,
-        /** Node expanded (lazy loading) */
+
         NODE_EXPANDED
     }
 
@@ -49,19 +45,16 @@ public class GraphUpdateMessage {
     private String username;
     private long timestamp;
 
-    // Delta update data
     private List<GraphNode> addedNodes;
     private List<GraphNode> updatedNodes;
     private List<String> deletedNodeIds;
     private List<GraphEdge> addedEdges;
     private List<GraphEdge> deletedEdges;
 
-    // Collaborative features
     private String selectedNodeId;
     private CursorPosition cursor;
     private String userColor;
 
-    // Full refresh data (only for FULL_REFRESH type)
     private List<GraphNode> nodes;
     private List<GraphEdge> edges;
     private Map<String, Object> metadata;
@@ -73,7 +66,7 @@ public class GraphUpdateMessage {
     public static class GraphNode {
         private String id;
         private String label;
-        private String type; // class, individual, objectProperty, datatypeProperty
+        private String type;
         private String color;
         private boolean expanded;
         private boolean hasChildren;
@@ -96,7 +89,7 @@ public class GraphUpdateMessage {
         private String from;
         private String to;
         private String label;
-        private String type; // subClassOf, instanceOf, propertyRelation, custom
+        private String type;
     }
 
     @Data
@@ -106,10 +99,8 @@ public class GraphUpdateMessage {
     public static class CursorPosition {
         private double x;
         private double y;
-        private String nodeId; // Node being hovered (if any)
+        private String nodeId;
     }
-
-    // Convenience constructors for common update types
 
     public static GraphUpdateMessage nodeAdded(String projectId, String userId, String username,
                                                GraphNode node) {

@@ -4,41 +4,30 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.List;
 import java.util.Map;
 
-// Based on your types.ts file
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class OntologyDto {
 
-    // For EntityHierarchy.tsx
     public static class TreeNode {
         private String id;
         private String label;
         private String description;
         private String parent;
-        /** All named superclass IRIs (rdfs:subClassOf and intersection parents). */
+
         private List<String> subClassOf;
         private List<TreeNode> children;
         private Boolean hasChildren;
         private Map<String, String> annotations;
-        /** Each entry: {iri, label} — populated for asserted hierarchy nodes that have owl:equivalentClass */
+
         private List<Map<String, String>> equivalentClasses;
-        /** Each entry: {iri, label} — populated for nodes that have a pairwise owl:disjointWith axiom. */
+
         private List<Map<String, String>> disjointWith;
-        /**
-         * Property restrictions (someValuesFrom/allValuesFrom/hasValue/cardinality) this class
-         * participates in via subClassOf or equivalentClass. Each entry: {propertyIri,
-         * propertyLabel, restrictionType, fillerIri, fillerLabel, cardinality?, axiomType}.
-         */
+
         private List<Map<String, String>> restrictions;
-        /** IRI of the ontology that declares this class (null = active ontology). Populated when scope=closure. */
+
         private String sourceOntology;
-        /**
-         * Anonymous class expressions (set operators) this class participates in via
-         * owl:equivalentClass or rdfs:subClassOf. Consumed by the graph view to render
-         * VOWL set-operator nodes. Null when the class has none.
-         */
+
         private List<ClassExpressionDto> classExpressions;
 
-        // Getters & Setters
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
         public String getLabel() { return label; }
@@ -67,21 +56,17 @@ public class OntologyDto {
         public void setClassExpressions(List<ClassExpressionDto> classExpressions) { this.classExpressions = classExpressions; }
     }
 
-    /**
-     * One anonymous class expression (owl:unionOf / owl:intersectionOf /
-     * owl:complementOf / owl:oneOf) attached to a named class.
-     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class ClassExpressionDto {
-        /** Stable id derived from the owning class + axiom type + index (blank nodes have no IRI). */
+
         private String id;
-        /** "union" | "intersection" | "complement" | "oneOf" */
+
         private String expressionType;
-        /** "equivalentClass" | "subClassOf" */
+
         private String axiomType;
-        /** Named operand members: {iri, label}. Nested anonymous operands are flattened into 'definition' only. */
+
         private List<Map<String, String>> operands;
-        /** Human-readable Manchester-ish rendering, e.g. "A or B", used for tooltips. */
+
         private String definition;
 
         public String getId() { return id; }
@@ -96,18 +81,16 @@ public class OntologyDto {
         public void setDefinition(String definition) { this.definition = definition; }
     }
 
-    // For PropertyEditor.tsx
     public static class PropertyDto {
         private String id;
         private String label;
-        private String type; // ObjectProperty, DatatypeProperty, AnnotationProperty
+        private String type;
         private List<String> domains;
         private List<String> ranges;
         private List<String> superProperties;
         private List<String> characteristics;
         private Map<String, String> annotations;
-        
-        // Getters & Setters
+
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
         public String getLabel() { return label; }
@@ -126,14 +109,12 @@ public class OntologyDto {
         public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
     }
 
-    // For IndividualEditor.tsx
     public static class IndividualDto {
         private String id;
         private String label;
         private List<String> types;
         private Map<String, String> annotations;
-        
-        // Getters & Setters
+
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
         public String getLabel() { return label; }
@@ -143,7 +124,7 @@ public class OntologyDto {
         public Map<String, String> getAnnotations() { return annotations; }
         public void setAnnotations(Map<String, String> annotations) { this.annotations = annotations; }
     }
-    
+
        public static class OntologyMetadataDto {
         private String ontologyIRI;
         private String versionIRI;
@@ -155,66 +136,60 @@ public class OntologyDto {
         private int axiomCount;
         private int logicalAxiomCount;
 
-        // Getters and Setters
         public String getOntologyIRI() { return ontologyIRI; }
         public void setOntologyIRI(String ontologyIRI) { this.ontologyIRI = ontologyIRI; }
-        
+
         public String getVersionIRI() { return versionIRI; }
         public void setVersionIRI(String versionIRI) { this.versionIRI = versionIRI; }
-        
+
         public int getClassCount() { return classCount; }
         public void setClassCount(int classCount) { this.classCount = classCount; }
-        
+
         public int getObjectPropertyCount() { return objectPropertyCount; }
         public void setObjectPropertyCount(int objectPropertyCount) { this.objectPropertyCount = objectPropertyCount; }
-        
+
         public int getDataPropertyCount() { return dataPropertyCount; }
         public void setDataPropertyCount(int dataPropertyCount) { this.dataPropertyCount = dataPropertyCount; }
-        
+
         public int getIndividualCount() { return individualCount; }
         public void setIndividualCount(int individualCount) { this.individualCount = individualCount; }
-        
+
         public int getAnnotationPropertyCount() { return annotationPropertyCount; }
         public void setAnnotationPropertyCount(int annotationPropertyCount) { this.annotationPropertyCount = annotationPropertyCount; }
-        
+
         public int getAxiomCount() { return axiomCount; }
         public void setAxiomCount(int axiomCount) { this.axiomCount = axiomCount; }
-        
+
         public int getLogicalAxiomCount() { return logicalAxiomCount; }
         public void setLogicalAxiomCount(int logicalAxiomCount) { this.logicalAxiomCount = logicalAxiomCount; }
     }
 
-
-    
-    // For Dashboard.tsx
     public static class OntologyPrefixDto {
         private String prefix;
         private String namespace;
-        // ... Getters & Setters
+
         public String getPrefix() { return prefix; }
         public void setPrefix(String prefix) { this.prefix = prefix; }
         public String getNamespace() { return namespace; }
         public void setNamespace(String namespace) { this.namespace = namespace; }
     }
 
-    // For StatisticsPanel.tsx
     public static class OntologyStatisticsDto {
-        // ... (add all fields from OntologyStatistics in types.ts)
+
         private int classCount;
         private int objectPropertyCount;
-        // ... Getters & Setters
+
         public int getClassCount() { return classCount; }
         public void setClassCount(int classCount) { this.classCount = classCount; }
         public int getObjectPropertyCount() { return objectPropertyCount; }
         public void setObjectPropertyCount(int objectPropertyCount) { this.objectPropertyCount = objectPropertyCount; }
     }
 
-    // For ValidationPanel.tsx
     public static class ValidationResultDto {
-        // ... (add all fields from ValidationResult in types.ts)
+
         private boolean isValid;
         private List<String> orphanClasses;
-        // ... Getters & Setters
+
         public boolean getIsValid() { return isValid; }
         public void setIsValid(boolean isValid) { this.isValid = isValid; }
         public List<String> getOrphanClasses() { return orphanClasses; }

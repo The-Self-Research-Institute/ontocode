@@ -1,7 +1,4 @@
-/**
- * Graph analytics for ontology visualization (OntoCode).
- * Pure functions — safe to call on filtered subgraphs.
- */
+
 
 import type { OntologyNode, OntologyEdge } from '../types';
 
@@ -103,7 +100,6 @@ function computeDegree(adjacency: Map<string, Set<string>>): Map<string, number>
   return degree;
 }
 
-/** Brandes algorithm — O(VE), suitable for medium graphs. */
 function brandesBetweenness(
   nodeIds: Set<string>,
   adjacency: Map<string, Set<string>>
@@ -155,7 +151,6 @@ function brandesBetweenness(
     }
   }
 
-  // Undirected graph normalization
   for (const v of nodeIds) {
     betweenness.set(v, (betweenness.get(v) ?? 0) / 2);
   }
@@ -171,7 +166,6 @@ function approximateBetweenness(degree: Map<string, number>): Map<string, number
   return result;
 }
 
-/** Lightweight community detection (label propagation). */
 function detectCommunitiesLabelPropagation(
   nodeIds: Set<string>,
   adjacency: Map<string, Set<string>>,
@@ -209,7 +203,6 @@ function detectCommunitiesLabelPropagation(
     if (!changed) break;
   }
 
-  // Renumber to 0..k-1 by size
   const sizeByLabel = new Map<number, number>();
   for (const label of labels.values()) {
     sizeByLabel.set(label, (sizeByLabel.get(label) ?? 0) + 1);
@@ -241,10 +234,7 @@ function findStructuralGaps(
   }
 
   const nodeById = new Map(nodes.map(n => [n.id, n]));
-  // Precompute the top-degree node per cluster in a single O(n) pass — the pairwise
-  // loop below is already O(clusters^2); calling a full O(n) scan (topInCluster) from
-  // inside it made the whole thing O(clusters^2 * n), which on a large ontology with
-  // many communities reaches into the billions of operations.
+
   const bestInCluster = new Map<number, { id: string; score: number }>();
   for (const [id, c] of communities) {
     const score = degree.get(id) ?? 0;

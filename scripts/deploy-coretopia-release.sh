@@ -1,72 +1,15 @@
 #!/usr/bin/env bash
-# =============================================================================
-# OntoCode — one command to release: docker (web), desktop installers, VS Code VSIX.
-#
-# deploy --mode dev|prod|all --changes <svc,svc,...|all> --platform <web,vscode,desktop|all>
-#
-# Every (mode × platform) combination runs as its OWN concurrent branch — e.g.
-# --mode all --platform web,vscode fires 4 branches at once (dev-web, prod-web,
-# dev-vscode, prod-vscode). Within one branch, steps that must be sequential still
-# are (push before deploy, build before upload) — everything else fans out.
-#
-# --mode all runs dev AND prod fully in parallel, on purpose, per your call — there
-# is NO gate requiring dev to succeed before prod starts. Use --mode dev first if
-# you want that safety net.
-#
-# Flags (all three required):
-#   --mode dev|prod|all
-#   --changes|--deploy <service>[,<service>...]|all
-#         Known services: fuseki graphdb auth gateway editor reasoner-worker
-#         swrl plugin plugin-init web
-#         "all" expands to everything EXCEPT fuseki and graphdb — fuseki is a rarely-
-#         changed base image, graphdb is a dead build target (no compose service uses
-#         it anymore). Name either explicitly (--changes fuseki) to still build it.
-#         mongo isn't ours to build at all, so it's never in this list.
-#   --platform <web|vscode|desktop>[,...]|all
-#         web     = build+push the --changes services, then SSH deploy (docker compose)
-#         desktop = build win+linux installers, then upload them
-#         vscode  = build+package the VS Code extension VSIX
-#
-# Environment:
-#   dev:  DEV_EC2_HOST=user@host   DEV_API_BASE=https://...   (required for --mode dev/all)
-#         DEV_REGISTRY (default ontocode)  DEV_VERSION (default dev)
-#         DEV_SSH_KEY=/path/to/dev.pem   (optional — omit to use ssh-agent/default key)
-#   prod: EC2_HOST=user@host       API_BASE=https://ontocodeapi.selfresearch.org (default)
-#         PROD_REGISTRY (default sindhujacoretopia)  PROD_VERSION (default latest)
-#         PROD_SSH_KEY=/path/to/prod.pem (optional — omit to use ssh-agent/default key)
-#   Paths: DEV_EC2_DIR and PROD_EC2_DIR (per environment). Optional legacy EC2_DIR
-#          is used as fallback for either if the specific var is unset.
-#          Defaults: DEV_EC2_DIR=/home/ubuntu/ontocode  PROD_EC2_DIR=/opt/ontocode
-#   Desktop upload: ADMIN_USER=admin@coretopia.com  ADMIN_PASSWORD=...
-#
-# Examples:
-#   # Deploy just the web service to dev
-#   DEV_EC2_HOST=ubuntu@1.2.3.4 DEV_API_BASE=https://dev-api.example.com \
-#     ./scripts/deploy-coretopia-release.sh --mode dev --changes web --platform web
-#
-#   # Preferred short entry (root):
-#   ./build-and-push --mode dev --platform all --deploy all
-#
-#   # Full release, both environments, everything, all in parallel
-#   ADMIN_USER=... ADMIN_PASSWORD=... EC2_HOST=ubuntu@<prod-ip> \
-#   DEV_EC2_HOST=ubuntu@<dev-ip> DEV_API_BASE=https://<dev-api> \
-#     ./scripts/deploy-coretopia-release.sh --mode all --changes all --platform all
-# =============================================================================
+
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# Local, gitignored config (DEV_EC2_HOST, DEV_API_BASE, EC2_HOST, ADMIN_PASSWORD, ...) —
-# see .env.deploy for the template. Optional: everything still works via inline env vars
-# if this file doesn't exist.
 if [[ -f "$ROOT/.env.deploy" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/.env.deploy"
 fi
 
-# Match remote-dev-release / EC2: amd64-only unless caller overrides.
-# Multi-arch (…,linux/arm64) uses QEMU on amd64 hosts and often breaks apk.
 export BUILD_PLATFORMS="${BUILD_PLATFORMS:-linux/amd64}"
 
 usage() {
@@ -75,15 +18,10 @@ usage() {
 }
 
 ALL_SERVICES=(fuseki graphdb auth gateway editor reasoner-worker swrl plugin plugin-init web)
-# --changes all expands to this, NOT to ALL_SERVICES:
-#  - fuseki is a heavy, rarely-changed base image (custom Jena build)
-#  - graphdb was removed — no docker-compose file references a graphdb service anymore,
-#    it's a dead build target (Dockerfile.graphdb is a leftover from the pre-Fuseki setup)
-#  - mongo isn't ours to build at all, so it's never in ALL_SERVICES either
-# All three stay valid for explicit --changes use in case you still need one of them.
+
 DEFAULT_ALL_SERVICES=(auth gateway editor reasoner-worker swrl plugin plugin-init web)
 ALL_PLATFORMS=(web vscode desktop)
-# Legacy single path — prefer DEV_EC2_DIR / PROD_EC2_DIR below.
+
 EC2_DIR="${EC2_DIR:-}"
 
 MODE_ARG=""
@@ -134,8 +72,6 @@ else
   done
 fi
 
-# ── Resolve per-mode config (explicit env vars still win over the built-in defaults) ──
-
 declare -A REG VER HOST API CFLAGS VSIXFILE SSHKEY DIR
 
 resolve_mode() {
@@ -177,7 +113,6 @@ fi
 echo "============================================"
 echo ""
 
-# JDK / Node / Docker — prefer the dedicated WSL checker when available.
 # shellcheck disable=SC1091
 source "$ROOT/scripts/check-jdk-prereqs.sh"
 _wsl_flags=()
@@ -189,9 +124,9 @@ for p in "${PLATFORMS[@]}"; do
   esac
 done
 if [[ -x "$ROOT/scripts/check-wsl-prereqs.sh" ]] || [[ -f "$ROOT/scripts/check-wsl-prereqs.sh" ]]; then
-  # Prefer Linux /usr/bin/docker (Engine in Ubuntu). Strip Windows Docker stubs from PATH.
+
   export PATH="/usr/local/bin:/usr/bin:/bin:${PATH}"
-  # Re-run prereq repair/start (daemon may have stopped between cmd check and release).
+
   bash "$ROOT/scripts/check-wsl-prereqs.sh" "${_wsl_flags[@]}" --auto-install || exit 1
 else
   _needs_host_jdk=0
@@ -209,8 +144,6 @@ echo ""
 LOG_DIR="$(mktemp -d)"
 declare -A BRANCH_PID
 
-# ── web: build+push the requested services, then SSH deploy (sequential within branch) ──
-
 branch_web() {
   local m="$1"
   echo "[progress][$m-web] $(date '+%H:%M:%S') START image build+push"
@@ -221,9 +154,7 @@ branch_web() {
   echo "[progress][$m-web] $(date '+%H:%M:%S') images pushed OK — starting SSH deploy"
   local ssh_opts=(-o BatchMode=yes)
   if [[ -n "${SSHKEY[$m]}" ]]; then
-    # Checked here, not eagerly in resolve_mode — the key path is host-specific
-    # (e.g. a WSL-internal /home/... path is invalid from Git Bash on Windows), and
-    # SSH is only actually needed for this platform, not desktop/vscode.
+
     if [[ ! -f "${SSHKEY[$m]}" ]]; then
       echo "ERROR: ${m^^}_SSH_KEY is set to '${SSHKEY[$m]}' but that file doesn't exist on this host" >&2
       return 1
@@ -235,18 +166,6 @@ branch_web() {
   echo "[progress][$m-web] $(date '+%H:%M:%S') DONE deploy"
 }
 
-# ── desktop: native installer for this host, then upload ─────────────────────
-#
-# Cross-building win FROM Linux/WSL with Wine is unreliable on /mnt/<drive> paths.
-# So we:
-#   1) Always build the installer native to THIS host (linux in WSL, win in Git Bash).
-#   2) If we are inside WSL and Windows is reachable (cmd.exe), ALSO build the
-#      Windows installer on the Windows side — sequentially after Linux, because
-#      both targets share electron-app/resources and must not run in parallel.
-#      (Hybrid remote path builds linux on EC2 || Windows .exe on PC — that IS parallel.)
-
-# Prefer real Linux Node in WSL. Interop often prepends Windows npm
-# (/mnt/c/.../nodejs) which then prints a bogus "WSL 1 is not supported" error.
 sanitize_path_for_linux_tools() {
   local cleaned="" part
   IFS=':' read -ra _parts <<< "${PATH:-}"
@@ -261,7 +180,7 @@ sanitize_path_for_linux_tools() {
 
 ensure_linux_nodejs() {
   sanitize_path_for_linux_tools
-  # Common user installs
+
   if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
     # shellcheck disable=SC1091
     source "$HOME/.nvm/nvm.sh"
@@ -317,7 +236,6 @@ build_desktop() {
   ( cd "$ROOT/electron-app" && npm run "dist:$platform" )
 }
 
-# Build Windows installer by invoking the Windows host from WSL (no Wine).
 build_desktop_win_via_windows_host() {
   if ! command -v cmd.exe >/dev/null 2>&1 && ! command -v powershell.exe >/dev/null 2>&1; then
     echo "[progress][desktop] Windows host tools not available from WSL — skipping win installer"
@@ -330,7 +248,7 @@ build_desktop_win_via_windows_host() {
   }
   echo "[progress][desktop] Building Windows installer on Windows host..."
   echo "          path: $win_electron"
-  # Sequential: must not overlap with a Linux dist that touches the same resources/
+
   if command -v cmd.exe >/dev/null 2>&1; then
     cmd.exe /c "cd /d \"${win_electron}\" && npm run dist:win" || return 1
   else
@@ -345,7 +263,7 @@ upload_installer() {
     return 1
   fi
   local token
-  # Login: short timeout so a hung auth API fails fast.
+
   token=$(curl -sf --connect-timeout 15 --max-time 60 -X POST "$api_base/api/auth/login" \
     -H "Content-Type: application/json" \
     -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASSWORD\"}" \
@@ -357,11 +275,10 @@ upload_installer() {
   local bytes mb
   bytes=$(wc -c <"$file_path" | tr -d ' ')
   mb=$(( bytes / 1024 / 1024 ))
-  # Progress board only shows the latest [progress] line — update per file so
-  # a long curl (often 300–400MB installers) does not look stuck.
+
   echo "[progress] uploading $filename ($mb MiB) → $platform"
   echo ">> Uploading $filename ($mb MiB) → $api_base (platform=$platform)"
-  # Large installers: allow up to 30m; fail instead of hanging forever.
+
   curl -f --connect-timeout 30 --max-time 1800 -X POST "$api_base/api/downloads/upload" \
     -H "Authorization: Bearer $token" \
     -F "platform=$platform" -F "filename=$filename" -F "file=@$file_path"
@@ -379,7 +296,6 @@ branch_desktop() {
 
   echo "[progress][$m-desktop] $(date '+%H:%M:%S') START (host=$host_platform)"
 
-  # 1) Native installer for this environment (needs Linux node when host=linux)
   if [[ "$host_platform" == "linux" ]]; then
     if ensure_linux_nodejs; then
       echo "[progress][$m-desktop] Building native 'linux' installer"
@@ -402,12 +318,11 @@ branch_desktop() {
     echo "[progress][$m-desktop] $(date '+%H:%M:%S') native $host_platform build OK"
   fi
 
-  # 2) From WSL, also build Windows installer on the real Windows side
   if [[ "$host_platform" == "linux" ]] && is_wsl; then
     echo "[progress][$m-desktop] WSL detected — Linux then Windows (shared electron-app/resources — not parallel by design)"
     if build_desktop_win_via_windows_host; then
       echo "[progress][$m-desktop] $(date '+%H:%M:%S') Windows installer build OK"
-      # Windows build success can still make the branch useful even if Linux node was missing
+
       if [[ $built_native -eq 0 ]]; then fail=0; fi
     else
       echo "[progress][$m-desktop] Windows installer build skipped/failed"
@@ -420,12 +335,12 @@ branch_desktop() {
   echo "[progress][$m-desktop] $(date '+%H:%M:%S') uploading available installers..."
   local DIST="$ROOT/electron-app/dist-electron"
   shopt -s nullglob
-  # NSIS artifact is typically "OntoCode Setup <ver>.exe" (no arch token). Also accept *x64*.
+
   local win=( "$DIST"/*[Ss]etup*.exe )
   if [[ ${#win[@]} -eq 0 ]]; then
     win=( "$DIST"/*Setup*x64*.exe )
   fi
-  # Drop blockmaps if a shell glob ever picks them up
+
   local win_filtered=()
   local _w
   for _w in "${win[@]+"${win[@]}"}"; do
@@ -452,8 +367,6 @@ branch_desktop() {
   return $fail
 }
 
-# ── vscode: build+package the VSIX pointed at that mode's API (fully independent) ────
-
 branch_vscode() {
   local m="$1"
   local vsix_file="${VSIXFILE[$m]}"
@@ -462,8 +375,7 @@ branch_vscode() {
   ensure_linux_nodejs || return 1
   ( cd "$ROOT/ontology-vscode-extension" && {
     if [[ "$m" == "dev" ]]; then
-      # No static dev-release env file is committed (dev API host isn't hardcoded) —
-      # generate it from DEV_API_BASE right before the build instead.
+
       cat > "$vsix_file" <<EOF
 # Generated by deploy-coretopia-release.sh --mode dev — do not edit by hand
 CLOUD_GATEWAY_URL=$api_base
@@ -479,8 +391,6 @@ EOF
   } )
   echo "[progress][$m-vscode] $(date '+%H:%M:%S') DONE"
 }
-
-# ── Launch one branch per (mode × platform) combination, all concurrently ────────────
 
 BRANCH_COUNT=0
 for m in "${MODES[@]}"; do
@@ -502,7 +412,6 @@ echo ""
 echo "[progress] $BRANCH_COUNT branch(es) running in parallel — live status every 8s"
 echo ""
 
-# Live status board: show recent progress lines + announce completions immediately.
 START_TIME=$(date +%s)
 declare -A BRANCH_DONE
 COMPLETED=0
@@ -513,7 +422,7 @@ while true; do
     if kill -0 "${BRANCH_PID[$key]}" 2>/dev/null; then
       running+=("$key")
     elif [[ -z "${BRANCH_DONE[$key]:-}" ]]; then
-      # First time we notice this PID exited — report it now (don't wait for final wait).
+
       if wait "${BRANCH_PID[$key]}"; then
         echo "[progress] ✓ COMPLETED $key  ($(( $(date +%s) - START_TIME ))s)"
         BRANCH_DONE["$key"]=ok
@@ -530,7 +439,7 @@ while true; do
   echo "------------------------------------------------------------"
   echo "[progress] $(date '+%H:%M:%S')  elapsed $(( $(date +%s) - START_TIME ))s  |  done ${COMPLETED}/${BRANCH_COUNT}  |  still: ${running[*]}"
   for key in "${running[@]}"; do
-    # Prefer a tagged progress line if present; else last 2 log lines.
+
     prog="$(grep '\[progress\]' "$LOG_DIR/$key.log" 2>/dev/null | tail -n 1)"
     if [[ -n "$prog" ]]; then
       echo "  • $key"

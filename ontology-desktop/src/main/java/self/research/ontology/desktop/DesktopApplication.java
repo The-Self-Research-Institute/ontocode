@@ -29,9 +29,9 @@ import self.research.ontology.plugins.config.SecurityConfig;
             AuthApplication.class,
             OwlEditorApplication.class,
             OntologyPluginServiceApplication.class,
-            DesktopController.class,   // auth stubs — replaced by real auth
-            SecurityConfig.class,       // plugin security — auth chain handles all
-            ProjectController.class     // editor's minimal version — auth's full version used
+            DesktopController.class,
+            SecurityConfig.class,
+            ProjectController.class
         }
     )
 )

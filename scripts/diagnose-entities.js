@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-/**
- * Complete diagnostic tool for entity loading issues
- * Checks if all entity types are being loaded correctly from the backend
- */
 
 const axios = require('axios');
 
@@ -25,7 +21,7 @@ async function diagnoseEntities() {
   console.log('');
 
   try {
-    // 1. Check metadata
+
     console.log('1️⃣  CHECKING METADATA...');
     try {
       const metaRes = await axios.get(`${BASE_URL}/api/ontology/metadata/${PROJECT_ID}`);
@@ -43,7 +39,6 @@ async function diagnoseEntities() {
       console.log('');
     }
 
-    // 2. Check Classes
     console.log('2️⃣  CHECKING CLASSES...');
     try {
       const classesRes = await axios.get(`${BASE_URL}/api/ontology/classes/top-level/${PROJECT_ID}`);
@@ -59,29 +54,28 @@ async function diagnoseEntities() {
       console.log('');
     }
 
-    // 3. Check ALL Properties
     console.log('3️⃣  CHECKING ALL PROPERTIES...');
     try {
       const propsRes = await axios.get(`${BASE_URL}/api/ontology/properties/${PROJECT_ID}`);
       const allProps = propsRes.data.data || propsRes.data.properties || propsRes.data || [];
       console.log(`   ✅ Total properties returned: ${allProps.length}`);
-      
+
       const objectProps = allProps.filter(p => p.type === 'ObjectProperty');
       const dataProps = allProps.filter(p => p.type === 'DatatypeProperty');
       const otherProps = allProps.filter(p => p.type !== 'ObjectProperty' && p.type !== 'DatatypeProperty');
-      
+
       console.log(`   📊 Object Properties: ${objectProps.length}`);
       if (objectProps.length > 0) {
         console.log(`      First 3 Object Properties:`);
         objectProps.slice(0, 3).forEach(p => console.log(`         - ${p.label || p.localName} (type: ${p.type})`));
       }
-      
+
       console.log(`   📊 Data Properties: ${dataProps.length}`);
       if (dataProps.length > 0) {
         console.log(`      First 3 Data Properties:`);
         dataProps.slice(0, 3).forEach(p => console.log(`         - ${p.label || p.localName} (type: ${p.type})`));
       }
-      
+
       if (otherProps.length > 0) {
         console.log(`   ⚠️  Other property types found: ${otherProps.length}`);
         otherProps.forEach(p => console.log(`      - ${p.label} (type: ${p.type})`));
@@ -92,7 +86,6 @@ async function diagnoseEntities() {
       console.log('');
     }
 
-    // 4. Check Individuals
     console.log('4️⃣  CHECKING INDIVIDUALS...');
     try {
       const indsRes = await axios.get(`${BASE_URL}/api/ontology/individuals/${PROJECT_ID}`);
@@ -108,7 +101,6 @@ async function diagnoseEntities() {
       console.log('');
     }
 
-    // 5. Check Annotation Properties
     console.log('5️⃣  CHECKING ANNOTATION PROPERTIES...');
     try {
       const annPropsRes = await axios.get(`${BASE_URL}/api/ontology/annotation-properties/${PROJECT_ID}`);
@@ -124,7 +116,6 @@ async function diagnoseEntities() {
       console.log('');
     }
 
-    // 6. Check Datatypes
     console.log('6️⃣  CHECKING DATATYPES...');
     try {
       const datatypesRes = await axios.get(`${BASE_URL}/api/ontology/datatypes/${PROJECT_ID}`);
@@ -140,7 +131,6 @@ async function diagnoseEntities() {
       console.log('');
     }
 
-    // 7. Summary
     console.log('='.repeat(80));
     console.log(' DIAGNOSIS COMPLETE');
     console.log('='.repeat(80));

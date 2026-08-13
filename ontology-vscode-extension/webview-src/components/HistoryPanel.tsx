@@ -30,7 +30,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
 
   const fetchHistory = useCallback(async () => {
     if (!projectId) return;
-    
+
     setLoading(true);
     try {
       const response = await apiClient.get<EditOperation[]>(`/api/collaboration/history/${projectId}?limit=${limit}`);
@@ -70,28 +70,26 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
     const date = new Date(timestamp);
     const now = new Date();
     const diff = now.getTime() - date.getTime();
-    
-    // Less than 1 minute
+
     if (diff < 60000) {
       return 'Just now';
     }
-    // Less than 1 hour
+
     if (diff < 3600000) {
       const minutes = Math.floor(diff / 60000);
       return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
     }
-    // Less than 24 hours
+
     if (diff < 86400000) {
       const hours = Math.floor(diff / 3600000);
       return `${hours} hour${hours > 1 ? 's' : ''} ago`;
     }
-    // More than 24 hours
+
     const days = Math.floor(diff / 86400000);
     if (days < 7) {
       return `${days} day${days > 1 ? 's' : ''} ago`;
     }
-    
-    // Format as date
+
     return date.toLocaleDateString('en-US', { 
       month: 'short', 
       day: 'numeric', 
@@ -102,7 +100,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
 
   const getOperationDescription = (op: EditOperation) => {
     const entityName = op.nodeId?.split('#').pop() || op.nodeId?.split('/').pop() || 'Entity';
-    
+
     switch (op.type) {
       case 'CREATE':
         return `Created ${entityName}`;
@@ -135,7 +133,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col">
-        {/* Header */}
+        {}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-blue-50">
           <div className="flex items-center gap-2">
             <Clock size={24} className="text-purple-600" />
@@ -170,7 +168,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
           </div>
         </div>
 
-        {/* Content */}
+        {}
         <div className="flex-1 overflow-y-auto p-4">
           {loading ? (
             <div className="flex items-center justify-center h-full">
@@ -196,7 +194,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
                 >
                   <div className="flex items-start gap-3">
                     <div className="mt-1">{getOperationIcon(op.type)}</div>
-                    
+
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-medium text-gray-900">
@@ -206,7 +204,7 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
                           {op.type}
                         </span>
                       </div>
-                      
+
                       <div className="flex items-center gap-4 text-sm text-gray-600">
                         <div className="flex items-center gap-1">
                           <User size={14} />
@@ -218,14 +216,14 @@ const HistoryPanel: React.FC<HistoryPanelProps> = ({ projectId, isOpen, onClose 
                         </div>
                       </div>
 
-                      {/* Show entity IRI if available */}
+                      {}
                       {op.nodeId && (
                         <div className="mt-2 text-xs text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded truncate">
                           {op.nodeId}
                         </div>
                       )}
 
-                      {/* Show value changes if available */}
+                      {}
                       {(op.value !== undefined || op.previousValue !== undefined) && (
                         <div className="mt-2 text-xs">
                           {op.previousValue !== undefined && (

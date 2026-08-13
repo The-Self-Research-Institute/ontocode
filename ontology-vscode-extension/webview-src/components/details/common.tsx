@@ -9,39 +9,35 @@ import type { Axiom } from '../../types';
 type JustificationAxiom = { type: string; manchester: string; entities: { iri: string; label: string; type: string }[]; isAsserted: boolean };
 type Justification = { index: number; axioms: JustificationAxiom[]; isAsserted: boolean };
 
-// Text is BLACK, only keywords are colored (magenta/pink)
-// Links are shown as underlined text for clickable entities
 const MANCHESTER_KEYWORDS = ['some', 'only', 'value', 'Self', 'min', 'max', 'exactly', 'and', 'or', 'not', 'that', 'inverse'];
 
-// Entity type icons bullets/shapes
-// Classes: yellow/orange filled circle, Object Properties: blue filled square, Data Properties: green filled square
 export const EntityIcon: React.FC<{ 
   type: 'class' | 'objectProperty' | 'dataProperty' | 'individual' | 'datatype' | 'annotationProperty' | 'mixed';
   size?: 'sm' | 'md';
 }> = ({ type, size = 'sm' }) => {
   const sizeClass = size === 'sm' ? 'w-2.5 h-2.5' : 'w-3 h-3';
-  
+
   switch (type) {
     case 'class':
-      // Yellow/Orange filled circle for classes
+
       return <span className={`inline-block ${sizeClass} rounded-full bg-amber-400 mr-1.5 flex-shrink-0`} />;
     case 'objectProperty':
-      // Blue filled square for object properties
+
       return <span className={`inline-block ${sizeClass} bg-blue-500 mr-1.5 flex-shrink-0`} />;
     case 'dataProperty':
-      // Green filled square for data properties
+
       return <span className={`inline-block ${sizeClass} bg-green-500 mr-1.5 flex-shrink-0`} />;
     case 'individual':
-      // Purple diamond for individuals
+
       return <span className={`inline-block ${sizeClass} bg-purple-500 mr-1.5 flex-shrink-0 rotate-45`} />;
     case 'datatype':
-      // Red filled circle for datatypes
+
       return <span className={`inline-block ${sizeClass} rounded-full bg-red-500 mr-1.5 flex-shrink-0`} />;
     case 'annotationProperty':
-      // Light blue square for annotation properties
+
       return <span className={`inline-block ${sizeClass} bg-sky-400 mr-1.5 flex-shrink-0`} />;
     case 'mixed':
-      // Mixed: half blue, half green (for mixed property lists)
+
       return (
         <span className={`inline-flex mr-1.5 flex-shrink-0`}>
           <span className={`inline-block w-1.5 h-2.5 bg-blue-500`} />
@@ -53,46 +49,39 @@ export const EntityIcon: React.FC<{
   }
 };
 
-// Determine entity type from axiom properties
 const getEntityTypeFromAxiom = (axiom: Axiom, dataProperties: any[] = [], properties: any[] = []): 'class' | 'objectProperty' | 'dataProperty' | 'individual' | 'datatype' | 'mixed' => {
-  // Check if this is an instance/individual
+
   if ((axiom as any).type === 'Instance') {
     return 'individual';
   }
-  
+
   const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
-  
-  // Check if this is a HasKey axiom with properties array
+
   if (axiom.type === 'HasKey' && (axiom as any).properties && Array.isArray((axiom as any).properties)) {
     const propsArray = (axiom as any).properties as string[];
-    // Check if all properties are data properties or object properties
+
     const hasDataProp = propsArray.some(p => dataProperties.some(dp => dp.id === p));
     const hasObjProp = propsArray.some(p => properties.some(op => op.id === p) || !dataProperties.some(dp => dp.id === p));
-    
+
     if (hasDataProp && hasObjProp) return 'mixed';
     if (hasDataProp) return 'dataProperty';
     return 'objectProperty';
   }
-  
+
   if (isRestriction && axiom.propertyIri) {
-    // Check if it's a data property restriction
+
     const isDataProp = axiom.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty' 
       || dataProperties.some(p => p.id === axiom.propertyIri);
     return isDataProp ? 'dataProperty' : 'objectProperty';
   }
-  
-  // Check if the axiom references a datatype (xsd: prefix or similar)
+
   if (axiom.definition && (axiom.definition.includes('xsd:') || axiom.definition.includes('XMLSchema'))) {
     return 'datatype';
   }
-  
-  // Default to class
+
   return 'class';
 };
 
-// Parse and colorize axiom definition
-// Text is BLACK, only keywords (some, and, or, etc.) are MAGENTA/PINK
-// Property names in restrictions can be shown as links (underlined)
 const ColorizedAxiomDefinition: React.FC<{
   definition: string | undefined | null;
   axiom: Axiom;
@@ -100,13 +89,11 @@ const ColorizedAxiomDefinition: React.FC<{
   dataProperties?: any[];
   onNavigate?: (iri: string, type: string) => void; // For clickable links
 }> = ({ definition, axiom, properties = [], dataProperties = [], onNavigate }) => {
-  // Tokenize and colorize: only keywords get color, everything else is black
-  // This matches's style exactly
+
   if (!definition) return <span className="text-gray-400 italic text-xs">(no definition)</span>;
 
   const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
-  
-  // Helper function to extract label from IRI
+
   const getLabelFromIri = (iri: string): string => {
     if (iri.includes('#')) {
       return iri.split('#').pop() || iri;
@@ -116,48 +103,42 @@ const ColorizedAxiomDefinition: React.FC<{
     }
     return iri;
   };
-  
-  // Helper function to find entity IRI by label
+
   const findEntityIri = (label: string): { iri: string; type: string } | null => {
-    // Remove quotes if present
+
     const cleanLabel = label.replace(/^['"]|['"]$/g, '');
-    
-    // Check in data properties
+
     const dataProp = dataProperties.find(p => getLabelFromIri(p.id) === cleanLabel || p.label === cleanLabel);
     if (dataProp) return { iri: dataProp.id, type: 'dataProperty' };
-    
-    // Check in object properties
+
     const objProp = properties.find(p => getLabelFromIri(p.id) === cleanLabel || p.label === cleanLabel);
     if (objProp) return { iri: objProp.id, type: 'objectProperty' };
-    
-    // If it's in the axiom fillerIri, use that
+
     if (axiom.fillerIri && (getLabelFromIri(axiom.fillerIri) === cleanLabel)) {
-      // Determine if it's a class or individual based on context
+
       return { iri: axiom.fillerIri, type: 'class' };
     }
-    
+
     return null;
   };
-  
-  // For restrictions, we can make both property name and filler class clickable
+
   if (isRestriction && axiom.propertyIri) {
     const parts = definition.split(' ');
-    
+
     if (parts.length >= 3) {
       const keywordIndex = parts.findIndex(p => MANCHESTER_KEYWORDS.includes(p.toLowerCase()));
-      
+
       if (keywordIndex > 0) {
         const propertyParts = parts.slice(0, keywordIndex);
         const keyword = parts[keywordIndex];
         const fillerParts = parts.slice(keywordIndex + 1);
         const fillerText = fillerParts.join(' ');
-        
-        // Find filler entity info
+
         const fillerEntity = findEntityIri(fillerText);
-        
+
         return (
           <span className="font-bold text-gray-900">
-            {/* Property name - can be a link */}
+            {}
             <span 
               className={onNavigate ? "text-blue-600 underline cursor-pointer hover:text-blue-800" : "text-gray-900"}
               onClick={onNavigate ? () => onNavigate(axiom.propertyIri!, 'property') : undefined}
@@ -166,10 +147,10 @@ const ColorizedAxiomDefinition: React.FC<{
               '{propertyParts.join(' ')}'
             </span>
             {' '}
-            {/* Keyword in magenta/pink - bold */}
+            {}
             <span className="text-fuchsia-600 font-bold">{keyword}</span>
             {' '}
-            {/* Filler class/datatype - clickable if we have the IRI */}
+            {}
             {fillerEntity && onNavigate ? (
               <span 
                 className="text-blue-600 underline cursor-pointer hover:text-blue-800"
@@ -186,13 +167,11 @@ const ColorizedAxiomDefinition: React.FC<{
       }
     }
   }
-  
-  // For all other definitions (simple class names), make them clickable if we can find the entity
-  // First check if the definition itself is an IRI
+
   const isIri = definition.startsWith('http://') || definition.startsWith('https://') || definition.startsWith('urn:');
-  
+
   if (isIri && onNavigate) {
-    // It's a full IRI - extract label and make it clickable as a class
+
     const label = getLabelFromIri(definition);
     return (
       <span 
@@ -204,12 +183,11 @@ const ColorizedAxiomDefinition: React.FC<{
       </span>
     );
   }
-  
-  // Try to find entity by label
+
   const entityInfo = findEntityIri(definition);
-  
+
   if (entityInfo && onNavigate) {
-    // Simple class/entity reference - make it clickable
+
     return (
       <span 
         className="text-blue-600 underline cursor-pointer hover:text-blue-800 font-bold"
@@ -220,18 +198,16 @@ const ColorizedAxiomDefinition: React.FC<{
       </span>
     );
   }
-  
-  // For complex definitions with keywords, parse and colorize
+
   const result: React.ReactNode[] = [];
   let keyIndex = 0;
-  
-  // Use regex to find both keywords and quoted entity names
+
   const keywordRegex = new RegExp(`\\b(${MANCHESTER_KEYWORDS.join('|')})\\b|'([^']+)'`, 'gi');
   let lastIndex = 0;
   let match;
-  
+
   while ((match = keywordRegex.exec(definition)) !== null) {
-    // Add text before the match (black)
+
     if (match.index > lastIndex) {
       const beforeText = definition.slice(lastIndex, match.index);
       if (beforeText.trim()) {
@@ -240,17 +216,17 @@ const ColorizedAxiomDefinition: React.FC<{
         );
       }
     }
-    
+
     if (match[1]) {
-      // It's a keyword (magenta/pink, bold)
+
       result.push(
         <span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-bold">{match[0]}</span>
       );
     } else if (match[2]) {
-      // It's a quoted entity name - make it clickable if we can find it
+
       const entityName = match[2];
       const entity = findEntityIri(entityName);
-      
+
       if (entity && onNavigate) {
         result.push(
           <span 
@@ -268,11 +244,10 @@ const ColorizedAxiomDefinition: React.FC<{
         );
       }
     }
-    
+
     lastIndex = keywordRegex.lastIndex;
   }
-  
-  // Add remaining text after last match (black)
+
   if (lastIndex < definition.length) {
     const remainingText = definition.slice(lastIndex);
     if (remainingText.trim()) {
@@ -281,12 +256,11 @@ const ColorizedAxiomDefinition: React.FC<{
       );
     }
   }
-  
-  // If no matches found, just return the definition in black
+
   if (result.length === 0) {
     return <span className="text-gray-900 font-bold">{definition}</span>;
   }
-  
+
   return <span>{result}</span>;
 };
 
@@ -308,7 +282,7 @@ export const AxiomRow: React.FC<{
   parentEntityIri?: string;
   sectionName?: string;
 }> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations: hasAxiomAnnotationsProp = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, sectionName }) => {
-  // Handle isInferred from prop or axiom object (can be boolean or string 'true')
+
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -354,40 +328,36 @@ export const AxiomRow: React.FC<{
     setIsEditing(false);
   };
 
-  // Determine which tab to open based on axiom properties
   const determineInitialTab = (): 'hierarchy' | 'objectRestriction' | 'dataRestriction' | 'classExpression' | undefined => {
     const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
-    
+
     if (isRestriction && axiom.propertyIri) {
-      // Check if it's a data property restriction (including owl:topDataProperty)
+
       const isDataProperty = axiom.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty' 
         || dataProperties.some(p => p.id === axiom.propertyIri);
       if (isDataProperty) {
         return 'dataRestriction';
       }
-      // Otherwise it's an object property restriction
+
       return 'objectRestriction';
     }
-    
-    // Check if it's a complex expression (intersection, union, complement, oneOf)
+
     const isComplex = axiom.isComplex === true || axiom.isComplex === 'true';
     if (isComplex && axiom.expressionType) {
       return 'classExpression';
     }
-    
-    // Default to hierarchy for simple class references
+
     return 'hierarchy';
   };
 
-  // Build restriction data from axiom properties
   const buildRestrictionData = (): any => {
     const isRestriction = axiom.isRestriction === true || axiom.isRestriction === 'true';
-    
+
     if (isRestriction && axiom.propertyIri && axiom.restrictionType && axiom.fillerIri) {
-      // Check if it's a data property (including owl:topDataProperty)
+
       const isDataProperty = axiom.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty' 
         || dataProperties.some(p => p.id === axiom.propertyIri);
-      
+
       return {
         type: isDataProperty ? 'dataRestriction' : 'objectRestriction',
         axiomType: axiom.type, // Include the axiom type (EquivalentTo, SubClassOf, etc.)
@@ -398,11 +368,10 @@ export const AxiomRow: React.FC<{
         isDataProperty
       };
     }
-    
+
     return undefined;
   };
 
-  // Handle double-click to edit
   const handleDoubleClick = () => {
     if (isViewOnly) { onViewOnlyAction?.(); return; }
     if (!isInferred && (onEdit || onEditClick)) {
@@ -416,7 +385,6 @@ export const AxiomRow: React.FC<{
     }
   };
 
-  // Handle keyboard shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!isFocused) return;
 
@@ -486,7 +454,7 @@ export const AxiomRow: React.FC<{
             </div>
           </div>
           <div className="flex items-center gap-1 ml-2">
-            {/* Axiom Annotations button */}
+            {}
             <button 
               onClick={(e) => {
                 e.stopPropagation();
@@ -501,7 +469,7 @@ export const AxiomRow: React.FC<{
               <MessageCircle size={14} />
             </button>
 
-            {/* Edit button - only for asserted axioms */}
+            {}
             {!isInferred && (onEdit || onEditClick) && (
               <button
                 onClick={(e) => {
@@ -523,7 +491,7 @@ export const AxiomRow: React.FC<{
               </button>
             )}
 
-            {/* Delete button - only for asserted axioms that have a delete handler */}
+            {}
             {!isInferred && onDelete && (
               <button
                 onClick={async (e) => {
@@ -545,7 +513,7 @@ export const AxiomRow: React.FC<{
       )}
     </div>
 
-      {/* Axiom Annotations Panel */}
+      {}
       {showAxiomAnnotations && (
         <div className="mx-3 mb-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs">
           <div className="font-semibold text-amber-800 mb-1">Axiom Annotations</div>
@@ -656,7 +624,7 @@ export const AxiomSubsection: React.FC<{
   title: string;
   axioms: Axiom[] | undefined;
   inferredAxioms?: Axiom[];
-  /** Inferred rows only when hierarchy/view is in inferred mode */
+
   viewMode?: 'asserted' | 'inferred';
   onAdd: (definition: string) => void;
   onEdit?: (id: string, newDefinition: string) => Promise<void> | void;
@@ -691,13 +659,12 @@ export const AxiomSubsection: React.FC<{
     }
   };
 
-  // Keyboard shortcut: Enter to add new axiom when section header is focused
   const handleHeaderKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && isFocused) {
       e.preventDefault();
       handleAddButtonClick();
     } else if (e.key === 'ArrowDown' && isFocused) {
-      // Move focus to first axiom
+
       e.preventDefault();
       const firstAxiom = e.currentTarget.parentElement?.querySelector('[data-axiom-id]') as HTMLElement;
       firstAxiom?.focus();
@@ -708,7 +675,6 @@ export const AxiomSubsection: React.FC<{
   const allAxioms = [...(axioms || []), ...visibleInferred];
   const hasContent = allAxioms.length > 0;
 
-  // Clean minimal theme colors - subtle and professional
   const themes = {
     yellow: {
       headerBg: 'bg-amber-50 border-l-2 border-l-amber-400',
@@ -759,7 +725,7 @@ export const AxiomSubsection: React.FC<{
   return (
     <div className="mb-4 last:mb-0">
       {theme ? (
-        // header with golden/yellow accent for classes
+
         <button 
           onClick={handleAddButtonClick}
           onKeyDown={handleHeaderKeyDown}
@@ -780,7 +746,7 @@ export const AxiomSubsection: React.FC<{
           )}
         </button>
       ) : (
-        // Default header style
+
         <div
           className={`flex justify-between items-center mb-1 px-2 py-1 rounded ${isFocused ? 'ring-2 ring-purple-300' : ''}`}
           tabIndex={0}
@@ -807,7 +773,7 @@ export const AxiomSubsection: React.FC<{
       >
         {hasContent ? (
           <>
-            {/* Asserted axioms */}
+            {}
             {axioms?.map(axiom => (
               <AxiomRow
                 key={axiom.id}
@@ -828,7 +794,7 @@ export const AxiomSubsection: React.FC<{
                 sectionName={title}
               />
             ))}
-            {/* Inferred axioms (only in inferred view) */}
+            {}
             {visibleInferred.map(axiom => (
               <AxiomRow
                 key={`inferred-${axiom.id}`}
@@ -863,11 +829,6 @@ export const AxiomSubsection: React.FC<{
   );
 };
 
-/**
- * A component to safely render an annotation value, stripping
- * common RDF literal suffixes like "^^xsd:string".
- *
- */
 export const AnnotationValue = ({ value }: { value: string }) => {
   let cleanedValue = value.toString();
   if (cleanedValue.startsWith('"')) cleanedValue = cleanedValue.substring(1);
@@ -898,11 +859,6 @@ const getPropertyLabel = (uri: string): string => {
   return uri;
 };
 
-/**
- * A component that displays a list of annotations (key-value pairs)
- * in - grouped by property with full URI displayed.
- * Sorts annotations to show rdfs:comment first, then rdfs:label, then others alphabetically.
- */
 type AnnotationMap = Record<string, string | string[]>;
 
 const flattenAnnotations = (annotations?: AnnotationMap) => {
@@ -934,14 +890,14 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly =
         <div className="p-3 text-xs text-gray-400 italic text-center">No annotations</div>
     );
   }
-  
+
   const priorityProps = [
     'http://www.w3.org/2000/01/rdf-schema#label',
     'http://www.w3.org/2000/01/rdf-schema#comment',
     'http://www.w3.org/2000/01/rdf-schema#isDefinedBy',
     'http://www.w3.org/2000/01/rdf-schema#seeAlso'
   ];
-  
+
   const sortedRows = [...rows].sort((a, b) => {
     const priorityA = priorityProps.indexOf(a.property);
     const priorityB = priorityProps.indexOf(b.property);
@@ -950,12 +906,12 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly =
     if (priorityB !== -1) return 1;
     return getPropertyLabel(a.property).localeCompare(getPropertyLabel(b.property));
   });
-  
+
   return (
     <div className="rounded-sm overflow-hidden" style={{ border: '1px solid var(--border)' }}>
       {sortedRows.map((row) => {
         const propertyLabel = getPropertyLabel(row.property);
-        
+
         return (
           <div
             key={row.rowKey}
@@ -1000,10 +956,6 @@ export const AnnotationsDisplay = ({ annotations, onDelete, onEdit, isViewOnly =
   );
 };
 
-/**
- * The main collapsible panel component used in all editors.
- *
- */
 export const Panel = ({ 
   title, 
   children, 
@@ -1020,7 +972,7 @@ export const Panel = ({
     const [isOpen, setIsOpen] = useState(defaultOpen);
     const contentRef = useRef<HTMLDivElement>(null);
     const themeClasses = themeColor || 'bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]';
-    
+
     useEffect(() => {
       const handleWheel = (e: WheelEvent) => {
         const element = contentRef.current;
@@ -1028,11 +980,11 @@ export const Panel = ({
 
         const isAtTop = element.scrollTop === 0;
         const isAtBottom = Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) < 1;
-        
+
         if ((isAtTop && e.deltaY < 0) || (isAtBottom && e.deltaY > 0)) {
           return;
         }
-        
+
         e.stopPropagation();
       };
 
@@ -1042,7 +994,7 @@ export const Panel = ({
         return () => element.removeEventListener('wheel', handleWheel);
       }
     }, [isOpen]);
-    
+
     return (
         <div className="border rounded-sm flex flex-col" style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
             <div className="text-xs font-semibold p-1.5 flex items-center justify-between border-b" style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-background)', color: 'var(--color-text)' }}>
@@ -1080,8 +1032,7 @@ export const MultiSelectItem: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
   projectId?: string;
   parentEntityIri?: string;
-  /** IRI -> rdfs:label, so relation lists show the referenced entity's actual name
-   * instead of its bare ID/IRI (e.g. "example of usage" instead of "IAO_0000112"). */
+
   labelLookup?: Map<string, string>;
 }> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate, projectId, parentEntityIri, labelLookup }) => {
     const [showExplanation, setShowExplanation] = useState(false);
@@ -1160,20 +1111,18 @@ export const MultiSelectItem: React.FC<{
             setTimeout(() => setCopied(false), 1500);
         }).catch(() => {});
     };
-    // Check if this is an inverse property expression
+
     const inverseMatch = displayItem.match(/^inverse\((.+)\)$/i);
     const isInverse = !!inverseMatch;
     const propertyIri = isInverse ? inverseMatch[1] : displayItem;
 
-    // Check if this is a restriction expression (contains 'some', 'only', 'min', 'max', 'exactly', 'value')
     const restrictionKeywords = ['some', 'only', 'min', 'max', 'exactly', 'value', 'and', 'or', 'not'];
     const isRestrictionExpression = restrictionKeywords.some(kw =>
         displayItem.includes(` ${kw} `) || displayItem.startsWith(`${kw} `) || displayItem.endsWith(` ${kw}`)
     );
-    
-    // Format display name - keep prefix for datatypes
+
     const getDisplayName = (iri: string): string => {
-        // Check if it's a datatype with known prefixes
+
         if (iri.includes('XMLSchema#')) {
             return 'xsd:' + iri.split('#').pop();
         } else if (iri.includes('rdf-syntax-ns#')) {
@@ -1183,21 +1132,16 @@ export const MultiSelectItem: React.FC<{
         } else if (iri.includes('owl#')) {
             return 'owl:' + iri.split('#').pop();
         }
-        // Default: local name after the last '#'. Many real-world IRIs (OBO/PURL style,
-        // e.g. http://purl.obolibrary.org/obo/IAO_0000112) have no '#' at all — falling
-        // through to iri.split('#').pop() on those returns the entire IRI unchanged, which
-        // is the raw-IRI-instead-of-a-name bug. Fall back to the last '/' segment first.
+
         if (iri.includes('#')) {
             return iri.split('#').pop() || iri;
         }
         const trimmed = iri.replace(/\/+$/, '');
         return trimmed.split('/').pop() || iri;
     };
-    
+
     const displayName = labelLookup?.get(propertyIri) || getDisplayName(propertyIri);
-    
-    // Detect entity type from themeColor if not provided
-    // blue = objectProperty, green = dataProperty, yellow/orange = class, purple = individual
+
     let detectedType = entityType;
     if (!detectedType) {
         if (item.includes('XMLSchema#') || item.includes('rdf-syntax-ns#') || item.includes('rdf-schema#') || 
@@ -1214,10 +1158,7 @@ export const MultiSelectItem: React.FC<{
             detectedType = 'class';
         }
     }
-    
-    // Icon based on entity type - matches
-    // Classes: yellow/orange circle, ObjectProperties: blue square, DataProperties: green square
-    // Individuals: purple diamond, Datatypes: red circle
+
     const getIcon = () => {
         switch (detectedType) {
             case 'objectProperty':
@@ -1235,35 +1176,33 @@ export const MultiSelectItem: React.FC<{
                 return <span className="w-2.5 h-2.5 bg-amber-400 rounded-full mr-1 flex-shrink-0" title="Class" />;
         }
     };
-    
-    // Format restriction expression with colored keywords (text is black, keywords are magenta)
+
     const formatRestrictionExpression = (expr: string): React.ReactNode => {
-        // Split by restriction keywords and color them
+
         const parts: React.ReactNode[] = [];
         let keyIndex = 0;
-        
-        // Find and replace keywords with colored versions
+
         const regex = /\b(some|only|min|max|exactly|value|and|or|not|inverse)\b/gi;
         let lastIndex = 0;
         let match;
-        
+
         while ((match = regex.exec(expr)) !== null) {
-            // Add text before the keyword (BLACK)
+
             if (match.index > lastIndex) {
                 parts.push(<span key={`text-${keyIndex++}`}>{expr.slice(lastIndex, match.index)}</span>);
             }
-            // Add the colored keyword (MAGENTA/PINK)
+
             parts.push(<span key={`kw-${keyIndex++}`} className="text-fuchsia-600 font-bold">{match[0]}</span>);
             lastIndex = regex.lastIndex;
         }
-        // Add remaining text
+
         if (lastIndex < expr.length) {
             parts.push(<span key={`text-${keyIndex++}`}>{expr.slice(lastIndex)}</span>);
         }
-        
+
         return parts.length > 0 ? parts : expr;
     };
-    
+
     return (
         <div
             className={`group border-b last:border-0 transition-colors transition-opacity duration-300 ${isDeleting ? 'opacity-40' : ''}`}
@@ -1279,7 +1218,7 @@ export const MultiSelectItem: React.FC<{
         >
             <div className="flex justify-between items-center p-1.5">
                 <div className="flex items-center">
-                    {/* Entity type icon */}
+                    {}
                     {getIcon()}
                     {isInverse ? (
                         <span className="text-sm font-bold">
@@ -1299,7 +1238,7 @@ export const MultiSelectItem: React.FC<{
                 </div>
                 {!isInferred && (
                     <div className={`flex items-center gap-1 transition-all ${isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                        {/* ? — Explanation (justification) */}
+                        {}
                         <button
                             onClick={(e) => { e.stopPropagation(); setShowExplanation(v => !v); if (showAnnotations) setShowAnnotations(false); }}
                             className={`p-1 rounded transition-all ${showExplanation ? 'text-blue-600 bg-blue-50 opacity-100' : 'text-gray-400 hover:bg-blue-100 hover:text-blue-600'}`}
@@ -1308,7 +1247,7 @@ export const MultiSelectItem: React.FC<{
                         >
                             <HelpCircle size={14} />
                         </button>
-                        {/* @ — Axiom annotations */}
+                        {}
                         <button
                             onClick={(e) => { e.stopPropagation(); setShowAnnotations(v => !v); if (showExplanation) setShowExplanation(false); }}
                             className={`p-1 rounded transition-all ${showAnnotations ? 'text-amber-600 bg-amber-50 opacity-100' : 'text-gray-400 hover:bg-amber-100 hover:text-amber-600'}`}
@@ -1317,7 +1256,7 @@ export const MultiSelectItem: React.FC<{
                         >
                             <AtSign size={14} />
                         </button>
-                        {/* ✎ — Edit item */}
+                        {}
                         {onEdit && (
                             <button
                                 onClick={(e) => { e.stopPropagation(); onEdit(item); }}
@@ -1328,7 +1267,7 @@ export const MultiSelectItem: React.FC<{
                                 <Edit2 size={14} />
                             </button>
                         )}
-                        {/* ○ — Navigate to entity in hierarchy */}
+                        {}
                         {onNavigate && (
                             <button
                                 onClick={(e) => { e.stopPropagation(); onNavigate(propertyIri, detectedType || 'class'); }}
@@ -1355,17 +1294,17 @@ export const MultiSelectItem: React.FC<{
                 )}
             </div>
 
-            {/* Explanation panel — justification dialog */}
+            {}
             {showExplanation && !isInferred && (
                 <div className="mx-1.5 mb-1.5 bg-blue-50 border border-blue-200 rounded text-xs" onClick={(e) => e.stopPropagation()}>
-                    {/* Title bar */}
+                    {}
                     <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-blue-200 bg-blue-100">
                         <HelpCircle size={11} className="text-blue-600 shrink-0" />
                         <span className="text-[10px] font-semibold text-blue-800">
                             Explanation for '{displayName}'{sectionName ? ` ${sectionName}` : ''}
                         </span>
                     </div>
-                    {/* Filter row — matches's radio layout */}
+                    {}
                     <div className="px-2 pt-2 pb-1 grid grid-cols-2 gap-x-4 gap-y-0.5">
                         <label className="flex items-center gap-1 cursor-pointer">
                             <input type="radio" name={`just-${item}`} checked={justType === 'regular'}
@@ -1398,7 +1337,7 @@ export const MultiSelectItem: React.FC<{
                             />
                         </label>
                     </div>
-                    {/* Justification blocks */}
+                    {}
                     <div className="px-2 pb-2">
                         {explanationLoading && (
                             <div className="flex items-center gap-1.5 py-2 text-[10px] text-blue-500">
@@ -1439,7 +1378,7 @@ export const MultiSelectItem: React.FC<{
                         {!explanationLoading && explanationData === null && !projectId && (
                             <div className="text-[10px] text-gray-400 italic py-1">No project context available.</div>
                         )}
-                        {/* IRI row */}
+                        {}
                         <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mt-2 mb-1">IRI</div>
                         <div className="flex items-start gap-2">
                             <span className="font-mono text-gray-700 break-all flex-1 leading-relaxed select-all text-[10px]">{item}</span>
@@ -1453,13 +1392,13 @@ export const MultiSelectItem: React.FC<{
                 </div>
             )}
 
-            {/* Annotations panel — "Annotations for DataPropertyRange" dialog */}
+            {}
             {showAnnotations && !isInferred && (
                 <div className="mx-1.5 mb-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-xs">
                     <div className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide mb-1.5">
                         Annotations for {sectionName || 'Axiom'}
                     </div>
-                    {/* The axiom expression this annotation applies to */}
+                    {}
                     <div className="bg-white border border-amber-100 rounded px-2 py-1.5 mb-2 text-gray-700 text-xs">
                         <span className="font-semibold">'{displayName}'</span>
                         {sectionName && <span className="text-blue-600 mx-1">{sectionName}</span>}
@@ -1477,7 +1416,7 @@ export const MultiSelectItem: React.FC<{
                             </button>
                         )}
                     </div>
-                    {/* Inline add form */}
+                    {}
                     {showAddAnnotationForm && (
                         <div className="mb-2 p-2 bg-white border border-amber-300 rounded" onClick={(e) => e.stopPropagation()}>
                             <select
@@ -1525,7 +1464,7 @@ export const MultiSelectItem: React.FC<{
                             </div>
                         </div>
                     )}
-                    {/* Stored axiom annotations */}
+                    {}
                     {localAnnotations.length > 0 ? (
                         <div className="space-y-1 mb-1">
                             {localAnnotations.map((ann, idx) => (
@@ -1581,8 +1520,7 @@ export const MultiSelectSection: React.FC<{
     labelLookup?: Map<string, string>;
 }> = ({ title, items, inferredItems, onAddClick, onDelete, themeColor = 'blue', itemEntityType, isViewOnly = false, onViewOnlyAction, onNavigate, onEdit, projectId, parentEntityIri, labelLookup }) => {
     const [isSelected, setIsSelected] = useState(false);
-    
-    // Clean minimal theme colors - subtle and professional
+
     const themes = {
         blue: {
             headerBg: 'bg-blue-50 border-l-2 border-l-blue-500',
@@ -1620,10 +1558,9 @@ export const MultiSelectSection: React.FC<{
             plusColor: 'text-stone-400 hover:text-purple-600'
         }
     };
-    
+
     const theme = themes[themeColor];
-    // Pass the editingItem to onAddClick — the picker's confirm handler will do
-    // delete + add in a single API call instead of delete-now / add-later.
+
     const itemEditHandler = onEdit || (onAddClick ? (editItem: string) => { onAddClick(editItem); } : undefined);
 
     const handleHeaderClick = () => {
@@ -1633,10 +1570,10 @@ export const MultiSelectSection: React.FC<{
             onAddClick(undefined);
         }
     };
-    
+
     return (
          <div className="mb-3 last:mb-0">
-             {/* Clean minimal clickable header */}
+             {}
              <button 
                 onClick={handleHeaderClick}
                 onBlur={() => setIsSelected(false)}
@@ -1653,7 +1590,7 @@ export const MultiSelectSection: React.FC<{
                     </span>
                  )}
              </button>
-             {/* Content area */}
+             {}
              <div className="border border-t-0 rounded-b-sm overflow-hidden" style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border, #e5e7eb)' }}>
                  {items && items.length > 0 ? (
                     items.map(item => <MultiSelectItem key={item} item={item} onDelete={(i: string) => { if (isViewOnly) { onViewOnlyAction?.(); return; } return onDelete(i); }} onEdit={isViewOnly ? undefined : itemEditHandler} themeColor={themeColor} entityType={itemEntityType} sectionName={title} onNavigate={onNavigate} projectId={projectId} parentEntityIri={parentEntityIri} labelLookup={labelLookup} />)
@@ -1663,7 +1600,7 @@ export const MultiSelectSection: React.FC<{
                  ) : null}
                  {(!items || items.length === 0) && (!inferredItems || inferredItems.length === 0) && (
                     <div className="p-2 text-xs text-gray-400 italic">
-                        {/* Empty - matches's minimal empty state */}
+                        {}
                     </div>
                  )}
              </div>

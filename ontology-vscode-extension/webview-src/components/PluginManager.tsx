@@ -73,12 +73,10 @@ const PluginManager: React.FC = () => {
   const filterPlugins = () => {
     let filtered = plugins;
 
-    // Filter by type
     if (filterType !== 'ALL') {
       filtered = filtered.filter(p => p.type === filterType);
     }
 
-    // Filter by search query
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(p =>
@@ -96,7 +94,7 @@ const PluginManager: React.FC = () => {
       const endpoint = enabled 
         ? `/api/plugins/${pluginId}/disable`
         : `/api/plugins/${pluginId}/enable`;
-      
+
       await apiClient.post(endpoint);
       await loadPlugins();
     } catch (error) {
@@ -120,7 +118,7 @@ const PluginManager: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
-      {/* Header */}
+      {}
       <header className="bg-white border-b border-gray-200 p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -145,7 +143,7 @@ const PluginManager: React.FC = () => {
           </button>
         </div>
 
-        {/* Statistics */}
+        {}
         {stats && (
           <div className="grid grid-cols-4 gap-4 mt-4">
             <div className="bg-indigo-50 p-4 rounded-lg">
@@ -175,7 +173,7 @@ const PluginManager: React.FC = () => {
           </div>
         )}
 
-        {/* Search and Filter */}
+        {}
         <div className="flex gap-4 mt-4">
           <div className="flex-1 relative">
             <Search size={20} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -203,7 +201,7 @@ const PluginManager: React.FC = () => {
         </div>
       </header>
 
-      {/* Plugin List */}
+      {}
       <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
@@ -228,7 +226,7 @@ const PluginManager: React.FC = () => {
                 className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow cursor-pointer"
                 onClick={() => setSelectedPlugin(plugin)}
               >
-                {/* Plugin Header */}
+                {}
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
                     {plugin.iconUrl ? (
@@ -244,7 +242,7 @@ const PluginManager: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Status Badge */}
+                  {}
                   {plugin.enabled ? (
                     <CheckCircle size={20} className="text-green-500" />
                   ) : (
@@ -252,19 +250,19 @@ const PluginManager: React.FC = () => {
                   )}
                 </div>
 
-                {/* Description */}
+                {}
                 <p className="text-sm text-gray-600 mb-3 line-clamp-2">
                   {plugin.description}
                 </p>
 
-                {/* Type Badge */}
+                {}
                 <div className="flex items-center gap-2 mb-3">
                   <span className={`px-2 py-1 rounded text-xs font-medium ${getTypeColor(plugin.type)}`}>
                     {plugin.type.replace('_', ' ')}
                   </span>
                 </div>
 
-                {/* Tags */}
+                {}
                 {plugin.tags && plugin.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-3">
                     {plugin.tags.slice(0, 3).map(tag => (
@@ -280,7 +278,7 @@ const PluginManager: React.FC = () => {
                   </div>
                 )}
 
-                {/* Actions */}
+                {}
                 <div className="flex gap-2">
                   <button
                     onClick={(e) => {
@@ -322,7 +320,7 @@ const PluginManager: React.FC = () => {
         )}
       </div>
 
-      {/* Plugin Detail Modal */}
+      {}
       {selectedPlugin && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-auto">

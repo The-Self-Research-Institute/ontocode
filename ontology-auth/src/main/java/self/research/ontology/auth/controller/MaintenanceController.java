@@ -9,9 +9,6 @@ import self.research.ontology.auth.service.SystemSettingsService;
 
 import java.util.Map;
 
-/**
- * Public endpoints for maintenance status — no authentication required.
- */
 @RestController
 @RequestMapping("/api/maintenance")
 public class MaintenanceController {
@@ -22,10 +19,6 @@ public class MaintenanceController {
         this.settingsService = settingsService;
     }
 
-    /**
-     * GET /api/maintenance/status — called by the frontend on startup to detect maintenance.
-     * Returns HTTP 200 with active=false when not in maintenance, or active=true with message.
-     */
     @GetMapping("/status")
     public ResponseEntity<?> getStatus() {
         SystemSettings s = settingsService.get();

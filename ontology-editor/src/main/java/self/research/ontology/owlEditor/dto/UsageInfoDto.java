@@ -8,10 +8,10 @@ public class UsageInfoDto {
     private List<AxiomUsage> usages;
 
     public static class AxiomUsage {
-        private String category;  // e.g., "SubClassOf", "EquivalentTo", "DisjointWith", "Domain", "Range"
-        private String description;  // Human-readable description
-        private String relatedEntity;  // The other class/property involved
-        private String axiomType;  // Full axiom type name
+        private String category;
+        private String description;
+        private String relatedEntity;
+        private String axiomType;
 
         public AxiomUsage() {}
 
@@ -22,7 +22,6 @@ public class UsageInfoDto {
             this.axiomType = axiomType;
         }
 
-        // Getters and setters
         public String getCategory() { return category; }
         public void setCategory(String category) { this.category = category; }
         public String getDescription() { return description; }
@@ -41,7 +40,6 @@ public class UsageInfoDto {
         this.usages = usages;
     }
 
-    // Getters and setters
     public String getClassIri() { return classIri; }
     public void setClassIri(String classIri) { this.classIri = classIri; }
     public int getTotalUsages() { return totalUsages; }

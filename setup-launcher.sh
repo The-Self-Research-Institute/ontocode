@@ -1,7 +1,4 @@
 #!/bin/bash
-# ========================================
-# Build OntoCode Launcher for Linux/Mac
-# ========================================
 
 echo "========================================"
 echo "  OntoCode Launcher Setup"
@@ -16,7 +13,6 @@ if [ ! -f "$LAUNCHER_SCRIPT" ]; then
     exit 1
 fi
 
-# Make the script executable
 chmod +x "$LAUNCHER_SCRIPT"
 
 echo "[OK] Launcher script is now executable"
@@ -37,7 +33,6 @@ echo "  - Create desktop shortcut"
 echo "  - Open http://localhost:3000"
 echo ""
 
-# Detect OS and provide specific instructions
 if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "macOS detected:"
     echo "  Desktop shortcut will be: OntoCode.command"
@@ -51,5 +46,4 @@ fi
 echo ""
 read -p "Press Enter to run the launcher now, or Ctrl+C to exit..."
 
-# Run the launcher
 ./"$LAUNCHER_SCRIPT"

@@ -54,7 +54,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 animate-fade-in">
                 <div className="p-6">
-                    {/* Header */}
+                    {}
                     <div className="flex items-start gap-4 mb-4">
                         <div className="flex-shrink-0">
                             {getIcon()}
@@ -71,12 +71,12 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
                         </button>
                     </div>
 
-                    {/* Message */}
+                    {}
                     <div className="ml-10 mb-6">
                         <p className="text-gray-600">{message}</p>
                     </div>
 
-                    {/* Actions */}
+                    {}
                     <div className="flex gap-3 justify-end">
                         <button
                             onClick={onCancel}

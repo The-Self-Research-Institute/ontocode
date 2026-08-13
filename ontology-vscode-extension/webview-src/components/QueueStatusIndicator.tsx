@@ -29,7 +29,6 @@ export const QueueStatusIndicator: React.FC<QueueStatusIndicatorProps> = ({
       return;
     }
 
-    // Subscribe to queue status updates via WebSocket
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
       if (message.type === 'queueStatusUpdate' && message.status?.projectId === projectId) {
@@ -225,7 +224,7 @@ export const GlobalQueueStats: React.FC<GlobalQueueStatsProps> = ({ visible = tr
         }
         scheduleNext(30000);
       } catch {
-        // Editor may be saturated during large imports — back off instead of hammering every 3s.
+
         backoffMs = Math.min(backoffMs > 0 ? backoffMs * 2 : 10000, 60000);
         scheduleNext(backoffMs);
       }

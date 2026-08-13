@@ -3,9 +3,6 @@ package self.research.ontology.owlEditor.service;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
-/**
- * Named graph URI helpers — triplestore-agnostic (Fuseki, GraphDB, etc.).
- */
 public final class SparqlGraphUris {
 
     public static final String DRAFT_NS = "http://ontocode.org/ns/draft#";
@@ -25,7 +22,6 @@ public final class SparqlGraphUris {
         return "http://ontocode.org/draft/" + encProject + "/" + encUser;
     }
 
-    /** SPARQL filter excluding entities marked deleted in the user's draft graph. */
     public static String excludeDraftDeletedFilter(String draftGraphUri, String entityVar) {
         if (draftGraphUri == null || draftGraphUri.isBlank()) {
             return "";

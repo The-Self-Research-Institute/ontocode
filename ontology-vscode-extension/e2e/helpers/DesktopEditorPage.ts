@@ -5,10 +5,6 @@ import { loadDesktopAuth } from './desktopApi';
 const DESKTOP_USER = process.env.DESKTOP_E2E_USER || 'admin@ontocode.local';
 const DESKTOP_PASS = process.env.DESKTOP_E2E_PASSWORD || 'ontocode-desktop';
 
-/**
- * Desktop-backend UI helper (Chromium + Vite proxy to :18085).
- * Each test should pass its own isolated projectId from prepareIsolatedDesktopProject.
- */
 export class DesktopEditorPage extends EditorPage {
   constructor(page: Page) {
     super(page);

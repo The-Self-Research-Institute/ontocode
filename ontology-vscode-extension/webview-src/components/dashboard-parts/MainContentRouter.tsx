@@ -144,8 +144,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     }
   };
 
-  // #region Render Methods
-
   const getImportResolutionStatus = (iri: string): { label: string; tone: "success" | "warning" | "error" | "neutral"; detail: string } => {
     const resolution = (metadata as any)?.importResolution || {};
     const loaded = Array.isArray(resolution.loaded) ? resolution.loaded : [];
@@ -164,7 +162,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     return { label: "Declared", tone: "neutral", detail: "Declared by owl:imports. Load status is unknown until import resolution runs." };
   };
 
-  // Cleanup sync service when switching projects
   useEffect(() => {
     return () => {
       if (projectId) {
@@ -174,7 +171,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     };
   }, [projectId]);
 
-  // Helper component for rendering class hierarchy nodes with tooltips
   const ClassHierarchyNode: React.FC<{ node: any; level: number }> = ({ node, level }) => {
     const [showTooltip, setShowTooltip] = useState(false);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
@@ -200,7 +196,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
           {node.inferred && <span className="text-[10px] bg-green-100 text-green-700 px-1 rounded">inferred</span>}
         </div>
 
-        {/* Explanation Tooltip */}
+        {}
         {showTooltip && node.explanation && (
           <div
             className="fixed z-[9999] bg-yellow-50 border-2 border-yellow-400 rounded-lg shadow-xl p-3 max-w-sm"
@@ -224,11 +220,9 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     );
   };
 
-  // Helper function to render class hierarchy
   const renderClassHierarchy = (nodes: any[]): React.ReactNode => {
     if (!Array.isArray(nodes) || nodes.length === 0) return null;
 
-    // Filter out null/undefined nodes
     const validNodes = nodes.filter((node) => node && (node.iri || node.id));
 
     return validNodes.map((node: any, idx: number) => (
@@ -241,7 +235,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
       case "CodeView":
         return <CodeViewPanel projectId={projectId} />;
       case "SPARQL": {
-        // Use dynamically loaded SPARQL Query Plugin
+
         const sparqlPlugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "sparql-query-plugin");
         const sparqlLoadingState = pluginLoadingStates["sparql-query-plugin"];
 
@@ -285,7 +279,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
         );
       }
       case "Graph": {
-        // Use dynamically loaded Graph View Plugin
+
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "graph-view-plugin");
         const loadingState = pluginLoadingStates["graph-view-plugin"];
 
@@ -486,7 +480,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
               className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden"
               style={{ backgroundColor: "var(--bg)", borderColor: "var(--border)" }}
             >
-              {/* Ontology Header Section */}
+              {}
               <div
                 className="p-4 border-b"
                 style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-2)" }}
@@ -546,7 +540,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                 </div>
               </div>
 
-              {/* Annotations Section */}
+              {}
               <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 0 }}>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
@@ -662,7 +656,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                 )}
               </div>
 
-              {/* Resize Handle */}
+              {}
               <div
                 className="relative cursor-ns-resize group"
                 style={{
@@ -697,7 +691,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                 />
               </div>
 
-              {/* Bottom Tabs Section (Imports, GCIs, Prefixes) */}
+              {}
               <div
                 className="border-t flex flex-col"
                 style={{
@@ -1570,14 +1564,13 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
         );
       }
       case "DLQuery":
-        // Built-in OWL IRIs to exclude from counts
+
         const builtInIris = new Set([
           "http://www.w3.org/2002/07/owl#Thing",
           "http://www.w3.org/2002/07/owl#topObjectProperty",
           "http://www.w3.org/2002/07/owl#topDataProperty",
         ]);
 
-        // Flatten the class hierarchy tree to get all classes (excluding owl:Thing)
         const flattenClassHierarchy = (nodes: TreeNode[]): { id: string; label: string }[] => {
           const result: { id: string; label: string }[] = [];
           const traverse = (nodeList: TreeNode[]) => {
@@ -1594,7 +1587,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
           return result;
         };
 
-        // Flatten the property hierarchy tree (excluding owl:topObjectProperty/topDataProperty)
         const flattenPropertyHierarchy = (nodes: Property[]): { id: string; label: string }[] => {
           const result: { id: string; label: string }[] = [];
           const traverse = (nodeList: any[]) => {

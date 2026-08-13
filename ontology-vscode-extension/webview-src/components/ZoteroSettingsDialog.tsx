@@ -12,8 +12,7 @@ declare global {
 interface ZoteroSettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Renders inline as the host dialog's content (no backdrop/close-X/Cancel) — used for the
-   * first-run "not configured yet" state so it reads as onboarding, not a stacked modal. */
+
   embedded?: boolean;
 }
 
@@ -27,9 +26,6 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState('');
 
-  // Listen for VS Code extension replies (config data) — real VS Code only; desktop
-  // and the plain webapp both install a same-named window.vscode shim, so a bare
-  // truthiness check here would misclassify them and this listener would never fire.
   useEffect(() => {
     if (!isRealVSCode()) return;
     const handler = (event: MessageEvent) => {
@@ -48,14 +44,14 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
   useEffect(() => {
     if (isOpen) {
       if (isRealVSCode()) {
-        // In VS Code: request config from extension host (stored in workspace settings)
+
         setApiKey('');
         setUserId('');
         setLibraryType('user');
         setGroupId('');
         window.vscode.postMessage({ type: 'requestZoteroConfig' });
       } else {
-        // In web/standalone: load from localStorage
+
         const cfg = sci2CodeBrowserService.getConfig();
         if (cfg) {
           setApiKey(cfg.apiKey);
@@ -90,7 +86,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
         return;
       }
       setUserId(resolvedUserId);
-      // In VS Code, also persist to workspace settings via extension host
+
       if (isRealVSCode()) {
         window.vscode!.postMessage({
           type: 'saveZoteroConfig',
@@ -120,7 +116,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
     setTesting(true);
     setTestResult(null);
     try {
-      // First resolve userId from API key
+
       const resolvedUserId = await sci2CodeBrowserService.fetchUserIdFromApiKey(apiKey.trim());
       if (!resolvedUserId) {
         setTestResult('error');
@@ -129,7 +125,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
         return;
       }
       setUserId(resolvedUserId);
-      // Save temporarily for test
+
       sci2CodeBrowserService.saveConfig({
         apiKey: apiKey.trim(),
         userId: resolvedUserId,
@@ -174,7 +170,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
 
   const dialog = (
     <div className={embedded ? "w-full flex flex-col" : "bg-white rounded-lg shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col"}>
-        {/* Header */}
+        {}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <Settings className="text-blue-600" size={24} />
@@ -189,9 +185,9 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
           )}
         </div>
 
-        {/* Content */}
+        {}
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
-          {/* Instructions */}
+          {}
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
             <p className="font-medium mb-1">How to get your API key:</p>
             <ol className="list-decimal ml-4 space-y-1">
@@ -211,7 +207,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
             </ol>
           </div>
 
-          {/* API Key */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Configure Zotero API Key <span className="text-red-500">*</span>
@@ -225,7 +221,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
             />
           </div>
 
-          {/* Auto-resolved User ID */}
+          {}
           {userId && (
             <div className="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
               <CheckCircle size={14} className="text-green-500" />
@@ -233,7 +229,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
             </div>
           )}
 
-          {/* Library Type */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Library Type</label>
             <select
@@ -246,7 +242,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
             </select>
           </div>
 
-          {/* Group ID (conditional) */}
+          {}
           {libraryType === 'group' && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Group ID</label>
@@ -260,7 +256,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
             </div>
           )}
 
-          {/* Test result */}
+          {}
           {testResult === 'success' && (
             <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
               <CheckCircle size={16} />
@@ -275,7 +271,7 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
           )}
         </div>
 
-        {/* Footer */}
+        {}
         <div className="flex items-center justify-between p-4 border-t border-gray-200">
           <button
             onClick={handleClear}

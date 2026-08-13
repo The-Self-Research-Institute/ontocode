@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Upload available desktop installers from electron-app/dist-electron to a mode's downloads API.
-# Usage: ./scripts/upload-desktop-installers.sh <dev|prod>
-# Env: sources .env.deploy (DEV_API_BASE / API_BASE, ADMIN_USER, ADMIN_PASSWORD).
-# Never prints secrets.
+
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -66,11 +63,11 @@ upload_one() {
 }
 
 pick_newest() {
-  # Args: glob patterns relative to DIST; prints newest existing file path or nothing.
+
   local f newest="" newest_m=0 m
   for f in "$@"; do
     [[ -f "$f" ]] || continue
-    # skip blockmaps / side artifacts
+
     case "$f" in
       *.blockmap) continue ;;
     esac
@@ -86,8 +83,6 @@ pick_newest() {
 fail=0
 shopt -s nullglob
 
-# Windows NSIS: "OntoCode Setup 1.1.0-beta.18.exe" (no arch token in name).
-# Also accept legacy *x64* names if ever produced.
 win_file="$(pick_newest "$DIST"/*[Ss]etup*.exe "$DIST"/*Setup*x64*.exe || true)"
 if [[ -n "${win_file:-}" ]]; then
   upload_one "windows-x64" "$win_file" || fail=1

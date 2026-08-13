@@ -6,10 +6,6 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.repository.UserRepository;
 
-/**
- * Grants or revokes Enterprise access for beta / partner users via admin-managed
- * email and domain allowlists (no Stripe subscription required).
- */
 @Service
 public class EnterpriseBypassService {
 
@@ -31,7 +27,6 @@ public class EnterpriseBypassService {
         return systemSettingsService.isEnterpriseBypass(email);
     }
 
-    /** Apply enterprise bypass on login/signup when the user matches the allowlist. */
     public void applyBypassIfEligible(User user) {
         if (user == null || user.getEmail() == null) return;
         if (!isBypassed(user.getEmail())) return;
@@ -52,10 +47,6 @@ public class EnterpriseBypassService {
         workspaceService.syncWorkspacesToOwnerPlan(user);
     }
 
-    /**
-     * When a user no longer matches the bypass list, downgrade to FREE unless they
-     * have an active paid Stripe subscription.
-     */
     public void revokeBypassIfNeeded(User user) {
         if (user == null || user.getEmail() == null) return;
         if (isBypassed(user.getEmail())) return;
@@ -68,7 +59,6 @@ public class EnterpriseBypassService {
         log.info("Enterprise bypass revoked: {} downgraded to FREE", user.getEmail());
     }
 
-    /** After admin updates allowlists — upgrade matching users and revoke others. */
     public void reconcileAllUsers() {
         userRepository.findAll().forEach(user -> {
             if (user.getEmail() == null || user.getEmail().isBlank()) return;
@@ -80,9 +70,6 @@ public class EnterpriseBypassService {
         });
     }
 
-    /**
-     * True when the user has ENTERPRISE solely from bypass (no active Stripe sub).
-     */
     public boolean isBypassOnlyEnterprise(User user) {
         if (user == null) return false;
         String plan = user.getSubscriptionPlanName();

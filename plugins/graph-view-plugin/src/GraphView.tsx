@@ -1,22 +1,4 @@
-/**
- * ============================================================================
- * ADVANCED ONTOLOGY GRAPH VIEW PLUGIN
- * ============================================================================
- * 
- * Enterprise-grade graph visualization with:
- * - Rich semantic modeling (higher-order, n-ary, temporal, spatial)
- * - AI-powered reasoning and suggestions
- * - Collaborative editing with real-time sync
- * - Advanced querying (pattern matching, path finding, motif detection)
- * - Provenance tracking and version control
- * - Performance optimization (clustering, lazy loading, caching)
- * - Multi-format export (OWL, RDF, JSON-LD, GraphML, Cypher)
- * - Natural language to query translation
- * - Graph-RAG integration
- * 
- * @author OntoCode Team
- * @version 2.0.0
- */
+
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Network } from 'vis-network';
@@ -86,7 +68,7 @@ interface GraphViewProps {
 export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<Network | null>(null);
-  
+
   const [nodes, setNodes] = useState<OntologyNode[]>([]);
   const [edges, setEdges] = useState<OntologyEdge[]>([]);
   const [loading, setLoading] = useState(false);
@@ -112,7 +94,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
     contextMenu: false,
     tooltips: false
   });
-  
+
   const [visibleTypes, setVisibleTypes] = useState({
     class: true,
     individual: true,
@@ -121,13 +103,12 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
     objectProperty: true
   });
 
-  // Fetch graph data from backend
   const fetchGraphData = useCallback(async (forceReload: boolean = false) => {
     setLoading(true);
     try {
       const url = `${(window as any).API_BASE_URL}/api/ontology/${projectId}/graph${forceReload ? '?forceReload=true' : ''}`;
       console.log(`[GraphView] Fetching graph from: ${url} (forceReload=${forceReload})`);
-      
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -135,7 +116,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         setNodes(data.nodes || []);
@@ -155,7 +136,6 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
     fetchGraphData();
   }, [fetchGraphData]);
 
-  // Initialize vis-network
   useEffect(() => {
     if (!containerRef.current || nodes.length === 0) return;
 
@@ -218,7 +198,6 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
       edges: visEdges
     };
 
-    // Circular/radial layout: position nodes evenly on a circle
     if (settings.layout === 'circular' || settings.layout === 'radial') {
       const r = Math.max(200, visNodes.length * 40);
       visNodes.forEach((node, i) => {
@@ -284,7 +263,6 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
     const network = new Network(containerRef.current, data, options);
     networkRef.current = network;
 
-    // Event listeners
     interface SelectNodeParams {
       nodes: string[];
       edges: string[];
@@ -365,7 +343,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
       position: 'relative',
       backgroundColor: '#f5f5f5'
     }}>
-      {/* Toolbar */}
+      {}
       <div style={{
         padding: '10px',
         backgroundColor: '#fff',
@@ -458,14 +436,14 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
         </button>
       </div>
 
-      {/* Main Content */}
+      {}
       <div style={{ 
         flex: 1, 
         display: 'flex', 
         position: 'relative',
         overflow: 'hidden'
       }}>
-        {/* Graph Canvas */}
+        {}
         <div 
           ref={containerRef} 
           style={{ 
@@ -475,7 +453,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
           }}
         />
 
-        {/* Filters Panel */}
+        {}
         {showFilters && (
           <div style={{
             position: 'absolute',
@@ -516,7 +494,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
           </div>
         )}
 
-        {/* Settings Panel */}
+        {}
         {showSettings && (
           <div style={{
             position: 'absolute',
@@ -606,7 +584,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
           </div>
         )}
 
-        {/* Selected Node Info */}
+        {}
         {selectedNode && (
           <div style={{
             position: 'absolute',
@@ -630,7 +608,7 @@ export const GraphView: React.FC<GraphViewProps> = ({ projectId }) => {
           </div>
         )}
 
-        {/* Loading Overlay */}
+        {}
         {loading && (
           <div style={{
             position: 'absolute',

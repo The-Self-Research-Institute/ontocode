@@ -12,9 +12,6 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Pizza tutorial roots and intersection-subClassOf children.
- */
 class HierarchySnapshotBuilderPizzaTest {
 
     private static final String PERSON =

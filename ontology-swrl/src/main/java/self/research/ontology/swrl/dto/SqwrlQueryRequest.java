@@ -2,16 +2,13 @@ package self.research.ontology.swrl.dto;
 
 import jakarta.validation.constraints.NotBlank;
 
-/**
- * Request DTO for SQWRL query execution
- */
 public class SqwrlQueryRequest {
 
     @NotBlank(message = "Query text is required")
     private String queryText;
-    
+
     private String queryName;
-    
+
     private Integer maxResults;
 
     public SqwrlQueryRequest() {

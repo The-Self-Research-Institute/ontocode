@@ -1,36 +1,4 @@
-/**
- * prepare-resources.js
- *
- * Copies / downloads backend binaries into electron-app/resources/backend/
- * before an electron-builder dist run.
- *
- * Run:  node scripts/prepare-resources.js
- *       npm run prepare-resources
- *
- * What it does:
- *   1. Copy owl-editor.jar from ontology-editor/target/
- *   2. Copy fuseki-server.jar from fuseki-docker/, or download the official
- *      Apache Jena Fuseki release (checksum-verified) if not present — no
- *      Docker required, so this works on a fresh machine
- *   3. Copy mongod binary from data/mongodb/bin/<platform>/, or (Windows only)
- *      download the official MongoDB Community Server release (checksum-verified)
- *      if not present. macOS/Linux still require the manual download — see the
- *      warning printed below.
- *   4. Bundle a minimal JRE via jlink (preferred) or download Temurin 21 JRE
- *
- * Result layout inside electron-app/resources/backend/:
- *
- *   jars/
- *     owl-editor.jar
- *     fuseki-server.jar
- *   mongodb/
- *     win32/   mongod.exe
- *     darwin/  mongod
- *     linux/   mongod
- *   jre/
- *     bin/java[.exe]   ← used by ServiceManager; no system Java required
- *     ...
- */
+
 
 const fs            = require('fs');
 const path          = require('path');
@@ -44,56 +12,29 @@ const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
 const JARS_DIR   = path.join(RESOURCES, 'jars');
 const JRE_DIR    = path.join(RESOURCES, 'jre');
-// SWRL's dependencies (SWRLAPI's bundled Drools 7.x/MVEL 2.x engine) reference
-// java.lang.Compiler, removed in JDK 9, in a fallback code path that only
-// misfires under JDK 21's stricter internals — not JDK 17's (see
-// ontology-swrl/pom.xml's own "MUST run on Java 17" note). SWRL therefore
-// gets its own separate bundled JRE instead of sharing jre/ with Desktop/Fuseki.
+
 const JRE17_DIR  = path.join(RESOURCES, 'jre17');
 
-// Cross-building for a platform other than the one this script runs on (e.g.
-// preparing a Linux bundle from Windows for an electron-builder --linux run).
-// jlink can't cross-compile — it only ever produces a runtime for the host
-// it's invoked on — so when this differs from process.platform we skip jlink
-// entirely and go straight to downloading the prebuilt Temurin JRE, and fetch
-// mongod for the target platform instead of copying/downloading the host's.
 const TARGET_PLATFORM = process.env.TARGET_PLATFORM || process.platform;
 const CROSS_BUILDING = TARGET_PLATFORM !== process.platform;
 
-// Node's arch values match what we need directly: 'x64' or 'arm64'. Only Linux
-// currently ships an arm64 electron-builder target (electron-builder.yml), so
-// this only actually changes behavior for TARGET_PLATFORM=linux today — but is
-// named generically in case Windows/Mac arm64 targets are added later.
 const TARGET_ARCH = process.env.TARGET_ARCH || process.arch;
 
-// ── Fuseki download (fallback when fuseki-docker/fuseki-server.jar is absent) ──
-// Same version + checksum pinned in fuseki-docker/Dockerfile — keep in sync.
 const FUSEKI_VERSION = '6.1.0';
 const FUSEKI_SHA512 = '75457f45d14397876a41ed51abe7ae5d2f1e708dfe1315765f858158bc5c6813bc036ec1539ddc4dffd26201f5cc31fadec299ca5c3dc2548b723513ed31d326';
 const FUSEKI_MIRROR_URL = `https://www.apache.org/dyn/mirrors/mirrors.cgi?action=download&filename=jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 const FUSEKI_ARCHIVE_URL = `https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 
-// ── MongoDB download (fallback when data/mongodb/bin/win32/mongod.exe is absent) ──
-// Latest 6.0.x as of this writing — matches the mongo:6 image used by docker-compose.
-// Checksum pulled from the official .sha256 file MongoDB publishes alongside the release.
 const MONGODB_VERSION = '6.0.29';
 const MONGODB_WIN32_URL = `https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-${MONGODB_VERSION}.zip`;
 const MONGODB_WIN32_SHA256 = 'abfd03e5e02c962004e0b46d47777cdd3bca767b1a200dcafc2194cc5415cd55';
 
-// Linux builds are distro-specific (glibc/OpenSSL version dependent), unlike the
-// generic Windows/Mac builds — this one targets Ubuntu 22.04 (jammy), the default
-// WSL distro. Checksum pulled from the official .sha256 MongoDB publishes alongside
-// the release (fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-<ver>.tgz.sha256).
 const MONGODB_LINUX_UBUNTU2204_URL = `https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz`;
 const MONGODB_LINUX_UBUNTU2204_SHA256 = '46de5a28be8066e0c44b60e9919e5edd00c28f55fc187f8e0c60ab38dedc9054';
 
-// ARM64 (aarch64) build for the electron-builder linux-arm64 target. Checksum
-// fetched fresh from fastdl.mongodb.org/linux/mongodb-linux-aarch64-ubuntu2204-<ver>.tgz.sha256
-// at the time this was added — keep in sync with MONGODB_VERSION above.
 const MONGODB_LINUX_ARM64_UBUNTU2204_URL = `https://fastdl.mongodb.org/linux/mongodb-linux-aarch64-ubuntu2204-${MONGODB_VERSION}.tgz`;
 const MONGODB_LINUX_ARM64_UBUNTU2204_SHA256 = '81003080fd01a95dc7bbc08a5e62c80d22b55df0ce5df6b674c2ec915a4b825b';
 
-// ── Minimal modules needed for Spring Boot + Jena Fuseki ────────────────────
 const JLINK_MODULES = [
     'java.base',
     'java.compiler',
@@ -119,18 +60,12 @@ const JLINK_MODULES = [
     'jdk.zipfs',
 ].join(',');
 
-// ── Temurin 21 JRE download URLs per platform (x64 — the only arch built for
-// win32/darwin today) ────────────────────────────────────────────────────────
 const TEMURIN_URLS = {
     win32:  'https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse',
     darwin: 'https://api.adoptium.net/v3/binary/latest/21/ga/mac/x64/jre/hotspot/normal/eclipse',
     linux:  'https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jre/hotspot/normal/eclipse',
 };
 
-// Linux arm64 (electron-builder's linux-arm64 target) — Adoptium's arch
-// identifier for ARM64 is "aarch64", not "arm64". Without this, the
-// linux-arm64 build previously fell through to the x64 URL above (wrong
-// architecture — fails to execute on real ARM64 hardware).
 const TEMURIN_LINUX_ARM64_URL = 'https://api.adoptium.net/v3/binary/latest/21/ga/linux/aarch64/jre/hotspot/normal/eclipse';
 
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); }
@@ -146,7 +81,6 @@ function copyIfExists(src, dest, label) {
     return false;
 }
 
-// ── Step 1: Desktop JAR (auth + editor + plugin) ─────────────────────────────
 function copyDesktopJar() {
     console.log('\n[1/4] Desktop JAR (ontology-desktop)');
     const src = path.join(REPO_ROOT, 'ontology-desktop', 'target', 'ontology-desktop-1.0.0.jar');
@@ -159,12 +93,10 @@ function copyDesktopJar() {
     return ok;
 }
 
-// Legacy name kept for older docs — owl-editor is no longer started by ServiceManager.
 function copyOwlEditorJar() {
     copyDesktopJar();
 }
 
-// ── Step 2: Fuseki JAR ────────────────────────────────────────────────────────
 async function copyFusekiJar() {
     console.log('\n[2/4] Fuseki JAR');
     const cachedSrc = path.join(REPO_ROOT, 'fuseki-docker', 'fuseki-server.jar');
@@ -175,22 +107,12 @@ async function copyFusekiJar() {
     }
 }
 
-/**
- * Download the official Fuseki binary distribution (no Docker required —
- * this is what makes prepare-resources work on a machine that only has
- * Node/npm, e.g. a fresh clone or a machine building the installer). Mirrors
- * the same version + checksum pinned in fuseki-docker/Dockerfile.
- */
 async function downloadFuseki(cachedSrc) {
     const archivePath = path.join(RESOURCES, `apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`);
     ensureDir(RESOURCES);
 
     try {
-        // archive.apache.org is a single stable host (verified reachable and fast);
-        // the mirrors.cgi redirect is more convenient bandwidth-wise when it works,
-        // but has been observed to redirect to a mirror that accepts the connection
-        // and then never responds — try the reliable host first, mirror as a bonus
-        // fallback rather than the primary path.
+
         try {
             await downloadFile(FUSEKI_ARCHIVE_URL, archivePath);
         } catch (archiveErr) {
@@ -210,12 +132,7 @@ async function downloadFuseki(cachedSrc) {
         const extractDir = path.join(RESOURCES, `_fuseki-extract-${FUSEKI_VERSION}`);
         fs.rmSync(extractDir, { recursive: true, force: true });
         ensureDir(extractDir);
-        // Windows' bundled tar (bsdtar) needs two things to accept a native path here:
-        //  --force-local — otherwise it reads the drive letter in "E:\..." as a
-        //    "host:path" remote-archive spec ("Cannot connect to E: resolve failed").
-        //  forward slashes — backslashes get mangled by its own path parsing even
-        //    with --force-local ("Cannot open: No such file or directory" on a dir
-        //    that does exist). Both are harmless no-ops on macOS/Linux tar.
+
         const tarArchivePath = archivePath.replace(/\\/g, '/');
         const tarExtractDir = extractDir.replace(/\\/g, '/');
         execSync(`tar --force-local -xzf "${tarArchivePath}" -C "${tarExtractDir}"`, { stdio: 'inherit', timeout: 120_000 });
@@ -227,8 +144,7 @@ async function downloadFuseki(cachedSrc) {
 
         ensureDir(JARS_DIR);
         fs.copyFileSync(extractedJar, path.join(JARS_DIR, 'fuseki-server.jar'));
-        // Also cache it at the path copyFusekiJar() checks first, so future
-        // runs (and the Docker build, which expects this layout) skip the download.
+
         ensureDir(path.dirname(cachedSrc));
         fs.copyFileSync(extractedJar, cachedSrc);
         console.log('  ✓  Downloaded and installed fuseki-server.jar');
@@ -245,15 +161,12 @@ async function downloadFuseki(cachedSrc) {
     }
 }
 
-// ── Step 3: MongoDB binary ────────────────────────────────────────────────────
 async function copyMongod() {
     console.log('\n[3/4] MongoDB binary');
     let anyMissing = false;
     for (const platform of ['win32', 'darwin', 'linux']) {
         const ext  = platform === 'win32' ? '.exe' : '';
-        // Linux caches per-arch (linux-x64 / linux-arm64): the two binaries are
-        // NOT interchangeable, so a single "linux" cache slot would silently
-        // reuse the wrong-architecture mongod on an arch switch between builds.
+
         const isLinuxArm64 = platform === 'linux' && TARGET_ARCH === 'arm64';
         const cacheSubdir = platform === 'linux' ? (isLinuxArm64 ? 'linux-arm64' : 'linux-x64') : platform;
         const cachedSrc = path.join(REPO_ROOT, 'data', 'mongodb', 'bin', cacheSubdir, `mongod${ext}`);
@@ -281,13 +194,6 @@ async function copyMongod() {
     }
 }
 
-/**
- * Download the official MongoDB Community Server Windows build (checksum-verified)
- * so a fresh Windows machine doesn't need a manual download — this was a recurring
- * blocker: prepare-resources previously required the user to manually fetch and
- * place mongod.exe before every build. macOS/Linux are left manual (see copyMongod)
- * since their archive layout/checksums aren't verified here.
- */
 async function downloadMongodWin32(cachedSrc, dest) {
     const archivePath = path.join(RESOURCES, `mongodb-windows-x86_64-${MONGODB_VERSION}.zip`);
     ensureDir(RESOURCES);
@@ -317,7 +223,7 @@ async function downloadMongodWin32(cachedSrc, dest) {
 
         ensureDir(path.dirname(dest));
         fs.copyFileSync(extractedExe, dest);
-        // Also cache it where copyMongod() checks first, so future runs skip the download.
+
         ensureDir(path.dirname(cachedSrc));
         fs.copyFileSync(extractedExe, cachedSrc);
         console.log('  ✓  Downloaded and installed mongod.exe');
@@ -332,13 +238,6 @@ async function downloadMongodWin32(cachedSrc, dest) {
     }
 }
 
-/**
- * Download the official MongoDB Community Server Linux build (checksum-verified),
- * for cross-building a Linux bundle from a non-Linux host — see downloadMongodWin32
- * for the same pattern. Ubuntu 22.04 specifically (Linux builds are distro-specific
- * unlike Windows/Mac); tar preserves the executable bit through extraction, and we
- * chmod it explicitly afterward since the host filesystem here may not honor it.
- */
 async function downloadMongodLinuxUbuntu2204(cachedSrc, dest) {
     const archivePath = path.join(RESOURCES, `mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz`);
     ensureDir(RESOURCES);
@@ -368,7 +267,7 @@ async function downloadMongodLinuxUbuntu2204(cachedSrc, dest) {
         ensureDir(path.dirname(dest));
         fs.copyFileSync(extractedBin, dest);
         fs.chmodSync(dest, 0o755);
-        // Also cache it where copyMongod() checks first, so future runs skip the download.
+
         ensureDir(path.dirname(cachedSrc));
         fs.copyFileSync(extractedBin, cachedSrc);
         fs.chmodSync(cachedSrc, 0o755);
@@ -384,14 +283,6 @@ async function downloadMongodLinuxUbuntu2204(cachedSrc, dest) {
     }
 }
 
-/**
- * Download the official MongoDB Community Server Linux ARM64 (aarch64) build —
- * same pattern as downloadMongodLinuxUbuntu2204, for the electron-builder
- * linux-arm64 target. Without this, the linux-arm64 AppImage/deb previously
- * bundled the x64 mongod binary (wrong architecture — fails to execute on
- * real ARM64 hardware) since this function didn't exist and copyMongod()
- * always fell back to the x64 downloader regardless of TARGET_ARCH.
- */
 async function downloadMongodLinuxArm64Ubuntu2204(cachedSrc, dest) {
     const archivePath = path.join(RESOURCES, `mongodb-linux-aarch64-ubuntu2204-${MONGODB_VERSION}.tgz`);
     ensureDir(RESOURCES);
@@ -421,7 +312,7 @@ async function downloadMongodLinuxArm64Ubuntu2204(cachedSrc, dest) {
         ensureDir(path.dirname(dest));
         fs.copyFileSync(extractedBin, dest);
         fs.chmodSync(dest, 0o755);
-        // Also cache it where copyMongod() checks first, so future runs skip the download.
+
         ensureDir(path.dirname(cachedSrc));
         fs.copyFileSync(extractedBin, cachedSrc);
         fs.chmodSync(cachedSrc, 0o755);
@@ -437,7 +328,6 @@ async function downloadMongodLinuxArm64Ubuntu2204(cachedSrc, dest) {
     }
 }
 
-/** Recursively search a directory tree for the first file matching `name`. */
 function findFileRecursive(dir, name) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -451,17 +341,9 @@ function findFileRecursive(dir, name) {
     return null;
 }
 
-// ── Step 4: JRE (jlink → download fallback) ──────────────────────────────────
-// jlink can't cross-compile to a different arch any more than it can to a
-// different platform — its output always matches the arch it's invoked on.
 const CROSS_ARCH = TARGET_ARCH !== process.arch;
 const SKIP_JLINK = CROSS_BUILDING || CROSS_ARCH;
 
-// Tracks which (platform, arch) the JRE_DIR currently actually contains. The
-// binary name alone can't distinguish this — "java" is the same filename for
-// linux-x64 and linux-arm64 — so without this marker, switching TARGET_ARCH
-// between builds without clearing JRE_DIR first would silently keep serving
-// the wrong-architecture JRE (existence check would pass either way).
 const JRE_ARCH_MARKER = path.join(JRE_DIR, '.prepared-for');
 
 async function bundleJre() {
@@ -481,9 +363,7 @@ async function bundleJre() {
             fs.rmSync(JRE_DIR, { recursive: true, force: true });
         }
     } else if (SKIP_JLINK && fs.existsSync(javaBin) && actualMarker === expectedMarker) {
-        // Can't exec-verify a foreign binary from here — but the marker confirms
-        // it was fetched for exactly this (platform, arch) pair, not just any
-        // leftover JRE dir, so trust it rather than re-fetching every run.
+
         console.log(`  ✓  Bundled JRE for ${expectedMarker} already present (existence check only — can't exec-verify a foreign binary)`);
         return;
     } else if (fs.existsSync(JRE_DIR) && actualMarker !== expectedMarker) {
@@ -491,14 +371,12 @@ async function bundleJre() {
         fs.rmSync(JRE_DIR, { recursive: true, force: true });
     }
 
-    // jlink can't cross-compile — only try it when building for the host's own platform+arch.
     if (!SKIP_JLINK && await tryJlink()) {
         ensureDir(JRE_DIR);
         fs.writeFileSync(JRE_ARCH_MARKER, expectedMarker);
         return;
     }
 
-    // Fall back to downloading Temurin JRE (the only option when cross-building)
     await downloadTemurin();
     if (fs.existsSync(javaBin)) {
         fs.writeFileSync(JRE_ARCH_MARKER, expectedMarker);
@@ -535,15 +413,11 @@ async function tryJlink() {
     }
 }
 
-// ── SWRL's dedicated JDK 17 JRE ──────────────────────────────────────────────
 function findJdk17Home() {
     if (process.env.JAVA17_HOME && fs.existsSync(process.env.JAVA17_HOME)) {
         return process.env.JAVA17_HOME;
     }
-    // Common install roots per platform for Adoptium/Oracle/distro-packaged JDK 17 —
-    // same pattern this build already assumes for JDK 21 (see the desktop build
-    // checklist). Linux entries cover both apt's openjdk-17-jdk (java-17-openjdk-*)
-    // and Adoptium's own .deb (temurin-17-jdk-*).
+
     const candidateRoots = process.platform === 'win32'
         ? ['C:\\Program Files\\Eclipse Adoptium', 'C:\\Program Files\\Java']
         : ['/usr/lib/jvm'];
@@ -636,10 +510,6 @@ async function downloadTemurin() {
     }
 }
 
-// Apache's mirrors.cgi redirect can hand off to a mirror that accepts the
-// connection and then never responds — https.get has no default timeout, so
-// that hangs the whole script forever instead of failing over. 20s covers a
-// slow-but-alive connection; anything stalled longer than that is dead.
 const DOWNLOAD_TIMEOUT_MS = 20_000;
 
 function downloadFile(url, dest, redirectsLeft = 5) {
@@ -684,19 +554,15 @@ function downloadFile(url, dest, redirectsLeft = 5) {
 function extractJreArchive(archivePath, targetDir, platform) {
     ensureDir(targetDir);
     if (platform === 'win32') {
-        // PowerShell Expand-Archive (built-in on Windows 10+)
+
         execSync(
             `powershell -NoProfile -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${targetDir}' -Force"`,
             { stdio: 'inherit', timeout: 120_000 },
         );
-        // Temurin extracts to jdk-21.x.x-jre\ — flatten it
+
         flattenSingleSubdir(targetDir);
     } else {
-        // tar with strip-components to skip the top-level jdk-21.x.x-jre/ dir.
-        // --force-local + forward slashes: same Windows-bsdtar workaround as the
-        // Fuseki/Linux-mongo downloads above — without it, a Windows path like
-        // "E:\..." gets misread as a "host:path" remote-archive spec. Harmless
-        // no-ops on macOS/Linux tar, so this is safe regardless of the host.
+
         const tarArchivePath = archivePath.replace(/\\/g, '/');
         const tarTargetDir = targetDir.replace(/\\/g, '/');
         execSync(
@@ -706,7 +572,6 @@ function extractJreArchive(archivePath, targetDir, platform) {
     }
 }
 
-/** If targetDir contains exactly one subdirectory, move its contents up. */
 function flattenSingleSubdir(targetDir) {
     const entries = fs.readdirSync(targetDir);
     if (entries.length !== 1) return;
@@ -718,7 +583,6 @@ function flattenSingleSubdir(targetDir) {
     fs.rmdirSync(sub);
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
     console.log('\n=== OntoCode Desktop — prepare-resources ===');
     if (CROSS_BUILDING) {
@@ -746,9 +610,7 @@ async function main() {
         console.log(`  ${ok ? '✓' : '✗'}  ${label}`);
         if (!ok) allOk = false;
     }
-    // SWRL JRE is checked separately and doesn't fail the build if missing —
-    // SWRL itself is already optional (startSwrl() no-ops without swrl.jar);
-    // missing its JRE just means it'll fail at runtime instead of build time.
+
     const swrlJreOk = fs.existsSync(path.join(JRE17_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java'));
     console.log(`  ${swrlJreOk ? '✓' : '⚠'}  SWRL JRE (JDK 17)${swrlJreOk ? '' : ' — missing, SWRL reasoning will fail at runtime'}`);
     if (!allOk) {

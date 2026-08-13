@@ -24,15 +24,12 @@ public class CustomUserDetailsService implements UserDetailsService {
     public UserDetails loadUserByUsername(String identifier) throws UsernameNotFoundException {
         String normalizedIdentifier = identifier == null ? "" : identifier.trim();
 
-        // Favor email lookup first since we are transitioning to email-based identity
         User authUser = userRepository.findByEmailIgnoreCase(normalizedIdentifier)
                 .or(() -> userRepository.findByUsername(normalizedIdentifier))
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + normalizedIdentifier));
 
         String[] authorities = buildAuthorities(authUser.getRoles());
 
-        // We use the EMAIL as the "username" for Spring Security's UserDetails
-        // This ensures that authentication.getName() returns the unique email.
         return org.springframework.security.core.userdetails.User.withUsername(authUser.getEmail())
                 .password(authUser.getPassword())
                 .authorities(authorities)

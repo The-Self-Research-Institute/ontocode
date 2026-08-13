@@ -223,7 +223,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src --ext ts",
+    "lint": "eslint src",
     "test": "node ./out/test/runTest.js",
     "build-webview": "cd webview-src && npm run build:vscode",
     "compile-web": "webpack --config webpack.config.js --mode development --watch",

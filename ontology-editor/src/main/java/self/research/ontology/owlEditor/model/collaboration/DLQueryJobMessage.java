@@ -5,10 +5,6 @@ import lombok.Data;
 
 import java.util.Map;
 
-/**
- * WebSocket payload for DL Query job lifecycle updates.
- * Topic: /topic/dlquery/{jobId}
- */
 @Data
 @Builder
 public class DLQueryJobMessage {

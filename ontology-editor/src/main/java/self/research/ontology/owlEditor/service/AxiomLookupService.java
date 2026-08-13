@@ -7,9 +7,6 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Locates asserted OWL axioms for an entity row (frame sections).
- */
 @Service
 @Slf4j
 public class AxiomLookupService {
@@ -87,14 +84,14 @@ public class AxiomLookupService {
                     .filter(ax -> axiomInvolves(ax, related))
                     .forEach(results::add);
         } catch (Exception ignored) {
-            // not a data property
+
         }
         try {
             ontology.getObjectPropertyRangeAxioms(df.getOWLObjectProperty(eIri)).stream()
                     .filter(ax -> axiomInvolves(ax, related))
                     .forEach(results::add);
         } catch (Exception ignored) {
-            // not an object property
+
         }
     }
 
@@ -105,14 +102,14 @@ public class AxiomLookupService {
                     .filter(ax -> axiomInvolves(ax, related))
                     .forEach(results::add);
         } catch (Exception ignored) {
-            // not a data property
+
         }
         try {
             ontology.getObjectPropertyDomainAxioms(df.getOWLObjectProperty(eIri)).stream()
                     .filter(ax -> axiomInvolves(ax, related))
                     .forEach(results::add);
         } catch (Exception ignored) {
-            // not an object property
+
         }
     }
 

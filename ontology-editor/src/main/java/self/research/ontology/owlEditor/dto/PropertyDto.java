@@ -19,9 +19,8 @@ public class PropertyDto {
     private List<String> disjointProperties;
     private List<String> equivalentProperties;
     private List<String> propertyChains;
-    private List<PropertyDto> children;  // NEW - for tree structure
+    private List<PropertyDto> children;
 
-    // Getters and Setters
     public String getId() {
         return id;
     }

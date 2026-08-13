@@ -8,10 +8,6 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Represents a change made to an ontology.
- * Tracks who made the change, when, what was changed, and why.
- */
 @Document(collection = "ontology_changes")
 public class OntologyChange {
 
@@ -23,43 +19,39 @@ public class OntologyChange {
 
     @Indexed
     private String userId;
-    
+
     private String username;
 
     @Indexed
     private LocalDateTime timestamp;
 
     private ChangeType changeType;
-    
-    private String changeCategory; // CLASS, PROPERTY, INDIVIDUAL, AXIOM, ANNOTATION
-    
+
+    private String changeCategory;
+
     private String entityIRI;
-    
+
     private String entityLabel;
-    
-    // For detailed change information
+
     private String oldValue;
     private String newValue;
-    
-    private String axiomBefore; // The axiom before change
-    private String axiomAfter;  // The axiom after change
-    
-    private String description; // Human-readable description
-    
-    private String comment; // Optional user comment
-    
-    // Metadata
+
+    private String axiomBefore;
+    private String axiomAfter;
+
+    private String description;
+
+    private String comment;
+
     private Map<String, String> metadata = new HashMap<>();
-    
-    // For reverting changes
+
     private boolean reverted = false;
     private String revertedBy;
     private LocalDateTime revertedAt;
-    
-    // For collaboration
-    private String sessionId; // For grouping related changes
+
+    private String sessionId;
     private String ipAddress;
-    
+
     public enum ChangeType {
         ADD_CLASS,
         REMOVE_CLASS,
@@ -82,33 +74,32 @@ public class OntologyChange {
         REMOVE_DATA_PROPERTY,
         ADD_ANNOTATION_PROPERTY,
         REMOVE_ANNOTATION_PROPERTY,
-        
+
         ADD_INDIVIDUAL,
         REMOVE_INDIVIDUAL,
-        
+
         ADD_AXIOM,
         REMOVE_AXIOM,
         MODIFY_AXIOM,
-        
+
         ADD_ANNOTATION,
         REMOVE_ANNOTATION,
         MODIFY_ANNOTATION,
-        
+
         ADD_DOMAIN,
         REMOVE_DOMAIN,
         ADD_RANGE,
         REMOVE_RANGE,
-        
+
         ADD_INVERSE,
         REMOVE_INVERSE,
-        
+
         IMPORT_ONTOLOGY,
         REMOVE_IMPORT,
-        
+
         OTHER
     }
 
-    // Constructors
     public OntologyChange() {
         this.timestamp = LocalDateTime.now();
     }
@@ -121,7 +112,6 @@ public class OntologyChange {
         this.changeType = changeType;
     }
 
-    // Builder pattern
     public static class Builder {
         private OntologyChange change;
 
@@ -194,7 +184,6 @@ public class OntologyChange {
         }
     }
 
-    // Getters and Setters
     public String getId() {
         return id;
     }

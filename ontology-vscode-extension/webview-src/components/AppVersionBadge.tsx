@@ -5,7 +5,7 @@ import { isDesktop } from "../utils/desktop";
 type Variant = "light" | "dark" | "muted" | "header";
 
 type AppVersionBadgeProps = {
-  /** Override edition label (default: Desktop or Web Beta). */
+
   editionLabel?: string;
   variant?: Variant;
   className?: string;
@@ -18,7 +18,6 @@ const variantClasses: Record<Variant, string> = {
   header: "text-gray-500 bg-gray-50 border-gray-200",
 };
 
-/** Small pill showing running app edition + version (web beta or desktop). */
 export const AppVersionBadge: React.FC<AppVersionBadgeProps> = ({
   editionLabel,
   variant = "muted",

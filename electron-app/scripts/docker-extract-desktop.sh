@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Extract OntoCode Windows installer from the Docker build image.
-# Usage (repo root): ./electron-app/scripts/docker-extract-desktop.sh [image] [out-dir]
 
 set -euo pipefail
 IMAGE="${1:-ontocode-desktop-win}"

@@ -1,10 +1,4 @@
-/**
- * Browser-compatible Sci2Code service.
- * Mirrors the VS Code sci2CodeService + zoteroApiService for standalone web usage.
- * Calls the Zotero public API directly and formats citations locally.
- */
 
-// ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface CitationItem {
   key: string;
@@ -52,20 +46,14 @@ interface ZoteroConfig {
   groupId?: string;
 }
 
-// ─── Storage keys ───────────────────────────────────────────────────────────
-
 const STORAGE_KEY_API = 'zoteroApiKey';
 const STORAGE_KEY_USER = 'zoteroUserId';
 const STORAGE_KEY_LIB_TYPE = 'zoteroLibraryType';
 const STORAGE_KEY_GROUP = 'zoteroGroupId';
 
-// ─── Service ────────────────────────────────────────────────────────────────
-
 class Sci2CodeBrowserService {
   private baseUrl = 'https://api.zotero.org';
   private cachedItems: ZoteroItem[] | null = null;
-
-  // ── Config ──────────────────────────────────────────────────────────────
 
   getConfig(): ZoteroConfig | null {
     const apiKey = localStorage.getItem(STORAGE_KEY_API);
@@ -91,9 +79,6 @@ class Sci2CodeBrowserService {
     this.cachedItems = null; // bust cache
   }
 
-  /**
-   * Save config, auto-resolving userId from API key if not provided.
-   */
   async saveConfigAutoResolve(cfg: { apiKey: string; libraryType?: string; groupId?: string }): Promise<string | null> {
     const userId = await this.fetchUserIdFromApiKey(cfg.apiKey);
     if (!userId) return null;
@@ -109,12 +94,6 @@ class Sci2CodeBrowserService {
     this.cachedItems = null;
   }
 
-  // ── Zotero API ─────────────────────────────────────────────────────────
-
-  /**
-   * Fetch the user ID associated with an API key via GET /keys/{key}.
-   * Returns the numeric userID string, or null on failure.
-   */
   async fetchUserIdFromApiKey(apiKey: string): Promise<string | null> {
     let resp: Response;
     try {
@@ -131,10 +110,6 @@ class Sci2CodeBrowserService {
     return data.userID ? String(data.userID) : null;
   }
 
-  /**
-   * Fetch a single page of library items and return both the items and the
-   * Zotero `Total-Results` header so callers know when to stop paginating.
-   */
   async fetchLibraryPage(
     start: number = 0,
     pageSize: number = 100,
@@ -176,7 +151,6 @@ class Sci2CodeBrowserService {
     return { items, totalResults };
   }
 
-  /** Legacy single-call helper — fetches ALL items at once (used internally). */
   async fetchLibrary(limit: number = 10000, start: number = 0): Promise<ZoteroItem[]> {
     const cfg = this.getConfig();
     if (!cfg) throw new Error('Zotero not configured');
@@ -192,7 +166,6 @@ class Sci2CodeBrowserService {
       allItems.push(...items);
       currentStart += items.length;
 
-      // Stop when we have fetched everything the library has
       if (allItems.length >= totalResults || items.length < PAGE_SIZE) break;
     }
 
@@ -242,8 +215,6 @@ class Sci2CodeBrowserService {
     return resp.ok;
   }
 
-  // ── Citation metadata ──────────────────────────────────────────────────
-
   zoteroItemToCitationItem(zi: ZoteroItem): CitationItem {
     return {
       key: zi.data.key || zi.key,
@@ -268,7 +239,7 @@ class Sci2CodeBrowserService {
   }
 
   async getCitationMetadata(key: string): Promise<CitationItem | null> {
-    // Try cache first
+
     if (this.cachedItems) {
       const found = this.cachedItems.find(i => (i.data?.key || i.key) === key);
       if (found) return this.zoteroItemToCitationItem(found);
@@ -276,8 +247,6 @@ class Sci2CodeBrowserService {
     const item = await this.fetchItem(key);
     return item ? this.zoteroItemToCitationItem(item) : null;
   }
-
-  // ── Citation formatting (mirrors sci2CodeService.formatManualCitation) ──
 
   formatCitationForOntology(item: CitationItem, format: 'turtle' | 'rdfxml' = 'turtle'): string {
     const key = item.key.replace(/[^a-zA-Z0-9]/g, '');
@@ -326,8 +295,6 @@ class Sci2CodeBrowserService {
     }
   }
 
-  // ── BibTeX / CFF helpers ───────────────────────────────────────────────
-
   convertToBibTeX(item: CitationItem): string {
     const key = item.key.replace(/[^a-zA-Z0-9]/g, '');
     const year = item.date ? (item.date.match(/\d{4}/)?.[0] || '2025') : '2025';
@@ -358,8 +325,6 @@ class Sci2CodeBrowserService {
       url: item.url,
     };
   }
-
-  // ── Escaping helpers ───────────────────────────────────────────────────
 
   private escapeTurtle(str: string): string {
     return str

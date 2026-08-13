@@ -1,30 +1,26 @@
-// services/apiClient.ts
+
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 import { getGatewayUrl, getStoredDeploymentType, type DeploymentType } from '../config/deploymentConfig';
 import { isDesktop } from '../utils/desktop';
 import { resolveMutationUserId } from '../utils/mutationActor';
 
-// Get initial base URL from centralized config
 let BASE_URL = getGatewayUrl();
 
-// Set window.API_BASE_URL for plugins (UMD bundles that don't have access to this module)
 if (typeof window !== 'undefined') {
   (window as any).API_BASE_URL = BASE_URL;
 }
 
-// Allow updating base URL dynamically
 export const updateBaseUrl = (deploymentType: DeploymentType) => {
   BASE_URL = getGatewayUrl(deploymentType);
-  // Update window.API_BASE_URL as well for plugins
+
   if (typeof window !== 'undefined') {
     (window as any).API_BASE_URL = BASE_URL;
   }
-  // Update the axios instance's baseURL so subsequent requests use the new URL
+
   ApiClient.getInstance().updateAxiosBaseUrl(BASE_URL);
   console.log('[ApiClient] Base URL updated to:', BASE_URL);
 };
 
-// Expose current base URL for WebSocket connection
 export const getBaseUrl = () => BASE_URL;
 
 const TIMEOUT = 600_000; // Default API timeout (10 minutes)
@@ -34,12 +30,6 @@ function isUploadRequest(url: string): boolean {
   return url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url);
 }
 
-// Merge analyze/execute load both ontologies into an OWLAPI model server-side and run
-// synchronously on the request thread — for 200MB-class files that legitimately exceeds
-// the 10-minute default, and a client-side timeout mid-merge leaves the UI out of sync
-// with a server that kept going. content-page's first call on a cache miss triggers a
-// full ontology export server-side before returning, so it gets the same budget
-// (subsequent page reads are fast cache hits). Same budget as uploads for all.
 function isLongRunningRequest(url: string): boolean {
   return /\/merge\/(analyze|execute)/.test(url) || url.includes('/content-page');
 }
@@ -77,7 +67,6 @@ function dispatchUploadProgress(projectId: string, progressEvent: { loaded: numb
   );
 }
 
-// VS Code API detection
 declare global {
   interface Window {
     vscode?: { postMessage: (message: any) => void };
@@ -85,10 +74,6 @@ declare global {
   }
 }
 
-/**
- * Custom error class to normalize backend and proxy errors.
- *
- */
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -101,29 +86,17 @@ export class ApiError extends Error {
   }
 }
 
-// Generates a unique ID for proxy requests
 const genReqId = () => `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-// Map to track pending requests sent to the VS Code proxy
 const pending = new Map<
   string,
   { resolve: (v: any) => void; reject: (r?: any) => void; timeout: ReturnType<typeof setTimeout>; url?: string }
 >();
 
-/**
- * A singleton ApiClient that handles both standard web and VS Code proxy communication.
- *
- */
 class ApiClient {
   private static _instance: ApiClient;
   private axiosClient: AxiosInstance | null = null;
-  // In web extension mode or browser bridge mode, bypass the VS Code proxy
-  // Use direct axios/fetch instead.
-  // NOTE: In Electron (contextIsolation=true), direct window assignments in preload.js
-  // are NOT visible to the renderer — only contextBridge.exposeInMainWorld properties are.
-  // window.electronAPI is exposed via contextBridge, so it reliably signals Electron desktop.
-  // window.__ONTOCODE_CONFIG__ and __ONTOCODE_BROWSER_BRIDGE__ are set in isolated preload
-  // context and are undefined here, so we cannot rely on them to detect Electron.
+
   private isVSCode = typeof window !== 'undefined' &&
     !!window.vscode &&
     !(window as any).electronAPI &&
@@ -138,23 +111,14 @@ class ApiClient {
     return this._instance;
   }
 
-  /**
-   * Register a callback to handle 401 Unauthorized errors (token expired)
-   */
   setUnauthorizedCallback(callback: () => void) {
     this.onUnauthorized = callback;
   }
 
-  /**
-   * Register a callback to handle 503 maintenance responses (redirects all users to maintenance page)
-   */
   setMaintenanceCallback(callback: (message: string) => void) {
     this.onMaintenance = callback;
   }
 
-  /**
-   * Update the axios instance's baseURL when deployment type changes
-   */
   updateAxiosBaseUrl(newBaseUrl: string) {
     if (this.axiosClient) {
       this.axiosClient.defaults.baseURL = newBaseUrl;
@@ -167,22 +131,16 @@ class ApiClient {
       'IS_WEB_EXTENSION:', (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION);
 
     if (this.isVSCode) {
-      // If in VS Code desktop, set up the message listener for proxy
+
       console.log('[ApiClient] Using VS Code extension proxy for API requests');
       this.attachVSCodeListener();
     } else {
-      // If in browser or web extension, set up a standard Axios client
+
       console.log('[ApiClient] Using direct axios for API requests (baseURL:', BASE_URL, ')');
       this.setupAxios();
     }
   }
 
-  // ---------- VS Code proxy mode ----------
-
-  /**
-   * Listens for 'apiResponse' messages from the extension.
-   *
-   */
   private attachVSCodeListener() {
     if (this.listenerAttached) return;
     window.addEventListener('message', (event) => {
@@ -195,12 +153,12 @@ class ApiClient {
 
       clearTimeout(p.timeout);
       if (error) {
-        // Check for 401 Unauthorized
+
         if (error.status === 401 && this.onUnauthorized) {
           console.log('[ApiClient] 401 Unauthorized - Token expired');
           this.onUnauthorized();
         }
-        // Check for 503 maintenance
+
         if (error.status === 503 && (error.data?.maintenance === true || error.maintenance === true) && this.onMaintenance) {
           const msg = error.data?.message || error.data?.error || error.message || 'System is under maintenance.';
           console.log('[ApiClient] 503 Maintenance mode - redirecting');
@@ -215,10 +173,6 @@ class ApiClient {
     this.listenerAttached = true;
   }
 
-  /**
-   * Sends a request to the extension proxy and waits for an 'apiResponse' message.
-   *
-   */
   private postViaVSCode<T>(payload: { type: string; url: string;[k: string]: any }): Promise<T> {
     return new Promise((resolve, reject) => {
       if (!window.vscode) {
@@ -236,8 +190,6 @@ class ApiClient {
 
       pending.set(requestId, { resolve, reject, timeout });
 
-      // Get auth token from localStorage (managed by useAuth hook).
-      // Desktop runs a permit-all local backend — never attach a token.
       const token = isDesktop() ? null : localStorage.getItem('authToken');
       window.vscode.postMessage({
         ...payload,
@@ -247,12 +199,6 @@ class ApiClient {
     });
   }
 
-  // ---------- Axios (browser) mode ----------
-
-  /**
-   * Creates a standard Axios client for browser use.
-   *
-   */
   private setupAxios() {
     this.axiosClient = axios.create({
       baseURL: BASE_URL,
@@ -264,23 +210,15 @@ class ApiClient {
       maxBodyLength: Infinity
     });
 
-    // Request interceptor: resolve base URL, add auth token, and disable browser caching.
-    // BASE_URL is evaluated at module init — before Electron's did-finish-load
-    // sets window.__DESKTOP_API_URL__. Re-read it on every request so the first
-    // call after page load picks up the correct desktop port (18083).
     this.axiosClient.interceptors.request.use((config) => {
       const desktopUrl = (window as any).__DESKTOP_API_URL__;
       if (desktopUrl && config.baseURL !== desktopUrl) {
         config.baseURL = desktopUrl;
         BASE_URL = desktopUrl;
-        // Keep the plugin-facing global in sync — UMD plugin bundles fetch()
-        // against window.API_BASE_URL and would otherwise keep the stale
-        // pre-injection default (http://localhost:80 → ERR_CONNECTION_REFUSED).
+
         (window as any).API_BASE_URL = desktopUrl;
       }
 
-      // Desktop runs a permit-all local backend with no real session — never send
-      // an Authorization header (avoids leaking any stale web token).
       if (!isDesktop()) {
         const token = localStorage.getItem('authToken');
         if (token && config.headers) {
@@ -291,8 +229,7 @@ class ApiClient {
       if (mutationUserId && config.headers) {
         config.headers['X-Ontocode-User-Id'] = mutationUserId;
       }
-      // Prevent browser from serving stale GET responses for mutable API resources.
-      // Particularly important for draft stats, entity lists, and metadata endpoints.
+
       if (config.method === 'get' && config.headers) {
         config.headers['Cache-Control'] = 'no-cache, no-store';
         config.headers['Pragma'] = 'no-cache';
@@ -300,7 +237,6 @@ class ApiClient {
       return config;
     });
 
-    // Response interceptor to normalize errors
     this.axiosClient.interceptors.response.use(
       (resp) => resp,
       (err: AxiosError) => {
@@ -311,7 +247,6 @@ class ApiClient {
           (typeof data === 'string' ? data : undefined) ||
           (status === 401 ? 'Unauthorized' : err.message || 'Unexpected error');
 
-        // Check for 503 maintenance before overwriting the message
         if (status === 503 && (data?.maintenance === true) && this.onMaintenance) {
           const maintenanceMsg = data?.message || data?.error || 'System is under maintenance.';
           console.log('[ApiClient] 503 Maintenance mode - redirecting');
@@ -326,7 +261,6 @@ class ApiClient {
           msg = 'Network error. Check your connection and try again.';
         }
 
-        // Check for 401 Unauthorized
         if (status === 401 && this.onUnauthorized) {
           console.log('[ApiClient] 401 Unauthorized - Token expired');
           this.onUnauthorized();
@@ -336,8 +270,6 @@ class ApiClient {
       }
     );
   }
-
-  // ---------- Public API Methods ----------
 
   async get<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
     let data: T;
@@ -353,7 +285,7 @@ class ApiClient {
   async post<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
     let data: T;
     if (this.isVSCode) {
-      // FormData cannot be serialized through postMessage — convert to transferable format
+
       if (body instanceof FormData) {
         const fileEntry = body.get('file') as File | null;
         const msgBody: Record<string, any> = {};
@@ -362,8 +294,7 @@ class ApiClient {
         });
         if (fileEntry) {
           const buf = await fileEntry.arrayBuffer();
-          // Use base64 encoding instead of Array.from() - avoids creating
-          // a multi-million-element JS array which freezes the UI for large files
+
           const bytes = new Uint8Array(buf);
           const chunks: string[] = [];
           const chunkSize = 32768;
@@ -373,7 +304,7 @@ class ApiClient {
           msgBody._fileBase64 = btoa(chunks.join(''));
           msgBody._fileFieldName = 'file';
           msgBody._originalFileName = fileEntry.name;
-          // Detect OWL file types
+
           let contentType = fileEntry.type;
           if (!contentType || contentType === '') {
             const fileName = fileEntry.name.toLowerCase();
@@ -392,8 +323,7 @@ class ApiClient {
         data = await this.postViaVSCode<T>({ type: 'apiPost', url, body, params: config?.params, headers: config?.headers });
       }
     } else {
-      // When sending FormData, remove the default Content-Type so axios/browser
-      // can auto-set multipart/form-data with the correct boundary.
+
       const uploadProjectId = isUploadRequest(url) ? extractUploadProjectId(url) : undefined;
       const userOnUploadProgress = config?.onUploadProgress;
       const postConfig = body instanceof FormData
@@ -472,7 +402,6 @@ class ApiClient {
   }
 }
 
-// Export a singleton instance
 const apiClient = ApiClient.getInstance();
 export default apiClient;
 export type { AxiosRequestConfig };

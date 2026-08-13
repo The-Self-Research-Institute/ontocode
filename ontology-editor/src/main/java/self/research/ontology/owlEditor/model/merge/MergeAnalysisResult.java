@@ -5,11 +5,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Result of analyzing two ontologies for merge conflicts
- */
 public class MergeAnalysisResult {
-    
+
     private List<MergeConflict> conflicts = new ArrayList<>();
     private int sourceClassCount;
     private int sourcePropertyCount;
@@ -31,78 +28,76 @@ public class MergeAnalysisResult {
     private Map<String, String> sourceOnlyClassLabels = new HashMap<>();
     private Map<String, String> sourceOnlyPropertyLabels = new HashMap<>();
     private Map<String, String> sourceOnlyIndividualLabels = new HashMap<>();
-    // Maps a parent entity IRI to its direct child IRIs (subclass / sub-property)
+
     private Map<String, List<String>> classHierarchy = new HashMap<>();
     private Map<String, List<String>> propertyHierarchy = new HashMap<>();
-    
+
     public void addConflict(MergeConflict conflict) {
         this.conflicts.add(conflict);
     }
-    
+
     public int getTotalConflicts() {
         return conflicts.size();
     }
-    
+
     public int getConflictsByType(ConflictType type) {
         return (int) conflicts.stream()
                             .filter(c -> c.getConflictType() == type)
                             .count();
     }
-    
-    // Getters and Setters
-    
+
     public List<MergeConflict> getConflicts() {
         return conflicts;
     }
-    
+
     public void setConflicts(List<MergeConflict> conflicts) {
         this.conflicts = conflicts;
     }
-    
+
     public int getSourceClassCount() {
         return sourceClassCount;
     }
-    
+
     public void setSourceClassCount(int sourceClassCount) {
         this.sourceClassCount = sourceClassCount;
     }
-    
+
     public int getSourcePropertyCount() {
         return sourcePropertyCount;
     }
-    
+
     public void setSourcePropertyCount(int sourcePropertyCount) {
         this.sourcePropertyCount = sourcePropertyCount;
     }
-    
+
     public int getTargetClassCount() {
         return targetClassCount;
     }
-    
+
     public void setTargetClassCount(int targetClassCount) {
         this.targetClassCount = targetClassCount;
     }
-    
+
     public int getTargetPropertyCount() {
         return targetPropertyCount;
     }
-    
+
     public void setTargetPropertyCount(int targetPropertyCount) {
         this.targetPropertyCount = targetPropertyCount;
     }
-    
+
     public int getSourceIndividualCount() {
         return sourceIndividualCount;
     }
-    
+
     public void setSourceIndividualCount(int sourceIndividualCount) {
         this.sourceIndividualCount = sourceIndividualCount;
     }
-    
+
     public int getTargetIndividualCount() {
         return targetIndividualCount;
     }
-    
+
     public void setTargetIndividualCount(int targetIndividualCount) {
         this.targetIndividualCount = targetIndividualCount;
     }

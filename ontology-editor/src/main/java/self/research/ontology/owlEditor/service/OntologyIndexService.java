@@ -96,7 +96,6 @@ public class OntologyIndexService {
         }
         log.info("[IndexService {}] [TIMING] Metrics query (counts): {} ms", projectId, (System.nanoTime() - queryStart) / 1_000_000);
 
-        // Get ontology IRI
         queryStart = System.nanoTime();
         String ontologyIri = null;
         String versionIri = null;
@@ -113,8 +112,6 @@ public class OntologyIndexService {
         }
         log.info("[IndexService {}] [TIMING] Ontology IRI query: {} ms", projectId, (System.nanoTime() - queryStart) / 1_000_000);
 
-        // Count axiom types — batched into a single SPARQL query using subqueries
-        // to avoid 14+ sequential round-trips to GraphDB (reduces ~60s to ~5-8s)
         queryStart = System.nanoTime();
         Map<String, Integer> axiomCounts = new LinkedHashMap<>();
         String batchedAxiomQuery = PREFIXES + """
@@ -163,7 +160,7 @@ public class OntologyIndexService {
             datatypeCount = literalToInt(sol, "datatypeCount");
             importsCount = literalToInt(sol, "importsCount");
         } else {
-            // Fallback: all zeros
+
             for (String key : List.of("subClassOf", "equivalentClasses", "disjointClasses",
                     "subObjectPropertyOf", "inverseObjectProperties", "objectPropertyDomain",
                     "objectPropertyRange", "dataPropertyDomain", "dataPropertyRange",
@@ -173,17 +170,15 @@ public class OntologyIndexService {
             }
         }
         log.info("[IndexService {}] [TIMING] Batched axiom count query: {} ms", projectId, (System.nanoTime() - queryStart) / 1_000_000);
-        
-        // Declaration axioms (classes + properties + individuals)
-        int declarations = (int) counts.getOrDefault("classes", 0) 
+
+        int declarations = (int) counts.getOrDefault("classes", 0)
                          + (int) counts.getOrDefault("objectProperties", 0)
                          + (int) counts.getOrDefault("dataProperties", 0)
                          + (int) counts.getOrDefault("individuals", 0)
                          + (int) counts.getOrDefault("annotationProperties", 0);
         axiomCounts.put("declaration", declarations);
-        
-        // Total logical axioms (rough estimate)
-        int logicalAxioms = axiomCounts.get("subClassOf") 
+
+        int logicalAxioms = axiomCounts.get("subClassOf")
                           + axiomCounts.get("equivalentClasses")
                           + axiomCounts.get("disjointClasses");
 
@@ -191,33 +186,28 @@ public class OntologyIndexService {
         meta.put("counts", counts);
         meta.put("prefixes", datasetService.getPrefixes(projectId));
         meta.put("lastUpdated", Instant.now().toString());
-        meta.put("cacheComplete", true);  // Mark cache as complete for fast loading
+        meta.put("cacheComplete", true);
         meta.put("cachedAt", Instant.now().toString());
-        
-        // Add ontology identity
+
         if (ontologyIri != null) {
             meta.put("ontologyIRI", ontologyIri);
         }
         if (versionIri != null) {
             meta.put("versionIRI", versionIri);
         }
-        
-        // Add ontology annotations
+
         queryStart = System.nanoTime();
         meta.put("annotations", metadataService.getOntologyAnnotations(projectId));
         log.info("[IndexService {}] [TIMING] Annotations query: {} ms", projectId, (System.nanoTime() - queryStart) / 1_000_000);
-        
-        // Add ontology imports
+
         queryStart = System.nanoTime();
         meta.put("imports", metadataService.getOntologyImports(projectId));
         log.info("[IndexService {}] [TIMING] Imports query: {} ms", projectId, (System.nanoTime() - queryStart) / 1_000_000);
-        
-        // Add general class axioms
+
         queryStart = System.nanoTime();
         meta.put("axioms", metadataService.getGeneralClassAxioms(projectId));
         log.info("[IndexService {}] [TIMING] General class axioms query: {} ms", projectId, (System.nanoTime() - queryStart) / 1_000_000);
-        
-        // Add axiom counts for display
+
         meta.put("axiomCount", logicalAxioms + declarations);
         meta.put("logicalAxiomCount", logicalAxioms);
         meta.put("declarationAxiomCount", declarations);
@@ -242,15 +232,15 @@ public class OntologyIndexService {
         meta.put("objectPropertyAssertionCount", axiomCounts.get("objectPropertyAssertion"));
         meta.put("dataPropertyAssertionCount", axiomCounts.get("dataPropertyAssertion"));
         meta.put("annotationAssertionCount", axiomCounts.get("annotationAssertion"));
-        meta.put("gciCount", 0);  // General Class Inclusions - requires reasoning
+        meta.put("gciCount", 0);
         meta.put("hiddenGciCount", 0);
-        
+
         long totalMs = (System.nanoTime() - totalStart) / 1_000_000;
         log.info("[IndexService {}] ═══ computeMetadata COMPLETED in {} ms ({} sec)", projectId, totalMs, totalMs / 1000);
 
         return meta;
     }
-    
+
     private int querySingleCount(String projectId, String query) {
         TupleQueryResult rs = datasetService.execSelect(projectId, query);
         if (rs.hasNext()) {

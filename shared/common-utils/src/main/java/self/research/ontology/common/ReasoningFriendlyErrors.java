@@ -2,9 +2,6 @@ package self.research.ontology.common;
 
 import java.util.Locale;
 
-/**
- * User-facing messages for DL Query and Reasoner job failures.
- */
 public final class ReasoningFriendlyErrors {
 
     private ReasoningFriendlyErrors() {}
@@ -31,8 +28,7 @@ public final class ReasoningFriendlyErrors {
             return "A reasoner component is incompatible with this ontology format. "
                     + "Try a different reasoner type.";
         }
-        // Malformed / unparseable OWL — check before "inconsistent" because some parsers
-        // say "inconsistent" when they actually mean the file is structurally broken.
+
         if (lower.contains("malformed") || lower.contains("rdf:first")
                 || lower.contains("ill-formed") || lower.contains("unexpected token")
                 || lower.contains("unexpected end") || lower.contains("parse exception")) {
@@ -63,7 +59,7 @@ public final class ReasoningFriendlyErrors {
         if (lower.contains("unsupported") || lower.contains("not supported")) {
             return "This reasoner cannot handle that request for this ontology. Try a different reasoner type.";
         }
-        // True DL inconsistency — the ontology is logically contradictory.
+
         if (lower.contains("inconsistent")) {
             return "The ontology is logically inconsistent (a class has conflicting definitions "
                     + "or an individual belongs to disjoint classes). Fix the issues in the editor, then try again.";

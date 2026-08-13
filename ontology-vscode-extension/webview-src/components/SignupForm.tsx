@@ -46,14 +46,13 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
         e.preventDefault();
         setError('');
         setSuccessMessage('');
-        
-        // Validate password
+
         const passwordError = validatePassword(password);
         if (passwordError) {
             setError(passwordError);
             return;
         }
-        
+
         if (password !== confirmPassword) {
             setError("Passwords don't match.");
             return;
@@ -63,7 +62,7 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
             setError('Please accept the Terms and Conditions and Privacy Policy to continue.');
             return;
         }
-        
+
         setIsLoading(true);
         try {
             const result = await signup(username, email, password);
@@ -184,7 +183,7 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
                 {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
             </div>
-            {/* Terms agreement */}
+            {}
             <label className="flex items-start gap-3 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -254,7 +253,7 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
           </div>
         </div>
 
-        {/* Report Issue floating button */}
+        {}
         <button
           onClick={() => setIsReportIssueModalOpen(true)}
           className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"

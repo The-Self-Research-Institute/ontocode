@@ -7,9 +7,6 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 
-/**
- * Snapshot of the main graph when a user started their current private draft session.
- */
 @Document(collection = "draft_sessions")
 @CompoundIndexes({
     @CompoundIndex(name = "project_user_unique", def = "{'projectId': 1, 'userId': 1}", unique = true)
@@ -25,12 +22,9 @@ public class DraftSession {
     private long baselineMainRevision;
     private long baselineMainTripleCount;
     private LocalDateTime baselineAt;
-    /** Relative path under project dir, e.g. baselines/user123.owl */
+
     private String baselineSnapshotPath;
 
-    /**
-     * Tracks whether the full graph copy (copy-on-switch) is in progress, done, or failed.
-     */
     private DraftCopyStatus copyStatus;
 
     public DraftSession() {

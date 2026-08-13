@@ -9,10 +9,6 @@ interface StatsDashboardProps {
   height: number;
 }
 
-/**
- * Statistics Dashboard Component
- * Shows comprehensive ontology metrics and visualizations
- */
 export const StatsDashboard: React.FC<StatsDashboardProps> = ({
   nodes,
   edges,
@@ -20,53 +16,47 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
   height
 }) => {
   const stats = useMemo(() => {
-    // Count by node type
+
     const nodeTypeCount = nodes.reduce((acc, node) => {
       acc[node.type] = (acc[node.type] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
-    // Count by edge type
     const edgeTypeCount = edges.reduce((acc, edge) => {
       acc[edge.type] = (acc[edge.type] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
-    // Calculate hierarchy depth
     const calculateDepth = () => {
       const visited = new Set<string>();
       const depths = new Map<string, number>();
-      
+
       const dfs = (nodeId: string, depth: number) => {
         if (visited.has(nodeId)) return;
         visited.add(nodeId);
         depths.set(nodeId, Math.max(depths.get(nodeId) || 0, depth));
-        
-        // Find children (nodes that have this as parent via subClassOf)
+
         edges
           .filter(e => e.to === nodeId && e.type === 'subClassOf')
           .forEach(e => dfs(e.from, depth + 1));
       };
-      
-      // Find root nodes (no parents)
+
       const hasParent = new Set(edges.filter(e => e.type === 'subClassOf').map(e => e.from));
       const roots = nodes.filter(n => !hasParent.has(n.id));
-      
+
       roots.forEach(root => dfs(root.id, 0));
-      
+
       return depths.size > 0 ? Math.max(...Array.from(depths.values())) : 0;
     };
 
-    // Calculate connectivity (average edges per node)
     const connectivity = nodes.length > 0 ? (edges.length / nodes.length).toFixed(2) : '0';
 
-    // Find most connected nodes
     const connectionCount = new Map<string, number>();
     edges.forEach(edge => {
       connectionCount.set(edge.from, (connectionCount.get(edge.from) || 0) + 1);
       connectionCount.set(edge.to, (connectionCount.get(edge.to) || 0) + 1);
     });
-    
+
     const mostConnected = Array.from(connectionCount.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
@@ -109,8 +99,8 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
   return (
     <div className="p-6 overflow-auto" style={{ width, height, backgroundColor: 'var(--bg)' }}>
       <h2 className="text-2xl font-bold mb-6" style={{ color: 'var(--text-primary)' }}>Ontology Statistics</h2>
-      
-      {/* Overview Cards */}
+
+      {}
       <div className="grid grid-cols-4 gap-4 mb-6">
         <div className="p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between">
@@ -121,7 +111,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
             <Box style={{ color: 'var(--accent)' }} size={32} />
           </div>
         </div>
-        
+
         <div className="p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between">
             <div>
@@ -131,7 +121,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
             <GitBranch style={{ color: 'var(--success)' }} size={32} />
           </div>
         </div>
-        
+
         <div className="p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between">
             <div>
@@ -141,7 +131,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
             <TrendingUp style={{ color: 'var(--accent)' }} size={32} />
           </div>
         </div>
-        
+
         <div className="p-4 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <div className="flex items-center justify-between">
             <div>
@@ -154,7 +144,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
       </div>
 
       <div className="grid grid-cols-2 gap-6">
-        {/* Node Types Distribution */}
+        {}
         <div className="p-6 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <PieChart size={20} />
@@ -184,7 +174,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
           </div>
         </div>
 
-        {/* Edge Types Distribution */}
+        {}
         <div className="p-6 rounded-lg shadow-sm" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <BarChart3 size={20} />
@@ -214,7 +204,7 @@ export const StatsDashboard: React.FC<StatsDashboardProps> = ({
           </div>
         </div>
 
-        {/* Most Connected Nodes */}
+        {}
         <div className="p-6 rounded-lg shadow-sm col-span-2" style={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--border)' }}>
           <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <Users size={20} />

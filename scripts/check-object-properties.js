@@ -1,6 +1,5 @@
 const axios = require('axios');
 
-// Configuration
 const PROJECT_ID = process.argv[2];
 const BASE_URL = 'http://localhost:8081';
 
@@ -15,7 +14,6 @@ async function checkObjectProperties() {
     console.log('Checking Object Properties for:', PROJECT_ID);
     console.log('============================================\n');
 
-    // 1. Get asserted object properties
     console.log('1. Fetching ASSERTED object properties...');
     const assertedResponse = await axios.get(
       `${BASE_URL}/api/ontology/${PROJECT_ID}/object-properties`
@@ -26,7 +24,6 @@ async function checkObjectProperties() {
       console.log(`   - ${prop.label || prop.iri}`);
     });
 
-    // 2. Try to get inferred object property hierarchy
     console.log('\n2. Fetching INFERRED object property hierarchy...');
     try {
       const inferredResponse = await axios.get(
@@ -36,12 +33,12 @@ async function checkObjectProperties() {
       console.log(`   Response success: ${inferredResponse.data.success}`);
       console.log(`   Reasoner type: ${inferredResponse.data.reasonerType}`);
       console.log(`   Hierarchy nodes: ${hierarchy.length}`);
-      
+
       if (hierarchy.length > 0) {
         const root = hierarchy[0];
         console.log(`   Root node: ${root.label || root.id}`);
         console.log(`   Children count: ${root.children ? root.children.length : 0}`);
-        
+
         if (root.children && root.children.length > 0) {
           console.log('   Properties in hierarchy:');
           root.children.forEach(child => {
@@ -57,7 +54,6 @@ async function checkObjectProperties() {
       console.error('   ❌ Error fetching inferred hierarchy:', error.response?.data || error.message);
     }
 
-    // 3. Check reasoner status
     console.log('\n3. Checking reasoner status...');
     try {
       const statsResponse = await axios.get(

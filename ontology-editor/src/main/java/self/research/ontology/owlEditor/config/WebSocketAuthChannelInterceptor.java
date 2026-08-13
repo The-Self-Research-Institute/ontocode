@@ -13,10 +13,6 @@ import org.springframework.stereotype.Component;
 import java.util.Base64;
 import java.util.Map;
 
-/**
- * Reads the JWT from the STOMP CONNECT Authorization header and stores
- * plan/userId in the WebSocket session attributes for plan enforcement.
- */
 @Slf4j
 @Component
 public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {

@@ -1,15 +1,9 @@
-/**
- * Local LLM term mapping for ask-the-graph (privacy-safe, zero-cost).
- * Talks to Ollama at localhost:11434. Maps question terms that matched no
- * node label (e.g. "sensors") onto actual labels ("SensingDevice").
- * Every failure path returns null so the deterministic matcher stays in charge.
- */
+
 
 const OLLAMA_URL = 'http://localhost:11434';
 const MAX_LABELS = 400;
 const REQUEST_TIMEOUT_MS = 15000;
 
-/** Small instruct models good at JSON, in preference order. */
 const PREFERRED_MODELS = ['qwen2.5:1.5b', 'qwen2.5:3b', 'llama3.2:1b', 'llama3.2:3b', 'phi3'];
 
 let cachedModel: string | null | undefined;
@@ -28,7 +22,6 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
   }
 }
 
-/** Probe Ollama and pick a model (preferred list first, then smallest installed). */
 export async function getLocalModel(): Promise<string | null> {
   if (cachedModel !== undefined) return cachedModel;
   const data = await fetchJson(`${OLLAMA_URL}/api/tags`);
@@ -44,16 +37,10 @@ export async function getLocalModel(): Promise<string | null> {
   return cachedModel;
 }
 
-/** Allow re-probing after the user starts/installs Ollama mid-session. */
 export function resetLocalModelCache(): void {
   cachedModel = undefined;
 }
 
-/**
- * Ask the local model to map unmatched question terms to real node labels.
- * Returns { term: [label, …] } using only labels from the graph, or null when
- * the model is unavailable / returns nothing usable.
- */
 export async function mapTermsToLabels(
   question: string,
   unmatchedTerms: string[],
@@ -89,7 +76,6 @@ export async function mapTermsToLabels(
   }
   if (!parsed || typeof parsed !== 'object') return null;
 
-  // Accept only labels that truly exist — small models occasionally invent variants.
   const canonical = new Map(labelList.map(l => [l.toLowerCase(), l]));
   const result: Record<string, string[]> = {};
   for (const term of unmatchedTerms) {
@@ -104,11 +90,6 @@ export async function mapTermsToLabels(
   return Object.keys(result).length > 0 ? result : null;
 }
 
-/**
- * Ask the local model to write a SPARQL SELECT for a natural-language question.
- * Schema = class labels+IRIs from the rendered graph. Returns null when the
- * model is unavailable or the output is not a usable query.
- */
 export async function generateSparql(
   question: string,
   classes: Array<{ iri: string; label: string }>,
@@ -145,11 +126,6 @@ export async function generateSparql(
   return isSparql ? query : null;
 }
 
-/**
- * Compose a short natural-language answer from query results (IRIs should
- * already be replaced with labels). Returns null when the model is unavailable
- * or produced nothing usable — the card then just shows the raw summary.
- */
 export async function answerQuestion(
   question: string,
   results: Array<Record<string, string>>,

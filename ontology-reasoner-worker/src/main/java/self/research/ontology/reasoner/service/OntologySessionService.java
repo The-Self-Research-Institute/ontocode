@@ -39,7 +39,6 @@ public class OntologySessionService {
         long tripleCount = editorClient.getTripleCount(projectId);
         log.info("[Reasoner] Triple count for project {}: {}", projectId, tripleCount);
 
-        // -1 means the editor couldn't be reached; treat as large to avoid running HermiT blind
         boolean tripleCountUnknown = tripleCount < 0;
         if (tripleCountUnknown) {
             log.warn("[Reasoner] Could not read triple count for {} — assuming large ontology, forcing ELK", projectId);
@@ -58,14 +57,13 @@ public class OntologySessionService {
             log.info("[Reasoner] Auto-downgraded {} → ELK for project {} ({} > {} threshold or size unknown)",
                     reasonerType, projectId, sizeDesc, hermitMaxTriples);
         } else if (effectiveType == ReasonerType.ELK && !tripleCountUnknown && tripleCount > hermitMaxTriples) {
-            // ELK explicitly selected on a large ontology — inform the user of OWL EL profile limitations
+
             downgradedWarning = "ELK is running on a large ontology (" + tripleCount + " triples). "
                     + "Results may take several minutes. "
                     + "Note: ELK covers the OWL EL profile — cardinality restrictions, allValuesFrom, "
                     + "and complement/union axioms will not be inferred.";
         }
 
-        // Cache lookup: only for main-graph exports (draft overlay is user-specific, skip caching)
         boolean cacheEligible = (userId == null || userId.isBlank());
         long revision = cacheEligible ? editorClient.getRevision(projectId) : -1;
 
@@ -79,10 +77,9 @@ public class OntologySessionService {
             }
         }
 
-        // Fresh load
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         try (InputStream in = editorClient.openOntologyStream(projectId, userId)) {
-            // Explicit N-Triples format — avoids OWLAPI autodetect overhead and picks the fastest parser
+
             StreamDocumentSource source = new StreamDocumentSource(
                     in,
                     IRI.create("urn:ontocode:load:" + projectId),
@@ -98,8 +95,7 @@ public class OntologySessionService {
             }
 
             OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, effectiveType);
-            // If stored in cache the manager lifetime is owned by OntologyCache — don't remove on close.
-            // fromCache=true suppresses the manager.removeOntology() call in ReasoningSession.close().
+
             return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType, downgradedWarning, storedInCache);
         }
     }
@@ -152,7 +148,7 @@ public class OntologySessionService {
                 reasoner.dispose();
             } catch (Exception ignored) {
             }
-            // When loaded from cache, the ontology lives in OntologyCache — don't remove it here
+
             if (!fromCache && manager != null) {
                 try {
                     manager.removeOntology(ontology);

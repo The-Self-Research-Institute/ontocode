@@ -17,18 +17,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Seeds the single local user and workspace used by the desktop build.
- *
- * Desktop runs permit-all with a synthetic principal (see
- * {@link DesktopLocalUserFilter}); the controllers still load a real Mongo user
- * by email, so this runner guarantees that user (and a default workspace)
- * exists. The identity comes from the verified license file passed by the
- * Electron shell via {@code ontocode.desktop.user.*}; for the FREE tier (no
- * license) it falls back to a generic anonymous local user.
- *
- * Active only when {@code ontocode.desktop.mode=true}.
- */
 @Component
 @ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")
 public class DesktopBootstrap implements CommandLineRunner {
@@ -71,7 +59,7 @@ public class DesktopBootstrap implements CommandLineRunner {
             user.setUsername(localName != null && !localName.isBlank() ? localName : "Desktop User");
         }
         if (user.getPassword() == null || user.getPassword().isBlank()) {
-            // Random password — desktop never logs in, but the field is required.
+
             user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
         }
         user.setEnabled(true);

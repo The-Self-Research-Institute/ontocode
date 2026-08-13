@@ -9,10 +9,6 @@ interface CollaborativeCursorProps {
   isActive?: boolean;
 }
 
-/**
- * CollaborativeCursor - Displays a collaborator's cursor with their name
- * Similar to Figma's collaborative cursors
- */
 export const CollaborativeCursor: React.FC<CollaborativeCursorProps> = ({
   userId,
   userName,
@@ -34,7 +30,7 @@ export const CollaborativeCursor: React.FC<CollaborativeCursorProps> = ({
         transition: 'left 0.1s ease-out, top 0.1s ease-out',
       }}
     >
-      {/* Cursor pointer */}
+      {}
       <svg
         width="24"
         height="24"
@@ -53,7 +49,7 @@ export const CollaborativeCursor: React.FC<CollaborativeCursorProps> = ({
         />
       </svg>
 
-      {/* User name label */}
+      {}
       <div
         style={{
           position: 'absolute',
@@ -80,9 +76,6 @@ interface CollaborativeCursorsProps {
   cursors: Map<string, { x: number; y: number; userName: string; color: string; timestamp: number }>;
 }
 
-/**
- * CollaborativeCursors - Renders all active collaborative cursors
- */
 export const CollaborativeCursors: React.FC<CollaborativeCursorsProps> = ({ cursors }) => {
   return (
     <>

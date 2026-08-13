@@ -1,8 +1,4 @@
-/**
- * Task-first insight chips overlaid on the WebGL canvas. Clicking a chip
- * emphasizes the matching nodes and flies the camera to them — the graph is
- * opened *for* something, never as wallpaper.
- */
+
 
 import React from 'react';
 import type { GraphInsights } from './graphAnalysis';
@@ -12,7 +8,7 @@ export type InsightKind = 'orphans' | 'islands' | 'hubs' | 'communities';
 interface InsightChipsProps {
   insights: GraphInsights;
   active: InsightKind | null;
-  /** Communities is a color overlay toggle, tracked separately from emphasis. */
+
   communitiesOn: boolean;
   dark: boolean;
   onSelect: (kind: InsightKind, nodeIds: string[]) => void;

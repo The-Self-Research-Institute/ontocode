@@ -32,12 +32,12 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
         if (e.target === e.currentTarget && e.button === 0) onClose();
       }}
     >
-      <div 
+      <div
         className="rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col"
         style={{ backgroundColor: 'var(--bg)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
+        {}
         <div className="p-6 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center">
@@ -51,7 +51,7 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
           <button
             onClick={onClose}
             className="p-2 rounded-lg transition-colors hover-bg-overlay"
-            style={{ 
+            style={{
               color: 'var(--text-secondary)'
             }}
           >
@@ -59,12 +59,12 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        {/* Tabs */}
+        {}
         <div className="flex border-b px-6" style={{ borderColor: 'var(--border)' }}>
           <button
             onClick={() => setActiveTab('mode')}
             className="px-4 py-3 text-sm font-medium transition-colors relative"
-            style={{ 
+            style={{
               color: activeTab === 'mode' ? 'var(--accent)' : 'var(--text-secondary)'
             }}
           >
@@ -76,7 +76,7 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
           <button
             onClick={() => setActiveTab('colors')}
             className="px-4 py-3 text-sm font-medium transition-colors relative"
-            style={{ 
+            style={{
               color: activeTab === 'colors' ? 'var(--accent)' : 'var(--text-secondary)'
             }}
           >
@@ -87,16 +87,16 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        {/* Content */}
+        {}
         <div className="flex-1 overflow-y-auto p-6">
           {activeTab === 'mode' && (
             <div className="space-y-4">
               <p className="text-sm mb-6" style={{ color: 'var(--text-secondary)' }}>
                 Choose your preferred theme mode. Auto mode follows your system settings.
               </p>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Light Mode */}
+                {}
                 <button
                   onClick={() => setThemeMode('light')}
                   className="p-6 rounded-xl border-2 transition-all"
@@ -118,7 +118,7 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                   </div>
                 </button>
 
-                {/* Dark Mode */}
+                {}
                 <button
                   onClick={() => setThemeMode('dark')}
                   className="p-6 rounded-xl border-2 transition-all"
@@ -140,7 +140,7 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                   </div>
                 </button>
 
-                {/* Auto Mode */}
+                {}
                 <button
                   onClick={() => setThemeMode('auto')}
                   className="p-6 rounded-xl border-2 transition-all"
@@ -171,7 +171,7 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                   <div>
                     <div className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>Current Mode</div>
                     <div className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-                      {theme.mode === 'auto' 
+                      {theme.mode === 'auto'
                         ? `Auto mode is currently showing ${actualMode} theme based on your system settings.`
                         : `Using ${actualMode} theme.`
                       }
@@ -196,7 +196,7 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                 <button
                   onClick={resetToDefault}
                   className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors"
-                  style={{ 
+                  style={{
                     color: 'var(--accent)',
                     backgroundColor: 'var(--accent-tint)'
                   }}
@@ -214,9 +214,9 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                         <div className="font-medium text-sm flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
                           {option.label}
                           {option.key === 'accent' && (
-                            <span className="text-xs px-2 py-0.5 rounded" style={{ 
-                              backgroundColor: 'var(--accent-tint)', 
-                              color: 'var(--accent)' 
+                            <span className="text-xs px-2 py-0.5 rounded" style={{
+                              backgroundColor: 'var(--accent-tint)',
+                              color: 'var(--accent)'
                             }}>
                               Primary
                             </span>
@@ -224,9 +224,9 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                         </div>
                         <div className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>{option.description}</div>
                       </div>
-                      <div 
+                      <div
                         className="w-12 h-12 rounded-lg border-2 shadow-inner"
-                        style={{ 
+                        style={{
                           backgroundColor: theme.colors[option.key],
                           borderColor: 'var(--border)'
                         }}
@@ -243,8 +243,8 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                 ))}
               </div>
 
-              <div className="mt-6 p-4 rounded-lg" style={{ 
-                backgroundColor: 'var(--warning-tint)', 
+              <div className="mt-6 p-4 rounded-lg" style={{
+                backgroundColor: 'var(--warning-tint)',
                 borderColor: 'var(--warning)',
                 border: '1px solid'
               }}>
@@ -260,8 +260,8 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                   </div>
                 </div>
               </div>
-              
-              {/* Reset All Button */}
+
+              {}
               <button
                 onClick={() => {
                   if (confirm('Reset all color customizations for both light and dark modes?')) {
@@ -269,7 +269,7 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
                     localStorage.removeItem('ontocode-theme-dark-colors');
                     localStorage.removeItem('ontocode-theme-colors'); // old storage
                     onClose();
-                    // Force reload without showing corrupted data
+
                     setTimeout(() => window.location.reload(), 100);
                   }
                 }}
@@ -287,7 +287,7 @@ const ThemeSettings: React.FC<ThemeSettingsProps> = ({ isOpen, onClose }) => {
           )}
         </div>
 
-        {/* Footer */}
+        {}
         <div className="p-6 border-t flex justify-between items-center" style={{ borderColor: 'var(--border)' }}>
           <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
             Currently customizing: <strong style={{ color: 'var(--text-primary)' }}>{actualMode === 'dark' ? 'Dark' : 'Light'} mode</strong>

@@ -1,11 +1,5 @@
 #!/usr/bin/env node
-/**
- * Pizza tutorial parity — class hierarchy + graph view (Protégé vs OntoCode).
- *
- * Expects PizzaTutorialWithDataV2.owl (or similar) already uploaded.
- *
- *   node playwright-pizza-parity.js --project-name "..." --file-name PizzaTutorialWithDataV2.owl
- */
+
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');

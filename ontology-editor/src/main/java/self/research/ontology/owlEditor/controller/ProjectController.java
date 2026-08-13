@@ -61,39 +61,33 @@ public class ProjectController {
             log.info("[ProjectController] listProjects called with userEmail: {}, parentProjectId: {}", userEmail, parentProjectId);
             List<ProjectDocument> allProjects = projectRepository.findAllByOrderByUpdatedAtDesc();
             log.info("[ProjectController] Total documents in database: {}", allProjects.size());
-            
-            // Filter to only return actual files (documents with gridfsFileId), not project containers
+
             List<ProjectDocument> allFiles = allProjects.stream()
                 .filter(doc -> doc.getGridfsFileId() != null && !doc.getGridfsFileId().isEmpty())
                 .collect(Collectors.toList());
             log.info("[ProjectController] Actual files (with gridfsFileId): {}", allFiles.size());
-            
-            // If parentProjectId is provided, filter to only files belonging to that project
+
             if (parentProjectId != null && !parentProjectId.isEmpty()) {
                 allFiles = allFiles.stream()
                     .filter(doc -> parentProjectId.equals(doc.getProjectId()))
                     .collect(Collectors.toList());
                 log.info("[ProjectController] Files for project {}: {}", parentProjectId, allFiles.size());
             }
-            
-            // If no userEmail provided, return all files (backward compatibility)
+
             if (userEmail == null || userEmail.isEmpty()) {
                 List<Map<String, Object>> projects = allFiles.stream()
                     .map(this::mapProjectToInfo)
                     .collect(Collectors.toList());
                 return ResponseEntity.ok(Map.of("success", true, "projects", projects));
             }
-            
-            // Separate into myFiles and sharedFiles
-            // Include files with matching ownerEmail OR files with null/empty ownerEmail (legacy files)
+
             List<Map<String, Object>> myFiles = allFiles.stream()
                 .filter(doc -> {
                     String docOwner = doc.getOwnerEmail();
-                    // Match if owner matches user, OR if owner is null/empty (legacy files)
+
                     boolean isOwner = userEmail.equals(docOwner);
                     boolean isUnowned = (docOwner == null || docOwner.isEmpty());
-                    
-                    // If file is unowned, assign it to this user automatically (best-effort)
+
                     if (isUnowned) {
                         try {
                             log.info("[ProjectController] Assigning unowned file {} to user {}", doc.getId(), userEmail);
@@ -101,16 +95,16 @@ public class ProjectController {
                             projectRepository.save(doc);
                         } catch (Exception e) {
                             log.error("[ProjectController] Failed to assign owner to file {}: {}", doc.getId(), e.getMessage());
-                            // Continue anyway - don't fail the entire request
+
                         }
                         return true;
                     }
-                    
+
                     return isOwner;
                 })
                 .map(doc -> {
                     Map<String, Object> info = mapProjectToInfo(doc);
-                    // Add sharedWith info for files owned by user (best-effort)
+
                     try {
                         shareService.getShareByProjectId(doc.getId()).ifPresent(share -> {
                             if (!share.getSharedWithEmails().isEmpty()) {
@@ -123,31 +117,30 @@ public class ProjectController {
                     return info;
                 })
                 .collect(Collectors.toList());
-            
+
             log.info("[ProjectController] myFiles count for {}: {}", userEmail, myFiles.size());
-            
-            // Get files shared with me
+
             List<ProjectShare> sharedWithMe = shareService.getSharedWithMe(userEmail);
             List<String> sharedProjectIds = sharedWithMe.stream()
                 .map(ProjectShare::getProjectId)
                 .collect(Collectors.toList());
-            
+
             log.info("[ProjectController] sharedWithMe count: {}", sharedWithMe.size());
-            
+
             List<Map<String, Object>> sharedFiles = allFiles.stream()
                 .filter(doc -> sharedProjectIds.contains(doc.getId()))
                 .map(doc -> {
                     Map<String, Object> info = mapProjectToInfo(doc);
-                    // Add owner info for shared files
+
                     info.put("sharedBy", doc.getOwnerEmail());
                     return info;
                 })
                 .collect(Collectors.toList());
-            
+
             log.info("[ProjectController] Returning myFiles: {}, sharedFiles: {}", myFiles.size(), sharedFiles.size());
 
             return ResponseEntity.ok(Map.of(
-                "success", true, 
+                "success", true,
                 "myFiles", myFiles,
                 "sharedFiles", sharedFiles
             ));
@@ -160,7 +153,7 @@ public class ProjectController {
             ));
         }
     }
-    
+
     private Map<String, Object> mapProjectToInfo(ProjectDocument doc) {
         Map<String, Object> projectInfo = new HashMap<>();
         projectInfo.put("id", doc.getId());
@@ -170,13 +163,13 @@ public class ProjectController {
         projectInfo.put("updatedAt", doc.getUpdatedAt());
         projectInfo.put("filename", doc.getFilename());
         projectInfo.put("ownerEmail", doc.getOwnerEmail());
-        projectInfo.put("projectId", doc.getProjectId()); // Parent project ID for file filtering
-        projectInfo.put("workspaceId", doc.getWorkspaceId()); // Add workspaceId
-        
+        projectInfo.put("projectId", doc.getProjectId());
+        projectInfo.put("workspaceId", doc.getWorkspaceId());
+
         if (doc.getMetadata() != null) {
             projectInfo.put("metadata", doc.getMetadata());
         }
-        
+
         return projectInfo;
     }
 
@@ -193,21 +186,18 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("success", false, "error", "Access denied"));
             }
 
-            // Clear GraphDB dataset (best-effort)
             try {
                 datasetService.clearDataset(projectId);
             } catch (Exception e) {
                 log.warn("[ProjectController] Failed to clear dataset for {}: {}", projectId, e.getMessage());
             }
 
-            // Delete GridFS file (best-effort)
             try {
                 gridFsFileService.deleteFileByProjectId(projectId);
             } catch (Exception e) {
                 log.warn("[ProjectController] Failed to delete GridFS file for {}: {}", projectId, e.getMessage());
             }
 
-            // Clear drafts and history (best-effort)
             try {
                 draftTrackingService.discardDrafts(projectId);
                 draftTrackingService.clearAppliedDrafts(projectId);
@@ -220,17 +210,14 @@ public class ProjectController {
                 log.warn("[ProjectController] Failed to clear history for {}: {}", projectId, e.getMessage());
             }
 
-            // Delete shares (best-effort)
             try {
                 shareService.deleteShare(projectId);
             } catch (Exception e) {
                 log.warn("[ProjectController] Failed to delete share for {}: {}", projectId, e.getMessage());
             }
 
-            // Delete project metadata
             projectRepository.deleteById(projectId);
 
-            // Delete local files
             try {
                 Path projectDir = storageManager.projectDir(projectId);
                 if (Files.exists(projectDir)) {

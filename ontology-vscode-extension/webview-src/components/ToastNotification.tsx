@@ -18,9 +18,9 @@ interface ToastNotificationProps {
 
 export const ToastNotification: React.FC<ToastNotificationProps> = ({ toasts = [], onDismiss }) => {
     useEffect(() => {
-        // Auto-dismiss toasts after their duration
+
         if (!toasts || toasts.length === 0) return;
-        
+
         toasts.forEach(toast => {
             const duration = toast.duration || 5000;
             const timer = setTimeout(() => {

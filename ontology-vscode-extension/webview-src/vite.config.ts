@@ -22,15 +22,11 @@ const zlibShimPath = path.resolve(__dirname, '../src/zlib-shim.js');
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
-  // Vite loads .env.local in ALL modes (including `vite build`), so dev-only
-  // localhost overrides (e.g. VITE_CLOUD_GATEWAY_URL=http://localhost:3001 for
-  // the dev-server proxy) would get baked into production bundles and break
-  // cloud deployments (CORS to localhost:3001). Strip localhost values from
-  // production builds; non-localhost overrides (staging servers) still apply.
+
   const prodSafe = (v?: string) =>
     mode === 'production' && v && /^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/i.test(v) ? '' : v || '';
   return {
-    // Use absolute paths from root for production (cloud server), relative for dev (VSCode webview)
+
     base: mode === 'production' ? '/' : './',
     server: {
       port: 3001,
@@ -45,10 +41,7 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           ws: true,
         },
-        // The reasoner-plugin calls this alternate route (gateway rewrites
-        // /plugin-service/api/reasoner/** -> /api/reasoner/** on the plugin service) rather
-        // than /api/**. Without this entry Vite has no prefix match for it, serves its own
-        // 404 as a static-file miss, and the request never reaches the gateway at all.
+
         '/plugin-service': {
           target: env.VITE_API_PROXY_TARGET || 'http://localhost:80',
           changeOrigin: true,
@@ -68,17 +61,10 @@ export default defineConfig(({ mode }) => {
     define: {
       __APP_VERSION__: JSON.stringify(extensionPackage.version),
       'global': 'globalThis',
-      // Note: no LLM API key is injected into the client bundle. AI insights use a
-      // bring-your-own-key model — the user's key stays in their browser at runtime.
-      // Provide zlib constants as global defines
+
       'process.env.Z_SYNC_FLUSH': '2',
       'process.env.Z_NO_FLUSH': '0',
-      // Compile-time config for standalone (browser/cloud) mode.
-      // Empty strings fall through to DEFAULTS in deploymentConfig.ts
-      // (e.g. CLOUD_GATEWAY_URL → 'https://ontocodeapi.selfresearch.org').
-      // window.__ONTOCODE_CONFIG__ injected by extension.ts is only read
-      // by apiClient.ts (property access, not bare identifier) so this
-      // define does NOT conflict with the runtime injection.
+
       '__ONTOCODE_CONFIG__': JSON.stringify({
         IS_WEB_EXTENSION: true,
         CLOUD_GATEWAY_URL: prodSafe(env.VITE_CLOUD_GATEWAY_URL),
@@ -93,9 +79,7 @@ export default defineConfig(({ mode }) => {
         ...(existsSync(zlibShimPath) ? { zlib: zlibShimPath } : {}),
       }
     },
-    // Dev-server dependency pre-bundling (esbuild) does NOT inherit `define`
-    // below — sockjs-client references `global` and crashes with
-    // "global is not defined" in dev without this.
+
     optimizeDeps: {
       esbuildOptions: {
         define: {
@@ -104,23 +88,17 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      // Disable source maps in production to reduce size
+
       sourcemap: false,
-      // Ensure lucide-react is not tree-shaken since plugins need it globally
+
       rollupOptions: {
-        // Inline dynamic imports into a single JS bundle. VS Code webviews load
-        // the main script from a rewritten webview-resource URI, but code-split
-        // chunks are resolved at runtime against the vscode-webview:// document
-        // origin (the <base> tag is intentionally removed for anchor navigation).
-        // That makes lazy chunks 404 at runtime, so lazy routes (billing/upgrade,
-        // desktop download, payment) crash with "Something went wrong". A single
-        // bundle removes runtime chunk loading entirely and fixes those routes.
+
         output: {
           inlineDynamicImports: true,
         },
         treeshake: {
           moduleSideEffects: (id) => {
-            // Mark setupGlobals and lucide-react as having side effects
+
             if (id.includes('setupGlobals') || id.includes('lucide-react')) {
               return true;
             }
@@ -129,9 +107,9 @@ export default defineConfig(({ mode }) => {
         }
       }
     },
-    // Explicitly disable service worker in Vite
+
     workbox: false,
-    // Disable manifest generation
+
     manifest: false
   };
 });

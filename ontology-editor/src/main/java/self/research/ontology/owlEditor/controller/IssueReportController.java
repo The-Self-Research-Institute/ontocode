@@ -17,52 +17,44 @@ import java.util.List;
 import java.util.Map;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-/**
- * REST API controller for issue reporting and Jira integration
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/issues")
 @CrossOrigin(originPatterns = "*", allowedHeaders = "*", allowCredentials = "false", methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class IssueReportController {
-    
+
     private final IssueReportService issueReportService;
-    
+
     public IssueReportController(IssueReportService issueReportService) {
         this.issueReportService = issueReportService;
     }
-    
-    /**
-     * Extract user information from JWT token in Authorization header
-     */
+
     private Map<String, String> extractUserFromToken(HttpServletRequest request) {
         Map<String, String> userInfo = new HashMap<>();
         try {
             String authHeader = request.getHeader("Authorization");
             log.info("Authorization header: {}", authHeader != null ? "Present (Bearer token)" : "Not present");
-            
+
             if (authHeader != null && authHeader.startsWith("Bearer ")) {
                 String token = authHeader.substring(7);
                 String[] parts = token.split("\\.");
                 if (parts.length >= 2) {
                     String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
                     log.info("JWT payload decoded successfully");
-                    
+
                     ObjectMapper mapper = new ObjectMapper();
                     @SuppressWarnings("unchecked")
                     Map<String, Object> claims = mapper.readValue(payload, Map.class);
-                    
+
                     log.info("JWT claims: {}", claims.keySet());
-                    
-                    // Extract username (usually in 'sub' claim)
+
                     if (claims.containsKey("sub")) {
                         userInfo.put("username", claims.get("sub").toString());
                         log.info("Extracted username from 'sub': {}", claims.get("sub"));
                     } else {
                         log.warn("'sub' claim not found in token");
                     }
-                    
-                    // Extract email if available
+
                     if (claims.containsKey("email")) {
                         userInfo.put("email", claims.get("email").toString());
                         log.info("Extracted email: {}", claims.get("email"));
@@ -78,17 +70,7 @@ public class IssueReportController {
         }
         return userInfo;
     }
-    
-    /**
-     * Submit an issue report
-     * Accepts multipart form data with issue details and optional attachments
-     * 
-     * NOTE: This endpoint is OPEN TO ALL AUTHENTICATED USERS (free and paid)
-     * No subscription plan restrictions apply - anyone with a valid JWT can report issues
-     * Issues are saved locally to MongoDB regardless of plan
-     * Jira ticket creation attempts may fail if Jira integration is unavailable,
-     * but the local issue report is always saved and returned with success: true
-     */
+
     @PostMapping(value = "/report", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<Map<String, Object>> reportIssue(
             HttpServletRequest request,
@@ -110,23 +92,20 @@ public class IssueReportController {
     ) {
         try {
             log.info("Received issue report: {}", title);
-            
-            // Extract user info from JWT token
+
             Map<String, String> userInfo = extractUserFromToken(request);
             String reporterUsername = userInfo.get("username");
             String reporterEmail = userInfo.get("email");
-            
+
             log.info("Reporter: {} ({})", reporterUsername, reporterEmail);
-            
-            // Build system info
+
             IssueReport.SystemInfo systemInfo = IssueReport.SystemInfo.builder()
                 .osName(osName)
                 .osVersion(osVersion)
                 .vsCodeVersion(vsCodeVersion)
                 .extensionVersion(extensionVersion)
                 .build();
-            
-            // Build issue report
+
             IssueReport issueReport = IssueReport.builder()
                 .title(title)
                 .description(description)
@@ -142,15 +121,13 @@ public class IssueReportController {
                 .priority(priority)
                 .systemInfo(systemInfo)
                 .build();
-            
 
-            // Submit issue (no file size or count limits)
             IssueReportService.IssueReportResult result = issueReportService.submitIssueReport(issueReport, attachments);
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put("success", result.isSuccess());
             response.put("message", result.getMessage());
-            
+
             if (result.getIssueReportId() != null) {
                 response.put("issueReportId", result.getIssueReportId());
             }
@@ -163,13 +140,13 @@ public class IssueReportController {
             if (result.getJiraFailureReason() != null) {
                 response.put("jiraFailureReason", result.getJiraFailureReason());
             }
-            
+
             if (result.isSuccess()) {
                 return ResponseEntity.ok(response);
             } else {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
             }
-            
+
         } catch (Exception e) {
             log.error("Failed to process issue report", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -179,10 +156,7 @@ public class IssueReportController {
                 ));
         }
     }
-    
-    /**
-     * Get issue reports for a user
-     */
+
     @GetMapping("/user/{email}")
     public ResponseEntity<List<IssueReport>> getUserIssueReports(@PathVariable String email) {
         try {
@@ -193,24 +167,21 @@ public class IssueReportController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
-    
-    /**
-     * Validate Jira connection (admin endpoint)
-     */
+
     @GetMapping("/jira/validate")
     public ResponseEntity<Map<String, Object>> validateJiraConnection() {
         try {
             JiraService.JiraValidationResult result = issueReportService.validateJiraConnection();
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put("success", result.isSuccess());
             response.put("message", result.getMessage());
             if (result.getProjectName() != null) {
                 response.put("projectName", result.getProjectName());
             }
-            
+
             return ResponseEntity.ok(response);
-            
+
         } catch (Exception e) {
             log.error("Failed to validate Jira connection", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

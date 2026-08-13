@@ -10,30 +10,12 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
-/**
- * Desktop-mode stub endpoints that replace the Auth Service.
- *
- * Active only when ontocode.desktop.mode=true (the desktop Spring profile).
- * These endpoints live on the same port as the OWL Editor so no separate
- * Auth Service process is needed.
- *
- * The React app's auth flow calls:
- *   POST /api/auth/login           → returns a JWT + user profile
- *   POST /api/workspaces/{id}/select → returns a workspace-scoped JWT
- *   GET  /api/workspaces           → returns the single local workspace
- *   GET  /api/workspaces/{id}      → returns workspace details
- *   GET  /api/billing/subscription → returns "PRO" subscription (no limits)
- *   GET  /api/auth/validate        → validates / refreshes the JWT
- *   POST /api/auth/logout          → no-op
- *   GET  /api/auth/me              → returns current user profile
- */
 @RestController
 @ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")
 public class DesktopController {
 
     private static final Logger log = LoggerFactory.getLogger(DesktopController.class);
 
-    // ── Stable desktop identifiers ────────────────────────────────────────────
     private static final String DESKTOP_USER_ID      = "desktop-user-local";
     private static final String DESKTOP_WORKSPACE_ID = "desktop-workspace-local";
     private static final String DESKTOP_PROJECT_ID   = "desktop-project-local";
@@ -41,11 +23,7 @@ public class DesktopController {
     private static final String DESKTOP_USERNAME     = "Desktop User";
     private static final String DESKTOP_PLAN         = "PRO";
 
-    // ── JWT (unsigned — desktop only, never leaves localhost) ─────────────────
-    // The interceptor does not validate signatures; it only decodes claims.
     private static final String DESKTOP_TOKEN = buildDesktopJwt();
-
-    // ── Auth endpoints ────────────────────────────────────────────────────────
 
     @PostMapping("/api/auth/login")
     public ResponseEntity<Map<String, Object>> login(@RequestBody(required = false) Map<String, Object> body) {
@@ -75,12 +53,10 @@ public class DesktopController {
     @PostMapping("/api/auth/refresh")
     public ResponseEntity<Map<String, Object>> refresh() {
         Map<String, Object> resp = loginResponse();
-        // Web AuthContext expects `jwt`; desktop stub historically used `token` only.
+
         resp.put("jwt", DESKTOP_TOKEN);
         return ResponseEntity.ok(resp);
     }
-
-    // ── Workspace endpoints ───────────────────────────────────────────────────
 
     @GetMapping("/api/workspaces")
     public ResponseEntity<List<Map<String, Object>>> listWorkspaces() {
@@ -96,7 +72,7 @@ public class DesktopController {
     @PostMapping("/api/workspaces/{workspaceId}/select")
     public ResponseEntity<Map<String, Object>> selectWorkspace(@PathVariable String workspaceId) {
         log.debug("[Desktop] POST /api/workspaces/{}/select", workspaceId);
-        // Return a workspace-scoped JWT — same token, just confirms selection
+
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("token", DESKTOP_TOKEN);
         resp.put("workspaceId", DESKTOP_WORKSPACE_ID);
@@ -116,8 +92,6 @@ public class DesktopController {
             "role", "OWNER"
         )));
     }
-
-    // ── Billing / subscription ────────────────────────────────────────────────
 
     @GetMapping("/api/billing/subscription")
     public ResponseEntity<Map<String, Object>> subscription() {
@@ -153,21 +127,15 @@ public class DesktopController {
         )));
     }
 
-    // ── Invitation stubs (no-op on desktop) ───────────────────────────────────
-
     @GetMapping("/api/invitations")
     public ResponseEntity<List<Object>> invitations() {
         return ResponseEntity.ok(Collections.emptyList());
     }
 
-    // ── Admin (desktop always grants admin) ───────────────────────────────────
-
     @GetMapping("/api/admin/users")
     public ResponseEntity<List<Map<String, Object>>> adminUsers() {
         return ResponseEntity.ok(List.of(userProfile()));
     }
-
-    // ── Helper builders ───────────────────────────────────────────────────────
 
     private Map<String, Object> loginResponse() {
         Map<String, Object> resp = new LinkedHashMap<>();
@@ -211,17 +179,10 @@ public class DesktopController {
         return ws;
     }
 
-    /**
-     * Builds a minimal unsigned JWT whose payload carries the claims read by
-     * MdcLoggingFilter, FreeViewOnlyInterceptor, and JwtClaimUtils.
-     * No signature verification happens anywhere in the OWL Editor — the
-     * payload is simply Base64-decoded.
-     */
     private static String buildDesktopJwt() {
-        // Header
+
         String header = base64url("{\"alg\":\"none\",\"typ\":\"JWT\"}");
 
-        // Payload — all claims expected by the codebase
         long now = Instant.now().getEpochSecond();
         long exp = Instant.now().plus(3650, ChronoUnit.DAYS).getEpochSecond();
         String payload = base64url(String.format(

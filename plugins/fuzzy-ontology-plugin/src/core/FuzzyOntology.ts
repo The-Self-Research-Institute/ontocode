@@ -1,13 +1,7 @@
-/**
- * Fuzzy Ontology Model
- * Extends classical OWL ontologies with fuzzy membership degrees
- */
+
 
 import { MembershipDegree, FuzzySet, TNorm, TCoNorm, MembershipFunctionParams } from './FuzzyLogic';
 
-/**
- * Fuzzy individual with membership degrees in concepts
- */
 export interface FuzzyIndividual {
   uri: string;
   label?: string;
@@ -15,17 +9,11 @@ export interface FuzzyIndividual {
   dataProperties: Map<string, FuzzyDataValue>;
 }
 
-/**
- * Fuzzy data value with degree
- */
 export interface FuzzyDataValue {
   value: any;
   degree: MembershipDegree;
 }
 
-/**
- * Fuzzy concept (class) definition
- */
 export interface FuzzyConcept {
   uri: string;
   label?: string;
@@ -37,9 +25,6 @@ export interface FuzzyConcept {
   disjointWith?: string[];
 }
 
-/**
- * Fuzzy concept expressions (complex concepts)
- */
 export type FuzzyConceptExpression =
   | { type: 'atomic'; uri: string }
   | { type: 'conjunction'; concepts: FuzzyConceptExpression[]; norm: TNorm }
@@ -48,9 +33,6 @@ export type FuzzyConceptExpression =
   | { type: 'existential'; property: string; concept: FuzzyConceptExpression }
   | { type: 'universal'; property: string; concept: FuzzyConceptExpression };
 
-/**
- * Fuzzy object property
- */
 export interface FuzzyObjectProperty {
   uri: string;
   label?: string;
@@ -63,9 +45,6 @@ export interface FuzzyObjectProperty {
   functional?: boolean;
 }
 
-/**
- * Fuzzy data property
- */
 export interface FuzzyDataProperty {
   uri: string;
   label?: string;
@@ -74,9 +53,6 @@ export interface FuzzyDataProperty {
   membershipFunction?: MembershipFunctionParams;
 }
 
-/**
- * Fuzzy axiom with degree
- */
 export interface FuzzyAxiom {
   type: 'subClassOf' | 'equivalentClass' | 'disjointWith' | 'memberOf' | 'propertyAssertion';
   subject: string;
@@ -85,18 +61,12 @@ export interface FuzzyAxiom {
   degree: MembershipDegree;
 }
 
-/**
- * Alpha-embedding for hierarchical fuzzy concepts
- */
 export interface AlphaEmbedding {
   conceptURI: string;
   embedding: number[];
   alpha: number; // decay parameter
 }
 
-/**
- * Main Fuzzy Ontology class
- */
 export class FuzzyOntology {
   private concepts: Map<string, FuzzyConcept>;
   private individuals: Map<string, FuzzyIndividual>;
@@ -120,7 +90,6 @@ export class FuzzyOntology {
     this.defaultTCoNorm = config?.tCoNorm || TCoNorm.PROBABILISTIC;
   }
 
-  // Concept management
   addConcept(concept: FuzzyConcept): void {
     this.concepts.set(concept.uri, concept);
   }
@@ -133,11 +102,9 @@ export class FuzzyOntology {
     return Array.from(this.concepts.values());
   }
 
-  // Individual management
   addIndividual(individual: FuzzyIndividual): void {
     this.individuals.set(individual.uri, individual);
 
-    // Update concept instances
     for (const [conceptURI, degree] of individual.memberships) {
       const concept = this.concepts.get(conceptURI);
       if (concept) {
@@ -154,7 +121,6 @@ export class FuzzyOntology {
     return Array.from(this.individuals.values());
   }
 
-  // Membership degree operations
   getMembershipDegree(individualURI: string, conceptURI: string): MembershipDegree {
     const individual = this.individuals.get(individualURI);
     if (!individual) return 0;
@@ -162,7 +128,6 @@ export class FuzzyOntology {
     const directDegree = individual.memberships.get(conceptURI);
     if (directDegree !== undefined) return directDegree;
 
-    // Infer from subclass hierarchy
     return this.inferMembershipFromHierarchy(individualURI, conceptURI);
   }
 
@@ -180,13 +145,11 @@ export class FuzzyOntology {
 
     individual.memberships.set(conceptURI, degree);
 
-    // Update concept instances
     const concept = this.concepts.get(conceptURI);
     if (concept) {
       concept.instances.set(individualURI, degree);
     }
 
-    // Add axiom
     this.axioms.push({
       type: 'memberOf',
       subject: individualURI,
@@ -195,12 +158,10 @@ export class FuzzyOntology {
     });
   }
 
-  // Hierarchy operations
   private inferMembershipFromHierarchy(individualURI: string, conceptURI: string): MembershipDegree {
     const concept = this.concepts.get(conceptURI);
     if (!concept || !concept.subClassOf) return 0;
 
-    // Get membership in parent concepts and take max
     let maxDegree = 0;
     for (const parentURI of concept.subClassOf) {
       const parentDegree = this.getMembershipDegree(individualURI, parentURI);
@@ -231,7 +192,6 @@ export class FuzzyOntology {
       .filter(c => c !== undefined) as FuzzyConcept[];
   }
 
-  // Property management
   addObjectProperty(property: FuzzyObjectProperty): void {
     this.objectProperties.set(property.uri, property);
   }
@@ -263,7 +223,6 @@ export class FuzzyOntology {
 
     prop.relations.get(subject)!.set(object, degree);
 
-    // Add axiom
     this.axioms.push({
       type: 'propertyAssertion',
       subject,
@@ -273,7 +232,6 @@ export class FuzzyOntology {
     });
   }
 
-  // Fuzzy concept expression evaluation
   evaluateConceptExpression(
     individualURI: string,
     expression: FuzzyConceptExpression
@@ -373,7 +331,7 @@ export class FuzzyOntology {
     let minDegree = 1;
     for (const [objectURI, relationDegree] of relations) {
       const conceptDegree = this.evaluateConceptExpression(objectURI, concept);
-      // Implication: ¬r ∨ c
+
       const implication = Math.max(1 - relationDegree, conceptDegree);
       minDegree = Math.min(minDegree, implication);
     }
@@ -381,7 +339,6 @@ export class FuzzyOntology {
     return minDegree;
   }
 
-  // Alpha-cut retrieval
   getInstances(conceptURI: string, alphaCut: number = 0): Map<string, MembershipDegree> {
     const concept = this.concepts.get(conceptURI);
     if (!concept) return new Map();
@@ -397,7 +354,6 @@ export class FuzzyOntology {
     return result;
   }
 
-  // Export methods
   toJSON(): any {
     return {
       concepts: Array.from(this.concepts.values()),

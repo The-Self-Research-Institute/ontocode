@@ -74,9 +74,7 @@ public class ReasoningQueueManager {
         touchActivity();
         log.info("[Reasoning] Enqueued {} job {} for project {} (position {})",
                 jobType, job.getJobId(), projectId, job.getQueuePosition());
-        // TEMP DIAGNOSTIC — investigating a reported case where two different job
-        // submissions ended up returning the same jobId to two different callers.
-        // Remove once root-caused. Logs thread + identity hash to catch object reuse.
+
         log.info("[DIAG] enqueue: jobId={} jobType={} projectId={} thread={} identityHash={} atMs={}",
                 job.getJobId(), jobType, projectId, Thread.currentThread().getName(),
                 System.identityHashCode(job), System.currentTimeMillis());
@@ -84,10 +82,7 @@ public class ReasoningQueueManager {
     }
 
     public synchronized ReasoningJob dequeue() {
-        // Scan for the first job whose LANE has room, rather than only ever looking at the
-        // front of the queue. Otherwise a heavy job stuck at the front (its lane full) would
-        // block a cheap, fast job queued right behind it even though the fast lane is free —
-        // exactly the head-of-line blocking that let one heavy request starve everyone else.
+
         ReasoningJob candidate = findFirstAdmissible();
         if (candidate == null) {
             return null;

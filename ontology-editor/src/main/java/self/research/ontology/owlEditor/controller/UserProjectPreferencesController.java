@@ -59,7 +59,6 @@ public class UserProjectPreferencesController {
             return ResponseEntity.badRequest().body(Map.of("error", "syncMode must be 'public' or 'private'"));
         }
 
-        // Atomic upsert: avoids duplicate-key errors when concurrent toggles race on a missing record.
         Query query = Query.query(Criteria.where("userEmail").is(email).and("projectId").is(projectId));
         Update update = new Update()
                 .set("syncMode", syncMode)

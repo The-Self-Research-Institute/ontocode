@@ -1,7 +1,4 @@
-/**
- * Fuzzy Ontology Plugin - Main Extension Entry Point
- * Advanced fuzzy ontology support
- */
+
 
 import { FuzzyOntology, FuzzyConcept, FuzzyIndividual } from './core/FuzzyOntology';
 import { MembershipFunctionType, TNorm, TCoNorm } from './core/FuzzyLogic';
@@ -9,72 +6,54 @@ import { FuzzySubsumptionReasoner, FuzzyQueryEngine, AlphaCutReasoner } from './
 import { MembershipFunctionPlotter, HierarchyVisualizer, MembershipMatrixVisualizer, RadarChartVisualizer } from './visualization/MembershipVisualizer';
 import { FuzzyQueryParser, FuzzyQueryBuilder, QueryTemplates } from './query/FuzzyQueryDSL';
 
-// Plugin state
 let fuzzyOntology: FuzzyOntology | null = null;
 let currentDocument: any = null;
 
-/**
- * Plugin activation
- */
 export function activate(context: any) {
   console.log('Fuzzy Ontology Plugin activated');
 
-  // Initialize fuzzy ontology
   fuzzyOntology = new FuzzyOntology({
     tNorm: TNorm.PRODUCT,
     tCoNorm: TCoNorm.PROBABILISTIC
   });
 
-  // Register commands
   registerCommands(context);
 
-  // Register providers
   registerProviders(context);
 
-  // Initialize UI components
   initializeUI(context);
 }
 
-/**
- * Register all commands
- */
 function registerCommands(context: any) {
-  // Enable fuzzy mode
+
   context.subscriptions.push({
     command: 'fuzzy.enableFuzzyMode',
     callback: () => enableFuzzyMode()
   });
 
-  // Set membership degree
   context.subscriptions.push({
     command: 'fuzzy.setMembershipDegree',
     callback: () => setMembershipDegree()
   });
 
-  // Visualize membership functions
   context.subscriptions.push({
     command: 'fuzzy.visualizeMembership',
     callback: () => visualizeMembership()
   });
 
-  // Run fuzzy query
   context.subscriptions.push({
     command: 'fuzzy.runFuzzyQuery',
     callback: () => runFuzzyQuery()
   });
 
-  // Export fuzzy OWL
   context.subscriptions.push({
     command: 'fuzzy.exportFuzzyOWL',
     callback: () => exportFuzzyOWL()
   });
 }
 
-/**
- * Register completion and hover providers
- */
 function registerProviders(context: any) {
-  // Fuzzy annotation completion provider
+
   context.subscriptions.push({
     language: 'turtle',
     provider: {
@@ -109,7 +88,6 @@ function registerProviders(context: any) {
     }
   });
 
-  // Hover provider for fuzzy annotations
   context.subscriptions.push({
     language: 'turtle',
     provider: {
@@ -147,11 +125,8 @@ function registerProviders(context: any) {
   });
 }
 
-/**
- * Initialize UI components
- */
 function initializeUI(context: any) {
-  // Create fuzzy ontology explorer view
+
   context.subscriptions.push({
     viewId: 'fuzzy-ontology-explorer',
     provider: {
@@ -160,7 +135,7 @@ function initializeUI(context: any) {
         if (!fuzzyOntology) return [];
 
         if (!element) {
-          // Root items
+
           return [
             { label: 'Fuzzy Concepts', collapsible: true, type: 'concepts' },
             { label: 'Fuzzy Individuals', collapsible: true, type: 'individuals' },
@@ -197,9 +172,6 @@ function initializeUI(context: any) {
   });
 }
 
-/**
- * Enable fuzzy ontology mode
- */
 async function enableFuzzyMode() {
   console.log('Enabling fuzzy ontology mode...');
 
@@ -207,15 +179,11 @@ async function enableFuzzyMode() {
     fuzzyOntology = new FuzzyOntology();
   }
 
-  // Parse current ontology and convert to fuzzy
   await parseTurtleToFuzzy();
 
   showNotification('Fuzzy ontology mode enabled! Use fuzzy:membershipDegree annotations.');
 }
 
-/**
- * Set membership degree for selected individual/concept
- */
 async function setMembershipDegree() {
   const individualURI = await promptInput('Enter individual URI:');
   const conceptURI = await promptInput('Enter concept URI:');
@@ -230,14 +198,10 @@ async function setMembershipDegree() {
     fuzzyOntology.setMembershipDegree(individualURI, conceptURI, degree);
     showNotification(`Set membership: ${individualURI} ∈ ${conceptURI} with degree ${degree}`);
 
-    // Update visualization
     await visualizeMembership();
   }
 }
 
-/**
- * Visualize membership functions and hierarchy
- */
 async function visualizeMembership() {
   if (!fuzzyOntology) {
     showError('Fuzzy ontology not initialized');
@@ -304,9 +268,6 @@ async function visualizeMembership() {
   }
 }
 
-/**
- * Run fuzzy query
- */
 async function runFuzzyQuery() {
   if (!fuzzyOntology) {
     showError('Fuzzy ontology not initialized');
@@ -350,9 +311,6 @@ async function runFuzzyQuery() {
   }
 }
 
-/**
- * Export fuzzy ontology to Fuzzy OWL format
- */
 async function exportFuzzyOWL() {
   if (!fuzzyOntology) {
     showError('Fuzzy ontology not initialized');
@@ -368,13 +326,8 @@ async function exportFuzzyOWL() {
   }
 }
 
-/**
- * Helper functions (placeholders for actual VSCode API calls)
- */
-
 async function parseTurtleToFuzzy(): Promise<void> {
-  // Parse current document and extract fuzzy annotations
-  // This would integrate with the actual ontology parser
+
   console.log('Parsing Turtle to Fuzzy ontology...');
 }
 
@@ -388,7 +341,7 @@ function getAverageMembership(concept: FuzzyConcept): number {
 }
 
 function generateFuzzyOWL(ontology: FuzzyOntology): string {
-  // Generate Fuzzy OWL 2 format
+
   let owl = `@prefix fuzzy: <http://www.ontocode.org/fuzzy#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -396,7 +349,6 @@ function generateFuzzyOWL(ontology: FuzzyOntology): string {
 
 `;
 
-  // Add concepts
   for (const concept of ontology.getAllConcepts()) {
     owl += `<${concept.uri}> a owl:Class .\n`;
     if (concept.label) {
@@ -404,7 +356,6 @@ function generateFuzzyOWL(ontology: FuzzyOntology): string {
     }
   }
 
-  // Add fuzzy assertions
   for (const individual of ontology.getAllIndividuals()) {
     for (const [conceptURI, degree] of individual.memberships) {
       owl += `
@@ -418,17 +369,17 @@ function generateFuzzyOWL(ontology: FuzzyOntology): string {
 }
 
 async function promptInput(message: string): Promise<string | undefined> {
-  // Placeholder: would use actual VS Code input box
+
   return undefined;
 }
 
 async function promptChoice(message: string, choices: string[]): Promise<string | undefined> {
-  // Placeholder: would use actual VS Code quick pick
+
   return choices[0];
 }
 
 async function promptSaveFile(defaultName: string): Promise<string | undefined> {
-  // Placeholder: would use actual VS Code save dialog
+
   return undefined;
 }
 

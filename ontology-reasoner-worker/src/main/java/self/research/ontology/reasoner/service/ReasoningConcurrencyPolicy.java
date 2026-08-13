@@ -34,11 +34,6 @@ public class ReasoningConcurrencyPolicy {
     @Value("${ontocode.reasoning.yield-to-imports:true}")
     private boolean yieldToImports;
 
-    // Two independent lanes so one heavy job (e.g. a 200MB ontology) can never block cheap,
-    // fast requests (e.g. a 10MB ontology) — they used to share one FIFO queue and one
-    // concurrency ceiling, so a heavy job at the front of the queue starved everything
-    // behind it regardless of cost. A job's lane is derived from its slotWeight: weight 1
-    // (small/cheap, <=100k triples per slotWeight()) is "fast", anything heavier is "heavy".
     @Value("${ontocode.reasoning.fast-lane-max-concurrent:3}")
     private int fastLaneMaxConcurrent;
 
@@ -66,10 +61,7 @@ public class ReasoningConcurrencyPolicy {
 
     public int slotWeight(long tripleCount) {
         if (tripleCount < 0) {
-            // EditorClient returns -1 when it couldn't determine the size (lookup failed).
-            // Unknown cost must default to heavy, not cheap — defaulting to the fast lane
-            // here would let a genuinely huge, unmeasured ontology run concurrently
-            // alongside other fast jobs with none of the lane's safety assumptions holding.
+
             return Math.max(1, slotBudget);
         }
         if (tripleCount == 0) {
@@ -125,12 +117,7 @@ public class ReasoningConcurrencyPolicy {
         if (candidate == null) {
             return false;
         }
-        // Global heap-safety veto — genuinely shared across lanes, so a free lane slot never
-        // overrides real memory pressure. Deliberately NOT gated on the old configuredMax/
-        // slotBudget combo: that sizing made a heavy job consume the *entire* shared budget
-        // by design, which — combined with a single FIFO queue — was exactly what let one
-        // heavy job block every other job regardless of lane. Lane caps below are now the
-        // primary admission gate.
+
         if (memoryAware && !activeJobs.isEmpty() && freeHeapRatio() < minFreeHeapRatio) {
             return false;
         }

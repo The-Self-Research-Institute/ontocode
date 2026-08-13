@@ -12,10 +12,6 @@ import java.io.OutputStream;
 import java.util.Arrays;
 import java.util.HashMap;
 
-/**
- * JSON-LD Import/Export Plugin
- * Supports JSON-LD format for ontology import and export
- */
 public class JsonLdPlugin implements ImportExportPlugin {
 
     private static final Logger log = LoggerFactory.getLogger(JsonLdPlugin.class);

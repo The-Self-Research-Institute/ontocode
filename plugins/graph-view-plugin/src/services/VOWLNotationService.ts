@@ -1,8 +1,4 @@
-/**
- * VOWL Notation Service - Integrated into Graph View
- * Transforms ontology data into VOWL-compliant visual representation
- * Merges VOWL notation with Graph View capabilities
- */
+
 
 import type {
   OntologyNode,
@@ -56,34 +52,29 @@ export class VOWLNotationService {
   private nodeMap: Map<string, VOWLNodeData> = new Map();
   private edgeMap: Map<string, VOWLEdgeData> = new Map();
 
-  /**
-   * Convert OntologyNode to VOWL-styled node with proper notation
-   */
   nodeToVOWLNode(node: OntologyNode): VOWLNodeData {
     const vowlType = this.mapToVOWLNodeType(node.type);
     const deprecated = node.metadata?.deprecated || false;
     const external = this.isExternalNode(node);
-    
-    // VOWL visual styling
+
     let radius = 12;
     let strokeColor = '#1f2937';
     let strokeWidth = 2;
     let strokeDasharray: string | null = null;
-    
-    // Adjust styling based on type and state
+
     if (node.type === 'individual') {
       radius = 8; // Smaller for individuals
     }
-    
+
     if (deprecated) {
       strokeDasharray = '4 2'; // Dashed for deprecated
       strokeColor = '#9ca3af';
     }
-    
+
     if (external) {
       strokeWidth = 1; // Thinner for external entities
     }
-    
+
     return {
       id: node.id,
       type: vowlType,
@@ -101,19 +92,13 @@ export class VOWLNotationService {
     };
   }
 
-  /**
-   * Convert OntologyEdge to VOWL-styled edge with proper characteristics
-   */
   edgeToVOWLEdge(edge: OntologyEdge): VOWLEdgeData {
     const vowlType = this.mapToVOWLEdgeType(edge.type);
-    
-    // VOWL edge styling based on type
+
     let stroke = '#000';
     let strokeDasharray: string | null = null;
     let strokeWidth = 2;
-    
-    // SubClassOf: fine-dotted line per VOWL spec (WebVOWL uses 1/6 dots —
-    // heavy 5/3 dashes read as visual clutter at overview zoom)
+
     if (edge.type === 'subClassOf') {
       stroke = '#374151';
       strokeDasharray = '1 6';
@@ -196,9 +181,6 @@ export class VOWLNotationService {
     };
   }
 
-  /**
-   * Map Graph View node type to VOWL node type
-   */
   private mapToVOWLNodeType(graphNodeType: NodeType): string {
     const typeMap: Record<NodeType, string> = {
       class: 'owl:Class',
@@ -213,9 +195,6 @@ export class VOWLNotationService {
     return typeMap[graphNodeType] || 'owl:Class';
   }
 
-  /**
-   * Map Graph View edge type to VOWL edge type
-   */
   private mapToVOWLEdgeType(graphEdgeType: EdgeType): string {
     const typeMap: Record<EdgeType, string> = {
       subClassOf: 'rdfs:subClassOf',
@@ -238,9 +217,6 @@ export class VOWLNotationService {
     return typeMap[graphEdgeType] || 'rdfs:relation';
   }
 
-  /**
-   * Check if node is external (from standard ontologies)
-   */
   private isExternalNode(node: OntologyNode): boolean {
     const uri = node.uri || node.id;
     if (!uri || typeof uri !== 'string') return false;
@@ -251,14 +227,8 @@ export class VOWLNotationService {
     );
   }
 
-  /**
-   * Get VOWL node color based on type (VOWL standard colors)
-   * These colors MUST match the actual rendering in AdvancedGraphView.tsx
-   * @param nodeType The type of the node
-   * @param isDark Whether dark mode is active
-   */
   getVOWLNodeColor(nodeType: string, isDark: boolean = false): string {
-    // Light mode — VOWL (medium blue + yellow datatype; white labels on classes)
+
     const lightColorMap: Record<string, string> = {
       'owl:Class': '#69c',
       'owl:NamedIndividual': '#cfc',
@@ -276,8 +246,7 @@ export class VOWLNotationService {
       'dataProperty': '#ffffcc',
       'annotation': '#e8d5f2',
     };
-    
-    // Dark mode colors - adjusted for better visibility on dark backgrounds
+
     const darkColorMap: Record<string, string> = {
       'owl:Class': '#6b92c4',
       'owl:NamedIndividual': '#fbb6ce',
@@ -295,14 +264,11 @@ export class VOWLNotationService {
       'dataProperty': '#fef08a',
       'annotation': '#9333ea',
     };
-    
+
     const colorMap = isDark ? darkColorMap : lightColorMap;
     return colorMap[nodeType] || (isDark ? '#6b92c4' : '#69c');
   }
 
-  /**
-   * Get VOWL edge stroke style based on type and attributes (VOWL standard)
-   */
   getVOWLEdgeStyle(edgeType: string, attributes?: Record<string, any>): {
     stroke: string;
     strokeDasharray?: string;
@@ -310,7 +276,6 @@ export class VOWLNotationService {
   } {
     const baseWidth = 1.5;
 
-    // Annotation properties use dashed lines
     if (edgeType === 'owl:AnnotationProperty') {
       return {
         stroke: '#000000',
@@ -319,7 +284,6 @@ export class VOWLNotationService {
       };
     }
 
-    // Datatype properties use solid black
     if (edgeType === 'owl:DatatypeProperty') {
       return {
         stroke: '#000000',
@@ -327,7 +291,6 @@ export class VOWLNotationService {
       };
     }
 
-    // Object properties use solid black
     if (edgeType === 'owl:ObjectProperty' || edgeType === 'owl:propertyRelation') {
       return {
         stroke: '#000000',
@@ -335,7 +298,6 @@ export class VOWLNotationService {
       };
     }
 
-    // SubClassOf relationships - dashed line
     if (edgeType === 'rdfs:subClassOf') {
       return {
         stroke: '#000000',
@@ -344,7 +306,6 @@ export class VOWLNotationService {
       };
     }
 
-    // Equivalent class - solid thicker line (blue, not green — see edgeToVOWLEdge for why)
     if (edgeType === 'owl:equivalentClass') {
       return {
         stroke: '#2563eb',
@@ -353,8 +314,6 @@ export class VOWLNotationService {
       };
     }
 
-    // Disjoint - dotted line (orange, not red — paired with equivalentClass, avoids the
-    // red/green color-vision-deficiency combination)
     if (edgeType === 'owl:disjointWith') {
       return {
         stroke: '#f97316',
@@ -369,9 +328,6 @@ export class VOWLNotationService {
     };
   }
 
-  /**
-   * Create VOWL notation legend entries
-   */
   getVOWLLegend(): Array<{
     name: string;
     type: 'node' | 'edge';
@@ -422,13 +378,9 @@ export class VOWLNotationService {
     ];
   }
 
-  /**
-   * Format node label with namespace prefix
-   */
   formatNodeLabel(label: string, namespace?: string): string {
     if (!label) return '';
 
-    // Extract prefix if namespace provided
     if (namespace) {
       const lastSlash = label.lastIndexOf('/');
       const lastHash = label.lastIndexOf('#');
@@ -443,9 +395,6 @@ export class VOWLNotationService {
     return label;
   }
 
-  /**
-   * Get property characteristic indicators
-   */
   getPropertyCharacteristics(
     attributes?: Record<string, any>
   ): Array<{
@@ -508,9 +457,6 @@ export class VOWLNotationService {
     return characteristics;
   }
 
-  /**
-   * Get VOWL-compliant statistics from nodes and edges
-   */
   calculateVOWLStatistics(
     nodes: OntologyNode[],
     edges: OntologyEdge[]

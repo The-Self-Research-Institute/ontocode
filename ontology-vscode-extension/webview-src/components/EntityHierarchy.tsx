@@ -44,7 +44,7 @@ interface EntityHierarchyProps {
     hideDeprecated: boolean;
     hideBuiltins: boolean;
   }) => void;
-  /** Under each search hit, how many levels of descendants to show (0–5). Default handled by parent. */
+
   searchMatchSubtreeDepth?: number;
   onSearchMatchSubtreeDepthChange?: (depth: number) => void;
   onSelectItem: (item: SelectableItem) => void;
@@ -154,10 +154,6 @@ const EntityHierarchy = ({
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const { state: collaborationState, publishCursor } = useCollaboration();
 
-  // Search input is decoupled from searchQuery so keystrokes stay instant even
-  // when the underlying tree filter (Dashboard's filterRecursively, O(materialized
-  // node count) which can be far larger than the entity count on ontologies with
-  // heavy multi-parent classes) takes a while — the filter only runs after typing pauses.
   const [searchInputValue, setSearchInputValue] = useState(searchQuery);
   useEffect(() => {
     setSearchInputValue(searchQuery);
@@ -169,10 +165,6 @@ const EntityHierarchy = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInputValue]);
 
-  // ── Virtualized rendering ─────────────────────────────────────────────────
-  // Keep render cost O(visible rows) instead of O(total nodes) so the tree stays
-  // smooth on large ontologies with tens of thousands of expanded entities —
-  // the same windowing technique Monaco/VS Code use to keep huge files fast.
   const ROW_HEIGHT = 24;            // px; virtual rows are clipped to this height
   const OVERSCAN = 12;              // extra rows rendered above/below the viewport
   const VIRTUALIZE_THRESHOLD = 200; // below this, render normally (no windowing)
@@ -188,14 +180,12 @@ const EntityHierarchy = ({
   useEffect(() => {
     if (scrollRef.current) setViewportH(scrollRef.current.clientHeight);
   }, [filteredData, entitiesTab]);
-  
-  // Get active users as array and filter by current project
+
   const allUsers = Array.from(collaborationState.activeUsers.values());
   const activeUsers = allUsers.filter(user => 
     !collaborationState.currentProjectId || user.projectId === collaborationState.currentProjectId
   );
 
-  // Close context menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
@@ -209,7 +199,6 @@ const EntityHierarchy = ({
     }
   }, [contextMenu]);
 
-  // Keyboard shortcuts: 'a' for asserted, 'i' for inferred
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -225,7 +214,6 @@ const EntityHierarchy = ({
     return () => document.removeEventListener('keydown', handleKeyPress);
   }, [onViewModeChange]);
 
-  // Listen for F2 rename trigger from Dashboard
   useEffect(() => {
     const handleRenameEvent = (e: Event) => {
       const customEvent = e as CustomEvent;
@@ -244,10 +232,9 @@ const EntityHierarchy = ({
     setContextMenu({ x: e.clientX, y: e.clientY, item });
   };
 
-  // Drag and Drop handlers for class hierarchy reorganization
   const handleDragStart = (e: React.DragEvent, item: SelectableItem) => {
     if (isViewOnly) { e.preventDefault(); return; }
-    // Only allow drag in Classes tab and asserted mode
+
     if (entitiesTab !== 'Classes' || viewMode !== 'asserted') {
       e.preventDefault();
       return;
@@ -296,9 +283,7 @@ const EntityHierarchy = ({
   };
 
   const renderRow = (item: SelectableItem, level = 0): React.JSX.Element => {
-    // Sentinel node injected into owl:Thing's children when top-level is truncated.
-    // Always intercept — never fall through to normal class rendering.
-    // Dialogs/secondary trees that don't pass onLoadMoreTopLevel get an empty fragment.
+
     if (item.id === "__load_more_top_level__") {
       if (!onLoadMoreTopLevel) return <React.Fragment key="__load_more_top_level__" />;
       const loaded = (filteredData[0] as any)?.children?.filter(
@@ -341,37 +326,30 @@ const EntityHierarchy = ({
       );
     }
     const isSelected = selectedItem?.id === item.id;
-    // An item is a "TreeNode" if it's in the Classes, ObjectProperties, DataProperties, or AnnotationProperties tab.
-    // We check 'hasChildren' to know if it's expandable.
+
     const isTreeNode = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
     const hasChildren = 'hasChildren' in item && item.hasChildren;
     const isExpanded = isTreeNode && hasChildren && expandedNodes.includes(item.id);
     const isDragging = draggedItem?.id === item.id;
     const canDrag = entitiesTab === 'Classes' && viewMode === 'asserted';
-    
-    // Check if class is defined (has equivalent classes) vs primitive
+
     const isDefined = entitiesTab === 'Classes' && (
       ('equivalentClassesAxioms' in item && (item as TreeNode).equivalentClassesAxioms && (item as TreeNode).equivalentClassesAxioms!.length > 0) ||
       ('equivalentClasses' in item && (item as TreeNode).equivalentClasses && (item as TreeNode).equivalentClasses!.length > 0)
     );
-   
-    // Find users viewing this node
+
     const usersViewingNode = activeUsers.filter(user => 
       user.cursorPosition === item.id || user.selectedNodes?.includes(item.id)
     );
     let Icon, iconClasses;
     let itemType = entitiesTab;
-    
-    // Multi-parent: class appears under more than one parent in the visible tree
+
     const isMultiParent = entitiesTab === 'Classes' && multiParentIds.has(item.id);
 
-    // Determine icon based on the tab - add equivalence lines for defined classes
     switch (itemType) {
         case 'Classes':
           Icon = Package;
-          // Multi-parent: double-border — class has >1 parent
-          // Defined: amber-300 with equivalence indicator
-          // Normal: solid amber-400
+
           iconClasses = isMultiParent
             ? 'bg-amber-400 border-amber-600 ring-1 ring-amber-300 ring-offset-[1px]'
             : isDefined
@@ -405,7 +383,7 @@ const EntityHierarchy = ({
           }}
           onContextMenu={(e) => handleContextMenu(e, item)}
         >
-          {/* Expander Arrow */}
+          {}
           {isTreeNode ? (
             <button
               className="p-0.5 mr-1"
@@ -424,11 +402,11 @@ const EntityHierarchy = ({
               )}
             </button>
           ) : (
-            // Non-tree items get a spacer to align text
+
             <span className="w-5 mr-1" /> 
           )}
-          
-          {/* Checkbox for multi-select mode (HasKey dialog) */}
+
+          {}
           {multiSelectMode && (
             <div 
               className={`w-4 h-4 mr-2 rounded border flex items-center justify-center flex-shrink-0 ${
@@ -446,8 +424,8 @@ const EntityHierarchy = ({
               )}
             </div>
           )}
-          
-          {/* Entity Icon */}
+
+          {}
            <div
              title={
                isMultiParent ? 'This class has multiple parent classes — it appears once under each parent (correct OWL behavior)'
@@ -462,8 +440,8 @@ const EntityHierarchy = ({
                 <Icon size={10} className="text-white"/>
               )}
            </div>
-          
-          {/* Label - show input if renaming */}
+
+          {}
           {renamingItemId === item.id ? (
             <InlineRenameInput
               initialValue={item.label}
@@ -494,7 +472,7 @@ const EntityHierarchy = ({
                       : item.label}
               </span>
 
-              {/* Equivalent classes/properties display — shown in both asserted and inferred modes */}
+              {}
               {(item as any).equivalentClasses && (item as any).equivalentClasses.length > 0 && (
                 <span className="text-[10px] text-amber-700 italic whitespace-nowrap ml-1 shrink-0 max-w-[50%] overflow-hidden text-ellipsis">
                   ≡ {(item as any).equivalentClasses.map((c: any) => c.label).join(', ')}
@@ -505,8 +483,8 @@ const EntityHierarchy = ({
                   ≡ {(item as any).equivalentProperties.map((p: any) => typeof p === 'string' ? p : p.label).join(', ')}
                 </span>
               )}
-              
-              {/* Inferred types for individuals */}
+
+              {}
               {entitiesTab === 'Individuals' && viewMode === 'inferred' && (item as any).inferredTypes && (item as any).inferredTypes.length > 0 && (
                 <div className="flex flex-wrap gap-1 ml-1">
                   {(item as any).inferredTypes.map((type: any) => (
@@ -522,8 +500,8 @@ const EntityHierarchy = ({
               )}
             </div>
           )}
-          
-          {/* Active User Cursors */}
+
+          {}
           {usersViewingNode.length > 0 && (
             <div className="flex items-center gap-1 ml-2">
               {usersViewingNode.map(user => (
@@ -544,12 +522,10 @@ const EntityHierarchy = ({
             </div>
           )}
         </div>
-        
+
     );
   };
 
-  // Recursive wrapper used by the non-virtualized path: a row plus its expanded
-  // descendants. The virtualized path renders flattened rows directly instead.
   const renderItem = (item: SelectableItem, level = 0): React.JSX.Element => {
     const isTreeNodeTab = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
     const nodeHasChildren = 'hasChildren' in item && (item as TreeNode).hasChildren;
@@ -562,8 +538,6 @@ const EntityHierarchy = ({
     );
   };
 
-  // Flatten the currently-visible tree (respecting expanded state) into a
-  // positional list. This is the data the virtualizer slices into a window.
   const flatNodes = useMemo(() => {
     const isTreeNodeTab = entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
     const out: { item: SelectableItem; level: number }[] = [];
@@ -581,9 +555,6 @@ const EntityHierarchy = ({
     return out;
   }, [filteredData, expandedNodes, entitiesTab]);
 
-  // Classes that appear more than once in the visible tree are multi-parent.
-  // Shown with a double-border icon so the user understands
-  // they're not duplicates — the class genuinely has multiple parent classes.
   const multiParentIds = useMemo(() => {
     if (entitiesTab !== 'Classes') return new Set<string>();
     const seen = new Set<string>();
@@ -596,8 +567,6 @@ const EntityHierarchy = ({
     return multi;
   }, [flatNodes, entitiesTab]);
 
-  // Render the hierarchy body. Large asserted trees are windowed; small lists and
-  // inferred mode (which can have variable-height rows) render normally.
   const renderHierarchyBody = (): React.ReactNode => {
     if (viewMode !== 'asserted' || flatNodes.length <= VIRTUALIZE_THRESHOLD) {
       return (filteredData || []).map(node => renderItem(node));
@@ -619,7 +588,7 @@ const EntityHierarchy = ({
       </div>
     );
   };
-  
+
   const entitiesTabsConfig = {
       Classes: { label: "Classes", icon: Package },
       ObjectProperties: { label: "Object properties", icon: GitBranch },
@@ -628,29 +597,23 @@ const EntityHierarchy = ({
       Datatypes: { label: "Datatypes", icon: Type },
       Individuals: { label: "Individuals", icon: User },
   };
-  
+
   const currentTabConfig = entitiesTabsConfig[entitiesTab as keyof typeof entitiesTabsConfig];
 
   const isPropertyTab = entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'AnnotationProperties';
-  // Mobile: use full width so the hierarchy doesn't crush the details panel.
-  // Desktop: keep the existing sidebar widths.
+
   const sidebarWidthClass = isPropertyTab ? 'w-full md:w-[26rem] md:min-w-[24rem]' : 'w-full md:w-80';
   const currentLabel = currentTabConfig?.label || entitiesTab;
 
   return (
     <aside className={`${hideToolbarActions ? 'w-full' : sidebarWidthClass} ${hideToolbarActions ? '' : 'border-r'} flex flex-col h-full`} style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
-      {/* Header with CUD buttons and Asserted/Inferred toggle */}
+      {}
       {!hideToolbarActions && (
       <div className="text-xs font-semibold p-1 flex items-center justify-center gap-1 flex-wrap border-b text-center" style={{ borderColor: 'var(--color-border)' }}>
         <span style={{ color: 'var(--color-text-secondary)' }}>{currentLabel} hierarchy</span>
-        {/* {viewMode === 'inferred' && isReasonerRunning && (
-          <span className="flex items-center gap-1 px-1.5 py-0.5 bg-green-50 text-green-700 rounded text-[10px] font-medium border border-green-300">
-            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
-            Reasoner Active
-          </span>
-        )} */}
+        {}
         <div className="flex items-center gap-0.5">
-          {/* Asserted/Inferred mode toggle for all entity types */}
+          {}
           {(entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties' || entitiesTab === 'Datatypes' || entitiesTab === 'AnnotationProperties' || entitiesTab === 'Individuals') && (
             <div className="flex items-center gap-0.5 bg-gray-100 rounded px-1 py-0.5">
               <button
@@ -681,25 +644,7 @@ const EntityHierarchy = ({
 
           {!hideToolbarActions && (
           <div className="flex items-center gap-0.5">
-              {/*
-                Toolbar layout, Bug #46 (matches):
-                  • Primary "Add" button is CONTEXTUAL — no selection creates
-                    a top-level entity (under owl:Thing / topObjectProperty /
-                    topDataProperty), with selection creates a sibling. This
-                    is what we pass to onAddItem('sibling') — Dashboard's
-                    handleAddItem now treats sibling-without-selection as
-                    "create at the top".
-                  • Secondary "Add Subclass / Sub-property" button always
-                    creates a child of the selection. It stays enabled even
-                    without a selection so the click can surface a clear
-                    "Select X first" notification (the previous disabled
-                    state was silent — the actual user complaint).
-                  • Icons:
-                      Rows3            – multiple rows at the same level
-                                         (Add Class / Add at root / Sibling)
-                      CornerDownRight  – arrow that visually indents (child)
-                                         (Add Subclass / Sub-property)
-              */}
+              {}
               {entitiesTab === 'Classes' && viewMode === 'asserted' && (
                  <>
                  <button
@@ -772,8 +717,7 @@ const EntityHierarchy = ({
                  </button>
                  </>
               )}
-              {/* Bug #45: Annotation Properties tab now matches the other
-                  property tabs — Add (top / sibling) plus Add sub-property. */}
+              {}
               {entitiesTab === 'AnnotationProperties' && viewMode === 'asserted' && (
                  <>
                  <button
@@ -850,8 +794,8 @@ const EntityHierarchy = ({
         </div>
       </div>
       )}
-      
-      {/* Search Bar */}
+
+      {}
       <div className="p-2 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
           <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-secondary)' }} />
@@ -920,18 +864,18 @@ const EntityHierarchy = ({
               )}
             </div>
           )}
-          
-          {/* Tips banner */}
+
+          {}
           {!hideToolbarActions && entitiesTab === 'Classes' && viewMode === 'asserted' && (
             <div className="mt-2 text-[10px] text-gray-500 bg-blue-50 border border-blue-200 rounded p-2">
               💡 <strong>Tip:</strong> Drag &amp; drop to reorganize | <kbd className="px-1 py-0.5 bg-gray-200 rounded">A</kbd> Asserted | <kbd className="px-1 py-0.5 bg-gray-200 rounded">I</kbd> Inferred | <kbd className="px-1 py-0.5 bg-gray-200 rounded">Ctrl+E</kbd> Add subclass
             </div>
           )}
       </div>
-      
-      {/* Tree/List View */}
+
+      {}
       <div ref={scrollRef} onScroll={handleTreeScroll} className="flex-1 overflow-y-auto p-1">
-        {/* Skeleton + footer status (preferred over dimmed tree / "Refreshing…" overlay) */}
+        {}
         {isLoading ? (
           <div className="p-2 space-y-1" role="status" aria-live="polite">
             {[...Array(12)].map((_, i) => (
@@ -989,7 +933,7 @@ const EntityHierarchy = ({
         }
       </div>
 
-      {/* Context Menu */}
+      {}
       {contextMenu && (entitiesTab === 'Classes' || entitiesTab === 'ObjectProperties' || entitiesTab === 'DataProperties') && (
         <div
           ref={contextMenuRef}

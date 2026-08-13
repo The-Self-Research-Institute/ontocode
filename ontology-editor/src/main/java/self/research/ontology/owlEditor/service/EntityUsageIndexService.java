@@ -10,15 +10,6 @@ import self.research.ontology.owlEditor.repository.EntityUsageRepository;
 
 import java.util.*;
 
-/**
- * Pre-computes entity usage for all classes in a project and stores results in MongoDB.
- *
- * Lookup path: MongoDB (O(1)) → SPARQL fallback (slow, blank-node traversal).
- * Write path: invalidate affected IRIs on mutation; rebuild async at import completion.
- *
- * For large ontologies (Mondo, 3.1M triples) this makes usage lookup instant
- * without requiring an in-memory OWLAPI model in the editor service.
- */
 @Slf4j
 @Service
 public class EntityUsageIndexService {
@@ -41,18 +32,11 @@ public class EntityUsageIndexService {
         this.revisionService = revisionService;
     }
 
-    /**
-     * O(1) MongoDB lookup — returns empty if not indexed yet or if the document was
-     * invalidated by a mutation. Freshness is maintained by per-IRI invalidation in
-     * {@link #invalidate}, not by a global revision check (global revision changes on every
-     * mutation but only affected IRIs are deleted, so non-affected docs remain valid).
-     */
     public Optional<List<Map<String, String>>> getUsage(String projectId, String entityIri) {
         return repo.findByProjectIdAndEntityIri(projectId, entityIri)
                 .map(EntityUsageDocument::getUsages);
     }
 
-    /** Invalidate cache entries for the given IRIs (called after mutation). */
     public void invalidate(String projectId, List<String> affectedIris) {
         if (affectedIris == null || affectedIris.isEmpty()) return;
         try {
@@ -63,7 +47,6 @@ public class EntityUsageIndexService {
         }
     }
 
-    /** Drop the entire usage index for a project (called on re-import). */
     public void dropAll(String projectId) {
         try {
             repo.deleteByProjectId(projectId);
@@ -73,11 +56,6 @@ public class EntityUsageIndexService {
         }
     }
 
-    /**
-     * Build the full usage index for a project using batch SPARQL queries.
-     * Runs async so it doesn't block the import completion response.
-     * For Mondo (3.1M triples, ~22K classes): ~2-5 minutes.
-     */
     @Async("metadataExecutor")
     public void scheduleBuild(String projectId) {
         try {
@@ -85,7 +63,6 @@ public class EntityUsageIndexService {
             long start = System.currentTimeMillis();
             long revision = revisionService.getRevision(projectId);
 
-            // Accumulate all usages keyed by entity IRI
             Map<String, List<Map<String, String>>> byEntity = new LinkedHashMap<>();
 
             buildSubclassUsages(projectId, byEntity);
@@ -96,7 +73,6 @@ public class EntityUsageIndexService {
             buildInstanceUsages(projectId, byEntity);
             buildAnnotationRefUsages(projectId, byEntity);
 
-            // Bulk write to MongoDB
             List<EntityUsageDocument> docs = new ArrayList<>();
             for (Map.Entry<String, List<Map<String, String>>> entry : byEntity.entrySet()) {
                 docs.add(new EntityUsageDocument(projectId, entry.getKey(), revision, entry.getValue()));
@@ -109,8 +85,6 @@ public class EntityUsageIndexService {
             log.error("[UsageIndex] Build failed for project {}: {}", projectId, e.getMessage(), e);
         }
     }
-
-    // ── Batch SPARQL queries ──────────────────────────────────────────────────
 
     private void buildSubclassUsages(String projectId, Map<String, List<Map<String, String>>> out) {
         String q = PREFIXES + """
@@ -126,10 +100,10 @@ public class EntityUsageIndexService {
                 String parent = iri(sol, "parent");
                 String child = iri(sol, "child");
                 if (parent == null || child == null) continue;
-                // parent gets a "subclass" usage entry (something is a subclass of parent)
+
                 out.computeIfAbsent(parent, k -> new ArrayList<>())
                    .add(entry("subclass", child, label(sol, "childLabel", child), "SubClassOf this"));
-                // child gets a "superclass" usage entry (parent is a superclass of child)
+
                 out.computeIfAbsent(child, k -> new ArrayList<>())
                    .add(entry("superclass", parent, localName(parent), "SuperClassOf"));
             }
@@ -139,8 +113,7 @@ public class EntityUsageIndexService {
     }
 
     private void buildRestrictionUsages(String projectId, Map<String, List<Map<String, String>>> out) {
-        // Covers someValuesFrom, allValuesFrom, hasValue (existential/universal/value restrictions)
-        // and onClass (qualified cardinality). Traverses blank-node to owning named class.
+
         String q = PREFIXES + """
             SELECT DISTINCT ?entity ?ownerClass ?ownerLabel ?onProp ?propLabel ?rtype WHERE {
               {
@@ -293,7 +266,7 @@ public class EntityUsageIndexService {
     }
 
     private void buildAnnotationRefUsages(String projectId, Map<String, List<Map<String, String>>> out) {
-        // Entities referenced via annotation properties (e.g. rdfs:seeAlso <IRI>)
+
         String q = PREFIXES + """
             SELECT DISTINCT ?entity ?subject ?subjectLabel ?prop ?propLabel WHERE {
               ?subject ?prop ?entity .
@@ -320,8 +293,6 @@ public class EntityUsageIndexService {
             log.warn("[UsageIndex] annotation ref batch failed: {}", e.getMessage());
         }
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Map<String, String> entry(String type, String subject, String subjectLabel, String context) {
         Map<String, String> m = new LinkedHashMap<>();

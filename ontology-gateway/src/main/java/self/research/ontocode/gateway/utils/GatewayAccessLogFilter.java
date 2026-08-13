@@ -18,31 +18,6 @@ import reactor.core.publisher.Mono;
 import java.util.Base64;
 import java.util.List;
 
-/**
- * Reactive access log + MDC enrichment for the gateway.
- *
- * <p>Spring Cloud Gateway is reactive, so a servlet-style
- * {@code OncePerRequestFilter} doesn't apply &mdash; ThreadLocal MDC isn't
- * propagated across Reactor schedulers. Instead we extract the
- * identifiers up-front, run the chain, and emit a single structured
- * access-log line at completion with MDC populated &mdash; that one log
- * call is on a known thread so MDC works for it.
- *
- * <p>Cascade rendered into the {@code ctx} field, identical to the
- * downstream services so a single grep correlates gateway and service
- * logs:
- * <pre>
- *   email + file       most specific
- *   email + project    file unknown
- *   email + workspace  project unknown
- *   email              nothing else known
- *   (anon)             unauthenticated
- * </pre>
- *
- * <p>Individual MDC fields ({@code userEmail}, {@code workspaceId},
- * {@code projectId}, {@code fileId}) are also set so structured-log
- * processors can filter by exact id.
- */
 @Component
 public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
 
@@ -54,13 +29,8 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
         long startNs = System.nanoTime();
         ServerHttpRequest req = exchange.getRequest();
 
-        // Identifiers are pure functions of the incoming request, so
-        // extract them once. They feed both the access-log line below
-        // and (when present) downstream services' own MDC filters.
         Identifiers ids = extract(req);
 
-        // Capture request metadata up-front so the doFinally callback
-        // doesn't need to traverse the (possibly closed) request again.
         String reqCt = nullToDash(req.getHeaders().getFirst(HttpHeaders.CONTENT_TYPE));
         long reqLen = req.getHeaders().getContentLength();
         String reqLenStr = reqLen >= 0 ? reqLen + "B" : "-";
@@ -74,9 +44,6 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
             long resLen = res.getHeaders().getContentLength();
             String resLenStr = resLen >= 0 ? resLen + "B" : "-";
 
-            // Set MDC just for this single log call; clear immediately
-            // afterwards. We're on the doFinally thread, so MDC is
-            // consistent here even though it wasn't across the chain.
             MDC.put("ctx", ids.context());
             if (ids.userEmail != null) MDC.put("userEmail", ids.userEmail);
             if (ids.workspaceId != null) MDC.put("workspaceId", ids.workspaceId);
@@ -102,21 +69,14 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
         return (s == null || s.isEmpty()) ? "-" : s;
     }
 
-    /** Run before the auth filter so identifiers are derived from the
-     *  incoming token, not from a possibly-rewritten downstream form. */
     @Override
     public int getOrder() {
         return -200;
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // Extraction
-    // ─────────────────────────────────────────────────────────────────
-
     private Identifiers extract(ServerHttpRequest req) {
         Identifiers ids = new Identifiers();
 
-        // 1. JWT: email + workspaceId from claims.
         List<String> auth = req.getHeaders().get(HttpHeaders.AUTHORIZATION);
         if (auth != null && !auth.isEmpty()) {
             String header = auth.get(0);
@@ -125,20 +85,11 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
             }
         }
 
-        // 2. Workspace from query param (covers paths that don't carry
-        //    a JWT yet, e.g. /api/billing/webhook is irrelevant here but
-        //    plan-pricing pre-auth calls might).
         if (ids.workspaceId == null) {
             String fromQuery = singleQueryParam(req, "workspaceId");
             if (fromQuery != null) ids.workspaceId = fromQuery;
         }
 
-        // 3. Project / file from URI path. Same conventions as
-        //    ontology-editor's MdcLoggingFilter:
-        //      proj-x--file-y  → split into project + file
-        //      proj-x          → project only
-        //      file-x          → file only
-        //      .../files/{id}  → file id by position
         String path = req.getURI().getRawPath();
         if (path != null) {
             String[] segments = path.split("/");
@@ -166,7 +117,7 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
                     String next = segments[i + 1];
                     if (!next.isEmpty()) ids.fileId = next;
                 }
-                // /api/workspaces/{wsId}/...
+
                 if ("workspaces".equals(seg) && i + 1 < segments.length
                         && ids.workspaceId == null) {
                     String next = segments[i + 1];
@@ -177,7 +128,6 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
             }
         }
 
-        // 4. File id from query string fallback.
         if (ids.fileId == null) {
             String fromQuery = singleQueryParam(req, "fileId");
             if (fromQuery != null) ids.fileId = fromQuery;
@@ -198,7 +148,7 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
             String wsId = textClaim(claims, "workspaceId");
             if (wsId != null) ids.workspaceId = wsId;
         } catch (Exception ignored) {
-            // Malformed token — leave identifiers blank, no recursive log.
+
         }
     }
 
@@ -216,10 +166,6 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
         String text = node.asText();
         return (text == null || text.isBlank()) ? null : text;
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Cascade
-    // ─────────────────────────────────────────────────────────────────
 
     private static final class Identifiers {
         String userEmail;

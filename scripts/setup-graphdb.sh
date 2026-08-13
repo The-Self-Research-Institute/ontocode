@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Wait for GraphDB to be ready
 echo "Waiting for GraphDB to start..."
 until curl -f http://localhost:7200/rest/repositories > /dev/null 2>&1; do
     echo "GraphDB not ready yet..."
@@ -9,7 +8,6 @@ done
 
 echo "GraphDB is ready!"
 
-# Create repository configuration
 cat > /tmp/ontocode-repo.ttl << 'EOF'
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
 @prefix rep: <http://www.openrdf.org/config/repository#>.
@@ -36,7 +34,6 @@ cat > /tmp/ontocode-repo.ttl << 'EOF'
     ].
 EOF
 
-# Create the repository
 echo "Creating ontocode repository..."
 curl -X POST http://localhost:7200/rest/repositories \
     -H "Content-Type: application/x-turtle" \

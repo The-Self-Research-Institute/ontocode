@@ -21,12 +21,11 @@ check_service() {
 
 check_service "MongoDB        " "http://localhost:27017"
 
-# Check for GraphDB or Fuseki
 GRAPHDB_REPO="${GRAPHDB_REPOSITORY:-ontocode}"
 if curl -s http://localhost:7200/rest/repositories > /dev/null 2>&1; then
     check_service "GraphDB        " "http://localhost:7200/rest/repositories"
     
-    # Check if ontocode repository exists
+
     if curl -s http://localhost:7200/rest/repositories | grep -q "\"$GRAPHDB_REPO\""; then
         echo -e "${GREEN}  ✓${NC} Repository '$GRAPHDB_REPO' exists"
     else

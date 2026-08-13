@@ -7,11 +7,6 @@ export interface MatrixLayoutOptions {
   padding?: number;
 }
 
-/**
- * Matrix/Adjacency Layout
- * Best for: Visualizing all relationships, finding patterns, dense graphs
- * Shows nodes on both axes with edges as cells
- */
 export function prepareMatrixData(
   nodes: OntologyNode[],
   edges: OntologyEdge[]
@@ -20,7 +15,7 @@ export function prepareMatrixData(
   matrix: Array<Array<OntologyEdge | null>>;
   nodeIndexMap: Map<string, number>;
 } {
-  // Sort nodes by type and name for better readability
+
   const sortedNodes = [...nodes].sort((a, b) => {
     if (a.type !== b.type) {
       return a.type.localeCompare(b.type);
@@ -28,13 +23,11 @@ export function prepareMatrixData(
     return a.label.localeCompare(b.label);
   });
 
-  // Create index map
   const nodeIndexMap = new Map<string, number>();
   sortedNodes.forEach((node, index) => {
     nodeIndexMap.set(node.id, index);
   });
 
-  // Build adjacency matrix
   const size = sortedNodes.length;
   const matrix: Array<Array<OntologyEdge | null>> = Array(size)
     .fill(null)
@@ -43,9 +36,9 @@ export function prepareMatrixData(
   edges.forEach(edge => {
     const fromIndex = nodeIndexMap.get(edge.from);
     const toIndex = nodeIndexMap.get(edge.to);
-    
+
     if (fromIndex !== undefined && toIndex !== undefined) {
-      // Store edge in matrix (can handle multiple edges by keeping the first or combining)
+
       if (!matrix[fromIndex][toIndex]) {
         matrix[fromIndex][toIndex] = edge;
       }
@@ -72,9 +65,6 @@ export interface MatrixVisualizationData {
   cellSize: number;
 }
 
-/**
- * Generate matrix visualization data
- */
 export function generateMatrixVisualization(
   nodes: OntologyNode[],
   edges: OntologyEdge[],
@@ -93,7 +83,6 @@ export function generateMatrixVisualization(
   const xLabels: MatrixVisualizationData['xLabels'] = [];
   const yLabels: MatrixVisualizationData['yLabels'] = [];
 
-  // Generate cell positions
   sortedNodes.forEach((sourceNode, i) => {
     sortedNodes.forEach((targetNode, j) => {
       const edge = matrix[i][j];
@@ -109,7 +98,6 @@ export function generateMatrixVisualization(
     });
   });
 
-  // Generate labels
   sortedNodes.forEach((node, i) => {
     xLabels.push({
       x: padding + i * cellSize + cellSize / 2,

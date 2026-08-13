@@ -14,13 +14,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-/**
- * Shared desktop owlapi-first fast-path check, extracted from OntologyQueryController's private
- * methods of the same name/behavior so other read-only controllers (ObjectPropertyController,
- * DataPropertyController) can use the identical gate instead of reading Fuseki unconditionally —
- * on desktop, Fuseki sync after a mutation is deferred (debounced up to 20s+), so an unconditional
- * SPARQL read returns stale pre-mutation data for that whole window.
- */
 @Component
 public class OwlApiFastPathSupport {
 
@@ -43,10 +36,6 @@ public class OwlApiFastPathSupport {
         return owlApiContext != null && owlApiContext.hasOntology(projectId);
     }
 
-    /**
-     * Desktop owlapi-first: use in-memory OWLAPI when there is no active per-user draft overlay.
-     * On desktop, Fuseki is deferred — always prefer OWLAPI over SPARQL (draft overlay would 503).
-     */
     public boolean preferOwlApiPath(String projectId) {
         if (!owlApiFirst) {
             return false;
@@ -82,12 +71,6 @@ public class OwlApiFastPathSupport {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
     }
 
-    /**
-     * Desktop owlapi-first: serve from OWLAPI or return a warming response.
-     * Never fall through to Fuseki (deferred on desktop → stale).
-     *
-     * @return response when owlapi-first applies; empty when caller should use SPARQL
-     */
     public Optional<ResponseEntity<?>> owlApiOnlyOrWarming(String projectId, Supplier<ResponseEntity<?>> whenReady) {
         if (!preferOwlApiPath(projectId)) {
             return Optional.empty();

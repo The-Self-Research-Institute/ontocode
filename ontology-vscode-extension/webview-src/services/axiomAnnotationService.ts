@@ -16,12 +16,8 @@ function unwrap<T extends Record<string, unknown>>(res: T): T {
   return res;
 }
 
-/**
- * In private/draft mode, axiom-annotation writes must go to the user's draft graph.
- * The backend needs both draft=true and the userId (resolved the same way mutations are).
- */
 function appendDraftParams(params: URLSearchParams): URLSearchParams {
-  // Webapp-only: desktop is single-user with no public/draft split (keeps prior behavior).
+
   if (!isDesktop() && ontologyMutationService.isPrivateEditMode()) {
     params.set('draft', 'true');
     const uid = resolveMutationUserId();

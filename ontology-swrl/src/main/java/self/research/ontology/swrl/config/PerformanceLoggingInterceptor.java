@@ -7,10 +7,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
-/**
- * Intercepts all HTTP requests and logs performance metrics.
- * Logs to the dedicated PERFORMANCE logger (writes to performance.log).
- */
 @Component
 public class PerformanceLoggingInterceptor implements HandlerInterceptor {
 

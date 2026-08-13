@@ -1,29 +1,4 @@
 #!/bin/bash
-# Build OntoCode Desktop — compiles backend JARs, bundles React UI, packages Electron app.
-#
-# Usage:
-#   ./build-desktop.sh [platform] [steps...]
-#
-# Examples:
-#   ./build-desktop.sh                     # build everything, auto-detect OS
-#   ./build-desktop.sh win                 # build everything, package for Windows
-#   ./build-desktop.sh mac                 # build everything, package for macOS
-#   ./build-desktop.sh linux               # build everything, package for Linux
-#   ./build-desktop.sh all                 # build everything, package for all platforms
-#   ./build-desktop.sh win desktop         # build only desktop.jar (auth+editor+plugin merged)
-#   ./build-desktop.sh win swrl            # build only swrl.jar
-#   ./build-desktop.sh win jars            # build desktop.jar + swrl.jar
-#   ./build-desktop.sh win ui              # build React UI only
-#   ./build-desktop.sh win pack            # repackage Electron only (jars + ui already built)
-#
-# Available steps:
-#   desktop — build desktop.jar (auth + editor + plugin combined) from ontology-desktop
-#   swrl    — build swrl.jar from ontology-swrl (optional, keeps its own JVM)
-#   jars    — shorthand for desktop + swrl
-#   ui      — build React UI (webview-src → electron-app/renderer/dist)
-#   pack    — package Electron app with electron-builder
-#
-# Platforms: win | mac | linux | all  (default: auto-detect current OS)
 
 set -euo pipefail
 
@@ -31,8 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JARS_DIR="$SCRIPT_DIR/electron-app/resources/backend/jars"
 DESKTOP_VERSION="1.0.0"
 SWRL_VERSION="1.0.0"
-
-# ── Parse args ────────────────────────────────────────────────────────────────
 
 KNOWN_PLATFORMS="win mac linux all"
 PLATFORM=""
@@ -58,8 +31,6 @@ fi
 
 FILTER=("$@")
 
-# ── Determine which steps to run ──────────────────────────────────────────────
-
 run_desktop=false
 run_swrl=false
 run_ui=false
@@ -79,8 +50,6 @@ else
         esac
     done
 fi
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 step() { echo ""; echo "── $1 ───────────────────────────────────────"; }
 
@@ -105,8 +74,6 @@ fail() {
 
 trap fail ERR
 
-# ── Header ────────────────────────────────────────────────────────────────────
-
 echo ""
 echo "============================================"
 echo "   Building OntoCode Desktop"
@@ -116,8 +83,6 @@ echo "   Root     : $SCRIPT_DIR"
 echo "============================================"
 echo ""
 mkdir -p "$JARS_DIR"
-
-# ── Step 1 — Build desktop.jar (auth + editor + plugin merged) ────────────────
 
 if $run_desktop; then
     step "Maven — install shared modules"
@@ -129,7 +94,6 @@ if $run_desktop; then
     mvn install -pl ontology-auth,ontology-editor -DskipTests -q
     echo "  ✓ auth, editor installed"
 
-    # plugin-service has its own parent (spring-boot-starter-parent), build separately
     cd "$SCRIPT_DIR/ontology-plugin-service"
     mvn install -DskipTests -q
     cd "$SCRIPT_DIR"
@@ -146,8 +110,6 @@ if $run_desktop; then
         "desktop (auth + editor + plugin)"
 fi
 
-# ── Step 2 — Build swrl.jar (optional, separate JVM due to owlapi conflict) ──
-
 if $run_swrl; then
     step "Maven — ontology-swrl (separate JVM, owlapi 4.x)"
     cd "$SCRIPT_DIR"
@@ -159,8 +121,6 @@ if $run_swrl; then
         "swrl"
 fi
 
-# ── Step 3 — React UI build ───────────────────────────────────────────────────
-
 if $run_ui; then
     step "Building React UI"
     cd "$SCRIPT_DIR/ontology-vscode-extension/webview-src"
@@ -168,8 +128,6 @@ if $run_ui; then
     echo "  ✓ React UI built"
     cd "$SCRIPT_DIR"
 fi
-
-# ── Step 4 — Electron package ─────────────────────────────────────────────────
 
 if $run_pack; then
     step "Packaging Electron app — $PLATFORM"
@@ -185,8 +143,6 @@ if $run_pack; then
 fi
 
 trap - ERR
-
-# ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo "============================================"

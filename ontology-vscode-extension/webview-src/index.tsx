@@ -1,12 +1,10 @@
-// Prevent service worker registration in VSCode webview context FIRST
-// Service workers are not supported in VSCode webviews
-// This MUST be before any imports to prevent third-party libraries from registering service workers
+
+
 if ('serviceWorker' in navigator) {
   try {
-    // Completely remove serviceWorker from navigator
+
     delete (navigator as any).serviceWorker;
-    
-    // Override with a completely silent frozen mock
+
     Object.defineProperty(navigator, 'serviceWorker', {
       value: Object.freeze({
         register: () => Promise.resolve({
@@ -32,7 +30,7 @@ if ('serviceWorker' in navigator) {
       enumerable: false
     });
   } catch (e) {
-    // Fallback: silently override methods
+
     if (navigator.serviceWorker) {
       try {
         (navigator.serviceWorker as any).register = () => Promise.resolve({});
@@ -45,13 +43,10 @@ if ('serviceWorker' in navigator) {
   }
 }
 
-// Load D3 globally first for plugins
 import './d3-global';
-// Setup global variables for UMD plugins FIRST (before any other imports that might use React)
+
 import './setupGlobals';
 
-// Install the browser-mode bridge BEFORE any React component mounts.
-// In VS Code Desktop this is a no-op (window.vscode already exists).
 import { installBrowserBridge } from './utils/vscodeBridge';
 installBrowserBridge();
 

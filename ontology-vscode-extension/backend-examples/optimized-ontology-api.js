@@ -1,11 +1,4 @@
-/**
- * Node.js/Express Optimized Ontology Upload API
- *
- * This example shows how to optimize GraphDB imports using Node.js
- * with streaming and proper GraphDB API calls
- *
- * Performance: 122MB files in 5-8 minutes (vs 15-20 minutes unoptimized)
- */
+
 
 const express = require('express');
 const multer = require('multer');
@@ -17,11 +10,9 @@ const pipeline = promisify(stream.pipeline);
 
 const app = express();
 
-// GraphDB connection settings
 const GRAPHDB_URL = process.env.GRAPHDB_URL || 'http://localhost:7200';
 const REPOSITORY_ID = process.env.GRAPHDB_REPO || 'ontology-repo';
 
-// Configure multer for streaming (don't store in memory!)
 const upload = multer({
     storage: multer.memoryStorage(), // For small files
     limits: {
@@ -29,9 +20,6 @@ const upload = multer({
     }
 });
 
-/**
- * Disable inference in GraphDB repository
- */
 async function disableInference() {
     console.log('[1/4] Disabling inference...');
     const startTime = Date.now();
@@ -56,14 +44,10 @@ async function disableInference() {
     console.log(`[1/4] Inference disabled in ${Date.now() - startTime}ms ✓`);
 }
 
-/**
- * Enable inference and rebuild index
- */
 async function enableInferenceAndRebuild() {
     console.log('[3/4] Re-enabling inference...');
     let startTime = Date.now();
 
-    // Remove disable flag
     const removeDisable = `
         PREFIX sys: <http://www.ontotext.com/owlim/system#>
         DELETE DATA {
@@ -83,7 +67,6 @@ async function enableInferenceAndRebuild() {
 
     console.log(`[3/4] Inference re-enabled in ${Date.now() - startTime}ms ✓`);
 
-    // Rebuild index
     console.log('[4/4] Rebuilding index...');
     startTime = Date.now();
 
@@ -107,22 +90,17 @@ async function enableInferenceAndRebuild() {
     console.log(`[4/4] Index rebuilt in ${(Date.now() - startTime) / 1000}s ✓`);
 }
 
-/**
- * Import ontology with streaming
- */
 async function importOntologyStreaming(fileBuffer, isCompressed, projectId) {
     console.log('[2/4] Importing ontology (streaming)...');
     const startTime = Date.now();
 
     let dataStream = stream.Readable.from(fileBuffer);
 
-    // Decompress if needed
     if (isCompressed) {
         console.log('Decompressing gzip stream...');
         dataStream = dataStream.pipe(zlib.createGunzip());
     }
 
-    // Upload to GraphDB using streaming
     await axios.post(
         `${GRAPHDB_URL}/repositories/${REPOSITORY_ID}/statements`,
         dataStream,
@@ -141,9 +119,6 @@ async function importOntologyStreaming(fileBuffer, isCompressed, projectId) {
     return importTime;
 }
 
-/**
- * Optimized upload endpoint
- */
 app.post('/api/ontology/upload/:projectId', upload.single('file'), async (req, res) => {
     const totalStartTime = Date.now();
 
@@ -165,11 +140,10 @@ app.post('/api/ontology/upload/:projectId', upload.single('file'), async (req, r
         console.log('Size:', fileSizeMB, 'MB');
         console.log('Compressed:', isCompressed);
 
-        // For large files, process asynchronously
         const isLargeFile = file.size > 50 * 1024 * 1024; // > 50MB
 
         if (isLargeFile) {
-            // Process in background
+
             processLargeFileAsync(file.buffer, isCompressed, projectId);
 
             return res.status(202).json({
@@ -179,7 +153,6 @@ app.post('/api/ontology/upload/:projectId', upload.single('file'), async (req, r
             });
         }
 
-        // Process small files synchronously
         await disableInference();
         const importTime = await importOntologyStreaming(file.buffer, isCompressed, projectId);
         await enableInferenceAndRebuild();
@@ -204,9 +177,6 @@ app.post('/api/ontology/upload/:projectId', upload.single('file'), async (req, r
     }
 });
 
-/**
- * Process large file in background
- */
 async function processLargeFileAsync(fileBuffer, isCompressed, projectId) {
     try {
         console.log(`[ASYNC] Processing large file for project ${projectId}`);
@@ -219,12 +189,9 @@ async function processLargeFileAsync(fileBuffer, isCompressed, projectId) {
     }
 }
 
-/**
- * Health check endpoint
- */
 app.get('/api/health', async (req, res) => {
     try {
-        // Check GraphDB connection
+
         await axios.get(`${GRAPHDB_URL}/repositories/${REPOSITORY_ID}/size`);
         res.json({ status: 'healthy', graphdb: 'connected' });
     } catch (error) {
@@ -232,9 +199,6 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-/**
- * Get repository statistics
- */
 app.get('/api/stats', async (req, res) => {
     try {
         const response = await axios.get(

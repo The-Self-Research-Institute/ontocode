@@ -10,7 +10,6 @@ export interface SwrlRule {
   updatedAt: string;
 }
 
-// Paginated response from backend
 export interface PagedResponse<T> {
   content: T[];
   pageable: {
@@ -27,14 +26,13 @@ export interface ValidationResult {
   valid: boolean;
   errorMessage: string | null;
   suggestions?: string[];
-  // Enhanced validation info
+
   parsedAtoms?: ParsedAtom[];
   usedBuiltIns?: string[];
   usedClasses?: string[];
   usedProperties?: string[];
 }
 
-// SWRL Atom types based on SWRLAPI
 export type AtomType = 
   | 'ClassAtom' 
   | 'DataPropertyAtom' 
@@ -50,7 +48,6 @@ export interface ParsedAtom {
   arguments: string[];
 }
 
-// SWRL Built-in categories based on SWRLAPI
 export interface BuiltInCategory {
   prefix: string;
   name: string;
@@ -88,7 +85,6 @@ export interface PluginContext {
   ontology?: any | null;
 }
 
-// SQWRL Query result
 export interface SQWRLResult {
   columns: string[];
   rows: Record<string, any>[];

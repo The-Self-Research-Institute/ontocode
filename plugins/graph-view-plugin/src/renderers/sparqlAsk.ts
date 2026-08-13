@@ -1,9 +1,4 @@
-/**
- * SPARQL → highlighted subgraph. Queries run through the editor backend
- * (POST /api/sparql/query/{projectId} → RDF4J), then every IRI in the result
- * bindings is matched against the rendered graph and lit up like an ask-the-graph
- * answer. Also the execution target for future local-LLM NL→SPARQL generation.
- */
+
 
 import type Graph from 'graphology';
 import type { AskResult } from './askGraph';
@@ -48,7 +43,6 @@ export async function runSparqlHighlight(
   const rows = data.results ?? [];
   const vars = data.head?.vars ?? [];
 
-  // Match every IRI binding to a rendered node
   const answers = new Set<string>();
   for (const row of rows) {
     for (const value of Object.values(row)) {

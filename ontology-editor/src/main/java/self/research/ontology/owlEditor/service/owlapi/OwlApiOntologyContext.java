@@ -13,9 +13,6 @@ import java.util.Collections;
 import java.util.Optional;
 import java.util.function.BiFunction;
 
-/**
- * Shared OWLAPI in-memory ontology access for desktop fast-open queries.
- */
 @Component
 @Conditional(FastOpenCondition.class)
 public class OwlApiOntologyContext {

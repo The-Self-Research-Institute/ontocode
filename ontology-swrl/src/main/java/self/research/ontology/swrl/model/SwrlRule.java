@@ -7,39 +7,33 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 
-/**
- * SWRL Rule entity
- * Stored in MongoDB
- */
 @Document(collection = "swrl_rules")
 @CompoundIndex(def = "{'projectId': 1, 'ruleName': 1}", unique = true)
 public class SwrlRule {
-    
+
     @Id
     private String id;
-    
+
     @Indexed
     private String projectId;
-    
+
     private String ruleName;
     private String ruleText;
     private String comment;
     private String category;
     private boolean enabled = true;
-    
+
     @Indexed
     private LocalDateTime createdAt;
-    
+
     private LocalDateTime updatedAt;
     private String createdBy;
     private String updatedBy;
-    
-    // Execution statistics
+
     private int executionCount = 0;
-    private Long lastExecutionTime; // in milliseconds
+    private Long lastExecutionTime;
     private LocalDateTime lastExecutedAt;
-    
-    // Validation metadata
+
     private boolean validated = false;
     private String validationError;
 
@@ -55,7 +49,6 @@ public class SwrlRule {
         this.ruleText = ruleText;
     }
 
-    // Getters and Setters
     public String getId() {
         return id;
     }

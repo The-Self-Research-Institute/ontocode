@@ -105,8 +105,7 @@ public class DesktopDownloadService {
         }
 
         String fileUrl = updateBaseUrl + "/" + WINDOWS_PLATFORM;
-        // electron-updater names the cached file from the URL path segment (windows-x64),
-        // not Content-Disposition — path must match or quitAndInstall prompts for the exe.
+
         String cachedPath = WINDOWS_PLATFORM;
         StringBuilder yml = new StringBuilder();
         yml.append("version: ").append(version).append('\n');

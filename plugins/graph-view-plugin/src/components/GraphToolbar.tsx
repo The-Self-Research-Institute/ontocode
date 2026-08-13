@@ -103,7 +103,7 @@ export interface GraphToolbarProps {
   webglSupported: boolean;
   vowlDisplayOptions: VowlDisplayOptions;
   onChangeVowlOptions: (patch: Partial<VowlDisplayOptions>) => void;
-  /** Pulse the overflow button for the first few sessions after the toolbar restructure */
+
   showOverflowHint: boolean;
 
   onRefresh: () => void;
@@ -140,18 +140,12 @@ export interface GraphToolbarProps {
   onToggleWebGL: () => void;
 }
 
-/**
- * Graph toolbar with progressive disclosure: a minimal primary bar for the actions
- * users touch constantly, and a "View options" popover holding everything else.
- * All controls that existed on the old flat toolbar remain reachable here.
- */
 export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
   const { styles } = props;
   const [optionsOpen, setOptionsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
   const overflowBtnRef = useRef<HTMLButtonElement>(null);
 
-  // Close the popover on outside click or Escape
   useEffect(() => {
     if (!optionsOpen) return;
     const onPointerDown = (event: MouseEvent) => {
@@ -182,7 +176,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
 
   return (
     <div style={{ ...styles.toolbar, position: 'relative' }}>
-      {/* MVP view presets — OntoCode Network vs Hierarchy */}
+      {}
       <div style={{ display: 'flex', gap: '2px', alignItems: 'center', backgroundColor: 'var(--surface-2)', padding: '2px', borderRadius: '6px', border: '1px solid var(--border)' }}>
         <button
           data-testid="graph-preset-network"
@@ -251,7 +245,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
         </>
       )}
 
-      {/* Exit Focus surfaces on the bar only while focus mode is active */}
+      {}
       {props.focusedNodeId && (
         <button
           onClick={props.onExitFocus}
@@ -277,7 +271,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
 
       <div style={{ flex: 1 }} />
 
-      {/* Stats */}
+      {}
       <div
         style={styles.stats}
         data-testid="graph-stats"

@@ -4,7 +4,6 @@ export const DESKTOP_USER_ID = 'desktop-user-local';
 
 export type MutationActor = { userId: string; username: string };
 
-/** Decode user id from JWT for draft graph scope (web/cloud). */
 export function userIdFromAuthToken(): string | null {
   try {
     const token = localStorage.getItem('authToken');
@@ -18,9 +17,6 @@ export function userIdFromAuthToken(): string | null {
   }
 }
 
-/**
- * Resolve user id for draft graph writes/reads — must match backend SparqlQueryContext.
- */
 export function resolveMutationActor(userId?: string, username?: string): MutationActor {
   if (isDesktop()) {
     return { userId: DESKTOP_USER_ID, username: username || 'Desktop User' };
@@ -35,7 +31,6 @@ export function resolveMutationActor(userId?: string, username?: string): Mutati
   return { userId: userId || 'anonymous', username: username || 'Anonymous' };
 }
 
-/** For API headers and save/draft endpoints. */
 export function resolveMutationUserId(explicitUserId?: string): string {
   return resolveMutationActor(explicitUserId).userId;
 }

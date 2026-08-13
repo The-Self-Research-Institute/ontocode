@@ -1,7 +1,4 @@
-/**
- * electron-builder requires macOS icons >= 512x512.
- * Generates build-assets/icon-512.png from icon.png (sips on macOS, sharp-cli elsewhere).
- */
+
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');

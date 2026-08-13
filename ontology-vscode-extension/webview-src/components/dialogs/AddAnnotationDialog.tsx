@@ -18,11 +18,11 @@ interface AddAnnotationDialogProps {
   initialValue?: string;
   initialLang?: string;
   initialDatatype?: string;
-  /** Create a new annotation property in the ontology */
+
   onCreateProperty?: (iri: string, label: string) => Promise<void>;
-  /** Refresh the available properties list from the server */
+
   onRefreshProperties?: () => void;
-  /** Ontology namespace for auto-generating new property IRIs */
+
   ontologyNamespace?: string;
 }
 
@@ -48,14 +48,12 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
   const [activeTab, setActiveTab] = useState('Literal');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Inline "create new annotation property" form state
   const [showCreate, setShowCreate] = useState(false);
   const [newPropLabel, setNewPropLabel] = useState('');
   const [newPropIri, setNewPropIri] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Reset form when opening
   useEffect(() => {
     if (isOpen) {
       setSelectedProperty(initialProperty || 'http://www.w3.org/2000/01/rdf-schema#label');
@@ -78,7 +76,6 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
 
   if (!isOpen) return null;
 
-  // Auto-generate a safe IRI fragment from a label
   const labelToIriFrag = (lbl: string) =>
     lbl.trim().replace(/\s+/g, '').replace(/[^a-zA-Z0-9_-]/g, '');
 
@@ -97,7 +94,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
       setShowCreate(false);
       setNewPropLabel('');
       setNewPropIri('');
-      // Refresh so the new property appears in the list
+
       onRefreshProperties?.();
     } finally {
       setIsCreating(false);
@@ -110,12 +107,11 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
     try {
       onRefreshProperties();
     } finally {
-      // Small visual delay so the spin animation is visible
+
       setTimeout(() => setIsRefreshing(false), 600);
     }
   };
 
-  // Standard OWL/RDFS annotation properties
   const standardProperties = [
     { iri: 'http://www.w3.org/2002/07/owl#backwardCompatibleWith', label: 'owl:backwardCompatibleWith' },
     { iri: 'http://www.w3.org/2002/07/owl#deprecated', label: 'owl:deprecated' },
@@ -128,7 +124,6 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
     { iri: 'http://www.w3.org/2000/01/rdf-schema#seeAlso', label: 'rdfs:seeAlso' },
   ];
 
-  // Merge with available properties from ontology, avoiding duplicates
   const allProperties = [...standardProperties];
   availableProperties.forEach(p => {
     if (!allProperties.find(ap => ap.iri === p.id)) {
@@ -136,7 +131,6 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
     }
   });
 
-  // Filter properties based on search
   const filteredProperties = allProperties.filter(p =>
     p.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.iri.toLowerCase().includes(searchQuery.toLowerCase())
@@ -160,7 +154,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
       }}
     >
       <div className="bg-[#F0F0F0] rounded-lg shadow-2xl w-[800px] h-[600px] flex flex-col overflow-hidden border border-gray-400" onClick={e => e.stopPropagation()}>
-        {/* Header */}
+        {}
         <div className="bg-white px-4 py-2 flex justify-between items-center border-b border-gray-300">
           <div className="flex items-center gap-2">
             <div className="w-5 h-5 bg-purple-600 rounded flex items-center justify-center">
@@ -174,9 +168,9 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
         </div>
 
         <div className="flex-1 flex overflow-hidden">
-          {/* Left Column: Property Selection */}
+          {}
           <div className="w-1/3 flex flex-col border-r border-gray-300 bg-white">
-            {/* Toolbar */}
+            {}
             <div className="p-2 flex gap-2 border-b border-gray-200 bg-gray-50">
               <button
                 onClick={() => { setShowCreate((prev: boolean) => !prev); setNewPropLabel(''); setNewPropIri(''); }}
@@ -210,7 +204,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
               </button>
             </div>
 
-            {/* Inline create new annotation property form */}
+            {}
             {showCreate && onCreateProperty && (
               <div className="p-2 border-b border-blue-200 bg-blue-50 space-y-1">
                 <p className="text-xs font-medium text-blue-700">New Annotation Property</p>
@@ -249,7 +243,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
               </div>
             )}
 
-            {/* Search */}
+            {}
             <div className="p-2 border-b border-gray-200">
               <div className="relative">
                 <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -263,7 +257,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
               </div>
             </div>
 
-            {/* Property List */}
+            {}
             <div className="flex-1 overflow-y-auto">
               {filteredProperties.map(prop => (
                 <div
@@ -280,9 +274,9 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
             </div>
           </div>
 
-          {/* Right Column: Tabs and Content */}
+          {}
           <div className="flex-1 flex flex-col bg-white">
-            {/* Tabs */}
+            {}
             <div className="flex bg-gray-200 border-b border-gray-300">
               {tabs.map(tab => (
                 <button
@@ -295,7 +289,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
               ))}
             </div>
 
-            {/* Tab Content */}
+            {}
             <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
               {activeTab === 'Literal' && (
                 <>
@@ -420,7 +414,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
+        {}
         <div className="bg-[#F0F0F0] p-4 flex justify-end gap-2 border-t border-gray-300">
           <button
             onClick={handleAdd}

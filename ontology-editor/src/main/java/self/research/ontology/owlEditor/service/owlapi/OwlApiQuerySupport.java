@@ -7,9 +7,6 @@ import self.research.ontology.owlEditor.util.AnnotationValueCollector;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * Shared OWLAPI helpers for desktop query services (labels, annotations, pagination).
- */
 public final class OwlApiQuerySupport {
 
     public static final Imports IMPORTS_EXCLUDED = Imports.EXCLUDED;
@@ -92,16 +89,6 @@ public final class OwlApiQuerySupport {
         return new ArrayList<>(iris);
     }
 
-    /**
-     * Renders a class expression the same way for every consumer: the desktop hierarchy service
-     * uses this to build the "definition" text shown in the UI for anonymous SubClassOf/GCI/
-     * EquivalentTo entries, and {@code OwlApiMutationPatcher} uses the SAME method to re-render
-     * candidates when matching a delete request by definition text (desktop has no stable
-     * Fuseki blank-node id for these, since the in-memory model is a separate parse — see
-     * OwlApiMutationPatcher's deleteAxiom/deleteSubClassOf/deleteEquivalentClass handling).
-     * Keeping one implementation guarantees the rendering used to label an entry always matches
-     * the rendering used to find it again later.
-     */
     public static String classExpressionToManchester(OWLOntology ont, OWLClassExpression ce) {
         if (!ce.isAnonymous()) {
             return getLabel(ont, ce.asOWLClass().getIRI());
@@ -188,7 +175,6 @@ public final class OwlApiQuerySupport {
         return range.getClass().getSimpleName();
     }
 
-    /** True when {@code expr} is exactly {@code target}, or an anonymous expression built on top of it. */
     public static boolean expressionReferencesClass(OWLClassExpression expr, OWLClass target) {
         if (expr.equals(target)) {
             return true;

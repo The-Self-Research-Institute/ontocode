@@ -1,15 +1,4 @@
-/**
- * BYOK (Bring-Your-Own-Key) LLM insights for the graph analytics panel.
- *
- * Users can choose their preferred LLM provider (Gemini, Claude, OpenAI).
- * API keys are stored only in the user's browser localStorage and sent directly to
- * the provider's API from the client. OntoCode never stores or sees the keys.
- *
- * Security notes:
- * - We never bundle any API key. The key is user-provided at runtime.
- * - In the VS Code webview, calls to external APIs require the host CSP to allow
- *   that connect-src; in the web/desktop app it works directly.
- */
+
 
 export type LlmProvider = 'gemini' | 'claude' | 'openai';
 
@@ -69,18 +58,16 @@ export interface LlmInsightRequest {
   gaps: Array<{ a: string; b: string; suggestion: string }>;
 }
 
-/** Context describing the node the user currently has selected in the graph. */
 export interface SelectedNodeContext {
   label: string;
   type: string;
   iri?: string;
-  /** Labels of directly connected (visible) nodes. */
+
   neighbors: string[];
-  /** Top words of the topic cluster the node belongs to, if known. */
+
   clusterTopWords?: string[];
 }
 
-/** One AI-suggested topic related to the selected node. */
 export interface TopicSuggestion {
   topic: string;
   reason: string;
@@ -88,9 +75,7 @@ export interface TopicSuggestion {
 
 export class LlmConfigError extends Error {}
 export class LlmRequestError extends Error {}
-/** The provider returned 404 for this specific model id — distinct from a generic
- *  failure so callProvider() can retry once against the provider's current default
- *  instead of just failing (model catalogs get renamed/retired over time). */
+
 export class LlmModelNotFoundError extends LlmRequestError {}
 
 export function getStoredProvider(): LlmProvider {
@@ -123,8 +108,7 @@ export interface KnownModel {
 }
 
 const MODELS_CACHE_STORAGE = 'ontocode_llm_models_cache';
-// Provider catalogs change on their own schedule, not ours — refetch periodically
-// rather than trusting a live list forever, but don't hit the endpoint on every render.
+
 const MODELS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 interface ModelsCacheEntry {
@@ -150,12 +134,6 @@ function writeModelsCache(cache: ModelsCache): void {
   }
 }
 
-/**
- * The model list to show/try for a provider: a freshly-fetched live list if one is
- * cached (see refreshAvailableModels), otherwise the hardcoded baseline in PROVIDERS.
- * The baseline goes stale as providers ship/retire models — this is what keeps the
- * dropdown and the 404 fallback chain (see callProvider) current without a rebuild.
- */
 export function getProviderModels(provider: LlmProvider): KnownModel[] {
   const entry = readModelsCache()[provider];
   if (entry && entry.models.length && Date.now() - entry.fetchedAt < MODELS_CACHE_TTL_MS) {
@@ -199,8 +177,7 @@ async function listOpenAIModels(key: string): Promise<KnownModel[]> {
   if (!res.ok) return [];
   const data = await res.json().catch(() => null);
   const models = Array.isArray(data?.data) ? data.data : [];
-  // The account-wide model list includes embeddings/audio/image/moderation models
-  // that can't answer a chat prompt — keep only chat-capable GPT text models.
+
   const NON_CHAT = /audio|embedding|whisper|tts|instruct|realtime|transcribe|search|moderation|davinci|babbage|image|vision-preview$/i;
   return models
     .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.id ?? '') }))
@@ -226,20 +203,10 @@ async function fetchLiveModels(provider: LlmProvider, key: string): Promise<Know
 
 export interface RefreshModelsResult {
   models: KnownModel[];
-  /** True if `models` came fresh from the provider just now — false means the live
-   *  call failed/returned nothing and this is the cached-or-hardcoded fallback. */
+
   live: boolean;
 }
 
-/**
- * Ask the provider directly (using the user's own key) which models are actually
- * available right now, and cache the result. This is the preferred source of truth
- * for the model list — the hardcoded PROVIDERS table only exists as a placeholder
- * before any key has been entered/verified, or if this call itself fails (offline,
- * rate-limited, etc). Called automatically whenever AI settings are opened or a key
- * is entered, on manual "Refresh models", and by callProvider() as a last resort
- * when every known model 404s.
- */
 export async function refreshAvailableModels(provider: LlmProvider, key: string): Promise<RefreshModelsResult> {
   const live = await fetchLiveModels(provider, key);
   if (live.length === 0) return { models: getProviderModels(provider), live: false };
@@ -275,11 +242,7 @@ export function getStoredModel(): string {
   try {
     const provider = getStoredProvider();
     const stored = localStorage.getItem(MODEL_STORAGE);
-    // A previously-stored model id can go stale when a provider retires a model
-    // generation (e.g. Gemini shut down the entire 1.0/1.5 line) — fall back to
-    // the current default instead of repeating a 404 the user can't self-diagnose.
-    // getProviderModels() includes any live-fetched list (see refreshAvailableModels),
-    // so a model we've *confirmed* works for this key isn't wrongly treated as stale.
+
     const isKnownModel = stored != null && getProviderModels(provider).some((m) => m.id === stored);
     return isKnownModel ? stored : PROVIDERS[provider].defaultModel;
   } catch {
@@ -393,8 +356,7 @@ async function callClaude(key: string, model: string, prompt: string, signal?: A
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      // No `temperature` — current Claude models (Sonnet 5, Opus 4.8, etc.) reject
-      // non-default sampling parameters with a 400. Omit rather than risk a stale value.
+
       model,
       max_tokens: 512,
       messages: [{ role: 'user', content: prompt }],
@@ -500,13 +462,6 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
       );
     }
 
-    // Model catalogs get renamed/retired, or a given API key just doesn't have
-    // access to a particular tier (this has already happened once before — see
-    // getStoredModel() and the Claude temperature comment above). Falling back to
-    // a single fixed "default" isn't enough: the failing model MAY BE the default
-    // (e.g. flash-lite 404ing for this key). So walk every other known model for
-    // this provider until one actually works, instead of guessing once. getProviderModels()
-    // already prefers a live-fetched list over the hardcoded baseline if one is cached.
     const tried = new Set([model]);
     const attemptAll = async (ids: string[]): Promise<string | null> => {
       for (const candidate of ids) {
@@ -525,7 +480,7 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
             lastError = candidateError;
             continue; // this one 404s too — try the next candidate
           }
-          // A non-404 failure (bad key, rate limit, network) — more model attempts won't help.
+
           throw candidateError;
         }
       }
@@ -536,8 +491,6 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
     const cachedResult = await attemptAll(getProviderModels(provider).map(m => m.id));
     if (cachedResult) return cachedResult;
 
-    // Every known/cached model 404d — our whole catalog may be stale. Ask the
-    // provider directly, right now, with this key, and try anything new it reports.
     const { models: liveModels } = await refreshAvailableModels(provider, key);
     const liveResult = await attemptAll(liveModels.map(m => m.id));
     if (liveResult) return liveResult;
@@ -549,10 +502,6 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
   }
 }
 
-/**
- * Generate insights via the user's chosen LLM provider. Returns markdown text.
- * Throws LlmConfigError when no key is set, LlmRequestError on API failure.
- */
 export async function generateGraphInsights(
   req: LlmInsightRequest,
   signal?: AbortSignal,
@@ -560,10 +509,6 @@ export async function generateGraphInsights(
   return callProvider(buildPrompt(req), signal);
 }
 
-/**
- * Answer a free-form user question about the graph, optionally grounded in the
- * currently selected node. Returns markdown text.
- */
 export async function askGraphQuestion(
   question: string,
   req: LlmInsightRequest,
@@ -589,10 +534,6 @@ export async function askGraphQuestion(
   return callProvider(prompt, signal);
 }
 
-/**
- * Suggest related topics for the selected node — subclasses, siblings, related
- * concepts, or missing links worth modeling next. Returns a parsed list.
- */
 export async function suggestTopicsForNode(
   node: SelectedNodeContext,
   req: LlmInsightRequest,
@@ -622,8 +563,7 @@ export async function suggestTopicsForNode(
 }
 
 function parseTopicSuggestions(raw: string): TopicSuggestion[] {
-  // Providers occasionally wrap the JSON in ```json fences or add a lead-in sentence
-  // despite the instructions — extract the outermost array before parsing.
+
   const unfenced = raw.replace(/```(?:json)?/gi, '').trim();
   const start = unfenced.indexOf('[');
   const end = unfenced.lastIndexOf(']');
@@ -643,7 +583,7 @@ function parseTopicSuggestions(raw: string): TopicSuggestion[] {
       /* fall through to line parsing */
     }
   }
-  // Fallback: bullet or numbered lines ("- Topic — reason", "1. Topic: reason").
+
   return unfenced
     .split('\n')
     .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())

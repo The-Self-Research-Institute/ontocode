@@ -1,7 +1,4 @@
-/**
- * Graph View Sidebar - Similar to VOWL plugin
- * Provides entity selector, filters, statistics, and detailed information
- */
+
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
@@ -38,7 +35,7 @@ interface GraphViewSidebarProps {
     strokeDasharray?: string;
     color?: string;
   }>;
-  /** When false, hide the legend accordion entirely. */
+
   showLegend?: boolean;
   vowlFilters?: {
     showExternalClasses: boolean;
@@ -63,21 +60,18 @@ interface GraphViewSidebarProps {
   isLayoutPaused?: boolean;
   showFilterSidebar?: boolean;
   showSettings?: boolean;
-  // Hierarchy tree callbacks — expand/collapse nodes in the graph from the sidebar tree
+
   onGraphNodeExpand?: (nodeId: string) => void;
   onGraphNodeCollapse?: (nodeId: string) => void;
   graphExpandedNodeIds?: Set<string>;
   graphVisibleNodeIds?: Set<string>;
-  // Focus mode (OntoCode hierarchy-style neighborhood isolation)
+
   focusedNodeId?: string | null;
   onFocusNode?: (nodeId: string) => void;
   onClearFocus?: () => void;
-  // Ontology header metadata (IRI, version, annotations) — optional, read-only display
+
   ontologyMetadata?: any;
-  // Inline hierarchy navigator — pre-rendered content shown above the Class Tree
-  // panel when a class is focused (see AdvancedGraphView's hierarchyNavigatorBody).
-  // Replaces always-popping-open the floating navigator dialog; that dialog is
-  // now opt-in via onPopOutHierarchyNavigator.
+
   hierarchyNavigatorContent?: React.ReactNode;
   hierarchyNavigatorLabel?: string;
   onCloseHierarchyNavigator?: () => void;
@@ -126,11 +120,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
 }) => {
   const [sidebarMode, setSidebarMode] = useState<'entities' | 'hierarchy'>('hierarchy');
 
-  // Auto-switch to the Hierarchy tab when a class is newly focused for the
-  // navigator — onNodeSelect (which drives hierarchyNavigatorContent) is also
-  // wired from the Entities-mode detail panel's "related class" links, so a
-  // user browsing Entities who clicks one would otherwise populate content
-  // they can't see without manually switching tabs.
   const hadHierarchyContentRef = useRef(false);
   useEffect(() => {
     const hasContent = !!hierarchyNavigatorContent;
@@ -143,12 +132,10 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(340);
   const [isResizing, setIsResizing] = useState(false);
-  
-  // Local state for sliders to prevent frequent graph movement
+
   const [localClassDistance, setLocalClassDistance] = useState(classDistance);
   const [localDatatypeDistance, setLocalDatatypeDistance] = useState(datatypeDistance);
 
-  // Sync local state with props when props change
   React.useEffect(() => {
     setLocalClassDistance(classDistance);
   }, [classDistance]);
@@ -168,12 +155,10 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     vowlControls: true
   });
 
-  // Toggle sections
   const toggleSection = (section: keyof typeof expandedSections) => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // Handle resize
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsResizing(true);
     e.preventDefault();
@@ -203,7 +188,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     };
   }, [isResizing]);
 
-  // Calculate statistics
   const statistics = useMemo(() => {
     const stats = {
       classes: nodes.filter(n => n.type === 'class').length,
@@ -217,7 +201,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       edgesByType: {} as Record<string, number>
     };
 
-    // Count edges by type
     edges.forEach(edge => {
       const type = edge.type || 'unknown';
       stats.edgesByType[type] = (stats.edgesByType[type] || 0) + 1;
@@ -226,13 +209,11 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     return stats;
   }, [nodes, edges]);
 
-  // Filter nodes by search term and entity tab
   const filteredNodes = useMemo(() => {
     const typeFilter = (node: OntologyNode) => {
-      // First check if this node type is enabled in the filters
+
       if (!filters.nodeTypes.has(node.type)) return false;
-      
-      // Then filter by entity tab
+
       if (entityTab === 'classes') return node.type === 'class';
       if (entityTab === 'objectProperties') return node.type === 'objectProperty';
       if (entityTab === 'datatypeProperties') return node.type === 'dataProperty';
@@ -252,7 +233,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       .sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id));
   }, [nodes, entityTab, searchTerm, filters]);
 
-  // Get node icon
   const getNodeIcon = (type: string) => {
     switch (type) {
       case 'class': return <Square size={14} className="node-icon" style={{ color: '#4A90E2' }} />;
@@ -264,7 +244,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     }
   };
 
-  // Get related entities
   const getRelatedEntities = (node: OntologyNode) => {
     if (!node) return { parents: [], children: [], properties: [], instances: [] };
 
@@ -282,8 +261,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       .filter(e => (e.from === node.id || e.to === node.id) && (e.type === 'domain' || e.type === 'range' || e.type === 'propertyRelation'))
       .map(e => nodes.find(n => n.id === (e.from === node.id ? e.to : e.from)))
       .filter(Boolean) as OntologyNode[];
-    
-    // Remove duplicates
+
     const uniqueProperties = Array.from(new Set(properties.map(p => p.id)))
       .map(id => properties.find(p => p.id === id)!)
       .sort((a, b) => (a.label || a.id).localeCompare(b.label || b.id));
@@ -296,17 +274,10 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     return { parents, children, properties: uniqueProperties, instances };
   };
 
-  // NOTE: The hierarchy tab is now rendered by <ClassHierarchyPanel /> below.
-  // The previous in-component class-hierarchy index, expansion state and
-  // recursive renderers have been removed — the panel handles all of that
-  // (multi-parent, cycle-safe, virtualized, keyboard-navigable).
-
-
-  // Get available node types from current graph (excluding properties)
   const availableNodeTypes = useMemo(() => {
     const types = new Set<string>();
     nodes.forEach(node => {
-      // Exclude objectProperty and dataProperty from Node Types
+
       if (node.type && node.type !== 'objectProperty' && node.type !== 'dataProperty') {
         types.add(node.type);
       }
@@ -314,7 +285,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     return Array.from(types).sort();
   }, [nodes]);
 
-  // Get available edge types from current graph
   const availableEdgeTypes = useMemo(() => {
     const types = new Set<string>();
     edges.forEach(edge => {
@@ -323,7 +293,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     return Array.from(types).sort();
   }, [edges]);
 
-  // Node type display names
   const nodeTypeLabels: Record<string, string> = {
     'class': 'Classes',
     'individual': 'Individuals',
@@ -334,7 +303,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     'annotation': 'Annotations'
   };
 
-  // Edge type display names
   const edgeTypeLabels: Record<string, string> = {
     'subClassOf': 'SubClass Of',
     'instanceOf': 'Instance Of',
@@ -346,18 +314,6 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     'inverseOf': 'Inverse Of',
     'custom': 'Custom'
   };
-
-//   const toggleSection = (section: string) => {
-//     setExpandedSections(prev => {
-//       const newSet = new Set(prev);
-//       if (newSet.has(section)) {
-//         newSet.delete(section);
-//       } else {
-//         newSet.add(section);
-//       }
-//       return newSet;
-//     });
-//   };
 
   const toggleNodeType = (type: string) => {
     const newTypes = new Set(filters.nodeTypes);
@@ -379,20 +335,19 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
     onFilterChange({ ...filters, edgeTypes: newTypes });
   };
 
-
   return (
     <div style={{...styles.sidebar, width: `${sidebarWidth}px`}}>
-      {/* Resize Handle */}
+      {}
       <div
         style={styles.resizeHandle}
         onMouseDown={handleMouseDown}
         title="Drag to resize"
       />
-      
-      {/* Scrollable Content */}
+
+      {}
       <div style={styles.scrollableContent}>
 
-      {/* Mode Toggle: Hierarchy vs Entities */}
+      {}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--surface-2)' }}>
         <button
           onClick={() => setSidebarMode('hierarchy')}
@@ -436,18 +391,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         </button>
       </div>
 
-      {/* === HIERARCHY MODE === */}
-      {/*
-        * The hierarchy tab is rendered by the production-grade
-        * <ClassHierarchyPanel /> component, which provides:
-        *   - virtualized rendering (handles 100k+ classes)
-        *   - multi-parent + cycle-safe traversal
-        *   - asserted/inferred/all toggle
-        *   - sub/super-class direction toggle
-        *   - full keyboard navigation (arrow keys, F2, Del, etc.)
-        *   - working right-click context menu
-        *   - badges for child count, instance count and multi-parent classes
-        */}
+      {}
+      {}
       {sidebarMode === 'hierarchy' && (
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {focusedNodeId && (() => {
@@ -597,10 +542,10 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         </div>
       )}
 
-      {/* === ENTITIES MODE === */}
+      {}
       {sidebarMode === 'entities' && (
       <>
-      {/* Top Filters (like VOWL) - Only show when filter button is clicked */}
+      {}
       {showFilterSidebar && (
       <div style={styles.accordionSection}>
         <div 
@@ -613,7 +558,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         </div>
         {expandedSections.filters && (
           <div style={styles.topFilters}>
-            {/* Node Type Filters - Dynamic based on current graph */}
+            {}
             <div style={styles.filterCategory}>
               <div style={styles.filterCategoryTitle}>
                 Node Types ({availableNodeTypes.length})
@@ -640,7 +585,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               )}
             </div>
 
-            {/* Edge Type Filters - Dynamic based on current graph */}
+            {}
             <div style={styles.filterCategory}>
               <div style={styles.filterCategoryTitle}>
                 Relationship Types ({availableEdgeTypes.length})
@@ -667,7 +612,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               )}
             </div>
 
-            {/* Property Visibility Filters (VOWL) */}
+            {}
             {(viewMode === 'vowl' || viewMode === 'ontograph') && (
               <div style={styles.filterCategory}>
                 <div style={styles.filterCategoryTitle}>
@@ -755,7 +700,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       </div>
       )}
 
-      {/* Combined Search, Selector, and Entities Section */}
+      {}
       <div style={styles.accordionSection}>
         <div 
           className="accordion-header"
@@ -767,7 +712,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         </div>
         {expandedSections.filterEntities && (
           <div style={styles.combinedSection}>
-            {/* Search Bar */}
+            {}
             <div style={styles.searchInputContainer}>
               <Search size={16} style={styles.searchIcon} />
               <input
@@ -791,8 +736,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 />
               )}
             </div>
-            
-            {/* Entity Selector Tabs */}
+
+            {}
             <div style={styles.entityTabs}>
               <button
                 style={{...styles.entityTab, ...(entityTab === 'classes' ? styles.activeEntityTab : {})}}
@@ -832,14 +777,13 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               </button>
             </div>
 
-            {/* Entity List */}
+            {}
             <div style={styles.entityList}>
               {filteredNodes.map(node => {
-                // Determine if class is Thing or external
+
                 const isThing = node.label === 'Thing' || node.id.includes('owl#Thing');
                 const isExternal = node.label?.includes('external') || ['Item', 'UserAccount', 'Concept'].includes(node.label || '');
-                
-                // Get color based on node type (matching graph visualization)
+
                 let nodeColor = '#667eea'; // default class color
                 if (node.type === 'class') {
                   if (viewMode === 'vowl') {
@@ -864,7 +808,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 } else if (node.type === 'annotation') {
                   nodeColor = viewMode === 'vowl' ? '#e8d5f2' : '#8b5cf6';
                 }
-                
+
                 return (
                   <div
                     key={node.id}
@@ -877,9 +821,9 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     onMouseEnter={() => onNodeHighlight(node.id)}
                     onMouseLeave={() => onNodeHighlight(null)}
                   >
-                    {/* Type-specific shape matching graph visualization */}
+                    {}
                     {node.type === 'class' ? (
-                      // Classes: Circle for VOWL/OntoGraph, Ellipse for Force mode, Rectangle for OntoGraph
+
                       viewMode === 'force' ? (
                         <div style={{
                           width: '24px',
@@ -901,7 +845,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                           marginRight: '8px'
                         }} />
                       ) : (
-                        // VOWL: Circle (solid border for normal, dashed for Thing)
+
                         <div style={{
                           width: '16px',
                           height: '16px',
@@ -913,7 +857,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         }} />
                       )
                     ) : node.type === 'objectProperty' ? (
-                      // Object Properties: Circle (cyan)
+
                       <div style={{
                         width: '16px',
                         height: '16px',
@@ -924,7 +868,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         marginRight: '8px'
                       }} />
                     ) : node.type === 'dataProperty' ? (
-                      // Data Properties: Square (pink)
+
                       <div style={{
                         width: '14px',
                         height: '14px',
@@ -935,7 +879,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         marginRight: '8px'
                       }} />
                     ) : node.type === 'datatype' ? (
-                      // Datatypes: Rounded Rectangle - white rectangle for force, dashed for VOWL
+
                       <div style={{
                         width: '24px',
                         height: '12px',
@@ -946,7 +890,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         marginRight: '8px'
                       }} />
                     ) : node.type === 'individual' ? (
-                      // Individuals: Rectangle - purple for force mode, green otherwise
+
                       <div style={{
                         width: viewMode === 'force' ? '28px' : '20px',
                         height: '12px',
@@ -957,7 +901,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         marginRight: '8px'
                       }} />
                     ) : node.type === 'annotation' ? (
-                      // Annotation Properties: Hexagon (light purple)
+
                       <svg width="18" height="18" viewBox="-9 -9 18 18" style={{ flexShrink: 0, marginRight: '8px' }}>
                         <polygon
                           points="0,-7 6,-3.5 6,3.5 0,7 -6,3.5 -6,-3.5"
@@ -967,7 +911,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         />
                       </svg>
                     ) : (
-                      // Default: Circle
+
                       <div style={{
                         width: '16px',
                         height: '16px',
@@ -992,7 +936,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         )}
       </div>
 
-      {/* Ontology Info Section — read-only header metadata */}
+      {}
       {ontologyMetadata && (() => {
         const m = ontologyMetadata as any;
         const ontoIRI = m.ontologyIRI || m.ontologyIri || m.iri || m.baseIRI || m.baseIri || m.defaultNamespace;
@@ -1065,17 +1009,17 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         );
       })()}
 
-      {/* Entity Details Section (like VOWL) */}
+      {}
       {selectedNode && (
         <div style={styles.accordionSection}>
-          {/* Entity Title Header */}
+          {}
           <div style={styles.entityTitleHeader}>
             <h3 style={styles.entityTitle}>{selectedNode.label || selectedNode.id}</h3>
           </div>
-          
-          {/* Entity Details Table */}
+
+          {}
           <div style={styles.entityDetailsTable}>
-            {/* Type */}
+            {}
             <div style={styles.entityDetailRow}>
               <div style={styles.entityDetailLabel}>Type</div>
               <div style={styles.entityDetailValue}>
@@ -1085,7 +1029,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               </div>
             </div>
 
-            {/* Name/Label */}
+            {}
             <div style={styles.entityDetailRow}>
               <div style={styles.entityDetailLabel}>Name</div>
               <div style={styles.entityDetailValue}>
@@ -1093,7 +1037,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               </div>
             </div>
 
-            {/* IRI */}
+            {}
             {selectedNode.iri && (
               <div style={styles.entityDetailRow}>
                 <div style={styles.entityDetailLabel}>IRI</div>
@@ -1112,7 +1056,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               </div>
             )}
 
-            {/* Description */}
+            {}
             {selectedNode.description && (
               <div style={styles.entityDetailRow}>
                 <div style={styles.entityDetailLabel}>Description</div>
@@ -1122,7 +1066,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               </div>
             )}
 
-            {/* Property Characteristics (OWL: Functional, Symmetric, Transitive, etc.) */}
+            {}
             {(selectedNode.type === 'objectProperty' || selectedNode.type === 'dataProperty') && (() => {
               const m: any = (selectedNode as any).metadata || {};
               const chars: string[] = [];
@@ -1156,7 +1100,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               );
             })()}
 
-            {/* Connections */}
+            {}
             <div style={styles.entityDetailRow}>
               <div style={styles.entityDetailLabel}>Connections</div>
               <div style={styles.entityDetailValue}>
@@ -1164,17 +1108,17 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               </div>
             </div>
 
-            {/* Related Entities */}
+            {}
             {(() => {
               const related = getRelatedEntities(selectedNode);
               const hasRelated = related.parents.length > 0 || related.children.length > 0 || 
                                 related.properties.length > 0 || related.instances.length > 0;
-              
+
               if (!hasRelated) return null;
 
               return (
                 <>
-                  {/* Superclasses */}
+                  {}
                   {related.parents.length > 0 && (
                     <div style={styles.entityDetailRow}>
                       <div style={styles.entityDetailLabel}>Superclasses</div>
@@ -1196,7 +1140,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     </div>
                   )}
 
-                  {/* Subclasses */}
+                  {}
                   {related.children.length > 0 && (
                     <div style={styles.entityDetailRow}>
                       <div style={styles.entityDetailLabel}>Subclasses</div>
@@ -1218,7 +1162,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     </div>
                   )}
 
-                  {/* Properties */}
+                  {}
                   {related.properties.length > 0 && (
                     <div style={styles.entityDetailRow}>
                       <div style={styles.entityDetailLabel}>Properties</div>
@@ -1240,7 +1184,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                     </div>
                   )}
 
-                  {/* Instances */}
+                  {}
                   {related.instances.length > 0 && (
                     <div style={styles.entityDetailRow}>
                       <div style={styles.entityDetailLabel}>Instances</div>
@@ -1265,7 +1209,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               );
             })()}
 
-            {/* Notes - if available */}
+            {}
             {(selectedNode as any).notes && (
               <div style={styles.entityDetailRow}>
                 <div style={styles.entityDetailLabel}>Notes</div>
@@ -1278,7 +1222,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         </div>
       )}
 
-      {/* Legend Section - gated by toolbar showLegend toggle */}
+      {}
       {showLegend && vowlLegend.length > 0 && (
         <div style={styles.accordionSection}>
           <div 
@@ -1291,18 +1235,18 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
           </div>
           {expandedSections.vowlLegend && (
             <div style={styles.vowlLegendSection}>
-              {/* Node Types */}
+              {}
               <div style={styles.legendCategory}>Node Types</div>
               {(() => {
                 const nodeItems = vowlLegend.filter(item => item.type === 'node');
                 console.log('[Sidebar Legend] Rendering node items:', nodeItems.length, nodeItems.map(i => ({name: i.name, nodeType: i.nodeType, color: i.color})));
                 return nodeItems.map((item) => (
                   <div key={`node-${item.nodeType}-${item.name}`} style={styles.vowlLegendItem}>
-                  {/* Render shape based on node type and name - matching graph visualization */}
+                  {}
                   {item.nodeType === 'class' ? (
-                    // Classes: Circle for VOWL/OntoGraph, Ellipse indicator for Force mode
+
                     viewMode === 'force' && item.name.includes('Ellipse') ? (
-                      // Force mode: Ellipse shape indicator
+
                       <div style={{
                         width: '28px',
                         height: '16px',
@@ -1312,7 +1256,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         flexShrink: 0
                       }} />
                     ) : viewMode === 'ontograph' ? (
-                      // OntoGraph mode: Rectangle with rounded corners and 'C' icon
+
                       <div style={{
                         width: '32px',
                         height: '18px',
@@ -1342,7 +1286,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                         }}>C</div>
                       </div>
                     ) : (
-                      // VOWL mode: Circle (solid border for normal classes, dashed for Thing)
+
                       <div style={{
                         width: '20px',
                         height: '20px',
@@ -1353,7 +1297,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       }} />
                     )
                   ) : item.nodeType === 'objectProperty' ? (
-                    // Object Properties: Circle (green)
+
                     <div style={{
                       width: '20px',
                       height: '20px',
@@ -1363,7 +1307,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       flexShrink: 0
                     }} />
                   ) : item.nodeType === 'dataProperty' || item.nodeType === 'datatypeProperty' ? (
-                    // Data Properties: Square (pink)
+
                     <div style={{
                       width: '18px',
                       height: '18px',
@@ -1373,7 +1317,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       borderRadius: '3px'
                     }} />
                   ) : item.nodeType === 'individual' ? (
-                    // Individuals: Rectangle (all modes)
+
                     viewMode === 'ontograph' ? (
                       <div style={{
                         width: '32px',
@@ -1414,7 +1358,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       }} />
                     )
                   ) : item.nodeType === 'datatype' ? (
-                    // Datatypes: Rounded Rectangle - white for force mode, dashed for VOWL
+
                     <div style={{
                       width: '32px',
                       height: '16px',
@@ -1424,7 +1368,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       borderRadius: viewMode === 'force' ? '3px' : '8px'
                     }} />
                   ) : item.nodeType === 'annotation' ? (
-                    // Annotation Properties: Hexagon (light purple)
+
                     <svg width="24" height="24" viewBox="-12 -12 24 24" style={{ flexShrink: 0 }}>
                       <polygon
                         points="0,-10 8.66,-5 8.66,5 0,10 -8.66,5 -8.66,-5"
@@ -1434,7 +1378,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                       />
                     </svg>
                   ) : (
-                    // Default: Circle
+
                     <div style={{
                       width: '20px',
                       height: '20px',
@@ -1448,8 +1392,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 </div>
               ));
               })()}
-              
-              {/* Edge Types */}
+
+              {}
               {vowlLegend.filter(item => item.type === 'edge').length > 0 && (
                 <>
                   <div style={styles.legendCategory}>Relationship Types</div>
@@ -1471,8 +1415,8 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                   ))}
                 </>
               )}
-              
-              {/* Property Label Colors (VOWL Mode) */}
+
+              {}
               {vowlLegend.filter(item => item.type === 'label').length > 0 && (
                 <>
                   <div style={styles.legendCategory}>Property Label Colors</div>
@@ -1496,7 +1440,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         </div>
       )}
 
-      {/* Ontology Statistics (like VOWL) */}
+      {}
       <div style={styles.accordionSection}>
         <div 
           className="accordion-header"
@@ -1546,7 +1490,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
         )}
       </div>
 
-      {/* VOWL Controls Section - Show only when Settings button clicked */}
+      {}
       {showSettings && (
         <div style={styles.accordionSection}>
           <div 
@@ -1559,7 +1503,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
           </div>
           {expandedSections.vowlControls && (
             <div style={styles.vowlControlsSection}>
-              {/* VOWL Specific Filters */}
+              {}
               {(viewMode === 'vowl' || viewMode === 'ontograph') && (
                 <div style={{ marginBottom: '16px', borderBottom: '1px solid #eee', paddingBottom: '12px' }}>
                   <div style={{ ...styles.controlLabel, fontWeight: 'bold', marginBottom: '8px' }}>VOWL Filters</div>
@@ -1624,7 +1568,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 </div>
               )}
 
-              {/* Class Distance Slider */}
+              {}
               <div style={styles.controlGroup}>
                 <label style={styles.controlLabel}>Class Distance:</label>
                 <input
@@ -1640,7 +1584,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 <span style={styles.sliderValue}>{localClassDistance}</span>
               </div>
 
-              {/* Datatype Distance Slider */}
+              {}
               <div style={styles.controlGroup}>
                 <label style={styles.controlLabel}>Datatype Distance:</label>
                 <input
@@ -1656,7 +1600,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 <span style={styles.sliderValue}>{localDatatypeDistance}</span>
               </div>
 
-              {/* Layout Controls */}
+              {}
               <div style={styles.layoutControls}>
                 <button
                   onClick={onPauseLayout}
@@ -1682,7 +1626,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
       )}
       </div>
 
-      {/* CSS for hover effects */}
+      {}
       <style>{`
         .accordion-header:hover {
           background: #f3f4f6 !important;
@@ -1831,7 +1775,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   searchIcon: {
     position: 'absolute',
-    // Container has padding 14px 16px; offset into the input (16 + 12)
+
     left: '28px',
     top: '50%',
     transform: 'translateY(-50%)',
@@ -2038,7 +1982,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: '500',
     transition: 'color 0.2s ease'
   },
-  // New Entity Details Card Styles (Blood Pressure style)
+
   entityTitleHeader: {
     background: 'var(--accent)',
     padding: '20px 20px',
@@ -2201,7 +2145,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--on-accent)',
     borderColor: 'var(--accent)'
   },
-  // VOWL Sidebar Header Styles
+
   vowlSidebarHeader: {
     background: 'var(--surface-2)',
     padding: '16px',
@@ -2219,7 +2163,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     fontWeight: '400'
   },
-  // VOWL Controls Card Styles
+
   vowlControlsCard: {
     marginBottom: '1px',
     backgroundColor: 'var(--surface-1)',
@@ -2363,7 +2307,7 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.2s ease',
     textAlign: 'center'
   },
-  // VOWL Entity Card Styles
+
   vowlEntityCard: {
     marginBottom: '1px',
     backgroundColor: 'var(--surface-1)',

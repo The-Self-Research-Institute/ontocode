@@ -4,18 +4,11 @@ import { applyCircularLayout } from './CircularLayout';
 export interface ClusterLayoutOptions {
   width: number;
   height: number;
-  /** Community id per node id — e.g. computeGraphAnalytics(...).communities. */
+
   communities: Map<string, number>;
   padding?: number;
 }
 
-/**
- * Cluster Layout
- * Best for: seeing which classes group together structurally (communities), rather
- * than by explicit subClassOf hierarchy.
- * Gives each community its own cell in a macro grid, then arranges that community's
- * members in a circle within the cell (reusing applyCircularLayout per cell).
- */
 export function applyClusterLayout(
   nodes: OntologyNode[],
   edges: OntologyEdge[],
@@ -25,9 +18,6 @@ export function applyClusterLayout(
   const positionMap = new Map<string, { x: number; y: number }>();
   if (nodes.length === 0) return positionMap;
 
-  // Group nodes by community. A node missing from the map (shouldn't normally happen —
-  // communities is computed over the same node set) gets its own singleton group rather
-  // than being silently dropped.
   const groups = new Map<number, OntologyNode[]>();
   let nextUnclustered = -1;
   nodes.forEach(node => {

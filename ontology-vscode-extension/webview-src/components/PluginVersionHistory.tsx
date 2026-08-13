@@ -1,11 +1,4 @@
-/**
- * =============================================================================
- * PLUGIN VERSION HISTORY MODAL
- * =============================================================================
- * Displays all published versions of a plugin and allows users to install or
- * rollback to any version. Uses the existing GET /api/plugins/{id}/versions
- * endpoint which returns versions sorted by publishedAt DESC.
- */
+
 
 import React, { useEffect, useState } from "react";
 import { X, Download, Clock, RotateCcw } from "lucide-react";
@@ -25,7 +18,7 @@ interface PluginVersionHistoryProps {
   installedVersion?: string;
   onClose: () => void;
   onInstallVersion: (pluginId: string, version: string) => Promise<void>;
-  /** Max versions shown (default 5). User requested "last 2 versions or so". */
+
   maxVersions?: number;
 }
 

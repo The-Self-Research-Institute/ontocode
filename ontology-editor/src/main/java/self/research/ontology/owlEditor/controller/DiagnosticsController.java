@@ -12,12 +12,6 @@ import java.lang.management.*;
 import java.util.*;
 import java.util.concurrent.Executor;
 
-/**
- * On-demand system diagnostics endpoint.
- * <p>
- * GET /api/diagnostics — returns JVM memory, GC, thread pool, and connection pool stats as JSON.
- * Use this when a user reports "it's slow" to instantly see if it's RAM, threads, or code.
- */
 @RestController
 @RequestMapping("/api/diagnostics")
 public class DiagnosticsController {
@@ -61,7 +55,6 @@ public class DiagnosticsController {
         m.put("nonHeapUsedMB", nonHeap.getUsed() / (1024 * 1024));
         m.put("availableProcessors", rt.availableProcessors());
 
-        // Direct buffers
         try {
             for (BufferPoolMXBean pool : ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class)) {
                 if ("direct".equals(pool.getName())) {
@@ -138,15 +131,11 @@ public class DiagnosticsController {
         return m;
     }
 
-    /**
-     * Auto-diagnosis: reads current metrics and returns a human-readable verdict.
-     */
     @SuppressWarnings("unchecked")
     private Map<String, Object> getDiagnosis() {
         Map<String, Object> d = new LinkedHashMap<>();
         List<String> issues = new ArrayList<>();
 
-        // Memory check
         MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
         int heapPct = heap.getMax() > 0 ? (int) ((heap.getUsed() * 100) / heap.getMax()) : 0;
         if (heapPct >= 90) {
@@ -155,7 +144,6 @@ public class DiagnosticsController {
             issues.add("WARNING: Heap at " + heapPct + "% — approaching limit. Monitor closely.");
         }
 
-        // GC check
         long totalGcTime = 0;
         for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
             totalGcTime += gc.getCollectionTime();
@@ -171,11 +159,9 @@ public class DiagnosticsController {
             d.put("gcOverheadPercent", String.format("%.2f", gcPercent));
         }
 
-        // Thread pool check
         checkPoolExhaustion(issues, "metadataPool", metadataExecutor);
         checkPoolExhaustion(issues, "sparqlPool", sparqlExecutor);
 
-        // Connection pool check
         try {
             PoolStats stats = connectionManager.getTotalStats();
             if (stats.getPending() > 0) {

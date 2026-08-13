@@ -11,22 +11,22 @@ import self.research.ontology.owlEditor.config.SparqlProperties;
 
 @Service
 public class SparqlUpdateService {
-    
+
     private static final Logger log = LoggerFactory.getLogger(SparqlUpdateService.class);
 
     private final WebClient updateClient;
     private final SparqlProperties props;
     private final ObjectMapper mapper;
 
-    public SparqlUpdateService(WebClient.Builder webClientBuilder, 
-                              SparqlProperties props, 
+    public SparqlUpdateService(WebClient.Builder webClientBuilder,
+                              SparqlProperties props,
                               ObjectMapper mapper) {
         this.props = props;
         this.mapper = mapper;
 
         WebClient.Builder builder = webClientBuilder.baseUrl(props.getUpdateEndpointUrl());
         if (props.getUsername() != null && !props.getUsername().isBlank()) {
-            builder.defaultHeaders(headers -> 
+            builder.defaultHeaders(headers ->
                 headers.setBasicAuth(props.getUsername(), props.getPassword())
             );
         }
@@ -47,9 +47,6 @@ public class SparqlUpdateService {
                 .then();
     }
 
-    /**
-     * Escape string for SPARQL literal
-     */
     public static String lit(String value) {
         if (value == null) return "\"\"";
         String escaped = value

@@ -1,7 +1,4 @@
-/**
- * Fuzzy Membership Visualization
- * Creates visual representations of membership degrees and fuzzy concepts
- */
+
 
 import { MembershipDegree, MembershipFunction, MembershipFunctionParams } from '../core/FuzzyLogic';
 import { FuzzyConcept, FuzzyIndividual } from '../core/FuzzyOntology';
@@ -37,9 +34,6 @@ export const DEFAULT_COLOR_SCHEMES: Record<string, ColorScheme> = {
   }
 };
 
-/**
- * Membership degree color mapper
- */
 export class ColorMapper {
 
   static degreeToColor(degree: MembershipDegree, scheme: ColorScheme): string {
@@ -82,9 +76,6 @@ export class ColorMapper {
   }
 }
 
-/**
- * Membership function plotter
- */
 export class MembershipFunctionPlotter {
 
   static plot(
@@ -181,9 +172,6 @@ export class MembershipFunctionPlotter {
   }
 }
 
-/**
- * Concept hierarchy visualizer
- */
 export class HierarchyVisualizer {
 
   static generateTreeSVG(
@@ -214,7 +202,6 @@ export class HierarchyVisualizer {
 
     const tree = buildTree(rootConcept);
 
-    // Calculate positions
     const calculatePositions = (node: TreeNode, leftBound: number, rightBound: number) => {
       node.x = (leftBound + rightBound) / 2;
 
@@ -228,10 +215,8 @@ export class HierarchyVisualizer {
 
     calculatePositions(tree, 0, width);
 
-    // Generate SVG
     let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`;
 
-    // Draw edges first
     const drawEdges = (node: TreeNode) => {
       for (const child of node.children) {
         svg += `<line x1="${node.x}" y1="${node.y}" x2="${child.x}" y2="${child.y}"
@@ -242,7 +227,6 @@ export class HierarchyVisualizer {
 
     drawEdges(tree);
 
-    // Draw nodes
     const drawNodes = (node: TreeNode) => {
       const avgDegree = this.calculateAverageMembership(node.concept);
       const color = ColorMapper.degreeToGradient(avgDegree);
@@ -283,9 +267,6 @@ export class HierarchyVisualizer {
   }
 }
 
-/**
- * Individual membership matrix visualizer
- */
 export class MembershipMatrixVisualizer {
 
   static generateHTML(
@@ -339,9 +320,6 @@ export class MembershipMatrixVisualizer {
   }
 }
 
-/**
- * Radar chart for individual concept membership
- */
 export class RadarChartVisualizer {
 
   static generateSVG(
@@ -359,13 +337,11 @@ export class RadarChartVisualizer {
 
     let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`;
 
-    // Draw background circles
     for (let i = 1; i <= 5; i++) {
       const r = (radius * i) / 5;
       svg += `<circle cx="${centerX}" cy="${centerY}" r="${r}" fill="none" stroke="#e0e0e0" stroke-width="1" />`;
     }
 
-    // Draw axes
     const points: Array<{ x: number; y: number; degree: MembershipDegree }> = [];
 
     for (let i = 0; i < n; i++) {
@@ -381,13 +357,11 @@ export class RadarChartVisualizer {
       const py = centerY + radius * degree * Math.sin(angle);
       points.push({ x: px, y: py, degree });
 
-      // Labels
       const labelX = centerX + (radius + 30) * Math.cos(angle);
       const labelY = centerY + (radius + 30) * Math.sin(angle);
       svg += `<text x="${labelX}" y="${labelY}" text-anchor="middle" font-size="10">${concepts[i].label || `C${i}`}</text>`;
     }
 
-    // Draw membership polygon
     if (points.length > 0) {
       let pathData = `M ${points[0].x} ${points[0].y}`;
       for (let i = 1; i < points.length; i++) {
@@ -397,7 +371,6 @@ export class RadarChartVisualizer {
 
       svg += `<path d="${pathData}" fill="rgba(0, 150, 200, 0.3)" stroke="rgba(0, 150, 200, 0.8)" stroke-width="2" />`;
 
-      // Draw points
       for (const point of points) {
         const color = ColorMapper.degreeToGradient(point.degree);
         svg += `<circle cx="${point.x}" cy="${point.y}" r="5" fill="${color}" stroke="white" stroke-width="2" />`;

@@ -9,15 +9,10 @@ import {
 import apiClient from './apiClient';
 import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom } from './types';
 
-// ============================================================================
-// CONSTANTS & HELPERS
-// ============================================================================
-
 function parseSwrlError(raw: string): { title: string; detail: string; hint?: string } {
   const builtInMatch = raw.match(/built-in (swrlb:\w+)/);
   const builtIn = builtInMatch ? builtInMatch[1] : null;
 
-  // Plain literal type mismatch — most common: property has no xsd datatype
   const plainLiteralMatch = raw.match(/got "([^"]+)"\^\^rdf:PlainLiteral/);
   if (plainLiteralMatch) {
     return {
@@ -27,7 +22,6 @@ function parseSwrlError(raw: string): { title: string; detail: string; hint?: st
     };
   }
 
-  // xsd:string where numeric expected
   const stringTypeMatch = raw.match(/got "([^"]+)"\^\^xsd:string/);
   if (stringTypeMatch) {
     return {
@@ -37,7 +31,6 @@ function parseSwrlError(raw: string): { title: string; detail: string; hint?: st
     };
   }
 
-  // Generic unsupported argument type
   const unsupportedMatch = raw.match(/unsupported argument type[^:]*expecting ([^,\]]+(?:,\s*[^,\]]+)*?)(?:,\s*or\s+[^,\]]+)?,?\s*got ([^\]]+)/);
   if (unsupportedMatch) {
     return {
@@ -47,7 +40,6 @@ function parseSwrlError(raw: string): { title: string; detail: string; hint?: st
     };
   }
 
-  // Syntax / parse error
   if (raw.toLowerCase().includes('parse') || raw.toLowerCase().includes('syntax')) {
     return {
       title: 'Rule syntax error',
@@ -56,7 +48,6 @@ function parseSwrlError(raw: string): { title: string; detail: string; hint?: st
     };
   }
 
-  // Fallback: strip the deeply-nested Drools wrapper, show only the innermost message
   const inner = raw
     .replace(/^.*?TargetSWRLRuleEngineException[^:]*:\s*/i, '')
     .replace(/^.*?error running Drools rule engine[^:]*:\s*/i, '')
@@ -70,8 +61,6 @@ function parseSwrlError(raw: string): { title: string; detail: string; hint?: st
   };
 }
 
-// Syntax-reference templates only — replace ClassName / propertyName with names from YOUR ontology.
-// These show SWRL patterns; they will not run as-is against your data.
 const RULE_TEMPLATES = [
   {
     name: 'Class Membership (numeric)',
@@ -276,7 +265,6 @@ const templateMatchesOntology = (template: string, schema: OntologySchemaNames) 
   return extractTemplatePredicates(template).every(predicate => validPredicates.has(predicate));
 };
 
-// Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => { 
@@ -285,10 +273,6 @@ function useDebounce<T>(value: T, delay: number): T {
   }, [value, delay]);
   return debounced;
 }
-
-// ============================================================================
-// CUSTOM DIALOG COMPONENT
-// ============================================================================
 
 const ConfirmDialog: React.FC<{
   isOpen: boolean;
@@ -300,7 +284,7 @@ const ConfirmDialog: React.FC<{
   danger?: boolean;
 }> = ({ isOpen, title, message, onConfirm, onCancel, confirmText = 'Confirm', danger = false }) => {
   if (!isOpen) return null;
-  
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm" style={{ backgroundColor: 'var(--overlay)' }}>
       <div className="rounded-xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200" style={{ backgroundColor: 'var(--surface-1)' }}>
@@ -334,10 +318,6 @@ const ConfirmDialog: React.FC<{
   );
 };
 
-// ============================================================================
-// RULE LIST ITEM COMPONENT
-// ============================================================================
-
 interface RuleListItemProps {
   rule: SwrlRule;
   isSelected: boolean;
@@ -361,7 +341,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
     }`}
     onClick={onSelect}
   >
-    {/* Checkbox */}
+    {}
     <div className="pt-0.5" onClick={e => e.stopPropagation()}>
       <input
         type="checkbox"
@@ -371,7 +351,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
       />
     </div>
 
-    {/* Content */}
+    {}
     <div className="flex-1 min-w-0">
       <div className="flex items-center gap-2">
         <span className={`font-medium text-sm truncate ${isSelected ? 'text-purple-900' : 'text-gray-800'}`}>
@@ -386,7 +366,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
       <p className="text-xs text-gray-500 font-mono truncate mt-0.5">{rule.ruleText}</p>
     </div>
 
-    {/* Actions */}
+    {}
     <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
       <button
         onClick={onToggleEnabled}
@@ -410,10 +390,6 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
   </div>
 );
 
-// ============================================================================
-// QUICK INSERT PANEL
-// ============================================================================
-
 interface QuickInsertProps {
   onInsert: (text: string) => void;
   disabled?: boolean;
@@ -432,10 +408,10 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({
   const [expanded, setExpanded] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showGeneralTemplates, setShowGeneralTemplates] = useState(false);
-  
+
   return (
     <div className="bg-gray-50 border-t border-gray-200">
-      {/* Quick symbols */}
+      {}
       <div className="flex items-center gap-1 p-2 flex-wrap">
         <span className="text-xs text-gray-500 mr-2">Quick:</span>
         {['(?x)', '(?y)', ' ^ ', ' -> '].map(sym => (
@@ -448,7 +424,7 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({
             {sym === ' ^ ' ? '∧ AND' : sym === ' -> ' ? '→ THEN' : sym}
           </button>
         ))}
-        
+
         <div className="ml-auto flex items-center gap-1">
           <button
             onClick={() => { setShowTemplates(!showTemplates); setExpanded(false); }}
@@ -465,7 +441,7 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({
         </div>
       </div>
 
-      {/* Templates */}
+      {}
       {showTemplates && (
         <div className="p-2 pt-0 space-y-2 max-h-80 overflow-y-auto">
           {dynamicTemplates.length > 0 ? (
@@ -489,8 +465,8 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({
                   </button>
                 ))}
               </div>
-              
-              {/* Collapsible general templates */}
+
+              {}
               <div className="mt-3">
                 <button
                   onClick={() => setShowGeneralTemplates(!showGeneralTemplates)}
@@ -546,7 +522,7 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({
         </div>
       )}
 
-      {/* Expanded built-ins */}
+      {}
       {expanded && (
         <div className="p-2 pt-0 space-y-2">
           {SWRL_BUILTINS_QUICK.map(cat => (
@@ -572,18 +548,10 @@ const QuickInsertPanel: React.FC<QuickInsertProps> = ({
   );
 };
 
-// ============================================================================
-// RESULTS PANEL
-// ============================================================================
-
 interface ResultsPanelProps {
   results: ExecutionResponse | null;
   isExecuting: boolean;
 }
-
-// ============================================================================
-// SQWRL QUERY PANEL
-// ============================================================================
 
 const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> = ({ projectId, context }) => {
   const [query, setQuery] = useState('Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)');
@@ -619,7 +587,6 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
     } finally { setLoading(false); }
   }, [projectId, query]);
 
-  // SQWRL query examples
   const queryExamples = [
     { label: 'All Persons with Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)' },
     { label: 'Adults (age > 18)', query: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> sqwrl:select(?p, ?age) ^ sqwrl:orderBy(?age)' },
@@ -632,7 +599,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
     <div className="flex flex-col h-full bg-gray-50">
       <div className="p-4 border-b border-gray-300 flex justify-between items-center">
         <h3 className="text-lg font-semibold text-gray-800">SQWRL Query</h3>
-        {/* Example dropdown */}
+        {}
         <select 
           onChange={(e) => e.target.value && setQuery(e.target.value)}
           className="text-sm border border-gray-300 rounded px-2 py-1 bg-white"
@@ -654,8 +621,8 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
         <button onClick={execute} disabled={loading} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-purple-300 text-sm">
           {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />} Execute Query
         </button>
-        
-        {/* Results Section */}
+
+        {}
         <div className="flex-grow overflow-auto border-2 border-gray-300 rounded-lg bg-white">
           {!results ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-500 p-4">
@@ -725,26 +692,16 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
   );
 };
 
-// ============================================================================
-// RESULTS PANEL
-// ============================================================================
-
 interface ResultsPanelProps {
   results: ExecutionResponse | null;
   isExecuting: boolean;
 }
 
-
-
-// Helper function to parse and format axioms for better readability
 const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: string; predicate?: string; object?: string; formatted: string } => {
   const readable = axiom.readable || '';
-  
-  // Helper to clean up regex matches
+
   const clean = (s: string) => extractLocalName(s);
-  
-  // Parse ClassAssertion: ClassAssertion(<http://...#Adult> <http://...#Alice>)
-  // Also handles: ClassAssertion(Adult Alice)
+
   const classAssertionMatch = readable.match(/ClassAssertion\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s*\)/i);
   if (classAssertionMatch) {
     const className = clean(classAssertionMatch[1]);
@@ -756,8 +713,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
       formatted: `${individual} → ${className}`
     };
   }
-  
-  // Parse ObjectPropertyAssertion: ObjectPropertyAssertion(<prop> <subj> <obj>)
+
   const objPropMatch = readable.match(/ObjectPropertyAssertion\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s*\)/i);
   if (objPropMatch) {
     const prop = clean(objPropMatch[1]);
@@ -771,14 +727,13 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
       formatted: `${subject} ${prop} ${object}`
     };
   }
-  
-  // Parse DataPropertyAssertion: DataPropertyAssertion(<prop> <subj> "value"^^type)
+
   const dataPropMatch = readable.match(/DataPropertyAssertion\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s+(.+)\s*\)/i);
   if (dataPropMatch) {
     const prop = clean(dataPropMatch[1]);
     const subject = clean(dataPropMatch[2]);
     let value = dataPropMatch[3];
-    // Clean up typed literals
+
     value = value.replace(/"\^\^.*$/, '').replace(/^"|"$/g, '');
     return {
       type: 'DataPropertyAssertion',
@@ -789,7 +744,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse SubClassOf: SubClassOf(<subClass> <superClass>)
   const subClassMatch = readable.match(/SubClassOf\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s*\)/i);
   if (subClassMatch) {
     const subClass = clean(subClassMatch[1]);
@@ -802,7 +756,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse EquivalentClasses: EquivalentClasses(<class1> <class2> ...)
   const equivClassMatch = readable.match(/EquivalentClasses\s*\(\s*<?([^>\s]+)>?/i);
   if (equivClassMatch) {
     const cls = clean(equivClassMatch[1]);
@@ -813,7 +766,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse SameIndividual: SameIndividual(<ind1> <ind2> ...)
   const sameIndMatch = readable.match(/SameIndividual\s*\(\s*<?([^>\s]+)>?/i);
   if (sameIndMatch) {
     const ind = clean(sameIndMatch[1]);
@@ -824,7 +776,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse Domain/Range - handles both ObjectPropertyDomain/Range and DataPropertyDomain/Range
   const domainRangeMatch = readable.match(/(Data|Object)Property(Domain|Range)\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (domainRangeMatch) {
     const propType = domainRangeMatch[1]; // Data or Object
@@ -839,7 +790,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse EquivalentObjectProperties: EquivalentObjectProperties(<prop1> <prop2> ...)
   const equivObjPropsMatch = readable.match(/EquivalentObjectProperties\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?/i);
   if (equivObjPropsMatch) {
     const prop1 = clean(equivObjPropsMatch[1]);
@@ -852,7 +802,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse EquivalentDataProperties: EquivalentDataProperties(<prop1> <prop2> ...)
   const equivDataPropsMatch = readable.match(/EquivalentDataProperties\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?/i);
   if (equivDataPropsMatch) {
     const prop1 = clean(equivDataPropsMatch[1]);
@@ -865,7 +814,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse SubObjectPropertyOf: SubObjectPropertyOf(<subProp> <superProp>)
   const subObjPropMatch = readable.match(/SubObjectPropertyOf\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (subObjPropMatch) {
     const subProp = clean(subObjPropMatch[1]);
@@ -878,7 +826,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse SubDataPropertyOf: SubDataPropertyOf(<subProp> <superProp>)
   const subDataPropMatch = readable.match(/SubDataPropertyOf\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (subDataPropMatch) {
     const subProp = clean(subDataPropMatch[1]);
@@ -891,7 +838,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse Declaration: Declaration(Class(<class>)) or Declaration(ObjectProperty(<prop>)) etc.
   const declarationMatch = readable.match(/Declaration\s*\(\s*(Class|ObjectProperty|DataProperty|NamedIndividual|AnnotationProperty)\s*\(\s*<?([^>\s)]+)>?\s*\)\s*\)/i);
   if (declarationMatch) {
     const entityType = declarationMatch[1];
@@ -904,7 +850,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse InverseObjectProperties: InverseObjectProperties(<prop1> <prop2>)
   const inversePropsMatch = readable.match(/InverseObjectProperties\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (inversePropsMatch) {
     const prop1 = clean(inversePropsMatch[1]);
@@ -917,7 +862,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse FunctionalObjectProperty: FunctionalObjectProperty(<prop>)
   const funcObjPropMatch = readable.match(/FunctionalObjectProperty\s*\(\s*<?([^>\s]+)>?\s*\)/i);
   if (funcObjPropMatch) {
     const prop = clean(funcObjPropMatch[1]);
@@ -928,7 +872,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse TransitiveObjectProperty: TransitiveObjectProperty(<prop>)
   const transitiveMatch = readable.match(/TransitiveObjectProperty\s*\(\s*<?([^>\s]+)>?\s*\)/i);
   if (transitiveMatch) {
     const prop = clean(transitiveMatch[1]);
@@ -939,7 +882,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse SymmetricObjectProperty: SymmetricObjectProperty(<prop>)
   const symmetricMatch = readable.match(/SymmetricObjectProperty\s*\(\s*<?([^>\s]+)>?\s*\)/i);
   if (symmetricMatch) {
     const prop = clean(symmetricMatch[1]);
@@ -950,7 +892,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
-  // Parse DisjointClasses: DisjointClasses(<class1> <class2> ...)
   const disjointMatch = readable.match(/DisjointClasses\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?/i);
   if (disjointMatch) {
     const cls1 = clean(disjointMatch[1]);
@@ -962,8 +903,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
       formatted: `${cls1} ⊥ ${cls2}`
     };
   }
-  
-  // Fallback: just extract local names from any URIs in the readable string
+
   const simplified = readable.replace(/<[^>]+#([^>]+)>/g, '$1').replace(/<[^>]+\/([^>/]+)>/g, '$1');
   return {
     type: axiom.axiomType || 'Unknown',
@@ -972,8 +912,6 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
   };
 };
 
-// Group axioms by type for better organization
-// Enhanced grouping with raw axiom data preserved for tooltips
 interface GroupedAxiomItem {
   formatted: string;
   subject: string;
@@ -984,7 +922,7 @@ interface GroupedAxiomItem {
 
 const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomItem[]> => {
   const groups = new Map<string, GroupedAxiomItem[]>();
-  
+
   axioms.forEach(axiom => {
     const parsed = formatInferredAxiom(axiom);
     const type = parsed.type;
@@ -999,11 +937,10 @@ const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomIte
       axiomType: axiom.axiomType || type
     });
   });
-  
+
   return groups;
 };
 
-// Axiom type icons and colors for better visual distinction
 const getAxiomTypeStyle = (type: string): { icon: string; bgColor: string; textColor: string; borderColor: string } => {
   const styles: Record<string, { icon: string; bgColor: string; textColor: string; borderColor: string }> = {
     'ClassAssertion': { icon: '🏷️', bgColor: 'bg-blue-50', textColor: 'text-blue-800', borderColor: 'border-blue-200' },
@@ -1023,11 +960,10 @@ const getAxiomTypeStyle = (type: string): { icon: string; bgColor: string; textC
   return styles[type] || { icon: '📄', bgColor: 'bg-gray-50', textColor: 'text-gray-800', borderColor: 'border-gray-200' };
 };
 
-// Individual axiom card component with enhanced display
 const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, index }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const displaySubject = item.subject || item.formatted || `Item ${index + 1}`;
-  
+
   return (
     <div 
       className="relative group"
@@ -1047,7 +983,7 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, 
           </>
         )}
       </div>
-      {/* Tooltip with full axiom */}
+      {}
       {showTooltip && item.rawReadable && (
         <div className="absolute z-50 bottom-full left-0 mb-2 p-3 bg-gray-900 text-white text-xs rounded-lg shadow-xl max-w-md whitespace-pre-wrap break-all">
           <div className="font-semibold mb-1 text-purple-300">{item.axiomType}</div>
@@ -1095,7 +1031,6 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
     </div>
   );
 
-  // Filter axioms by search term
   const filteredAxioms = searchFilter.trim() 
     ? results.inferredAxioms.filter(ax => {
         const searchLower = searchFilter.toLowerCase();
@@ -1109,19 +1044,18 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
     : results.inferredAxioms;
 
   const groupedAxioms = groupAxiomsByType(filteredAxioms);
-  
-  // Highlight SWRL-specific inferences (ClassAssertion = individuals classified by rules)
+
   const classAssertions = results.inferredAxioms.filter(ax => {
     const parsed = formatInferredAxiom(ax);
     return parsed.type === 'ClassAssertion';
   });
-  
+
   const hasSwrlResults = classAssertions.length > 0;
 
   return (
     <div className="h-full overflow-y-auto">
     <div className="p-4 space-y-4">
-      {/* Execution Summary Card */}
+      {}
       <div className="bg-gradient-to-r from-white to-gray-50 rounded-xl border-2 border-gray-200 p-5 shadow-sm">
         <h3 className="font-bold mb-4 text-lg flex items-center gap-2" style={{ color: '#1f2937' }}>
           <BarChart2 size={20} className="text-purple-600" />
@@ -1154,7 +1088,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
           </div>
         </div>
 
-        {/* Show executed rule names if available */}
+        {}
         {results.executedRuleNames && results.executedRuleNames.length > 0 && (
           <div className="mt-4 pt-4 border-t border-gray-200">
             <div className="text-xs uppercase tracking-wide mb-2" style={{ color: '#6b7280' }}>Executed Rules</div>
@@ -1170,7 +1104,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
         )}
       </div>
 
-      {/* SWRL Rule Results - ClassAssertions (individuals classified by rules) */}
+      {}
       {results.success && hasSwrlResults && (
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border-2 border-green-300 overflow-hidden shadow-md">
           <div className="p-4 border-b border-green-200 flex justify-between items-center">
@@ -1201,7 +1135,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
         </div>
       )}
 
-      {/* No SWRL Results Warning */}
+      {}
       {results.success && !hasSwrlResults && results.inferredAxioms.length > 0 && (
         <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl overflow-hidden">
           <div 
@@ -1221,7 +1155,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
               )}
             </div>
           </div>
-          
+
           {showWarning && (
             <div className="px-4 pb-4 pl-12">
               <div className="text-sm text-yellow-700 mt-1">
@@ -1249,7 +1183,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
         </div>
       )}
 
-      {/* Error Message */}
+      {}
       {!results.success && results.errorMessage && (() => {
         const err = parseSwrlError(results.errorMessage);
         return (
@@ -1270,10 +1204,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
         );
       })()}
 
-      {/* Inferred Axioms Section */}
+      {}
       {results.success && results.inferredAxioms.length > 0 && (
         <div className="bg-white rounded-xl border-2 border-gray-200 overflow-hidden shadow-sm">
-          {/* Header with controls */}
+          {}
           <div className="p-4 bg-gradient-to-r from-purple-50 to-white border-b-2 border-gray-100 flex flex-col gap-3">
             <div className="flex justify-between items-center">
               <h3 className="font-bold text-lg flex items-center gap-2" style={{ color: '#1f2937' }}>
@@ -1284,7 +1218,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
                 </span>
               </h3>
               <div className="flex items-center gap-3">
-                {/* View mode toggle */}
+                {}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
                   <button
                     onClick={() => setViewMode('grouped')}
@@ -1308,7 +1242,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
                     📝 Raw
                   </button>
                 </div>
-                {/* Expand/Collapse buttons for grouped view */}
+                {}
                 {viewMode === 'grouped' && (
                   <div className="flex gap-1">
                     <button onClick={expandAll} className="px-2 py-1 text-xs text-purple-600 hover:bg-purple-50 rounded" title="Expand all">
@@ -1319,7 +1253,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
                     </button>
                   </div>
                 )}
-                {/* Show/Hide toggle */}
+                {}
                 <button
                   onClick={() => setShowInferredAxioms(!showInferredAxioms)}
                 className="flex items-center gap-1 px-3 py-1.5 text-sm text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
@@ -1329,7 +1263,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
               </button>
             </div>
           </div>
-          {/* Search Filter */}
+          {}
           {showInferredAxioms && (
             <div className="px-4 pb-3">
               <div className="relative">
@@ -1359,7 +1293,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
           )}
           </div>
 
-          {/* Grouped View */}
+          {}
           {showInferredAxioms && viewMode === 'grouped' && (
             <div className="max-h-[70vh] overflow-y-auto">
               {Array.from(groupedAxioms.entries()).map(([type, items]) => {
@@ -1367,7 +1301,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
                 const isExpanded = expandedGroups.has(type);
                 return (
                   <div key={type} className="border-b border-gray-100 last:border-b-0">
-                    {/* Group header - clickable to expand/collapse */}
+                    {}
                     <button
                       onClick={() => toggleGroup(type)}
                       className={`w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors ${style.bgColor}`}
@@ -1383,7 +1317,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
                       </div>
                       <ChevronRight size={20} className={`text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                     </button>
-                    {/* Group content */}
+                    {}
                     {isExpanded && (
                       <div className="p-4 pt-2 bg-white">
                         <div className="flex flex-wrap gap-2">
@@ -1399,7 +1333,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
             </div>
           )}
 
-          {/* Table View */}
+          {}
           {showInferredAxioms && viewMode === 'table' && (
             <div className="max-h-[70vh] overflow-auto">
               <table className="w-full text-sm">
@@ -1435,7 +1369,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
             </div>
           )}
 
-          {/* Raw View */}
+          {}
           {showInferredAxioms && viewMode === 'raw' && (
             <div className="max-h-[70vh] overflow-y-auto">
               {filteredAxioms.map((ax, i) => {
@@ -1457,7 +1391,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
         </div>
       )}
 
-      {/* No Results Message */}
+      {}
       {results.success && results.inferredAxiomsCount === 0 && (
         <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200 rounded-xl p-6 text-center">
           <div className="text-4xl mb-3">🔍</div>
@@ -1473,10 +1407,6 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
   );
 };
 
-// ============================================================================
-// MAIN COMPONENT
-// ============================================================================
-
 interface SWRLEditorProps {
   projectId: string;
   context?: PluginContext;
@@ -1484,10 +1414,6 @@ interface SWRLEditorProps {
 
 export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) => {
 
-  // State
-  // Bumped on every rules mutation so a slow, still-in-flight loadRules() call
-  // (SWRL's lazy-start can take 15-25s, easily outlasting a create/update/delete
-  // fired after it) can detect it's stale and skip overwriting fresher state.
   const rulesVersionRef = useRef(0);
   const [rules, setRules] = useState<SwrlRule[]>([]);
   const [selectedRule, setSelectedRule] = useState<SwrlRule | null>(null);
@@ -1506,7 +1432,6 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   const [dynamicTemplates, setDynamicTemplates] = useState<typeof RULE_TEMPLATES>([]);
   const [ontologySchema, setOntologySchema] = useState<{ classes: string[], objectProperties: string[], dataProperties: string[] } | null>(null);
 
-  // Form state
   const [editForm, setEditForm] = useState({
     ruleName: '',
     ruleText: '',
@@ -1518,7 +1443,6 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Debounced validation
   const debouncedRuleText = useDebounce(editForm.ruleText, 500);
 
   const schemaNames = useMemo<OntologySchemaNames | null>(() => {
@@ -1537,7 +1461,6 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     [schemaNames]
   );
 
-  // Load ontology schema and generate dynamic templates
   const loadOntologySchema = useCallback(async () => {
     try {
       console.log('[SWRL] Loading ontology schema for project:', projectId);
@@ -1545,8 +1468,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         `/api/ontology/${projectId}/schema`
       );
       console.log('[SWRL] Schema loaded:', res);
-      
-      // Generate dynamic templates based on actual ontology
+
       const classes = res.classes.map(c => extractLocalName(c)).filter(c => c && !c.startsWith('owl:') && !c.startsWith('rdf:'));
       const objProps = res.objectProperties.map(p => extractLocalName(p)).filter(p => p && !p.startsWith('owl:') && !p.startsWith('rdf:'));
       const dataProps = res.dataProperties.map(p => extractLocalName(p)).filter(p => p && !p.startsWith('owl:') && !p.startsWith('rdf:'));
@@ -1556,12 +1478,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         dataProperties: new Set(dataProps),
       };
       setOntologySchema({ classes, objectProperties: objProps, dataProperties: dataProps });
-      
+
       const generated: typeof RULE_TEMPLATES = [];
-      
-      // Generate templates for each class
+
       classes.forEach((cls, idx) => {
-        // Class classification based on data property value
+
         if (dataProps.length > 0) {
           const dataProp = dataProps[0];
           const targetCls = classes[idx + 1] || `${cls}Classified`;
@@ -1571,8 +1492,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
             description: `Classify ${cls} into ${targetCls} when ${dataProp} > 100`
           });
         }
-        
-        // Class membership based on string property
+
         if (dataProps.length > 0) {
           const dataProp = dataProps[0];
           generated.push({
@@ -1581,8 +1501,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
             description: `Classify ${cls} based on ${dataProp} containing specific text`
           });
         }
-        
-        // SQWRL query for class
+
         if (dataProps.length > 0) {
           const dataProp = dataProps[0];
           generated.push({
@@ -1592,8 +1511,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
           });
         }
       });
-      
-      // Generate templates for object property chains (2-level)
+
       for (let i = 0; i < Math.min(objProps.length, 3); i++) {
         for (let j = 0; j < Math.min(objProps.length, 3); j++) {
           if (i !== j && classes.length > 0) {
@@ -1608,36 +1526,31 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
           }
         }
       }
-      
-      // Generate templates for data property calculations
+
       if (dataProps.length >= 2 && classes.length > 0) {
         const cls = classes[0];
         const prop1 = dataProps[0];
         const prop2 = dataProps[1];
-        
-        // Addition
+
         generated.push({
           name: `${cls} Sum ${prop1}+${prop2}`,
           template: `${cls}(?x) ^ ${prop1}(?x, ?v1) ^ ${prop2}(?x, ?v2) ^ swrlb:add(?sum, ?v1, ?v2) -> has${prop1}${prop2}Sum(?x, ?sum)`,
           description: `Calculate sum of ${prop1} and ${prop2} for ${cls}`
         });
-        
-        // Multiplication
+
         generated.push({
           name: `${cls} ${prop1} × ${prop2}`,
           template: `${cls}(?x) ^ ${prop1}(?x, ?v1) ^ ${prop2}(?x, ?v2) ^ swrlb:multiply(?product, ?v1, ?v2) -> has${prop1}${prop2}Product(?x, ?product)`,
           description: `Calculate product of ${prop1} and ${prop2} for ${cls}`
         });
-        
-        // Comparison
+
         generated.push({
           name: `${cls} ${prop1} > ${prop2}`,
           template: `${cls}(?x) ^ ${prop1}(?x, ?v1) ^ ${prop2}(?x, ?v2) ^ swrlb:greaterThan(?v1, ?v2) -> has${prop1}Greater(?x, true)`,
           description: `Check if ${prop1} exceeds ${prop2} for ${cls}`
         });
       }
-      
-      // Generate templates for same-value relationships
+
       if (classes.length > 0 && objProps.length > 0) {
         const cls = classes[0];
         const objProp = objProps[0];
@@ -1647,41 +1560,36 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
           description: `Find ${cls} instances sharing the same ${objProp}`
         });
       }
-      
-      // Generate templates for aggregate SQWRL queries
+
       if (classes.length > 0 && dataProps.length > 0) {
         const cls = classes[0];
         const prop = dataProps[0];
-        
-        // Count
+
         generated.push({
           name: `Count ${cls}`,
           template: `${cls}(?x) -> sqwrl:select(?x) ^ sqwrl:count(?x)`,
           description: `Count total number of ${cls} instances`
         });
-        
-        // Min/Max
+
         generated.push({
           name: `${cls} Min ${prop}`,
           template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?val) ^ sqwrl:min(?val)`,
           description: `Find minimum ${prop} value in ${cls}`
         });
-        
+
         generated.push({
           name: `${cls} Max ${prop}`,
           template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?val) ^ sqwrl:max(?val)`,
           description: `Find maximum ${prop} value in ${cls}`
         });
-        
-        // Average
+
         generated.push({
           name: `${cls} Avg ${prop}`,
           template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?x) ^ sqwrl:avg(?val)`,
           description: `Calculate average ${prop} for all ${cls}`
         });
       }
-      
-      // Limit templates to avoid overwhelming UI
+
       const validGenerated = generated.filter(t => templateMatchesOntology(t.template, schemaNames));
       console.log('[SWRL] Generated', generated.length, 'dynamic templates;', validGenerated.length, 'match ontology schema');
       setDynamicTemplates(validGenerated.slice(0, 20));
@@ -1694,15 +1602,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
 
   useEffect(() => { loadOntologySchema(); }, [loadOntologySchema]);
 
-  // Load rules
   const loadRules = useCallback(async () => {
     const myVersion = rulesVersionRef.current;
     setIsLoading(true);
     try {
       const res = await apiClient.get<{ content: SwrlRule[] }>(`/api/swrl/${projectId}/rules`);
-      // A mutation (save/delete/toggle) that started after this request would
-      // have bumped the version — its result is fresher than what we just
-      // fetched, so applying this response now would revert it.
+
       if (rulesVersionRef.current === myVersion) {
         setRules(res.content || []);
       }
@@ -1715,7 +1620,6 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
 
   useEffect(() => { loadRules(); }, [loadRules]);
 
-  // Validate rule
   useEffect(() => {
     if (!debouncedRuleText.trim() || !isEditing) {
       setValidationResult(null);
@@ -1736,7 +1640,6 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     validate();
   }, [debouncedRuleText, projectId, isEditing]);
 
-  // Filtered rules
   const filteredRules = useMemo(() => {
     if (!searchQuery.trim()) return rules;
     const q = searchQuery.toLowerCase();
@@ -1749,7 +1652,6 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
 
   const enabledCount = rules.filter(r => r.enabled).length;
 
-  // Handlers
   const handleSelectRule = (rule: SwrlRule) => {
     setSelectedRule(rule);
     setEditForm({
@@ -1805,13 +1707,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       }
       setIsEditing(false);
     } catch (e: any) {
-      // Previously only logged to console — clicking Save on a failure looked
-      // identical to a successful no-op click, with zero feedback in the UI.
+
       console.error('Save failed:', e);
-      // e.data.error is a boolean flag ({error: true, message: "..."} — see
-      // SwrlController.createErrorResponse), not the text — the real message
-      // is e.data.message. Reading .error here just rendered the literal
-      // string "true" in the banner instead of the actual failure reason.
+
       setSaveError(e?.data?.message || e?.message || 'Failed to save rule — please try again.');
     } finally {
       setIsSaving(false);
@@ -1978,7 +1876,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
-      {/* Header */}
+      {}
       <header className="bg-white border-b border-gray-200 px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
@@ -1986,7 +1884,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
             <p className="text-xs text-gray-500">{enabledCount} of {rules.length} rules enabled</p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Tools */}
+            {}
             <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-2">
               <button onClick={handleExport} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg" title="Export">
                 <Download size={16} />
@@ -2000,7 +1898,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
               </button>
             </div>
 
-            {/* Execute buttons */}
+            {}
             {selectedRuleIds.size > 0 && (
               <button
                 onClick={handleExecuteSelected}
@@ -2023,11 +1921,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         </div>
       </header>
 
-      {/* Main Content */}
+      {}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Rule List */}
+        {}
         <aside className="w-72 bg-white border-r border-gray-200 flex flex-col">
-          {/* New Rule + Search */}
+          {}
           <div className="p-3 border-b border-gray-100 space-y-2">
             <button
               onClick={handleNewRule}
@@ -2045,7 +1943,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                 className="w-full pl-9 pr-3 py-1.5 text-sm text-black border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200"
               />
             </div>
-            {/* Selection controls */}
+            {}
             {rules.length > 0 && (
               <div className="flex items-center gap-1 text-xs">
                 <button 
@@ -2070,7 +1968,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
             )}
           </div>
 
-          {/* Rule List */}
+          {}
           <div className="flex-1 overflow-y-auto">
             {isLoading ? (
               <div className="flex items-center justify-center p-8">
@@ -2099,9 +1997,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
           </div>
         </aside>
 
-        {/* Right: Editor/Results */}
+        {}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Tab Bar */}
+          {}
           <div className="flex items-center gap-1 px-4 py-2 bg-white border-b border-gray-200">
             <button
               onClick={() => setActivePanel('editor')}
@@ -2152,7 +2050,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
             </button>
           </div>
 
-          {/* Panel Content */}
+          {}
           {activePanel === 'editor' ? (
             <div className="flex-1 overflow-y-auto p-4">
               {!selectedRule && !isEditing ? (
@@ -2175,7 +2073,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                 </div>
               ) : (
                 <div className="max-w-3xl mx-auto space-y-4">
-                  {/* Rule Name */}
+                  {}
                   <div className="bg-white rounded-xl border border-gray-200 p-4">
                     <div className="flex items-center justify-between mb-3">
                       <label className="text-sm font-semibold text-gray-700">Rule Name</label>
@@ -2196,8 +2094,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       className="w-full px-4 py-2.5 text-base text-black font-medium border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-600"
                       placeholder="Enter rule name"
                     />
-                    
-                    {/* Category & Status */}
+
+                    {}
                     <div className="grid grid-cols-2 gap-4 mt-4">
                       <div>
                         <label className="text-xs font-medium text-gray-500 mb-1 block">Category</label>
@@ -2228,11 +2126,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                     </div>
                   </div>
 
-                  {/* Rule Expression */}
+                  {}
                   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                     <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
                       <label className="text-sm font-semibold text-gray-700">SWRL Expression</label>
-                      {/* Template dropdown */}
+                      {}
                       <div className="relative group">
                         <button className="px-3 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1">
                           <BookOpen size={12} /> Templates
@@ -2278,7 +2176,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                         </div>
                       </div>
                     </div>
-                    
+
                     <textarea
                       ref={textareaRef}
                       value={editForm.ruleText}
@@ -2288,7 +2186,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       placeholder="Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
                     />
 
-                    {/* Validation - only show when editing */}
+                    {}
                     {isEditing && validationResult && (
                       <div className={`px-4 py-2 flex items-center gap-2 text-sm ${
                         validationResult.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
@@ -2298,8 +2196,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       </div>
                     )}
 
-                    {/* Save error — previously swallowed silently (console.error only),
-                        so a failed save looked identical to a successful no-op click */}
+                    {}
                     {saveError && (
                       <div className="px-4 py-2 flex items-center gap-2 text-sm bg-red-50 text-red-700 border-t border-red-100">
                         <AlertCircle size={14} />
@@ -2307,7 +2204,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       </div>
                     )}
 
-                    {/* Quick Insert */}
+                    {}
                     <QuickInsertPanel
                       onInsert={insertAtCursor}
                       disabled={!isEditing}
@@ -2317,7 +2214,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                     />
                   </div>
 
-                  {/* Description */}
+                  {}
                   <div className="bg-white rounded-xl border border-gray-200 p-4">
                     <label className="text-sm font-semibold text-gray-700 mb-2 block">Description</label>
                     <textarea
@@ -2329,7 +2226,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                     />
                   </div>
 
-                  {/* Action Buttons */}
+                  {}
                   {isEditing ? (
                     <div className="flex items-center gap-3 pt-2">
                       <button
@@ -2362,11 +2259,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                         className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2"
                       >
                         {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        {/* Was always "Save" regardless of new-vs-existing, and the only
-                            way to enter edit mode for an existing rule was a small text
-                            link up near the Rule Name field — easy to miss, so users
-                            defaulted to "New Rule" instead, which created a duplicate
-                            and hit the "already exists" error on save. */}
+                        {}
                         {selectedRule ? 'Update' : 'Save'}
                       </button>
                     </div>
@@ -2456,7 +2349,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         </main>
       </div>
 
-      {/* Confirm Dialog */}
+      {}
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title="Delete Rule"

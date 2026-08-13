@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
 type DebouncedVisibleOptions = {
-  /** Wait before showing (avoids flash on sub-ms loads). Default 150ms. */
+
   showDelayMs?: number;
-  /** Minimum time visible once shown. Default 350ms. */
+
   minVisibleMs?: number;
 };
 
-/**
- * Delays showing a transient UI element and enforces a minimum visible duration
- * so loaders and banners do not flicker.
- */
 export function useDebouncedVisible(
   active: boolean,
   { showDelayMs = 150, minVisibleMs = 350 }: DebouncedVisibleOptions = {},

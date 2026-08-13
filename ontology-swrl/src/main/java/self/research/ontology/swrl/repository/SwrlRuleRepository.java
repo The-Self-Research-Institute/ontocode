@@ -20,14 +20,12 @@ public interface SwrlRuleRepository extends MongoRepository<SwrlRule, String> {
 
     boolean existsByProjectIdAndRuleName(String projectId, String ruleName);
 
-    // Paginated queries
     Page<SwrlRule> findByProjectId(String projectId, Pageable pageable);
 
     Page<SwrlRule> findByProjectIdAndEnabled(String projectId, Boolean enabled, Pageable pageable);
 
     Page<SwrlRule> findByProjectIdAndCategory(String projectId, String category, Pageable pageable);
 
-    // ✅ ADD THIS METHOD (for search)
     Page<SwrlRule> findByProjectIdAndRuleNameContainingOrRuleTextContaining(
             String projectId, String ruleNameSearch, String ruleTextSearch, Pageable pageable);
 }

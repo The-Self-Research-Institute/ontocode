@@ -8,11 +8,6 @@ export interface TreeLayoutOptions {
   levelSpacing?: number;
 }
 
-/**
- * Tree Layout
- * Best for: Pure hierarchies (subClassOf, subPropertyOf)
- * Uses D3 tree algorithm for optimal spacing
- */
 export function applyTreeLayout(
   nodes: OntologyNode[],
   edges: OntologyEdge[],
@@ -28,13 +23,12 @@ export function applyTreeLayout(
 
   const positionMap = new Map<string, { x: number; y: number }>();
 
-  // Build parent-child relationships for tree structure
   const children = new Map<string, string[]>();
   const hasParent = new Set<string>();
 
   edges.forEach(edge => {
     if (edge.type === 'subClassOf' || edge.type === 'subPropertyOf') {
-      // edge.from is child, edge.to is parent
+
       if (!children.has(edge.to)) {
         children.set(edge.to, []);
       }
@@ -43,15 +37,13 @@ export function applyTreeLayout(
     }
   });
 
-  // Find root nodes
   const roots = nodes.filter(node => !hasParent.has(node.id));
 
   if (roots.length === 0) {
-    // No tree structure, fallback to grid
+
     return applyGridLayout(nodes, width, height);
   }
 
-  // Build tree structure recursively
   interface TreeNode {
     id: string;
     children: TreeNode[];
@@ -115,7 +107,6 @@ export function applyTreeLayout(
     leafCursor += treeGap;
   });
 
-  // Center the resulting forest in the available viewport while preserving spacing.
   if (positionMap.size > 0) {
     const positions = Array.from(positionMap.values());
     const minX = Math.min(...positions.map(pos => pos.x));
@@ -132,16 +123,6 @@ export function applyTreeLayout(
     });
   }
 
-  /*
-   * The previous implementation positioned each subtree from local sibling
-   * indexes, so separate branches at the same depth could overlap. The leaf-slot
-   * pass above gives every leaf a unique breadth position and centers parents
-   * over their descendants, matching the readable OntoCode hierarchy style.
-   */
-  /*
-   * Fallback for any node skipped due to cycles/multiple-parent structures:
-   * place it after the laid-out forest instead of stacking it in the corner.
-   */
   let disconnectedIndex = 0;
   nodes.forEach(node => {
     if (!positionMap.has(node.id)) {
@@ -163,9 +144,6 @@ export function applyTreeLayout(
   return positionMap;
 }
 
-/**
- * Grid layout fallback
- */
 function applyGridLayout(
   nodes: OntologyNode[],
   width: number,

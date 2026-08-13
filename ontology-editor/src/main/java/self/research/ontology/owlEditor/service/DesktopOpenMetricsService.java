@@ -8,9 +8,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Records open timings for desktop benchmarking (file size, parse ms, total ms).
- */
 @Service
 @ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")
 public class DesktopOpenMetricsService {

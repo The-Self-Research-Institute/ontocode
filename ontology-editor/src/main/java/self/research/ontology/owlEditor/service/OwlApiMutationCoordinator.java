@@ -12,11 +12,6 @@ import self.research.ontology.owlEditor.config.FastOpenCondition;
 
 import java.util.List;
 
-/**
- * Keeps the OWLAPI in-memory model in sync with Fuseki after mutations.
- * Structured ops from {@link OntologyMutationService} are patched in-place when
- * possible; all other writes bump the MongoDB version and evict the cache.
- */
 @Service
 @Conditional(FastOpenCondition.class)
 public class OwlApiMutationCoordinator {
@@ -41,11 +36,6 @@ public class OwlApiMutationCoordinator {
         this.desktopMode = desktopMode;
     }
 
-    /**
-     * Called at the end of every {@link SparqlDatasetService#execUpdate}.
-     *
-     * @param structuredOps non-null when the write originated from {@link OntologyMutationService#apply}
-     */
     public void afterMutation(String projectId, @Nullable List<OntologyMutationService.MutationOp> structuredOps) {
         long version = metadataService.incrementMutationVersion(projectId);
         if (structuredOps != null && patcher.tryPatch(projectId, structuredOps)) {
@@ -60,18 +50,6 @@ public class OwlApiMutationCoordinator {
         }
     }
 
-    /**
-     * Before serving from the OWLAPI fast path, evict if another writer bumped the version.
-     *
-     * No-op on desktop: this process is the only writer there (single user, single cache),
-     * and every write already goes through afterMutation() above, which patches the cache
-     * in-place or proactively evicts+rewarms right when a non-patchable write happens — there
-     * is no other-instance scenario for a read to reactively catch here. Checking anyway reads
-     * MongoDB's version and the cache's version as two separate, non-atomic steps; if a read
-     * lands between them it can see a spurious mismatch and evict a cache entry that was
-     * actually already correct, sending the next read to whatever is mid-rewarm.
-     * Cloud/web IS multi-instance, so this check stays load-bearing there.
-     */
     public void ensureFreshForRead(String projectId) {
         if (desktopMode) {
             return;

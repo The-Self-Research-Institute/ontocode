@@ -83,7 +83,6 @@ import { GraphToolbar, RELATIONSHIP_VISIBILITY_CONTROLS } from './components/Gra
 import { WebGLGraphView, buildBenchmarkData, type WebGLCameraHandle } from './renderers/WebGLGraphView';
 import { isWebGLAvailable } from './renderers/graphAdapter';
 
-// D3 types
 interface D3Node extends OntologyNode, d3.SimulationNodeDatum {
   x?: number;
   y?: number;
@@ -112,18 +111,15 @@ interface AdvancedGraphViewProps {
 
 type AssertionViewMode = 'asserted' | 'inferred' | 'all';
 
-// Node count above which large-graph LOD/culling behaviors activate (all visualization modes)
 const LARGE_GRAPH_THRESHOLD = 800;
-// Entrance animation tiers (visible node counts): full staggered bloom, calmer
-// single fade, or static (instant) above that.
+
 const BLOOM_MAX_VISIBLE = 300;
 const CALM_MAX_VISIBLE = 1500;
-// Camera feel: one duration/easing for every programmatic camera move
+
 const CAMERA_MS = 650;
-// rAF-interpolated wheel zoom (flip to false to fall back to native d3 wheel steps)
+
 const SMOOTH_WHEEL_ZOOM = true;
 
-// Type normalization helpers
 const normalizeNodeType = (type: string): NodeType => {
   if (!type) return 'class';
   const normalized = type === 'CLASS' ? 'class' :
@@ -152,9 +148,6 @@ const normalizeEdgeType = (type: string): EdgeType => {
   return normalized as EdgeType;
 };
 
-// Color schemes — all node color derives from the validated NODE_ACCENTS
-// palette (utils/nodePalette). One entity type = one hue, everywhere:
-// fill, stroke, legend, tooltip, selection glow.
 const TYPE_COLORS: Record<NodeType, string> = {
   class: NODE_ACCENTS.class,
   individual: NODE_ACCENTS.individual,
@@ -166,7 +159,6 @@ const TYPE_COLORS: Record<NodeType, string> = {
   setOperator: NODE_ACCENTS.class // operator nodes are anonymous classes — class blue
 };
 
-// VOWL set-operator glyphs rendered inside operator nodes
 const SET_OPERATOR_SYMBOLS: Record<string, string> = {
   union: '∪',
   intersection: '∩',
@@ -180,8 +172,7 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   propertyRelation: '#059669', // Green for properties
   equivalentClass: '#3b82f6', // Blue — was pink here / green in VOWLNotationService; unified
   disjointWith: '#f97316', // Orange — was red, paired with equivalentClass's old green (a
-  // red/green combination color-vision-deficiency guidance warns against for two
-  // opposite-meaning edge types); matches VOWLNotationService.edgeToVOWLEdge now
+
   domain: '#06b6d4',
   range: '#8b5cf6',
   inverseOf: '#fbbf24',
@@ -196,7 +187,6 @@ const EDGE_TYPE_COLORS: Record<EdgeType, string> = {
   // as annotationProperty edges elsewhere and only distinguishable by dash spacing)
 };
 
-// Per-type accent colors shared by node rendering, selection styling, and tooltips
 const ACCENT_COLORS: Record<string, string> = { ...NODE_ACCENTS };
 
 const hexToRgba = (hex: string, alpha: number): string => {
@@ -206,10 +196,6 @@ const hexToRgba = (hex: string, alpha: number): string => {
   return `rgba(${r},${g},${b},${alpha})`;
 };
 
-// Picks black or white label text from a node's ACTUAL rendered fill (perceived
-// brightness, ITU-R BT.601). Callers must pass the same color the shape was
-// painted with — a mismatched guess (e.g. a raw accent instead of its pastel
-// tint) silently produces unreadable white-on-pale-blue text.
 const getReadableTextColor = (hex: string): string => {
   const clean = hex.replace('#', '');
   if (clean.length !== 6) return '#111111';
@@ -220,15 +206,6 @@ const getReadableTextColor = (hex: string): string => {
   return brightness > 140 ? '#111111' : '#ffffff';
 };
 
-// Evicts the graph-view sessionStorage cache the moment the ontology changes elsewhere
-// (Code View save, entity-editor mutations, etc.) — registered at MODULE scope rather
-// than inside the component's mount effect. Switching to another top-level tab (Code
-// View, Entities, ...) fully unmounts this component (Dashboard.tsx renders exactly one
-// active tab), so a mount-time listener would miss any mutation that happens while this
-// view isn't the active tab — the very common "edit in Code View, switch back to Graph"
-// path. A module-level listener stays registered for the whole page session regardless
-// of mount state, so by the time the component next mounts, the stale cache is already
-// gone and its plain (non-bypassing) initial fetch reads fresh data instead.
 if (typeof window !== 'undefined') {
   window.addEventListener('ontology:mutated', ((e: CustomEvent) => {
     try {
@@ -236,7 +213,7 @@ if (typeof window !== 'undefined') {
       if (mutatedProjectId) {
         sessionStorage.removeItem(`ontocode:graphView:${mutatedProjectId}`);
       } else {
-        // No projectId on the event — clear every graph-view cache entry to be safe.
+
         Object.keys(sessionStorage)
           .filter((k) => k.startsWith('ontocode:graphView:'))
           .forEach((k) => sessionStorage.removeItem(k));
@@ -247,7 +224,6 @@ if (typeof window !== 'undefined') {
   }) as EventListener);
 }
 
-// Default settings
 const DEFAULT_SETTINGS: GraphSettings = {
   layout: 'force',
   renderer: 'webgl',  // WebGL engine is the default view; silently falls back to SVG when unsupported
@@ -273,7 +249,6 @@ const DEFAULT_FILTERS: GraphFilters = {
   nodeTypes: new Set(['class', 'individual', 'datatype', 'objectProperty', 'dataProperty', 'annotation', 'setOperator']), // All node types enabled by default
   edgeTypes: new Set(['subClassOf', 'instanceOf', 'propertyRelation', 'equivalentClass', 'domain', 'range', 'disjointWith', 'inverseOf', 'custom', 'subPropertyOf', 'operand'])
 };
-
 
 type HierarchyState = {
   visible: Set<string>;
@@ -322,8 +297,7 @@ const resolveNamespaceFromNode = (node?: OntologyNode | null): string | null => 
 
   for (const candidate of candidateIris) {
     if (!candidate) continue;
-    
-    // Decode URL-encoded IRIs first
+
     let iriToUse = candidate;
     if (candidate.startsWith('http_') || candidate.startsWith('https_')) {
       iriToUse = candidate
@@ -331,7 +305,7 @@ const resolveNamespaceFromNode = (node?: OntologyNode | null): string | null => 
         .replace(/^https___/, 'https://')
         .replace(/_/g, '/');
     }
-    
+
     const namespace = extractNamespace(iriToUse);
     if (isLikelyAbsoluteIri(namespace)) {
       return namespace;
@@ -353,7 +327,6 @@ const getNodeDegree = (nodeId: string, edges: OntologyEdge[]): number => {
   return edges.reduce((count, edge) => count + (edge.from === nodeId || edge.to === nodeId ? 1 : 0), 0);
 };
 
-/** Precomputed once per graph render — avoids O(N×E) inside force ticks. */
 const buildDegreeMap = (edges: OntologyEdge[]): Map<string, number> => {
   const map = new Map<string, number>();
   for (const edge of edges) {
@@ -363,7 +336,6 @@ const buildDegreeMap = (edges: OntologyEdge[]): Map<string, number> => {
   return map;
 };
 
-// Gate for noisy per-render diagnostics — enable via localStorage 'ontocode.graphView.debug' = 'true'
 const GRAPH_DEBUG = typeof window !== 'undefined' && window.localStorage?.getItem('ontocode.graphView.debug') === 'true';
 const graphLog = (...args: unknown[]) => {
   if (GRAPH_DEBUG) console.log(...args);
@@ -388,15 +360,14 @@ const resolveNodeIri = (node?: OntologyNode | null): string | null => {
     if (isLikelyAbsoluteIri(candidate)) {
       return candidate;
     }
-    
-    // Handle URL-encoded IRIs (e.g., http___example_org_Class -> http://example.org/Class)
+
     if (candidate.startsWith('http_') || candidate.startsWith('https_')) {
-      // Convert underscores back to proper IRI format
+
       const decoded = candidate
         .replace(/^http___/, 'http://')
         .replace(/^https___/, 'https://')
         .replace(/_/g, '/');
-      
+
       if (isLikelyAbsoluteIri(decoded)) {
         console.log(`[resolveNodeIri] Decoded URL-encoded IRI: ${candidate} -> ${decoded}`);
         return decoded;
@@ -442,12 +413,10 @@ const computeVowlLayout = (
   const safeHeight = Math.max(height, 1);
   const centerX = safeWidth / 2;
   const centerY = safeHeight / 2;
-  
-  // Scale the radii based on the distance parameters
-  // Range: 20-200 maps to 0.2-2.0 scale (100 is default)
+
   const classScale = Math.max(0.2, Math.min(2.0, classDistanceParam / 100));
   const datatypeScale = Math.max(0.2, Math.min(2.0, datatypeDistanceParam / 100));
-  
+
   const baseMaxRadius = Math.max(120, Math.min(centerX, centerY) - 60);
   const maxRadius = baseMaxRadius * classScale;
   const classRadius = maxRadius * 0.85;
@@ -481,8 +450,6 @@ const computeVowlLayout = (
   assignRing(individuals, individualRadius, Math.PI * 1.8, -Math.PI / 2);
   assignRing(datatypes, datatypeRadius, Math.PI * 1.2, -Math.PI / 2 + Math.PI / 6);
 
-  // Pin only a genuine shared Thing hub. Per-edge Thing clones from the VOWL
-  // transform (id contains "__vowl__") must stay next to their single neighbor.
   const thingNode = classes.find(
     node => !node.id.includes('__vowl__') &&
       (node.label === 'Thing' || node.id === 'owl:Thing' || node.id.includes('owl#Thing'))
@@ -520,11 +487,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   onEdgeClick,
   readonly = false
 }) => {
-  // Reactive theme + motion preferences (recolor on theme switch, no animation when reduced)
+
   const isDarkTheme = useIsDarkTheme();
   const prefersReducedMotion = usePrefersReducedMotion();
 
-  // Refs
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
   const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
@@ -532,20 +498,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const currentTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
   const assertedGraphRef = useRef<{ nodes: OntologyNode[]; edges: OntologyEdge[] } | null>(null);
   const inferredGraphRef = useRef<{ nodes: OntologyNode[]; edges: OntologyEdge[] } | null>(null);
-  // Persist node positions across expand/collapse re-renders (OntoCode stability)
+
   const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  // Hard-pinned VOWL neighborhood hubs — Fit uses these so zoom-out can't re-squash clusters
+
   const vowlPinnedHubIdsRef = useRef<Set<string>>(new Set());
-  // When the hub set changes (async data load, project switch), force a fresh
-  // neighborhood seed — otherwise saved coords from an empty/partial first paint
-  // skip placement and the graph settles into a hairball.
+
   const vowlHubFingerprintRef = useRef<string>('');
-  // Latest culling pass for the current render — callable from zoom/drag/programmatic camera moves
+
   const applyViewportCullingRef = useRef<() => void>(() => {});
-  // Un-hides culled elements and recomputes all edge paths so exports always contain the full graph
+
   const uncullForExportRef = useRef<() => void>(() => {});
 
-  // State - Hierarchical Lazy Loading
   const [allNodes, setAllNodes] = useState<OntologyNode[]>([]);  // All data from API
   const [allEdges, setAllEdges] = useState<OntologyEdge[]>([]);  // All edges from API
   const [assertionView, setAssertionView] = useState<AssertionViewMode>('asserted');
@@ -626,23 +589,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   }, [projectId]);
 
-  // New project → drop previous layout memory (otherwise VOWL skips reseeding)
   useEffect(() => {
     nodePositionsRef.current.clear();
     vowlHubFingerprintRef.current = '';
     vowlPinnedHubIdsRef.current = new Set();
   }, [projectId]);
 
-  // New project → clear the hierarchy navigator too. Its content is now shown
-  // inline in the sidebar by default (not just the opt-in floating popup), so a
-  // stale root node from the previous project would otherwise render immediately
-  // instead of sitting invisibly closed like before.
   useEffect(() => {
     setHierarchyRootNode(null);
     setShowHierarchyDialog(false);
   }, [projectId]);
 
-  // UI State
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
   const selectedNodesRef = useRef(selectedNodes);
   useEffect(() => {
@@ -653,8 +610,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
-  // Latest-value refs so edit-mode toggles and handler-prop changes don't tear down
-  // and rebuild the whole D3 scene (the heavy render effect reads these instead).
+
   const editModeRef = useRef(editMode);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
   const onNodeClickRef = useRef(onNodeClick);
@@ -663,23 +619,19 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     onNodeClickRef.current = onNodeClick;
     onEdgeClickRef.current = onEdgeClick;
   }, [onNodeClick, onEdgeClick]);
-  // Cursor is the only visual editMode affects — update it in place
+
   useEffect(() => {
     if (!gRef.current) return;
     d3.select(gRef.current).selectAll<SVGGElement, unknown>('.node')
       .style('cursor', editModeRef.current ? 'move' : 'pointer');
   }, [editMode]);
-  // Default chrome: Explorer closed (opens via toolbar or the right-edge rail), legend on.
-  // Both remembered per user across sessions.
+
   const [showPropertyPanel, setShowPropertyPanel] = useState(() => loadUiPrefs()?.showPropertyPanel ?? false);
   const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
-  
-  // Per-user view memory: first-ever open gets the animated force "bloom";
-  // afterwards the tab reopens in whatever mode/layout the user last used.
+
   const initialViewMemory = useMemo(() => loadLastView(projectId), [projectId]);
   const isFirstEverOpen = initialViewMemory === null;
 
-  // Visualization Type (combines both view mode and visualization type)
   const [visualizationType, setVisualizationType] = useState<VisualizationType>(
     () => initialViewMemory?.visualizationType ?? 'vowl'
   );
@@ -688,8 +640,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   );
   const [showLegend, setShowLegend] = useState(() => loadUiPrefs()?.showLegend ?? true);
 
-  // One subtle pulse on the View-options button for the first few sessions after the
-  // toolbar restructure, so existing users find where everything moved.
   const [showToolbarHint, setShowToolbarHint] = useState(false);
   useEffect(() => {
     const prefs = loadUiPrefs();
@@ -705,7 +655,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   }, []);
 
-  // Persist chrome preferences (legend / Explorer visibility) whenever the user changes them
   const chromePrefsMountedRef = useRef(false);
   useEffect(() => {
     if (!chromePrefsMountedRef.current) {
@@ -721,17 +670,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     });
   }, [showLegend, showPropertyPanel]);
 
-  // Entrance animation ("bloom") — decided once per mount, on the first render with data
   const entranceRef = useRef<{ phase: 'pending' | 'playing' | 'done'; mode: 'bloom' | 'calm' | 'static' }>({
     phase: 'pending',
     mode: 'static'
   });
   const [entrancePhase, setEntrancePhase] = useState<'pending' | 'playing' | 'done'>('pending');
   const userInteractedRef = useRef(false);
-  // Node to frame once the layout settles after an expand/collapse toggle.
+
   const pendingToggleFrameRef = useRef<string | null>(null);
-  // Existing users (a stored view exists) persist mode changes immediately; first-time
-  // users only start persisting once the entrance has played or they changed the view.
+
   const hasSeenGraphRef = useRef(!isFirstEverOpen);
 
   useEffect(() => {
@@ -743,8 +690,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     saveLastView(projectId, { visualizationType, ontographLayoutType });
   }, [projectId, visualizationType, ontographLayoutType, initialViewMemory]);
-  
-  // VOWL Filters State (integrated into main sidebar)
+
   const [vowlFilters, setVowlFilters] = useState({
     showExternalClasses: true,
     showInternalClasses: true,
@@ -757,7 +703,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [showClassHierarchy, setShowClassHierarchy] = useState(false);
   const [hierarchySelectedClass, setHierarchySelectedClass] = useState<OntologyNode | null>(null);
 
-  // Notation & density options — persisted per user.
   const [vowlOptions, setVowlOptions] = useState<VowlDisplayOptions>(
     () => ({ ...DEFAULT_VOWL_OPTIONS, ...(loadUiPrefs()?.vowlOptions ?? {}) })
   );
@@ -775,19 +720,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       vowlOptions
     });
   }, [vowlOptions]);
-  
-  // Save-view name prompt — replaces window.prompt(), which Electron's renderer
-  // (the desktop shell this plugin also runs in) does not implement.
+
   const [showSaveViewPrompt, setShowSaveViewPrompt] = useState(false);
   const [saveViewNameDraft, setSaveViewNameDraft] = useState('');
 
-  // Hierarchy Dialog State
   const [showHierarchyDialog, setShowHierarchyDialog] = useState(false);
   const [hierarchyDialogPosition, setHierarchyDialogPosition] = useState({ x: 100, y: 100 });
   const [hierarchyDialogSize, setHierarchyDialogSize] = useState({ width: 360, height: 480 });
   const [hierarchyRootNode, setHierarchyRootNode] = useState<OntologyNode | null>(null);
   const [isDialogMinimized, setIsDialogMinimized] = useState(false);
-  // SVG Tree hover card (mirrors WebGL hover actions when canEdit)
+
   const [svgHoverCard, setSvgHoverCard] = useState<{
     id: string;
     label: string;
@@ -800,7 +742,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const svgRenamingRef = useRef(svgRenaming);
   svgRenamingRef.current = svgRenaming;
 
-  // Context menu state
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
     x: number;
@@ -808,15 +749,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     nodeId: string | null;
   }>({ visible: false, x: 0, y: 0, nodeId: null });
 
-  // Viewport tracking for large graph optimization — a ref, not state: culling/LOD
-  // decisions read it imperatively, and pan/zoom must not re-render React.
   const viewportBoundsRef = useRef({ x: 0, y: 0, width: 0, height: 0, scale: 1 });
 
-  // Settings & Filters
   const [settings, setSettings] = useState<GraphSettings>(DEFAULT_SETTINGS);
 
-  // WebGL renderer spike (feature-flagged): settings.renderer or ?webgl=1, with a
-  // silent SVG fallback when the host has no WebGL (GPU blocklist, remote desktop).
   const webglSupported = useMemo(() => isWebGLAvailable(), []);
   const webglActive = webglSupported && (
     settings.renderer === 'webgl' ||
@@ -824,12 +760,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   );
   const [webglBannerDismissed, setWebglBannerDismissed] = useState(false);
   const webglCamRef = useRef<WebGLCameraHandle>(null);
-  // Bumped by Expand All / deep dive / ±1 so SVG + WebGL re-fit after layout.
+
   const [viewportFitToken, setViewportFitToken] = useState(0);
   const requestViewportFitAfterBulkExpand = useCallback(() => {
     setViewportFitToken((t) => t + 1);
   }, []);
-  // ?bench=N renders a synthetic graph directly in the WebGL renderer (benchmark harness)
+
   const benchData = useMemo(() => {
     if (typeof window === 'undefined') return null;
     const n = parseInt(new URLSearchParams(window.location.search).get('bench') || '', 10);
@@ -837,14 +773,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, []);
   const [filters, setFilters] = useState<GraphFilters>(DEFAULT_FILTERS);
   const [searchQuery, setSearchQuery] = useState('');
-  /** Under each graph search hit, how many descendant levels to keep in the filter focus set (0–15). */
+
   const [searchFilterDepth, setSearchFilterDepth] = useState(5);
-  /** Dim non-matches in place, or hide them from the graph entirely. */
+
   const [searchFilterMode, setSearchFilterMode] = useState<'dim' | 'hide'>('hide');
-  /** Nodes in the active filter focus (matches + path + depth). Used for dimming and hide. */
+
   const [searchFocusIds, setSearchFocusIds] = useState<Set<string>>(() => new Set());
   const preFilterVisibilityRef = useRef<{ visible: Set<string>; expanded: Set<string> } | null>(null);
-  /** Brief status after depth / deep-dive actions (clears itself). */
+
   const [searchActionHint, setSearchActionHint] = useState<string | null>(null);
   const searchActionHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashSearchHint = useCallback((msg: string) => {
@@ -854,19 +790,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, []);
   const [sidebarSearchTerm, setSidebarSearchTerm] = useState('');
 
-  // VOWL Controls
-  // VOWL-first defaults: more breathing room than VOWL's tight packing
   const [classDistance, setClassDistance] = useState(170);
   const [datatypeDistance, setDatatypeDistance] = useState(85);
   const [isLayoutPaused, setIsLayoutPaused] = useState(false);
 
-  // Panels
   const [showSearch, setShowSearch] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
 
-  // Advanced features
   const [zoomLevel, setZoomLevel] = useState(1);
   type SavedGraphView = {
     id: string;
@@ -1078,29 +1010,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   }, [buildInferredGraphFromHierarchy, projectId]);
 
-  // ---------------------------------------------------------------------------
-  // FOCUS MODE — isolate a single class plus its N-hop parents/children
-  //
-  // ---------------------------------------------------------------------------
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [focusParentDepth, setFocusParentDepth] = useState<number>(2);
   const [focusChildDepth, setFocusChildDepth] = useState<number>(2);
   const [focusIncludeProperties, setFocusIncludeProperties] = useState<boolean>(true);
   const [focusIncludeIndividuals, setFocusIncludeIndividuals] = useState<boolean>(false);
 
-  // OntoCode insights
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [colorByCluster, setColorByCluster] = useState(false);
   const [sizeByInfluence, setSizeByInfluence] = useState(true);
   const [centralityThreshold, setCentralityThreshold] = useState(100);
 
-  // Compute neighborhood of focused node via BFS over subClassOf, instanceOf,
-  // domain/range and propertyRelation edges.
   const focusedNodeIds = useMemo<Set<string> | null>(() => {
     if (!focusedNodeId) return null;
     const result = new Set<string>([focusedNodeId]);
 
-    // BFS upwards via subClassOf (child --from--> parent --to-->)
     let frontier = new Set<string>([focusedNodeId]);
     for (let d = 0; d < focusParentDepth && frontier.size > 0; d++) {
       const next = new Set<string>();
@@ -1113,7 +1037,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       frontier = next;
     }
 
-    // BFS downwards via subClassOf
     frontier = new Set<string>([focusedNodeId]);
     for (let d = 0; d < focusChildDepth && frontier.size > 0; d++) {
       const next = new Set<string>();
@@ -1126,7 +1049,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       frontier = next;
     }
 
-    // Include directly connected individuals (instanceOf into the focused node)
     if (focusIncludeIndividuals) {
       for (const e of allEdges) {
         if (e.type === 'instanceOf' && result.has(e.to)) {
@@ -1135,7 +1057,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
     }
 
-    // Include directly connected properties / domain / range neighbors
     if (focusIncludeProperties) {
       for (const e of allEdges) {
         if (
@@ -1158,10 +1079,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     setFocusedNodeId(null);
   }, []);
 
-  // Compute visible nodes and edges based on hierarchy
   const visibleNodes = useMemo(() => {
-    // Focus mode short-circuits hierarchical visibility — show only the
-    // computed neighborhood for laser-focus class inspection.
+
     if (focusedNodeIds) {
       const filtered = allNodes.filter(n => focusedNodeIds.has(n.id));
       console.log('[AdvancedGraphView] 🎯 FOCUS MODE active — showing', filtered.length, 'nodes around', focusedNodeId);
@@ -1173,7 +1092,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, [allNodes, visibleNodeIds, focusedNodeIds, focusedNodeId]);
 
   const visibleEdges = useMemo(() => {
-    // Focus mode: only edges between visible (neighborhood) nodes
+
     if (focusedNodeIds) {
       const edges = allEdges.filter(e => focusedNodeIds.has(e.from) && focusedNodeIds.has(e.to));
       console.log('[AdvancedGraphView] 🎯 FOCUS MODE edges:', edges.length);
@@ -1182,17 +1101,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (visibleNodeIds.size === 0) return [];
     if (visibleNodeIds.size === allNodes.length) return allEdges; // All visible
 
-    // Fast path: filter using Set lookups (O(1) per lookup)
     const edges = allEdges.filter(e =>
       visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to)
     );
 
     graphLog('[AdvancedGraphView] Visible edges:', edges.length, 'from total:', allEdges.length);
 
-    // Debug-only: trace a "Thing" root's edges through the visibility filter. Gated
-    // behind GRAPH_DEBUG — on large ontologies (tens of thousands of nodes/edges) the
-    // nested allNodes.find() lookups below are O(n*m) and previously ran unconditionally
-    // on every visibility change, freezing the tab.
     if (GRAPH_DEBUG) {
       const thingNode = allNodes.find(n =>
         n.label === 'Thing' ||
@@ -1240,14 +1154,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return edges;
   }, [allEdges, visibleNodeIds, allNodes.length, allNodes, focusedNodeIds]);
 
-  /**
-   * ========================================================================
-   * FILTERING
-   * ========================================================================
-   */
-  // External = class whose namespace differs from the ontology's dominant namespace
-  // (VOWL "color externals" semantics). The dominant namespace is the most common
-  // namespace among class IRIs — more reliable than comparing against projectId.
   const namespaceOfIri = (iri: string): string | null => {
     if (!iri || !iri.startsWith('http')) return null;
     const cut = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
@@ -1278,7 +1184,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return !!ns && ns !== dominantNamespace;
   }, [dominantNamespace]);
 
-  // Helper to determine if an edge is functional
   const isFunctionalEdge = useCallback((edge: any) => {
     if (!edge) return false;
     return (
@@ -1297,12 +1202,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return true;
     });
 
-    // **VOWL/OntoGraph Mode: Apply specific entity filters**
     if (visualizationType === 'vowl' || visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
-      
-      // In VOWL mode, we hide property nodes (they are edges).
-      // Set-operator nodes (∪ ∩ ¬ {…}) are VOWL notation — shown unless filtered off.
+
       if (visualizationType === 'vowl') {
         filtered = filtered.filter(node =>
           node.type === 'class' ||
@@ -1311,31 +1213,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           (node.type === 'setOperator' && vowlOptions.showSetOperators)
         );
       }
-      
-      // Apply Sidebar Filters
+
       filtered = filtered.filter(node => {
-        // Check external vs internal classes
+
         const isExternal = isExternalNode(node);
         const isThing = node.label === 'Thing' || node.id === 'owl:Thing' || node.id.includes('owl#Thing');
-        
+
         if (node.type === 'class') {
           if (isThing) return vowlFilters.showInternalClasses; // Thing is internal
           if (isExternal) return vowlFilters.showExternalClasses;
           return vowlFilters.showInternalClasses;
         }
-        
+
         if (node.type === 'datatype') {
           return vowlFilters.showDatatypes;
         }
-        
+
         return true; // individuals always shown
       });
-      
+
       if (GRAPH_DEBUG) console.log(`[Filtering] ${visualizationType} mode: After vowlFilters, showing ${filtered.length} nodes (from ${beforeFilter})`);
     }
 
-    // **Force Mode: Hide property nodes (objectProperty, dataProperty, annotation)**
-    // Properties should only appear as edges, not as nodes in force mode
     if (visualizationType === 'force') {
       filtered = filtered.filter(node =>
         node.type === 'class' ||
@@ -1345,8 +1244,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (GRAPH_DEBUG) console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
     }
 
-    // Datatype nodes that only exist for VOWL fallback edges (missing domain/range
-    // defaults) would float disconnected in non-VOWL modes — hide them there.
     if (visualizationType !== 'vowl') {
       const nonVowlConnected = new Set<string>();
       for (const e of allEdges) {
@@ -1357,16 +1254,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       filtered = filtered.filter(node => node.type !== 'datatype' || nonVowlConnected.has(node.id));
     }
 
-    // OntoGraph Mode: focus on class hierarchy and individuals for clean OntoCode layout
     if (visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
       filtered = filtered.filter(node => node.type === 'class' || node.type === 'individual');
       if (GRAPH_DEBUG) console.log(`[Filtering] OntoGraph mode: Focused on classes and individuals ${beforeFilter} -> ${filtered.length}`);
     }
 
-    // Density options (network views only — the ontograph hierarchy must stay complete):
-    // degree-of-collapsing hides weakly-connected nodes, solitary-subclasses hides
-    // classes whose only relationship is a single subClassOf.
     if (
       (visualizationType === 'vowl' || visualizationType === 'force') &&
       (vowlOptions.degreeCollapsing > 0 || vowlOptions.hideSolitarySubclasses)
@@ -1398,10 +1291,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     if (GRAPH_DEBUG) console.log(`[Filtering] visibleNodes: ${visibleNodes.length}, after type filter: ${filtered.length}`);
 
-    // Graph search already restricts hierarchy visibility (handleSearch → nodesToShow).
-    // Non-matching nodes are hidden; matching nodes may also be highlighted below.
-
-    // Sidebar search filter - filters the visible graph
     if (sidebarSearchTerm) {
       const query = sidebarSearchTerm.toLowerCase();
       filtered = filtered.filter(node =>
@@ -1423,127 +1312,106 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       filters.edgeTypes.has(edge.type) &&
       nodeIds.has(edge.from) &&
       nodeIds.has(edge.to) &&
-      // vowlOnly = fallback edges (missing domain/range defaulted to
-      // owl:Thing / rdfs:Literal). Other modes have no per-edge Thing splitting, so
-      // these would just bloat the Thing hub there.
+
       !(edge.metadata?.vowlOnly && visualizationType !== 'vowl') &&
       (assertionView === 'all' ||
         (assertionView === 'inferred' ? isInferredEntity(edge) : !isInferredEntity(edge)))
     );
-    
-    // **VOWL/OntoGraph Mode: Apply specific relationship filters**
+
     if (visualizationType === 'vowl' || visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
-      
-      // In VOWL mode, we hide domain/range edges (they are metadata)
+
       if (visualizationType === 'vowl') {
         filtered = filtered.filter(edge => 
           edge.type !== 'domain' && edge.type !== 'range'
         );
       }
-      
-      // Apply Sidebar Edge Filters
+
       filtered = filtered.filter(edge => {
         if (edge.type === 'subClassOf') {
           return vowlFilters.showSubClassOf;
         }
         if (edge.type === 'propertyRelation') {
-          // Check if functional property
+
           const isFunctional = isFunctionalEdge(edge);
-          
+
           if (isFunctional && !vowlFilters.showFunctionalProperties) {
             return false;
           }
-          
-          // Determine property type (check source node type and target node type)
+
           const sourceNode = allNodes.find(n => n.id === edge.from);
           const targetNode = allNodes.find(n => n.id === edge.to);
-          
-          // Annotation property edges
+
           if (sourceNode?.type === 'annotation') {
             return true; // Always show annotation properties when enabled
           }
-          
-          // Data property edges (data properties or edges to datatypes)
+
           if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
             return vowlFilters.showDataProperties;
           }
-          
-          // Object property edges - check filter
+
           if (sourceNode?.type === 'objectProperty') {
             return vowlFilters.showObjectProperties;
           }
-          
-          // Default: check object properties filter for unidentified property edges
+
           return vowlFilters.showObjectProperties;
         }
-        
-        // Domain and Range edges - filter based on property type
+
         if (edge.type === 'domain' || edge.type === 'range') {
           const sourceNode = allNodes.find(n => n.id === edge.from);
-          
-          // If source is object property, check object properties filter
+
           if (sourceNode?.type === 'objectProperty') {
             return vowlFilters.showObjectProperties;
           }
-          
-          // If source is data property, check data properties filter
+
           if (sourceNode?.type === 'dataProperty') {
             return vowlFilters.showDataProperties;
           }
-          
-          // If source is annotation, always show
+
           if (sourceNode?.type === 'annotation') {
             return true;
           }
-          
-          // Default: hide domain/range in VOWL mode unless they are direct relations
+
           return visualizationType !== 'vowl';
         }
-        
+
         return true;
       });
-      
+
       console.log(`[Filtering] ${visualizationType} mode: Filtered ${beforeFilter} -> ${filtered.length} edges`);
     }
-    
-    // **Force/OntoGraph Mode: Show property relation edges if filters allow them**
+
     if (visualizationType === 'force') {
       const beforeFilter = filtered.length;
       filtered = filtered.filter(edge => {
         if (edge.type === 'propertyRelation') {
-          // Check the source node type - determine property type
+
           const sourceNode = allNodes.find(n => n.id === edge.from);
           const targetNode = allNodes.find(n => n.id === edge.to);
-          
-          // Annotation properties - always show if annotation filter is enabled
+
           if (sourceNode?.type === 'annotation') {
             return filters.nodeTypes.has('annotation');
           }
-          
-          // Data properties - show if dataProperty filter is enabled
+
           if (sourceNode?.type === 'dataProperty' || targetNode?.type === 'datatype') {
             return filters.nodeTypes.has('dataProperty');
           }
-          
-          // Object properties - show if objectProperty filter is enabled
+
           if (sourceNode?.type === 'objectProperty') {
             return filters.nodeTypes.has('objectProperty');
           }
-          
-          // Default: show the edge if we can't determine type
+
           return true;
         }
         return true;
       });
-      
+
       console.log(`[Filtering] ${visualizationType} mode: Filtered property edges ${beforeFilter} -> ${filtered.length}`);
     }
 
     if (visualizationType === 'ontograph') {
       const beforeFilter = filtered.length;
-      // OntoGraph should honor OntoCode relationship visibility controls
-      // instead of silently dropping non-hierarchy axiom edges.
+
       const ontographRelationshipTypes = new Set(
         RELATIONSHIP_VISIBILITY_CONTROLS.flatMap(control => control.edgeTypes)
       );
@@ -1553,7 +1421,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.log(`[Filtering] OntoGraph mode: Applied relationship visibility ${beforeFilter} -> ${filtered.length}`);
     }
 
-    // VOWL density toggles (beyond the classic sidebar filters)
     if (visualizationType === 'vowl') {
       if (!vowlOptions.showDisjointness) {
         filtered = filtered.filter(e => e.type !== 'disjointWith');
@@ -1562,13 +1429,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         filtered = filtered.filter(e => !(e.type === 'propertyRelation' && e.from === e.to));
       }
     }
-    
+
     console.log('[AdvancedGraphView] Filtered edges:', filtered.length);
     if (filtered.length === 0 && visibleEdges.length > 0) {
       console.warn('[AdvancedGraphView] ⚠️ No edges after filtering! Check edge types.');
       console.warn('[AdvancedGraphView] Edge types in data:', [...new Set(visibleEdges.map(e => e.type))]);
     }
-    
+
     return filtered;
   }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes, assertionView, vowlOptions]);
 
@@ -1577,80 +1444,68 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     [filteredNodes, filteredEdges]
   );
 
-  // Same density rule as the render pass: VOWL chips stay always-visible below
-  // this many labeled edges (mirrored in the hover/selection update effect).
   const vowlChipDensityOk = useMemo(() =>
     visualizationType === 'vowl' &&
     filteredEdges.filter(e => e.type === 'propertyRelation' || e.type === 'subClassOf').length <= 400,
   [visualizationType, filteredEdges]);
 
-  // Generate dynamic legend based on current graph
   const dynamicLegend = useMemo(() => {
     console.log('[Legend] Computing dynamic legend - Mode:', visualizationType, 'Filtered nodes:', filteredNodes.length, 'Filtered edges:', filteredEdges.length);
-    
+
     if (visualizationType === 'vowl') {
-      // VOWL Mode - dynamic legend based on filtered nodes in the current graph
+
       const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
-      
-      // Use filteredNodes (after all filters) for accurate legend
+
       const nodeTypes = new Set(filteredNodes.map(n => n.type));
       const edgeTypes = new Set(filteredEdges.map(e => e.type));
-      
+
       console.log('[Legend] VOWL - Node types:', Array.from(nodeTypes), 'Edge types:', Array.from(edgeTypes));
-      
-      // Check for specific node types in filtered nodes
+
       const hasThing = filteredNodes.some(n => n.label === 'Thing' || n.id === 'owl:Thing' || n.id.includes('owl#Thing'));
       const hasClass = nodeTypes.has('class') && filteredNodes.some(n => n.type === 'class' && n.label !== 'Thing');
       const hasDatatype = nodeTypes.has('datatype');
       const hasIndividual = nodeTypes.has('individual');
-      
-      // Distinguish internal vs external classes if present
+
       const externalClasses = filteredNodes.filter(n => 
         n.type === 'class' && isExternalNode(n)
       );
       const internalClasses = filteredNodes.filter(n => 
         n.type === 'class' && !isExternalNode(n) && n.label !== 'Thing'
       );
-      
-      // VOWL renders on the fixed light VOWL canvas — legend matches it
+
       const isDark = false;
-      
-      // Add node type legends with counts - theme aware
+
       if (hasThing) legend.push({ name: 'Thing', type: 'node', nodeType: 'class', color: isDark ? '#374151' : '#ffffff' });
       if (externalClasses.length > 0) legend.push({ name: `External Class (${externalClasses.length})`, type: 'node', nodeType: 'class', color: isDark ? '#60a5fa' : '#36c' });
       if (internalClasses.length > 0) legend.push({ name: `Internal Class (${internalClasses.length})`, type: 'node', nodeType: 'class', color: isDark ? '#6b92c4' : '#69c' });
       if (hasDatatype) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: isDark ? '#d97706' : '#fc3' });
       if (hasIndividual) legend.push({ name: `Individual (${filteredNodes.filter(n => n.type === 'individual').length})`, type: 'node', nodeType: 'individual', color: isDark ? '#fbb6ce' : '#cfc' });
-      
-      // Add edge type legends based on filtered edges
+
       if (edgeTypes.has('propertyRelation')) {
         const objProps = filteredEdges.filter(e => {
           const target = allNodes.find(n => n.id === e.to);
           const source = allNodes.find(n => n.id === e.from);
           return e.type === 'propertyRelation' && target?.type !== 'datatype' && source?.type !== 'annotation';
         }).length;
-        
+
         const dataProps = filteredEdges.filter(e => {
           const target = allNodes.find(n => n.id === e.to);
           const source = allNodes.find(n => n.id === e.from);
           return e.type === 'propertyRelation' && (target?.type === 'datatype' || source?.type === 'dataProperty');
         }).length;
-        
+
         const annoProps = filteredEdges.filter(e => {
           const source = allNodes.find(n => n.id === e.from);
           return e.type === 'propertyRelation' && source?.type === 'annotation';
         }).length;
 
-        // Property kind is now encoded in the label CHIP color (VOWL),
-        // not the line — legend swatches show the chip palette.
         if (objProps > 0) legend.push({ name: `Object Property (${objProps})`, type: 'edge', stroke: isDark ? '#60a5fa' : '#69c', strokeDasharray: '0' });
         if (dataProps > 0) legend.push({ name: `Data Property (${dataProps})`, type: 'edge', stroke: isDark ? '#a3e635' : '#99cc66', strokeDasharray: '0' });
         if (annoProps > 0) legend.push({ name: `Annotation Property (${annoProps})`, type: 'edge', stroke: isDark ? '#c4b5fd' : '#a78bfa', strokeDasharray: '0' });
       }
-      
+
       if (edgeTypes.has('subClassOf')) legend.push({ name: `SubClass Of (${filteredEdges.filter(e => e.type === 'subClassOf').length})`, type: 'edge', stroke: isDark ? '#9ca3af' : '#000000', strokeDasharray: '5,5' });
 
-      // Restriction edges carry VOWL badges: ∃ some, ∀ only, ∋ hasValue, ≥/≤/= cardinality
       if (edgeTypes.has('restriction')) {
         legend.push({
           name: `Restriction ∃ ∀ ∋ ≥ ≤ = (${filteredEdges.filter(e => e.type === 'restriction').length})`,
@@ -1660,52 +1515,42 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         });
       }
 
-      // Characteristics render as a label suffix (no longer a chip color variant)
       if (edgeTypes.has('propertyRelation')) {
         legend.push({ name: 'Characteristics suffix (F, IF, S, T…)', type: 'label', color: isDark ? '#374151' : '#e5e7eb' });
       }
-      
+
       return legend;
     } else {
-      // Standard Mode (Force-directed & OntoGraph) - dynamic legend based on filtered nodes/edges
+
       const legend: Array<{ name: string; type: string; nodeType?: string; color?: string; stroke?: string; strokeDasharray?: string }> = [];
-      
-      // Node types from filtered nodes in current graph
+
       const nodeTypes = new Set(filteredNodes.map(n => n.type));
-      
-      // For force mode, use special colors for classes
+
       if (visualizationType === 'force') {
         if (nodeTypes.has('class')) legend.push({ name: `Class (${filteredNodes.filter(n => n.type === 'class').length})`, type: 'node', nodeType: 'class', color: nodeFill('class', isDarkTheme) });
         if (nodeTypes.has('individual')) legend.push({ name: `Individual (${filteredNodes.filter(n => n.type === 'individual').length})`, type: 'node', nodeType: 'individual', color: '#a78bfa' });
         if (nodeTypes.has('datatype')) legend.push({ name: `Datatype (${filteredNodes.filter(n => n.type === 'datatype').length})`, type: 'node', nodeType: 'datatype', color: '#FFFFFF' });
       } else {
-        // OntoGraph mode
+
         if (nodeTypes.has('class')) legend.push({ name: `Class (${filteredNodes.filter(n => n.type === 'class').length})`, type: 'node', nodeType: 'class', color: '#FFF9C4' });
         if (nodeTypes.has('individual')) legend.push({ name: `Individual (${filteredNodes.filter(n => n.type === 'individual').length})`, type: 'node', nodeType: 'individual', color: '#E1F5FE' });
       }
-      
-      // Edge types from filtered edges
+
       const edgeTypes = new Set(filteredEdges.map(e => e.type));
       if (edgeTypes.has('subClassOf')) legend.push({ name: 'SubClass Of', type: 'edge', stroke: '#1976D2', strokeDasharray: '0' });
       if (edgeTypes.has('propertyRelation')) legend.push({ name: 'Property Relation', type: 'edge', stroke: '#059669', strokeDasharray: '0' });
       if (filteredNodes.some(isInferredEntity) || filteredEdges.some(isInferredEntity)) {
         legend.push({ name: 'Inferred', type: 'edge', stroke: '#10b981', strokeDasharray: '8 4' });
       }
-      
+
       return legend;
     }
   }, [visualizationType, filteredNodes, filteredEdges, isExternalNode, allNodes, isDarkTheme]);
 
-  // Performance tracking (disabled for production performance)
   const renderTime = useRef(0);
 
-  /**
-   * ========================================================================
-   * DATA FETCHING - Optimized GraphDB Direct Approach
-   * ========================================================================
-   */
   const fetchGraphData = useCallback(async (opts?: { bypassCache?: boolean }) => {
-    // Guard: Don't fetch if projectId is not set
+
     if (!projectId) {
       console.warn('[AdvancedGraphView D3] ⚠️ No projectId provided, skipping data fetch');
       setError('No project selected. Please select a project to view its ontology graph.');
@@ -1723,9 +1568,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
       const CACHE_MAX_BYTES = 4 * 1024 * 1024; // 4MB safety cap
 
-      // Try sessionStorage cache first. Session-scoped (cleared on tab close).
-      // Short TTL means users editing the ontology pick up changes quickly.
-      // Explicit Refresh and ontology mutations bypass the cache entirely.
       let graphData: any = null;
       if (opts?.bypassCache) {
         try { sessionStorage.removeItem(cacheKey); } catch { /* ignore */ }
@@ -1752,7 +1594,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const fetchService = createGraphDataFetchService(apiBaseUrl, projectId, authToken);
         graphData = await fetchService.fetchGraphData();
 
-        // Save to sessionStorage (best-effort, skip if payload too large).
         try {
           const serialized = JSON.stringify({ timestamp: Date.now(), data: graphData });
           if (serialized.length <= CACHE_MAX_BYTES) {
@@ -1764,7 +1605,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           console.warn('[AdvancedGraphView D3] Cache write failed (non-fatal):', cacheErr);
         }
       }
-        
+
         console.log('[GraphDB Fetch] ✅ Fetched from GraphDB:', {
           nodes: graphData.nodes.length,
           edges: graphData.edges.length,
@@ -1777,13 +1618,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             annotations: graphData.nodes.filter((n: any) => n.type === 'annotation').length
           }
         });
-        
+
         if (!graphData.nodes || graphData.nodes.length === 0) {
           console.warn('[AdvancedGraphView D3] ⚠️ WARNING: GraphDB returned zero nodes! The ontology may be empty.');
           setError('No ontology data found in GraphDB. Please ensure the ontology is loaded.');
         }
 
-        // Debug: Show edge type distribution
         const edgeTypeCount: Record<string, number> = {};
         graphData.edges.forEach((e: OntologyEdge) => {
           edgeTypeCount[e.type] = (edgeTypeCount[e.type] || 0) + 1;
@@ -1805,7 +1645,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         };
         assertedGraphRef.current = assertedGraph;
 
-        // Paint asserted graph immediately; reasoner/inferred data loads in background (no blocking spinner).
         applyGraphForAssertionView(assertionView, assertedGraph, inferredGraphRef.current);
         setLoading(false);
 
@@ -1818,7 +1657,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .catch((err) => {
             console.warn('[AdvancedGraphView] Inferred graph prefetch failed (non-fatal):', err);
           });
-        
+
         graphLog('[AdvancedGraphView] ✅ Initial hierarchy — visible subset, expand with toolbar or double-click');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1833,19 +1672,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     applyGraphForAssertionView(assertionView, assertedGraphRef.current, inferredGraphRef.current);
   }, [assertionView, applyGraphForAssertionView]);
 
-  /**
-   * ========================================================================
-   * D3 VISUALIZATION - OPTIMIZED FOR PERFORMANCE
-   * ========================================================================
-   */
   useEffect(() => {
     if (!svgRef.current || filteredNodes.length === 0) return;
 
     const startTime = performance.now();
 
-    // VOWL topology transform: split shared Thing/Literal hubs into per-edge
-    // duplicates, drop subClassOf→Thing, merge equivalent classes. Only the render
-    // graph changes — sidebar/legend/analytics stay on the filtered graph.
     const vowlGraph = visualizationType === 'vowl'
       ? applyVowlTransform(filteredNodes, filteredEdges, {
           mergeEquivalents: vowlOptions.mergeEquivalents
@@ -1854,27 +1685,20 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const renderNodes = vowlGraph ? vowlGraph.nodes : filteredNodes;
     const renderEdges = vowlGraph ? vowlGraph.edges : filteredEdges;
 
-    // VOWL mode always renders on the VOWL light canvas (user-preferred look),
-    // so all theme-dependent colors inside this effect use effectiveDark instead
-    // of isDarkTheme. Other modes keep following the app theme.
     const effectiveDark = visualizationType === 'vowl' ? false : isDarkTheme;
 
-    // Derived per render, mode-independent — replaces the former isLargeGraph state,
-    // which was only ever set in the ontograph branch and went stale on mode switch.
     const isLargeGraph = renderNodes.length > LARGE_GRAPH_THRESHOLD;
 
     if (GRAPH_DEBUG) {
       console.log('[AdvancedGraphView D3] 🎨 Initializing D3 visualization');
       console.log('[AdvancedGraphView D3] 📊 Nodes:', filteredNodes.length, 'Edges:', filteredEdges.length);
 
-      // Log edge types distribution
       const edgesByType: Record<string, number> = {};
       filteredEdges.forEach(e => {
         edgesByType[e.type] = (edgesByType[e.type] || 0) + 1;
       });
       console.log('[AdvancedGraphView D3] 🔗 Edges by type:', edgesByType);
 
-      // Log propertyRelation edges
       const propEdges = filteredEdges.filter(e => e.type === 'propertyRelation');
       if (propEdges.length > 0) {
         console.log('[AdvancedGraphView D3] 🔥 PropertyRelation edges found:', propEdges.length);
@@ -1904,7 +1728,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         setSelectedEdgeId(null);
         setSelectedNodeInfo(null);
       });
-    // VOWL's signature light blue-gray canvas — slightly cooler/cleaner than VOWL
+
     svg.style('background', (visualizationType === 'vowl' ? '#ecf0f1' : '') as string);
     const g = d3.select(gRef.current);
 
@@ -1933,25 +1757,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return { x: node.projectedX, y: node.projectedY, scale: node.depthScale };
     };
 
-    // Clear existing content
     g.selectAll('*').remove();
 
-    // Create or update arrow markers for each edge type
     let defs = svg.select<SVGDefsElement>('defs');
     if (defs.empty()) {
       defs = svg.append('defs');
     }
-    
-    // Remove existing markers to ensure clean state
+
     defs.selectAll('marker').remove();
-    
+
     const isDark = effectiveDark;
 
-    // VOWL-specific arrow markers — neutral filled triangles matching the neutral
-    // property lines (VOWL: the property kind lives in the label chip,
-    // not in line/arrow color). One id per kind is kept so hover styling can still
-    // target them individually.
-    // Object property / axiom markers use black like VOWL
     const vowlArrowFill = isDark ? '#94a3b8' : '#000000';
     (['arrow-vowl-object', 'arrow-vowl-data', 'arrow-vowl-annotation'] as const).forEach(id => {
       defs.append('marker')
@@ -1964,9 +1780,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         .attr('fill', vowlArrowFill);
     });
 
-    // VOWL arrowhead convention: subClassOf/isA edges get a HOLLOW outlined
-    // triangle; type/property edges get filled triangles. The shape difference (not
-    // just color) is what makes relationship kinds readable at a glance.
     const canvasBg = visualizationType === 'vowl' ? '#ecf0f1' : (isDark ? '#111827' : '#ffffff');
     const appendArrowMarker = (
       id: string,
@@ -1990,9 +1803,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         .attr('stroke-width', hollow ? 1.4 : 0);
     };
 
-    // Generic VOWL markers for other types
     Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
-      // Determine VOWL color for this edge type
+
       let vowlColor = color;
       if (type === 'subClassOf') vowlColor = isDark ? '#9ca3af' : '#374151';
       // Blue/orange, not green/red — matches VOWLNotationService.edgeToVOWLEdge (avoids the
@@ -2005,9 +1817,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       appendArrowMarker(`arrow-vowl-${type}`, vowlColor, type === 'subClassOf' || type === 'subPropertyOf');
     });
 
-    // Standard arrow markers using TRIANGLES for force and ontograph modes
     Object.entries(EDGE_TYPE_COLORS).forEach(([type, color]) => {
-      // Determine color for each edge type in force mode
+
       let forceColor = color;
       if (type === 'subClassOf') forceColor = isDark ? '#fbbf24' : '#FFA500';
       else if (type === 'instanceOf') forceColor = isDark ? '#cbd5e1' : '#000000';
@@ -2018,7 +1829,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       appendArrowMarker(`arrow-${type}`, forceColor, type === 'subClassOf' || type === 'subPropertyOf');
     });
 
-    // OntoGraph specific arrow markers
     const ontographColors = {
       subClassOf: isDark ? '#64B5F6' : '#1976D2',
       instanceOf: isDark ? '#fbbf24' : '#FFA726',
@@ -2033,10 +1843,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     if (GRAPH_DEBUG) console.log('[AdvancedGraphView] ✅ Arrow markers created (hollow subClassOf, filled properties)');
 
-    // ── Premium visual defs: gradients & glow filters ─────────────────────
     defs.selectAll('.premium-def').remove();
 
-    // Card background gradient (ontograph mode) — subtle vertical sheen
     const cardGrad = defs.append('linearGradient')
       .attr('class', 'premium-def')
       .attr('id', 'card-grad')
@@ -2044,7 +1852,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     cardGrad.append('stop').attr('offset', '0%').attr('stop-color', isDark ? '#2a3850' : '#ffffff');
     cardGrad.append('stop').attr('offset', '100%').attr('stop-color', isDark ? '#1b2436' : '#eef2f9');
 
-    // Glow filters: selection (indigo), hover (per-node accent via per-type filters)
     const makeGlow = (id: string, color: string, blur: number, opacity: number) => {
       const f = defs.append('filter')
         .attr('class', 'premium-def')
@@ -2060,8 +1867,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     makeGlow('sel-glow', '#818cf8', 5, 0.85);
     Object.entries(ACCENT_COLORS).forEach(([type, color]) => makeGlow(`hover-glow-${type}`, color, 4, 0.7));
 
-    // Glossy radial gradient factory — gives flat fills gentle 3D depth.
-    // Cached per color so defs stay small no matter how many nodes render.
     const glossyCache = new Map<string, string>();
     const glossyFill = (color: string | undefined): string => {
       if (!color || color.startsWith('url(')) return color || '';
@@ -2081,7 +1886,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return url;
     };
 
-    // Linear accent gradient factory (stripes, badges, expanders)
     const accentCache = new Map<string, string>();
     const accentGrad = (color: string): string => {
       const c = d3.color(color);
@@ -2099,43 +1903,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return url;
     };
 
-    // Prepare D3 data — reuse saved positions for stable expand/collapse
     const savedPositions = nodePositionsRef.current;
     const hasSavedPositions = savedPositions.size > 0;
     const d3Nodes: D3Node[] = renderNodes.map((node, index) => {
       let baseSize = influenceSize(node.id, node.size || settings.nodeSize);
-      // VOWL-style sizing: mostly UNIFORM class circles (VOWL). Degree
-      // ballooning made hubs huge and leaves tiny — when Fit zooms out, everything
-      // becomes an unreadable pale hairball.
+
       if (visualizationType === 'vowl') {
         const isThingNode = isThingIri(node.id) || node.label === 'Thing';
         if (isThingNode) {
           baseSize = Math.max(10, Math.round(settings.nodeSize * 0.72));
         } else if (node.type === 'class') {
-          // Real VOWL convention: the circle grows to fit the label, not the
-          // other way around — the previous flat multiplier left the text-fit
-          // budget (below) at ~6 characters, truncating "Elevation" to "Ele..".
-          // Grow to comfortably fit up to ~13 characters of the real label;
-          // longer names still truncate gracefully since the text callback
-          // derives its own budget from this same size. Capped (not degree-
-          // based) deliberately — see the comment above this block explaining
-          // why unbounded hub-degree sizing was reverted. The 13-char/2.5x
-          // caps (down from an initial 16/3x) were retuned after verifying in
-          // the graph-view-plugin test harness: vowlTransform.ts's packing
-          // spacing (CLASS_NODE_R) is a single flat constant approximating
-          // "typical" class-circle radius, so keeping less size variance
-          // across nodes matters more than maximizing any one label's fit.
+
           const charWidthPx = vowlOptions.labelFontSize * (7 / 11);
           const avgScale = (vowlOptions.nodeWidthScale + vowlOptions.nodeHeightScale) / 2;
-          // Labels wrap to 3 lines, so the circle only needs to fit the
-          // LONGEST WORD on a chord (0.86 of diameter) — not the whole label.
+
           const longestWord = (node.label || '').split(/[\s_]+/)
             .reduce((m, w) => Math.max(m, w.length), 0);
           const visibleChars = Math.min(Math.max(longestWord, 6), 14);
           const desiredDiameter = (visibleChars * charWidthPx + 8) / 0.86;
           const fittedSize = desiredDiameter / (2.7 * avgScale);
           const minSize = Math.round(settings.nodeSize * 1.15);
-          // Cap must admit a 14-char word (e.g. "Environmental") un-hyphenated
+
           const maxSize = Math.round(settings.nodeSize * 2.9);
           baseSize = Math.max(minSize, Math.min(Math.round(fittedSize), maxSize));
         } else if (node.type === 'datatype') {
@@ -2145,13 +1933,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
       }
       const sizedNode = { ...node, size: baseSize };
-      // Reuse previous position if the node was already rendered (OntoCode stability)
+
       const saved = savedPositions.get(node.id);
       if (saved) {
         return { ...sizedNode, x: saved.x, y: saved.y };
       }
 
-      // New node — place near its parent if we have a parent position
       if (hasSavedPositions) {
         const parentEdge = allEdges.find(e => e.from === node.id && (e.type === 'subClassOf' || e.type === 'subPropertyOf' || e.type === 'instanceOf'));
         const parentPos = parentEdge ? savedPositions.get(parentEdge.to) : undefined;
@@ -2163,15 +1950,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
 
       let x: number, y: number;
-      
+
       if (visualizationType === 'vowl') {
-        // Better initial spread for VOWL mode to reduce initial overlapping
+
         const cols = Math.ceil(Math.sqrt(renderNodes.length));
         const col = index % cols;
         const row = Math.floor(index / cols);
         const cellWidth = Math.max(150, (width - 300) / cols);
         const cellHeight = Math.max(150, (height - 300) / cols);
-        
+
         x = 150 + col * cellWidth + (Math.random() - 0.5) * 120;
         y = 150 + row * cellHeight + (Math.random() - 0.5) * 120;
       } else if (visualizationType === 'spatial3d') {
@@ -2187,7 +1974,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         x = width / 2 + (Math.random() - 0.5) * 100;
         y = height / 2 + (Math.random() - 0.5) * 100;
       }
-      
+
       const z = visualizationType === 'spatial3d'
         ? Math.max(-260, Math.min(420, (hashToUnit(`${node.id}:depth`) - 0.35) * 680 - (nodeDegreeMap.get(node.id) || 0) * 8))
         : undefined;
@@ -2205,21 +1992,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     let vowlLayout: VowlLayoutResult | null = null;
     if (visualizationType === 'vowl') {
-      // Compute radii for a *very* weak optional radial hint only. Do NOT pin
-      // nodes onto rings — that artificial halo is what made our layout look
-      // worse than VOWL's organic neighborhood clusters.
+
       vowlLayout = computeVowlLayout(d3Nodes, width, height, classDistance, datatypeDistance);
     }
 
-    // Apply OntoGraph hierarchical layout if selected
     if (visualizationType === 'ontograph') {
       const nodeCount = filteredNodes.length;
       const isLarge = isLargeGraph;
 
       if (GRAPH_DEBUG) console.log(`[OntoGraph] Applying ${ontographLayoutType} layout for ${nodeCount} nodes`);
-      
+
       let positionMap: Map<string, { x: number; y: number }>;
-      
+
       switch (ontographLayoutType) {
         case 'grid':
           positionMap = layouts.applyGridLayout(filteredNodes, filteredEdges, { width, height });
@@ -2246,13 +2030,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           });
           break;
         case 'spring':
-          // Spring layout uses the force simulation
-          // We return an empty map here and let the force simulation handle it
+
           positionMap = new Map();
           break;
         case 'cluster':
-          // Reuses the same community detection already computed for colorByCluster
-          // (see graphAnalytics above) instead of running a second algorithm.
+
           positionMap = layouts.applyClusterLayout(filteredNodes, filteredEdges, {
             width,
             height,
@@ -2269,26 +2051,24 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             centerY: height / 2
           });
       }
-      
-      // Skip refinement for very large graphs or non-hierarchical layouts
+
       const refinedMap = (isLarge || ontographLayoutType === 'grid' || ontographLayoutType === 'radial' || ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal' || ontographLayoutType === 'spring' || ontographLayoutType === 'cluster')
         ? positionMap 
         : layouts.refineOntoGraphLayout(positionMap, filteredNodes, filteredEdges, 30);
-      
-      // Apply positions from layout and fix them
+
       d3Nodes.forEach(node => {
         const pos = refinedMap.get(node.id);
         if (pos) {
           node.x = pos.x;
           node.y = pos.y;
-          // Fix positions for all OntoGraph layouts EXCEPT spring to prevent force simulation from moving them
+
           if (ontographLayoutType !== 'spring') {
             node.fx = pos.x; 
             node.fy = pos.y;
           }
         }
       });
-      
+
       console.log(`[OntoGraph] ${ontographLayoutType} layout applied to`, d3Nodes.length, 'nodes');
     }
 
@@ -2300,10 +2080,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       target: nodeMap.get(edge.to)!
     })).filter(e => e.source && e.target);
 
-    // VOWL neighborhood placement: seed clusters FAR APART so the graph
-    // reads as separate hubs (Person / Document / Agent…) instead of one blob.
-    // Re-seed whenever the hub set changes (async FOAF load after an empty first
-    // paint used to skip this and leave a hairball of long arcs).
     const nodeHubId = new Map<string, string>();
     vowlPinnedHubIdsRef.current = new Set();
     if (visualizationType === 'vowl') {
@@ -2318,10 +2094,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         nodePositionsRef.current.clear();
       }
       if (hubsChanged || !hasSavedPositions) {
-        // Seed = INITIAL positions only (WebVOWL runs a fully free simulation;
-        // pinning seeds froze overlaps and canvas-spanning subclass edges).
-        // Large graphs skip the O(n²)+ SMACOF seeding — cluster-aware
-        // phyllotaxis is O(n) and force relaxation does the rest.
+
         const LARGE_SEED_THRESHOLD = 500;
         let seeded: Map<string, { x: number; y: number }>;
         if (renderNodes.length > LARGE_SEED_THRESHOLD) {
@@ -2353,7 +2126,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
         });
       } else {
-        // Restore previous settled positions (free — not pinned)
+
         d3Nodes.forEach(node => {
           const saved = nodePositionsRef.current.get(node.id);
           if (!saved) return;
@@ -2366,9 +2139,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           neighborhoods.map(n => `${n.hubId.split(/[#/]/).pop()}(${n.memberIds.length})`).join(', '));
       }
     }
-    
-    // Calculate curvature for edges with multiple connections between same nodes.
-    // VOWL also needs this — Agent→Document alone has interest/weblog/tipjar/openid.
+
     const edgeCurvature = new Map<string, number>();
     const nodePairEdges = new Map<string, D3Edge[]>();
     d3Edges.forEach(edge => {
@@ -2395,20 +2166,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     const nodeCount = d3Nodes.length;
 
-    // ── VOWL chip physics ─────────────────────────────────────────────────
-    // In VOWL the property-label rectangle IS a node in the force simulation,
-    // sitting mid-edge and linked to both endpoints. That's what spaces edges
-    // apart and keeps labels from overlapping. Here: each chip edge gets an
-    // invisible physics node; the edge is drawn as a curve through it and the
-    // label chip is glued to it. Capped at the same density threshold as chips.
     const isVowlChipEdge = (d: any) => d.type === 'propertyRelation' || d.type === 'subClassOf';
     const vowlChipsAlwaysVisible = visualizationType === 'vowl'
       && d3Edges.filter(isVowlChipEdge).length <= 600;
 
     const chipNodes: D3Node[] = [];
     if (visualizationType === 'vowl' && vowlChipsAlwaysVisible) {
-      // Group by endpoint pair so parallel properties (openid/weblog/tipjar…)
-      // get distinct along-edge + perpendicular slots like VOWL.
+
       const pairBuckets = new Map<string, D3Edge[]>();
       d3Edges.forEach(e => {
         if (!isVowlChipEdge(e)) return;
@@ -2419,7 +2183,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         pairBuckets.get(key)!.push(e);
       });
 
-      // Per-hub spoke counter so chips on adjacent spokes stagger along-edge
       const hubSpokeCount = new Map<string, number>();
 
       pairBuckets.forEach(group => {
@@ -2429,9 +2192,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const t = e.target as D3Node;
           const chipId = `__vowlchip__${e.id}`;
           const labelLen = String(e.label || (e.type === 'subClassOf' ? 'Subclass of' : '')).length;
-          // Half-width at ~11px font ≈ len·2.8+10; capping at 48 made the
-          // repulsion pass blind to long labels ("has observation temporal
-          // interval" is ~100px half-width) — cap at 96 instead.
+
           const chipRadius = Math.max(18, Math.min(96, labelLen * 2.8 + 10));
 
           const sx = s.x ?? width / 2;
@@ -2446,10 +2207,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const px = -uy;
           const py = ux;
 
-          // Chip slot from ABSOLUTE clearances, not fixed fractions:
-          //   t ∈ [ (hubR + chipH) / L , 1 − (endR + chipH) / L ]
-          // Adjacent spokes of the same hub alternate near/far inside that
-          // window (staggered labeling) so short-fan chips never share a ring.
           let tAlong = 0.5;
           let side = 0;
           const touchesLiteral =
@@ -2475,8 +2232,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           } else if (e.type === 'subClassOf') {
             tAlong = lo + (hi - lo) * 0.5;
           } else {
-            // Stagger along + alternate side of spoke so long horizontal chips
-            // on neighboring spokes never stack (AABB still cleans residuals).
+
             tAlong = lo + (hi - lo) * (spokeIdx % 2 === 0 ? 0.28 : 0.72);
             side = (spokeIdx % 2 === 0 ? 1 : -1) * Math.max(18, chipRadius * 0.35);
           }
@@ -2484,10 +2240,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const cx0 = sx + dx * tAlong + px * side;
           const cy0 = sy + dy * tAlong + py * side;
 
-          // Seeded, not pinned: (cx0, cy0) is a good starting guess (staggered
-          // by spoke so parallel chips don't start exactly on top of each
-          // other), but real charge + rigid half-links now do the separating
-          // at simulation runtime instead of freezing this one-shot geometry.
           const chip: D3Node = {
             id: chipId,
             label: '',
@@ -2506,8 +2258,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         });
       });
 
-      // AABB (box) repulsion — chips are wide horizontal rectangles, NOT circles.
-      // Circular separation let two 180px labels stack with centers only 40px apart.
       const CHIP_HH = 12;
       for (let pass = 0; pass < 24; pass++) {
         let moved = false;
@@ -2526,7 +2276,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const overlapX = hwA + hwB + 14 - Math.abs(dx);
             const overlapY = CHIP_HH + CHIP_HH + 10 - Math.abs(dy);
             if (overlapX <= 0 || overlapY <= 0) continue;
-            // Separate on the shallow axis (classic AABB resolve)
+
             if (overlapX < overlapY) {
               const sx = (dx === 0 ? (i % 2 === 0 ? 1 : -1) : Math.sign(dx)) * (overlapX / 2);
               a.x = ax - sx;
@@ -2536,16 +2286,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               a.y = ay - sy;
               b.y = by + sy;
             }
-            // Seed refinement only — no fx/fy pin. Charge + rigid half-links
-            // keep this separation (and correct it further) once ticking starts.
+
             moved = true;
           }
         }
         if (!moved) break;
       }
 
-      // Chips must also clear node glyphs (yellow Literal boxes AND class circles)
-      // using AABB against each glyph's bounding box.
       const glyphNodes = d3Nodes.filter(
         nd => nd.type === 'datatype' || nd.label === 'Literal' || nd.type === 'class'
       );
@@ -2568,7 +2315,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             if (overlapX <= 0 || overlapY <= 0) continue;
 
             if (g === s || g === t) {
-              // Own endpoint: slide toward the opposite end of the spoke
+
               const other = g === s ? t : s;
               const hx = (other.x ?? 0) - (chip.x ?? 0);
               const hy = (other.y ?? 0) - (chip.y ?? 0);
@@ -2589,9 +2336,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (!movedAny) break;
       }
 
-      // Bake resolved positions back into (along, side) — used as a fallback by
-      // downstream code that still reads __chipAlong/__chipSide directly; the
-      // free chip itself is now driven by the simulation, not this projection.
       chipNodes.forEach(chip => {
         const e = (chip as any).__chipEdge as D3Edge | undefined;
         if (!e) return;
@@ -2617,8 +2361,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     }
 
-    // Simulation links: chip edges are replaced by two half-links through their
-    // chip node (the direct link would fight the chip's midpoint position).
     const buildSimLinks = (): any[] => {
       if (chipNodes.length === 0) return d3Edges;
       const links: any[] = [];
@@ -2635,42 +2377,29 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     };
     const simLinks = buildSimLinks();
     const simNodes = chipNodes.length > 0 ? [...d3Nodes, ...chipNodes] : d3Nodes;
-    
-    // Border-to-border radius estimate so a half-link's target distance is the
-    // visible gap between node edges, not a center-to-center constant that lets
-    // a big class ellipse (or a long chip label) "eat" its own edge.
+
     const nodeRadiusFor = (n: D3Node): number => {
       const size = n.size || settings.nodeSize || 20;
       if ((n as any).__isChip) return (n as any).__chipRadius || size;
       if (n.type === 'datatype' || n.label === 'Literal') return size * 1.65;
-      // Actual rendered VOWL circle radius (WebVOWL's actualRadius())
+
       const avgScale = (vowlOptions.nodeWidthScale + vowlOptions.nodeHeightScale) / 2;
       return size * 1.35 * avgScale + 4;
     };
 
-    // Calculate link distance based on node types and VOWL distance controls
     const linkDistance = (edge: D3Edge): number => {
-      // Half-links to a chip node cover half the parent edge each, plus the
-      // actual radii of the two endpoints it spans (WebVOWL's
-      // linkPartDistance = full/2 + domain.actualRadius() + range.actualRadius()).
+
       const half = (edge as any).__halfOf as D3Edge | undefined;
       if (half) {
         const s = edge.source as D3Node;
         const t = edge.target as D3Node;
-        // WebVOWL labels contribute a fixed actualRadius of labelHeight/2 = 14
-        // to link distance regardless of label width — using the chip's real
-        // half-width here inflated every labeled link by ~60-90px.
+
         const radForDist = (n: D3Node) => ((n as any).__isChip ? 14 : nodeRadiusFor(n));
         return linkDistance(half) / 2 + radForDist(s) + radForDist(t);
       }
       const source = edge.source as D3Node;
       const target = edge.target as D3Node;
 
-      // VOWL: WebVOWL's exact distance model (options.js defaults):
-      // classDistance = 200 for EVERY class-class link (subclass and property
-      // alike), datatypeDistance = 120. The half-link branch above adds the
-      // endpoint radii exactly like WebVOWL's calculateLinkPartDistance.
-      // User sliders scale (100 = 1×).
       if (visualizationType === 'vowl') {
         const kC = Math.max(0.4, Math.min(2, classDistance / 100));
         const kD = Math.max(0.4, Math.min(2, datatypeDistance / 100));
@@ -2681,34 +2410,32 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
 
       const distanceMultiplier = visualizationType === 'spatial3d' ? 1.45 : 1.0;
-      
+
       if (edge.type === 'subClassOf') {
         return classDistance * 1.05 * distanceMultiplier;
       }
-      
+
       if (edge.type === 'propertyRelation') {
         if (source.type === 'datatype' || target.type === 'datatype') {
           return Math.max(70, datatypeDistance * 0.95);
         }
         return classDistance * 3.2 * distanceMultiplier;
       }
-      
+
       if (source.type === 'dataProperty' || target.type === 'dataProperty' ||
           source.type === 'datatype' || target.type === 'datatype') {
         return Math.max(70, datatypeDistance * 0.95);
       }
-      
+
       if (edge.type === 'domain' || edge.type === 'range') {
         return classDistance * 0.9 * distanceMultiplier;
       }
-      
+
       return classDistance * distanceMultiplier;
     };
-    
-    // Calculate link strength - hierarchy edges are stronger
+
     const linkStrength = (edge: D3Edge): number => {
-      // WebVOWL: options.linkStrength = 1 for EVERY link — rigid links are
-      // what settle every edge at exact rest length (uniform spacing).
+
       if (visualizationType === 'vowl') return 1.0;
       const half = (edge as any).__halfOf as D3Edge | undefined;
       if (half) {
@@ -2720,7 +2447,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (edge.type === 'propertyRelation') {
         const source = edge.source as D3Node;
         const target = edge.target as D3Node;
-        // Datatype stars: strong (Literals hug their class)
+
         if (source?.type === 'datatype' || target?.type === 'datatype') {
           return 0.95;
         }
@@ -2728,18 +2455,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
       return nodeCount > 100 ? 0.3 : 0.5;
     };
-    
-    // Calculate average node size for collision detection
+
     const avgNodeSize = settings.nodeSize || 20;
-    
-    // Force simulation configuration
-    // Use physics for force, vowl, and ontograph spring mode — gated by settings.physics
+
     const usePhysics =
       settings.physics &&
       (visualizationType !== 'ontograph' || ontographLayoutType === 'spring');
 
-    // Entrance decision — once per mount, on the first data render. The bloom only
-    // plays on a user's first-ever open (no persisted view), with visible physics.
     if (entranceRef.current.phase === 'pending') {
       let entranceMode: 'bloom' | 'calm' | 'static' = 'static';
       if (isFirstEverOpen && usePhysics && !prefersReducedMotion && !isLayoutPaused && !hasSavedPositions) {
@@ -2749,25 +2471,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       entranceRef.current = { phase: entranceMode === 'static' ? 'done' : 'playing', mode: entranceMode };
       setEntrancePhase(entranceRef.current.phase);
       if (entranceMode === 'static' && isFirstEverOpen) {
-        // First open rendered statically (large graph / reduced motion / tree mode):
-        // the user has seen the graph, start persisting their view from here on.
+
         hasSeenGraphRef.current = true;
         saveLastView(projectId, { visualizationType, ontographLayoutType });
       }
     }
     const entrancePlaying = entranceRef.current.phase === 'playing' && !hasSavedPositions;
 
-    // Expand All from a collapsed view keeps saved positions but injects a
-    // flood of unplaced nodes into an already-inflated mesh — incremental
-    // resume just tangles them. Treat it as a fresh global settle instead.
     const newNodeRatio = hasSavedPositions
       ? d3Nodes.filter(n => !savedPositions.has(n.id)).length / Math.max(1, d3Nodes.length)
       : 1;
     const bigExpansion = visualizationType === 'vowl' && hasSavedPositions && newNodeRatio > 0.3;
 
-    // WebVOWL parity: it drops nodes in a small 800×600 box and lets repulsion
-    // INFLATE the graph — expansion untangles, contraction locks tangles in.
-    // Compress our seeded layout to a compact disc before the settle.
     if (visualizationType === 'vowl' && usePhysics && (!hasSavedPositions || bigExpansion)) {
       const placed = simNodes.filter(n => n.x != null && n.y != null);
       if (placed.length > 2) {
@@ -2783,8 +2498,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             n.y = cy + (n.y! - cy) * k;
           }
         }
-        // WebVOWL seeds RANDOM positions, so symmetric twins always diverge;
-        // our deterministic seeds can stack exact clones — break the symmetry.
+
         for (const n of placed) {
           n.x! += (hashToUnit(`${n.id}:jx`) - 0.5) * 14;
           n.y! += (hashToUnit(`${n.id}:jy`) - 0.5) * 14;
@@ -2801,13 +2515,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .force('charge', usePhysics && visualizationType !== 'vowl' ? d3.forceManyBody()
         .strength(d => {
           const node = d as D3Node;
-          // Chip label nodes repel by their label footprint — long chips keep clear.
+
           if ((node as any).__isChip) {
             return -Math.min(180, ((node as any).__chipRadius || 20) * 1.8);
           }
-          // Force mode - adaptive strength for large graphs (100k nodes)
+
           if (visualizationType === 'force') {
-            // Reduce charge strength for very large graphs to improve performance
+
             if (nodeCount > 50000) {
               return node.type === 'class' ? -300 : -200;
             } else if (nodeCount > 10000) {
@@ -2821,7 +2535,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const degree = nodeDegreeMap.get(node.id) || 0;
             return node.type === 'class' ? -1200 - degree * 25 : -700 - degree * 15;
           }
-          // Standard mode repulsion
+
           if (node.type === 'class') {
             return nodeCount > 100 ? -1000 : -1500;
           }
@@ -2835,14 +2549,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .force('collision', usePhysics && visualizationType !== 'vowl' ? d3.forceCollide()
         .radius(d => {
           const node = d as D3Node;
-          // Chip nodes reserve room for their actual label rectangle
+
           if ((node as any).__isChip) return ((node as any).__chipRadius || 28) * 1.35;
           const size = node.size || avgNodeSize;
           const isVeryLargeGraph = nodeCount > 10000;
-          
-          // Force mode - adaptive collision radius for scalability
+
           if (visualizationType === 'force') {
-            // Reduce collision radius for very large graphs to fit more nodes
+
             const scaleFactor = isVeryLargeGraph ? 0.7 : 1.0;
             if (node.type === 'class') {
               return size * 4.5 * scaleFactor; // Larger for class ellipses
@@ -2854,7 +2567,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (visualizationType === 'spatial3d') {
             return size * (node.type === 'class' ? 4.2 : 3.4);
           }
-          // OntoGraph mode - larger collision to prevent overlap with card nodes
+
           if (visualizationType === 'ontograph') {
             if (node.type === 'class') {
               return size * 8.5;
@@ -2872,7 +2585,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'spatial3d') {
           return height / 2 + ((node.z || 0) * 0.08);
         }
-        // Standard mode positioning
+
         if (node.type === 'class') {
           return height * 0.4;
         } else if (node.type === 'individual') {
@@ -2914,15 +2627,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (visualizationType === 'vowl' && usePhysics) {
       const cx = width / 2;
       const cy = height / 2;
-      // WebVOWL pulls EVERYTHING (islands included) toward one center and lets
-      // the graph overflow the screen — no per-component spreading, no box.
+
       const mainCenter = { x: cx, y: cy };
-      // ── WebVOWL layout engine (MIT) ─────────────────────────────────────
-      // Verbatim port of d3 v3's force layout tick as used by WebVOWL
-      // (VisualDataWeb/WebVOWL, MIT license): Gauss-Seidel positional link
-      // constraints, Barnes-Hut charge applied to the Verlet shadow (px/py),
-      // positional gravity, friction 0.9. It owns integration for VOWL mode —
-      // all v7 velocity forces are disabled and velocities zeroed each tick.
+
       const friction = 0.9;
       const theta2 = 0.64; // v3 default theta 0.8
       const chargeDist2 = nodeCount > 1500 ? 1000 * 1000 : Infinity;
@@ -2940,10 +2647,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const restLen = simLinks.map((l: any) => linkDistance(l));
 
       simulation.force('vowlGravity', (v7alpha: number) => {
-        // v3 alpha starts at 0.1; v7 at 1.0
+
         const alpha = v7alpha * 0.1;
 
-        // 1. Links: Gauss-Seidel positional relaxation (v3 tick, strength 1)
         for (let i = 0; i < simLinks.length; i++) {
           const o: any = simLinks[i];
           const s = o.source as D3Node;
@@ -2968,7 +2674,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
         }
 
-        // 2. Gravity: positional pull to the single center (v3 gravity 0.025)
         const gk = alpha * (nodeCount > 1500 ? 0.045 : 0.025);
         for (const node of simNodes) {
           if (node.x == null || node.y == null) continue;
@@ -2976,7 +2681,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           node.y += (mainCenter.y - node.y) * gk;
         }
 
-        // 3. Charge: Barnes-Hut repulsion accumulated into the Verlet shadow
         const q = d3.quadtree(simNodes as any[], (d: any) => d.x, (d: any) => d.y);
         q.visitAfter((quad: any) => {
           let charge = 0;
@@ -3038,7 +2742,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           });
         }
 
-        // 4. Position-Verlet integration with friction (v3: o.x -= (o.px - (o.px = o.x)) * friction)
         for (const node of simNodes) {
           const st = v3.get(node)!;
           if (node.fx != null) {
@@ -3058,11 +2761,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           node.vy = 0;
         }
 
-        // 5. Positional de-overlap (our addition — raw WebVOWL leaves touching
-        // circles for the user to drag apart). px shifts too, so no velocity kick.
-        // Chips are excluded and padding is zero: WebVOWL's tight look comes
-        // from links compressing below rest length in dense areas — this pass
-        // must only break overlaps, never hold nodes apart.
         {
           const solidNodes = simNodes.filter((n: any) => !n.__isChip);
           const cq = d3.quadtree(solidNodes as any[], (d: any) => d.x, (d: any) => d.y);
@@ -3104,16 +2802,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     simulationRef.current = simulation;
 
-    // Pre-calculate stable positions before rendering (run simulation silently)
-    // Skip heavy pre-ticks when resuming from saved positions (expand/collapse)
     if (usePhysics && !isLayoutPaused) {
-      // Cap silent pre-ticks on large graphs: 50+ synchronous ticks at 10k nodes
-      // freeze the main thread for seconds before first paint.
-      // During the entrance, most of the settle stays VISIBLE: just enough pre-ticks
-      // to break the initial spiral, then a high alpha so the graph blooms on screen.
-      // WebVOWL restarts the whole simulation at full alpha on every graph
-      // update — cold incremental reheats leave expansions under-annealed
-      // (loose). Match it for small graphs; keep cold resumes above 1500.
+
       const vowlFullReheat = visualizationType === 'vowl' && hasSavedPositions &&
         newNodeRatio > 0 && nodeCount <= 1500;
       const preTicks = hasSavedPositions
@@ -3121,9 +2811,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         : entrancePlaying
           ? (entranceRef.current.mode === 'bloom' ? 8 : 16)
           : visualizationType === 'vowl'
-            // Free WebVOWL physics needs a real silent settle so the first
-            // paint is already organized (WebVOWL hides the graph for the
-            // first ~half of its simulation for exactly this reason).
+
             ? (nodeCount > 2000 ? 60 : 250)
             : nodeCount > 2000
               ? 15
@@ -3140,10 +2828,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (GRAPH_DEBUG) console.log(`[AdvancedGraphView] Pre-calculated ${preTicks} ticks ${hasSavedPositions ? '(incremental, positions preserved)' : 'for stable initial positions'}`);
     }
 
-    // No bounding box for VOWL: WebVOWL lets the graph run past the screen
-    // edges at natural scale and the user pans — squeezing it into the
-    // viewport is what made layouts look diffuse and stretched.
-
     if (isSpatial3D) {
       simulation.force('depthOrbit', () => {
         d3Nodes.forEach(node => {
@@ -3155,9 +2839,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     }
 
-    // Add hit areas for edges (transparent wider paths for easier clicking).
-    // Skipped above 2,000 edges: the extra path per edge doubles edge DOM and per-tick
-    // path updates, and the visible paths carry the same click/hover handlers anyway.
     const edgeHitArea = d3Edges.length <= 2000 ? g.append('g')
       .attr('class', 'edge-hit-areas')
       .selectAll('path')
@@ -3180,7 +2861,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         setHoveredEdgeId(null);
       }) : null;
 
-    // Draw edges (with VOWL styling support and curved paths for multiple edges)
     const link = g.append('g')
       .attr('class', 'links')
       .selectAll('path')
@@ -3191,9 +2871,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('stroke', d => {
         if (isInferredEntity(d)) return '#10b981';
         const isDark = effectiveDark;
-        
+
         if (visualizationType === 'vowl') {
-          // VOWL: black edges (not pale blue spaghetti that blends into nodes)
+
           if (d.type === 'subClassOf') {
             return '#000000';
           }
@@ -3204,14 +2884,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             return '#000000';
           }
           const vowlEdge = vowlNotationService.edgeToVOWLEdge(d);
-          // Keep special axiom colors (disjoint orange, equivalent blue); else black
+
           if (d.type === 'disjointWith' || d.type === 'equivalentClass') {
             return vowlEdge.stroke || '#000000';
           }
           return '#000000';
         }
         if (visualizationType === 'ontograph') {
-          // Modern edge colors matching node accent palette
+
           if (d.type === 'subClassOf') return isDark ? '#60a5fa' : '#3b82f6'; // Blue for hierarchy
           if (d.type === 'instanceOf') return isDark ? '#a78bfa' : '#7c3aed'; // Purple
           if (d.type === 'propertyRelation') {
@@ -3223,7 +2903,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
           return isDark ? '#60a5fa' : '#3b82f6';
         }
-        // Force mode - with dark mode support
+
         if (d.type === 'subClassOf') return isDark ? '#fbbf24' : '#FFA500';
         if (d.type === 'instanceOf') return isDark ? '#cbd5e1' : '#000000';
         if (d.type === 'propertyRelation') {
@@ -3262,12 +2942,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return vowlEdge.strokeDasharray || null;
         }
         if (visualizationType === 'ontograph') {
-          // Clean dashing: solid for hierarchy, subtle dash for properties
+
           if (d.type === 'instanceOf') return '6 3';
           if (d.type === 'propertyRelation') return '4 3';
           return null; // Solid for subClassOf
         }
-        // Force mode - match reference image
+
         if (d.type === 'subClassOf') return '5 3'; // Dashed for subClassOf
         if (d.type === 'propertyRelation') {
           const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
@@ -3276,20 +2956,20 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return null; // Solid for instanceOf and object properties
       })
       .attr('marker-end', d => {
-        // In VOWL mode, always show arrows with specific colors for properties
+
         if (visualizationType === 'vowl') {
           if (d.type === 'operand') return null; // member links carry no arrowheads (VOWL)
           if (d.type === 'propertyRelation') {
             const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
             const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
-            
+
             if (sourceNode?.type === 'annotation') return 'url(#arrow-vowl-annotation)';
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return 'url(#arrow-vowl-data)';
             return 'url(#arrow-vowl-object)';
           }
           return `url(#arrow-vowl-${d.type})`;
         }
-        // OntoGraph specific markers
+
         if (visualizationType === 'ontograph') {
           if (d.type === 'subClassOf') return 'url(#arrow-ontograph-subClassOf)';
           if (d.type === 'instanceOf') return 'url(#arrow-ontograph-instanceOf)';
@@ -3302,7 +2982,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
           return 'url(#arrow-ontograph-subClassOf)';
         }
-        // For other visualization types, show based on settings
+
         if (settings.showArrows || d.type === 'propertyRelation') {
           return `url(#arrow-${d.type})`;
         }
@@ -3321,12 +3001,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         setHoveredEdgeId(null);
       });
 
-    // Draw edge label backgrounds (colored boxes for VOWL - varied colors based on property)
-    // VOWL chips: in vowl mode, property and subclass labels sit in
-    // always-visible colored chips on the edge — the VOWL look
-    // (blue = object property, green = data property, white dashed = Subclass of).
-    // isVowlChipEdge / vowlChipsAlwaysVisible are defined above the simulation:
-    // chip edges also get invisible mid-edge physics nodes (VOWL label nodes).
     const linkLabelBg = g.append('g')
       .attr('class', 'link-label-backgrounds')
       .selectAll('rect')
@@ -3334,13 +3008,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .join('rect')
       .attr('class', 'edge-label-bg')
       .attr('fill', d => {
-        // Theme-aware chips: dark surfaces in dark mode so the light label text stays
-        // readable (light-on-light chips were the "invisible subClassOf" bug).
+
         const isDark = effectiveDark;
         if (visualizationType === 'vowl') {
-          // VOWL-spec chip palette: the property KIND is encoded
-          // in the chip color, not the edge line. Functional etc. show as the
-          // "(F,…)" suffix, not as a color variant.
+
           const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
           const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
 
@@ -3349,36 +3020,34 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
 
           if (d.type === 'propertyRelation') {
-            // Annotation properties - violet (no VOWL spec color; kept distinct)
+
             if (sourceNode?.type === 'annotation') {
               return isDark ? '#5b21b6' : '#ddd6fe';
             }
-            // Data properties - VOWL green
+
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
               return isDark ? '#4d7c0f' : '#99cc66';
             }
-            // Object properties — match class blue (VOWL chip style)
+
             return isDark ? '#1d4ed8' : '#69c';
           }
 
           return isDark ? '#1e3a8a' : '#69c';
         }
 
-        // Add background colors for other modes too
         if (d.type === 'propertyRelation') {
           const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
           const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
           const isFunctional = d.metadata?.functional;
 
-          // Annotation properties - purple
           if (sourceNode?.type === 'annotation') {
             return isDark ? (isFunctional ? '#5b21b6' : '#4c1d95') : (isFunctional ? '#E9D5FF' : '#F3E8FF');
           }
-          // Data properties - pink
+
           if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
             return isDark ? (isFunctional ? '#9d174d' : '#831843') : (isFunctional ? '#FCE7F3' : '#FDF2F8');
           }
-          // Object properties - cyan
+
           return isDark ? (isFunctional ? '#065f46' : '#155e75') : (isFunctional ? '#A7F3D0' : '#CFFAFE');
         }
 
@@ -3386,10 +3055,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('opacity', d => {
         if (visualizationType === 'vowl') {
-          // Disjointness is drawn as the VOWL twin-circle symbol, not a text chip
+
           if (d.type === 'disjointWith') return 0;
-          // Chips are always visible (VOWL look) below the density threshold;
-          // everything else reveals on selection/hover.
+
           if (vowlChipsAlwaysVisible && isVowlChipEdge(d)) return 1;
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
@@ -3397,8 +3065,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('stroke', d => {
         if (visualizationType === 'vowl') {
-          // Chip borders by property kind (VOWL palette) — the old version keyed
-          // colors off substrings of the label text, which looked arbitrary.
+
           const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
           const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
           if (d.type === 'subClassOf') return effectiveDark ? '#9ca3af' : '#6b7280';
@@ -3420,7 +3087,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('ry', visualizationType === 'vowl' ? 1.5 : 3)
       .style('pointer-events', 'none');
 
-    // Draw edge labels (more prominent in VOWL mode)
     const linkLabel = g.append('g')
       .attr('class', 'link-labels')
       .selectAll('text')
@@ -3432,10 +3098,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('font-family', visualizationType === 'vowl' ? 'Helvetica Neue, Helvetica, Arial, sans-serif' : 'inherit')
       .attr('fill', d => {
         const isDark = effectiveDark;
-        
+
         if (visualizationType === 'vowl') {
-          // Text colors matched to the VOWL chip fills above — dark ink on the
-          // light spec-color chips, light ink on their dark-mode counterparts.
+
           const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
           const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
 
@@ -3444,21 +3109,21 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
 
           if (d.type === 'propertyRelation') {
-            // Annotation properties - violet chip
+
             if (sourceNode?.type === 'annotation') {
               return isDark ? '#ede9fe' : '#4c1d95';
             }
-            // Data properties - VOWL green chip
+
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
               return isDark ? '#f7fee7' : '#1a2e05';
             }
-            // Object properties — white on class-blue chip (VOWL)
+
             return '#ffffff';
           }
 
           return '#ffffff';
         }
-        // Color labels by property type with dark mode support
+
         if (d.type === 'propertyRelation') {
           const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
           const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
@@ -3473,8 +3138,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
       .text(d => {
-        // Build characteristic suffix from all OWL property characteristics on the edge
-        // Format: "(F,IF,S,T,A,R,Ir)" — only includes characteristics actually present
+
         const buildCharSuffix = (edge: any): string => {
           const m = edge.metadata || {};
           const flags: string[] = [];
@@ -3488,15 +3152,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return flags.length > 0 ? ` (${flags.join(',')})` : '';
         };
 
-        // Show full label in VOWL mode with characteristic indicators
         if (visualizationType === 'vowl') {
           if (d.type === 'disjointWith') return ''; // rendered as the VOWL twin-circle symbol
-          // VOWL labels inheritance edges "Subclass of", not the raw type name
+
           const baseLabel = d.type === 'subClassOf' ? 'Subclass of' : (d.label || d.type || '');
           return vowlOptions.compactNotation ? baseLabel : `${baseLabel}${buildCharSuffix(d)}`;
         }
 
-        // Add property type prefix and characteristic indicators for clarity
         if (settings.showLabels && d.type === 'propertyRelation') {
           const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
           const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
@@ -3515,17 +3177,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('pointer-events', 'none')
       .style('opacity', d => {
         if (visualizationType === 'vowl') {
-          // Chips always visible below the density threshold (VOWL look);
-          // everything else reveals on selection/hover.
+
           if (vowlChipsAlwaysVisible && isVowlChipEdge(d)) return 1;
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
         return settings.showLabels ? 1 : 0;
       });
 
-    // VOWL disjointness symbol (per the VOWL spec / VOWL's OwlDisjointWith):
-    // a small rect containing two separated circles, captioned "(disjoint)" —
-    // always visible on the dashed edge, replacing the text chip.
     const disjointSymbol = g.append('g')
       .attr('class', 'disjoint-symbols')
       .selectAll('g')
@@ -3566,7 +3224,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const dx = target.x - source.x;
         const dy = target.y - source.y;
         const len = Math.hypot(dx, dy) || 1;
-        // Offset perpendicular so the badge doesn't sit on crossing edges / labels
+
         const px = -dy / len;
         const py = dx / len;
         const side = 36;
@@ -3575,11 +3233,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     };
     updateDisjointSymbols();
 
-    // VOWL cardinality / quantifier badges: restriction edges
-    // always show their kind — "≥ n" (min), "≤ n" (max), "= n" (exactly),
-    // "∃" (someValuesFrom), "∀" (allValuesFrom), "∋" (hasValue) — as a small
-    // always-visible label at the edge midpoint, VOWL-spec style. The full
-    // "property kind n" text remains on the hover/selection label above.
     const restrictionBadgeText = (d: any): string => {
       const m = d.metadata || {};
       const n = m.cardinality;
@@ -3628,8 +3281,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (!label) return;
         const bbox = (label as SVGTextElement).getBBox();
         const padding = visualizationType === 'vowl' ? 2.5 : 3;
-        // Cache chip dimensions so updateLinkLabelPositions can move the chip
-        // every tick without re-measuring (getBBox per tick thrashes layout).
+
         (_d as any).__chipW = bbox.width + padding * 2;
         (_d as any).__chipH = bbox.height + padding * 2;
         d3.select(this)
@@ -3640,7 +3292,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     };
 
-    /** AABB resolve using MEASURED chip boxes (__chipW/H) — estimates under-size long labels. */
     const resolveMeasuredChipOverlaps = () => {
       if (!vowlChipsAlwaysVisible || chipNodes.length === 0) return;
       for (let pass = 0; pass < 20; pass++) {
@@ -3680,7 +3331,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         if (!moved) break;
       }
-      // Clear chips off class/literal glyphs with measured half-sizes
+
       const glyphs = d3Nodes.filter(
         nd => nd.type === 'datatype' || nd.label === 'Literal' || nd.type === 'class'
       );
@@ -3722,7 +3373,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         if (!movedAny) break;
       }
-      // Re-bake along/side so tick keeps measured separation
+
       chipNodes.forEach(chip => {
         const e = (chip as any).__chipEdge as D3Edge | undefined;
         if (!e) return;
@@ -3745,12 +3396,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     };
 
     if (vowlChipsAlwaysVisible) {
-      // Size chips immediately so they're visible during the initial settle,
-      // not only after the first simulation 'end'.
+
       updateLinkLabelBackgrounds();
     }
 
-    // Filter nodes by viewport for large OntoGraph (virtualization)
     let visibleD3Nodes = d3Nodes;
     if (isLargeGraph && visualizationType === 'ontograph' && d3Nodes.length > 5000) {
       const buffer = 500; // Buffer zone around viewport
@@ -3764,8 +3413,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
       if (GRAPH_DEBUG) console.log(`[OntoGraph Virtualization] Rendering ${visibleD3Nodes.length} of ${d3Nodes.length} nodes`);
     }
-    
-    // Draw nodes
+
     const node = g.append('g')
       .attr('class', 'nodes')
       .selectAll('g')
@@ -3787,32 +3435,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .on('dblclick', (event: any, d: D3Node) => {
         event.stopPropagation();
         event.preventDefault();
-        // Shift+double-click → enter focus mode
+
         if (event.shiftKey) {
           enterFocusMode(d.id);
           return;
         }
-        // Double-click to expand/collapse children
+
         if (nodeRelationsMap.get(d.id)?.hasChildren) {
           handleToggleExpansion(d.id);
         }
       });
 
-    // Node shapes (VOWL-style: circles for classes/properties, rectangles for datatypes/individuals)
     node.each(function(d) {
       const nodeGroup = d3.select(this);
       const size = d.size || settings.nodeSize;
       let nodeType = d.type;
-      // User-configurable box scale (Notation & density panel) — vowl/force only,
-      // where shape size is otherwise a fixed multiple of `size` regardless of label length.
+
       const widthScale = (visualizationType === 'vowl' || visualizationType === 'force') ? vowlOptions.nodeWidthScale : 1;
       const heightScale = (visualizationType === 'vowl' || visualizationType === 'force') ? vowlOptions.nodeHeightScale : 1;
 
-      // Check if this is owl:Thing or external/internal node
       const isThing = d.label === 'Thing' || d.id.includes('owl#Thing');
       const isExternal = isExternalNode(d);
-      // XSD / rdfs Literal must stay VOWL yellow boxes — never steel-blue
-      // "external class" circles (Patient ontologies often ship xsd:integer as class).
+
       const nodeIri = String(d.uri || d.id || '');
       const isXsdOrLiteralIri =
         nodeIri.includes('XMLSchema') ||
@@ -3822,13 +3466,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (nodeType !== 'datatype' && isXsdOrLiteralIri) {
         nodeType = 'datatype';
       }
-      
-      // Detect dark mode for theme-aware colors (VOWL is pinned to the light palette)
+
       const isDark = effectiveDark;
-      
-      // VOWL color scheme — medium blue classes with white labels (stock look)
+
       let fill = isDark ? '#6b92c4' : '#69c';
-      
+
       if (visualizationType === 'vowl' && nodeType === 'datatype') {
         fill = isDark ? '#d97706' : '#fc3';
       } else if (visualizationType === 'vowl' && nodeType === 'class') {
@@ -3853,36 +3495,29 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         fill = isDark ? '#064e3b' : '#d1fae5';
       }
 
-      // Record the color actually used to paint this node so the label-text
-      // callback further down can pick a readable black/white against it
-      // instead of re-deriving (and risking a mismatched) guess.
       (d as any).__nodeFillColor = fill;
 
       const stroke = visualizationType === 'vowl'
         ? (isInferredEntity(d) ? '#10b981' : (isDark ? '#d1d5db' : '#000000'))
         : (isInferredEntity(d) ? '#10b981' : '#fff');
-      
+
       const strokeWidth = visualizationType === 'vowl'
         ? (isInferredEntity(d) ? 2.5 : (isThing ? 1.25 : 1.35))
         : (isInferredEntity(d) ? 3 : (nodeRelationsMap.get(d.id)?.hasChildren && visualizationType !== 'vowl' ? 3 : 2));
-      
-      // Thing and anonymous set-operator nodes get dashed borders in VOWL
+
       const strokeDasharray = isInferredEntity(d)
         ? '8 4'
         : (visualizationType === 'vowl'
           ? (isThing || nodeType === 'setOperator' ? '5 3' : null)
           : null);
 
-      // Flat VOWL fills (VOWL is flat — glossy + drop-shadow made ours look muddy).
-      // Other modes keep the premium glossy treatment.
       const fillPaint = visualizationType === 'vowl' ? fill : glossyFill(fill);
       const softShadow = visualizationType === 'vowl' || visibleNodes.length > 100
         ? 'none'
         : 'drop-shadow(0 2px 5px rgba(0,0,0,0.22)) drop-shadow(0 6px 14px rgba(0,0,0,0.10))';
 
-      // Render different shapes based on node type (VOWL style)
       if (nodeType === 'dataProperty' || nodeType === 'property') {
-        // Pink Rectangle for data properties
+
         nodeGroup.append('rect')
           .attr('class', 'node-shape')
           .attr('x', -size)
@@ -3900,7 +3535,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
           .on('mouseout', handleNodeMouseOut);
       } else if (nodeType === 'datatype') {
-        // Force mode: White rectangle for datatypes/literals
+
         if (visualizationType === 'force') {
           const rectWidth = size * 2.2 * widthScale;
           const rectHeight = size * 1.1 * heightScale;
@@ -3921,7 +3556,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
             .on('mouseout', handleNodeMouseOut);
         } else {
-          // VOWL: compact yellow Literal boxes (VOWL proportions — flat, not glossy)
+
           const rectWidth = (visualizationType === 'vowl' ? size * 3.2 * widthScale : (visualizationType === 'ontograph' ? size * 3.5 : size * 3));
           const rectHeight = (visualizationType === 'vowl' ? size * 1.55 * heightScale : (visualizationType === 'ontograph' ? size * 1.8 : size * 1.6));
           nodeGroup.append('rect')
@@ -3942,7 +3577,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseout', handleNodeMouseOut);
         }
       } else if (nodeType === 'individual') {
-        // Force mode: Blue rounded rectangle for individuals
+
         if (visualizationType === 'force') {
           const rectWidth = size * 3.2 * widthScale;
           const rectHeight = size * 1.6 * heightScale;
@@ -3963,10 +3598,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
             .on('mouseout', handleNodeMouseOut);
         } else {
-          // VOWL/OntoGraph: Rectangle for individuals (purple/pink) - dynamic width based on label length
+
           const label = d.label || '';
           const baseWidth = (visualizationType === 'vowl' ? size * 2.8 * widthScale : (visualizationType === 'ontograph' ? size * 2.8 : size * 2.4));
-          // Calculate width based on label length (approximately 7 pixels per character), capped
+
           const labelWidth = Math.min(label.length * 7, 180);
           const rectWidth = Math.max(baseWidth, labelWidth + 16); // Add padding
           const maxWidth = visualizationType === 'vowl' ? size * 5.0 * widthScale : size * 4.5;
@@ -3991,8 +3626,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseout', handleNodeMouseOut);
         }
       } else if (nodeType === 'annotation' && visualizationType !== 'force') {
-        // Hexagon for annotation properties (distinctive shape) - but not in force mode
-        // In force mode, annotations are shown only as edges, not nodes
+
         const hexSize = visualizationType === 'vowl' ? size * 1.5 : size * 1.2;
         const angle = Math.PI / 3; // 60 degrees
         const hexPoints = Array.from({ length: 6 }, (_, i) => {
@@ -4000,7 +3634,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const y = hexSize * Math.sin(angle * i - Math.PI / 2);
           return `${x},${y}`;
         }).join(' ');
-        
+
         nodeGroup.append('polygon')
           .attr('class', 'node-shape')
           .attr('points', hexPoints)
@@ -4014,13 +3648,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
           .on('mouseout', handleNodeMouseOut);
       } else if (visualizationType === 'ontograph') {
-        // Modern hierarchical graph: clean card-style nodes with accent stripe
+
         const simplifiedLOD = isLargeGraph && viewportBoundsRef.current.scale < 0.5;
         const rectWidth = simplifiedLOD ? size * 5 : size * 9;
         const rectHeight = simplifiedLOD ? size * 1.8 : size * 2.6;
         const cornerRadius = 8;
-        
-        // Modern color palette per type
+
         const nodeColors: Record<string, { bg: string; border: string; accent: string; icon: string; text: string }> = {
           class:      { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#3b82f6' : '#3b82f6', accent: isDark ? '#3b82f6' : '#3b82f6', icon: '#3b82f6', text: isDark ? '#e2e8f0' : '#1e293b' },
           individual: { bg: isDark ? '#1e293b' : '#f8fafc', border: isDark ? '#8b5cf6' : '#7c3aed', accent: isDark ? '#8b5cf6' : '#7c3aed', icon: '#7c3aed', text: isDark ? '#e2e8f0' : '#1e293b' },
@@ -4037,8 +3670,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 return { bg: isDark ? '#1e293b' : '#f8fafc', border: cc, accent: cc, icon: cc, text: isDark ? '#e2e8f0' : '#1e293b' };
               })()
             : (nodeColors[d.type] || nodeColors['class']));
-        
-        // Main card background — gradient sheen + colored ambient shadow
+
         nodeGroup.append('rect')
           .attr('class', 'node-shape')
           .attr('x', -rectWidth / 2)
@@ -4059,7 +3691,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .on('mouseout', handleNodeMouseOut);
 
         if (!simplifiedLOD) {
-          // Left accent stripe — gradient for depth
+
           nodeGroup.append('rect')
             .attr('x', -rectWidth / 2)
             .attr('y', -rectHeight / 2)
@@ -4071,7 +3703,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             // Clip to card's left rounded corners
             .attr('clip-path', `inset(0 0 0 0 round ${cornerRadius}px 0 0 ${cornerRadius}px)`);
 
-          // Type badge (small gradient pill)
           const badgeText = d.type === 'class' ? 'C' : (d.type === 'individual' ? 'I' : (d.type === 'datatype' ? 'D' : (d.type === 'dataProperty' ? 'DP' : 'P')));
           const badgeWidth = badgeText.length > 1 ? 22 : 16;
 
@@ -4096,7 +3727,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .text(badgeText)
             .style('pointer-events', 'none');
 
-          // Expander icon on the right — accent-filled with white glyph
           if (nodeRelationsMap.get(d.id)?.hasChildren) {
             const isExpanded = expandedNodeIds.has(d.id);
             const expanderGroup = nodeGroup.append('g')
@@ -4128,9 +3758,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
         }
       } else {
-        // Force mode classes OR default circle rendering
+
         if (visualizationType === 'force' && nodeType === 'class') {
-          // Classes as light orange/peach ovals (ellipse) - larger size for better label fit
+
           const ellipseWidth = size * 3.5 * widthScale;  // Wider for text
           const ellipseHeight = size * 2.0 * heightScale; // Taller oval
           nodeGroup.append('ellipse')
@@ -4140,13 +3770,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .attr('rx', ellipseWidth)
             .attr('ry', ellipseHeight)
             .attr('fill', () => {
-              // Flat tint + accent stroke + soft shadow — no glossy gradient.
+
               const paletteFill = nodeFill(d.type, isDark);
               const finalFill = colorByCluster && clusterFor(d.id) !== undefined
                 ? (getClusterColor(clusterFor(d.id), graphAnalytics.clusterColors) || paletteFill)
                 : paletteFill;
-              // Overrides the generic stash above — this ellipse ignores the
-              // outer `fill` var (that holds the raw accent, not this tint).
+
               (d as any).__nodeFillColor = finalFill;
               return finalFill;
             })
@@ -4163,10 +3792,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
             .on('mouseout', handleNodeMouseOut);
         } else {
-          // Circle for classes, object properties, and other types - larger for OntoGraph.
-          // A circle can't have independent width/height without becoming an ellipse, so
-          // the two user scale sliders are averaged here — vowl class truncation below
-          // uses the same average so the label budget always matches this radius.
+
           const circleRadius = visualizationType === 'vowl'
             ? size * 1.35 * ((widthScale + heightScale) / 2)
             // @ts-ignore - Type narrowing limitation: visualizationType can be 'ontograph' in other code paths
@@ -4184,7 +3810,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             .on('mouseover', (event: any, d: any) => handleNodeMouseOver(event, d as D3Node))
             .on('mouseout', handleNodeMouseOut);
 
-          // VOWL: merged equivalent classes get the double border (inner ring)
           if (visualizationType === 'vowl' && (d as any).metadata?.vowlEquivalent) {
             nodeGroup.append('circle')
               .attr('r', Math.max(4, circleRadius - 4))
@@ -4208,16 +3833,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .style('pointer-events', 'none');
       }
 
-      // Expander +/- icons: Network/Force only. VOWL stays clean — expand/collapse
-      // via right-click (and double-click) instead of on-node chrome.
       if (visualizationType !== 'ontograph' && visualizationType !== 'vowl' && nodeRelationsMap.get(d.id)?.hasChildren) {
         const isExpanded = expandedNodeIds.has(d.id);
         const isDark = effectiveDark;
-        
-        // Position the expander at the bottom-right of the node shape
+
         let expanderX = 0;
         let expanderY = 0;
-        
+
         if (visualizationType === 'vowl') {
           if (nodeType === 'class') {
             const r = size * 1.8;
@@ -4283,8 +3905,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
     });
 
-    // Remember each shape's base styling so the selection/hover effect can
-    // layer highlights on top and restore the original look afterwards
     node.selectAll<SVGGraphicsElement, D3Node>('.node-shape').each(function() {
       const el = d3.select(this);
       el.attr('data-base-fill', el.attr('fill') || 'none');
@@ -4293,22 +3913,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       el.attr('data-base-filter', this.style.filter || 'none');
     });
 
-    // Node labels - INSIDE for VOWL and OntoGraph, outside for force mode
-    // Hide labels when zoomed out on large graphs (LOD)
     const showLabels = !isLargeGraph || viewportBoundsRef.current.scale >= 0.5;
-    
-    // Surface-colored halo keeps labels readable over crossing edges at density
-    // without label boxes. VOWL mode is exempt: its notation rendering (text
-    // inside semantically-shaped nodes) follows VOWL label conventions.
+
     const labelHalo = effectiveDark ? '#1b1e2b' : '#ffffff';
     node.append('text')
       .attr('class', 'node-label-text')
       .attr('data-base-font-size', d => {
-        // Stashed so the zoom handler can counter-scale against zoom-out
-        // without recomputing the whole per-type font-size formula on every
-        // zoom tick — VOWL mode only (see the zoom handler below); other
-        // modes already handle legibility differently (ontograph hides
-        // labels below a zoom threshold instead).
+
         if (visualizationType !== 'vowl') return null;
         return d.type === 'setOperator' ? 16 : Math.min(11, vowlOptions.labelFontSize);
       })
@@ -4364,13 +3975,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('fill', d => {
         if (visualizationType === 'vowl' || visualizationType === 'force') {
-          // Read the color the shape was ACTUALLY painted with (stashed in
-          // node.each above) instead of re-deriving a guess from TYPE_COLORS —
-          // that guess used the raw saturated accent, not the pastel tint most
-          // node types render with, which picked white text on light node fills.
+
           const painted = (d as any).__nodeFillColor || (effectiveDark ? '#6b92c4' : '#69c');
           if (visualizationType === 'vowl') {
-            // VOWL: white labels on blue classes; black on yellow/green/white
+
             const t = d.type;
             if (t === 'class' || t === 'setOperator') {
               const isThingNode = d.label === 'Thing' || isThingIri(d.id);
@@ -4402,29 +4010,24 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('paint-order', 'stroke')
       .text(d => {
         if (visualizationType === 'vowl') {
-          // Set-operator nodes render their VOWL glyph, not a text label
+
           if (d.type === 'setOperator') {
             return SET_OPERATOR_SYMBOLS[(d as any).metadata?.setOperator] || '∪';
           }
-          // Truncate labels in VOWL mode to fit within their shapes. Char budget
-          // derives from the actual (scaled) shape width and chosen font size, so
-          // text can never spill outside the box regardless of the Notation &
-          // density panel's width/height/font-size sliders.
+
           const label = d.label || '';
           const size = d.size || settings.nodeSize;
           const charWidthPx = vowlOptions.labelFontSize * (7 / 11); // 7px/char was calibrated at 11px font
-          // Recomputed here (not read from node.each's closure — this is a sibling D3
-          // callback on the same selection, not a nested function, so those locals
-          // aren't in scope).
+
           const widthScale = vowlOptions.nodeWidthScale;
           const heightScale = vowlOptions.nodeHeightScale;
           let maxChars = 18;
 
           if (d.type === 'datatype') {
-            // Rect width = size * 4.2 * widthScale, minus padding
+
             maxChars = Math.max(4, Math.floor((size * 4.2 * widthScale - 12) / charWidthPx));
           } else if (d.type === 'individual') {
-            // Mirrors the rect sizing above (base/label-driven width, capped at size * 5.0 * widthScale)
+
             const label2 = d.label || '';
             const baseWidth = size * 2.8 * widthScale;
             const labelWidth = Math.min(label2.length * 7, 180);
@@ -4432,12 +4035,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const finalWidth = Math.min(rectWidth, size * 5.0 * widthScale);
             maxChars = Math.max(4, Math.floor((finalWidth - 10) / charWidthPx));
           } else if (d.type === 'class') {
-            // Circle radius = size * 1.8 * avg(scale) → diameter-based budget
+
             const diameter = size * 2.7 * ((widthScale + heightScale) / 2);
             maxChars = Math.max(6, Math.floor((diameter - 8) / charWidthPx));
           }
 
-          // User-set cap layers on top of the shape-fitted budget
           maxChars = Math.min(maxChars, vowlOptions.maxLabelChars);
           return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 2)) + '..' : label;
         }
@@ -4445,21 +4047,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return ''; // Hide labels when zoomed out on large graphs
         }
         if (visualizationType === 'ontograph') {
-          // Card width = size*9, padding 32px, font ~7px/char → max = floor((size*9-32)/7)
+
           const s = d.size || settings.nodeSize;
           const maxChars = Math.max(8, Math.floor((s * 9 - 32) / 7));
           const label = d.label || '';
           return label.length > maxChars ? label.substring(0, maxChars - 2) + '..' : label;
         }
         if (visualizationType === 'force') {
-          // Shape-aware budget mirroring the vowl branch above — force-mode box sizes
-          // are fixed (not label-length-driven), so without this a long label simply
-          // spilled outside its oval/rect. Char budget derives from the actual (scaled)
-          // shape width and chosen font size.
+
           const label = d.label || '';
           const size = d.size || settings.nodeSize;
           const charWidthPx = vowlOptions.labelFontSize * (7 / 11);
-          // Recomputed here — sibling D3 callback, not nested inside node.each.
+
           const widthScale = vowlOptions.nodeWidthScale;
           let maxChars = 18;
 
@@ -4475,7 +4074,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return label.length > maxChars ? label.substring(0, Math.max(1, maxChars - 3)) + '...' : label;
         }
         if (visualizationType === 'spatial3d') {
-          // Short truncation — text is centered inside the circle, so space is limited
+
           const label = d.label || '';
           return label.length > 12 ? label.substring(0, 10) + '..' : label;
         }
@@ -4484,9 +4083,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('pointer-events', 'none')
       .style('user-select', 'none');
 
-    // WebVOWL-style multi-line labels: wrap class names inside the circle
-    // (up to 3 lines) instead of truncating to "Environment..". Equivalent
-    // classes stack one name per line.
     if (visualizationType === 'vowl') {
       node.select('text').each(function(d: any) {
         if (d.type !== 'class' && d.type !== 'datatype') return;
@@ -4495,7 +4091,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const charWidthPx = vowlOptions.labelFontSize * (7 / 11);
         const avgScale = (vowlOptions.nodeWidthScale + vowlOptions.nodeHeightScale) / 2;
         const isDatatype = d.type === 'datatype';
-        // Usable width: circle chord for classes, rect width for literals
+
         const lineBudget = isDatatype
           ? Math.max(4, Math.floor((size * 4.2 * vowlOptions.nodeWidthScale - 12) / charWidthPx))
           : Math.max(6, Math.floor((size * 2.7 * avgScale * 0.86 - 6) / charWidthPx));
@@ -4507,9 +4103,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const fullLabel = d.label || '';
         if (!isEquivStack && fullLabel.length <= lineBudget) return; // fits one line
 
-        // Build lines: one per equivalent name, or greedy word wrap.
-        // Words longer than a line hyphenate across lines (WebVOWL truncates;
-        // hyphenation keeps "Environmental" readable instead of "Environme..").
         let lines: string[];
         if (isEquivStack) {
           lines = equivParts!;
@@ -4559,9 +4152,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     }
 
-    // Node type badge — skip entirely in VOWL (shape/color IS the type; letters clutter)
-    // Skip for ontograph mode since badges are built into the card design
-    // Skip badge for spatial3d — label is already centered inside the node
     if (visualizationType !== 'ontograph' && visualizationType !== 'spatial3d' && visualizationType !== 'vowl') {
     node.append('text')
       .attr('dx', 0)
@@ -4584,7 +4174,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('pointer-events', 'none')
       .style('opacity', 0.7);
     } else if (visualizationType === 'vowl') {
-      // Set-operator caption only — VOWL shows "(union)" under operator glyphs
+
       node.filter(d => d.type === 'setOperator' && !vowlOptions.compactNotation)
         .append('text')
         .attr('dx', 0)
@@ -4600,16 +4190,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         .style('pointer-events', 'none');
     }
 
-    // Simulation tick with aggressive throttling for performance
     let rafId: number | null = null;
     let ticking = false;
     let tickCount = 0;
-    // Skip more frames as graphs grow — node motion stays smooth, ancillary work staggers
+
     const updateInterval = nodeCount > 5000 ? 5 : nodeCount > 2000 ? 4 : nodeCount > 100 ? 3 : 2;
 
-    // Update edge paths with curvature for multiple edges between same nodes.
-    // Computed ONCE per edge per pass and cached on the datum — the hit-area layer
-    // reuses the cached string instead of recomputing the boundary trig.
     const computeEdgePath = (d: D3Edge): string => {
       const source = d.source as D3Node;
       const target = d.target as D3Node;
@@ -4622,10 +4208,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const targetPoint = getRenderPoint(target);
       const curve = edgeCurvature.get(d.id) || 0;
 
-      // VOWL chip physics: the edge bends through its label node's position.
       const chip = (d as any).__chipNode as D3Node | undefined;
       if (chip && chip.x != null && chip.y != null) {
-        // Self-loop: draw a cubic loop out through the chip and back
+
         if (source === target) {
           const loopDx = chip.x - sourcePoint.x;
           const loopDy = chip.y - sourcePoint.y;
@@ -4638,8 +4223,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             ` ${chip.x - px * spread},${chip.y - py * spread}` +
             ` ${sourcePoint.x},${sourcePoint.y}`;
         }
-        // WebVOWL look: straight polyline source → chip → target. The label
-        // sits on a crisp line (tiny kink at most), not a soft bezier.
+
         const inDx = targetPoint.x - chip.x;
         const inDy = targetPoint.y - chip.y;
         const inDist = Math.sqrt(inDx * inDx + inDy * inDy) || 1;
@@ -4651,10 +4235,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const absSin = Math.abs(inDy / inDist);
           tr = Math.min((w / 2) / Math.max(absCos, 1e-6), (h / 2) / Math.max(absSin, 1e-6)) + 2;
         } else {
-          // Matches the actual rendered VOWL class circle radius (size * 1.35 *
-          // avgScale, see the node.type === 'class' shape-drawing code) — this
-          // used to assume 1.8x, well past the true ~1.35x boundary, so the
-          // arrowhead stopped short in empty space instead of touching the circle.
+
           const avgScale = (vowlOptions.nodeWidthScale + vowlOptions.nodeHeightScale) / 2;
           tr = tr * 1.35 * avgScale + 4;
         }
@@ -4663,7 +4244,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return `M${sourcePoint.x},${sourcePoint.y}L${chip.x},${chip.y}L${tx},${ty}`;
       }
 
-      // Calculate edge endpoints
       const dx = targetPoint.x - sourcePoint.x;
       const dy = targetPoint.y - sourcePoint.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -4672,27 +4252,23 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return `M${sourcePoint.x},${sourcePoint.y}L${targetPoint.x},${targetPoint.y}`;
       }
 
-      // Shorten edge to stop at node boundary - dynamic based on visualization type and node shape
       let r = (target.size || settings.nodeSize);
 
       if (visualizationType === 'vowl') {
         if (target.type === 'datatype' || target.type === 'dataProperty') {
-          // Rectangle boundary for VOWL datatypes (approx 2.8x by 1.8x)
+
           const w = r * 2.8;
           const h = r * 1.8;
           const absCos = Math.abs(dx / dist);
           const absSin = Math.abs(dy / dist);
           r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
         } else {
-          // Matches the actual rendered VOWL class circle radius (size * 1.35 *
-          // avgScale, see the node.type === 'class' shape-drawing code) — this
-          // used to assume 1.8x, well past the true ~1.35x boundary, so the
-          // arrowhead stopped short in empty space instead of touching the circle.
+
           const avgScale = (vowlOptions.nodeWidthScale + vowlOptions.nodeHeightScale) / 2;
           r = r * 1.35 * avgScale + 4;
         }
       } else if (visualizationType === 'ontograph') {
-        // Rounded rectangle boundary for OntoGraph (approx 7.5x by 2.0x)
+
         const w = r * 7.5;
         const h = r * 2.0;
         const absCos = Math.abs(dx / dist);
@@ -4700,7 +4276,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         r = Math.min((w / 2) / absCos, (h / 2) / absSin) + 2;
       } else if (visualizationType === 'force') {
         if (target.type === 'class') {
-          // Ellipse boundary approximation (3.5x by 2.0x)
+
           const w = r * 3.5 * 2;
           const h = r * 2.0 * 2;
           const absCos = Math.abs(dx / dist);
@@ -4717,15 +4293,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const targetY = targetPoint.y - (dy / dist) * r;
 
       if (curve === 0) {
-        // Straight line
+
         return `M${sourcePoint.x},${sourcePoint.y}L${targetX},${targetY}`;
       } else {
-        // Curved path - quadratic bezier curve
-        // Calculate control point perpendicular to the line
+
         const midX = (sourcePoint.x + targetX) / 2;
         const midY = (sourcePoint.y + targetY) / 2;
 
-        // Perpendicular offset
         const perpX = -dy / dist;
         const perpY = dx / dist;
 
@@ -4751,7 +4325,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       linkLabel.each(function(d: any, i: number) {
         if (d.__culled) return;
 
-        // Chip physics: the label lives exactly at its simulation node
         const chip = d.__chipNode as D3Node | undefined;
         if (chip && chip.x != null && chip.y != null) {
           d3.select(this).attr('x', chip.x).attr('y', chip.y);
@@ -4777,17 +4350,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         const curve = edgeCurvature.get(d.id) || 0;
 
-        // Position label at the MIDDLE of the edge
         let labelX: number;
         let labelY: number;
 
         if (curve === 0) {
-          // Straight line
+
           const t = 0.5;
           labelX = sourceX + dx * t;
           labelY = sourceY + dy * t;
 
-          // Small perpendicular offset for readability
           if (dist > 0) {
             const perpX = -dy / dist;
             const perpY = dx / dist;
@@ -4796,26 +4367,20 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             labelY += perpY * perpOffset;
           }
         } else {
-          // Curved path - position label on the curve at t=0.5
+
           const midX = (sourceX + targetX) / 2;
           const midY = (sourceY + targetY) / 2;
 
-          // Perpendicular offset for curve control point — guard dist===0 (source and
-          // target coincide, e.g. nodes not yet separated by the simulation), matching
-          // computeEdgePath's dist===0 early return; otherwise this divides by zero and
-          // cascades NaN into labelX/labelY, spamming "<text> attribute x/y: NaN" errors.
           const perpX = dist > 0 ? -dy / dist : 0;
           const perpY = dist > 0 ? dx / dist : 0;
 
           const controlX = midX + perpX * curve;
           const controlY = midY + perpY * curve;
 
-          // Quadratic bezier point at t=0.5
           const t = 0.5;
           labelX = (1-t)*(1-t)*sourceX + 2*(1-t)*t*controlX + t*t*targetX;
           labelY = (1-t)*(1-t)*sourceY + 2*(1-t)*t*controlY + t*t*targetY;
 
-          // Additional small offset for label readability
           const labelOffset = 10;
           labelX += perpX * labelOffset;
           labelY += perpY * labelOffset;
@@ -4825,10 +4390,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .attr('x', labelX)
           .attr('y', labelY);
 
-        // Keep the always-visible VOWL chip glued to its label during the force
-        // simulation using dimensions cached by updateLinkLabelBackgrounds —
-        // getBBox per tick would thrash layout. Text is middle-anchored, so the
-        // chip centers on (labelX, labelY).
         if (vowlChipsAlwaysVisible && (d.__chipW ?? 0) > 0) {
           const bg = linkLabelBg.nodes()[i] as SVGRectElement | undefined;
           if (bg) {
@@ -4839,10 +4400,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     };
 
-    // Live viewport culling — all visualization modes, activates above the large-graph
-    // threshold. Runs at gesture/sim ends only (never per tick): offscreen node groups
-    // get display:none; edges/labels whose endpoints are both culled are hidden and
-    // skipped by the tick handler. Positions keep persisting from sim data, not DOM.
     const cullingEnabled = nodeCount > LARGE_GRAPH_THRESHOLD;
     const applyViewportCulling = () => {
       if (!cullingEnabled) return;
@@ -4884,7 +4441,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       updateLinkLabelPositions();
     };
 
-    // Force initial render to show nodes immediately
     if (visualizationType === 'ontograph' && ontographLayoutType !== 'spring') {
       simulation.alpha(0.01).restart(); // Minimal alpha since positions are fixed
     } else if (visualizationType === 'ontograph') {
@@ -4893,7 +4449,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     simulation.on('tick', () => {
       tickCount++;
-      // Skip frames for better performance
+
       if (tickCount % updateInterval !== 0) return;
 
       if (!ticking) {
@@ -4903,41 +4459,29 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             d3Nodes.forEach(project3DNode);
           }
 
-          // Chips are free simulation nodes now (real charge + rigid half-links,
-          // see linkStrength/linkDistance below) — no per-tick re-pin to a static
-          // spoke slot. D3's own integrator already updated chip.x/y this tick.
-
-          // Hit-area paths are pointer targets, not visuals — they sync on sim/gesture end
           updateEdgePaths(false);
 
-          // Edge labels: VOWL labels are hover-only (positioned on 'end'); other modes
-          // skip the bezier math entirely when labels are switched off.
           if ((visualizationType !== 'vowl' && settings.showLabels !== false) || vowlChipsAlwaysVisible) {
             updateLinkLabelPositions();
           }
-          // Disjointness symbols and restriction badges are always visible and
-          // few — track the edge midpoint live
+
           if (visualizationType === 'vowl') {
             updateDisjointSymbols();
             updateRestrictionBadges();
           }
-          // Label backgrounds sized once after layout — getBBox in tick forces layout thrash
 
           node.attr('transform', d => {
             const point = getRenderPoint(d);
             return `translate(${point.x},${point.y}) scale(${visualizationType === 'spatial3d' ? Math.max(0.72, Math.min(1.28, point.scale)) : 1})`;
           });
           if (isSpatial3D) {
-            // Depth-based opacity only applies in 3D — writing opacity per tick in other
-            // modes would stomp the entrance fade transition.
+
             node.style('opacity', d => {
               const point = getRenderPoint(d);
               return Math.max(0.58, Math.min(1, point.scale * 0.92));
             });
           }
 
-          // Persist node positions so expand/collapse doesn't scramble the graph
-          // (simNodes also covers chip label nodes so edges keep their bends)
           simNodes.forEach(n => {
             if (n.x != null && n.y != null) {
               nodePositionsRef.current.set(n.id, { x: n.x, y: n.y });
@@ -4960,7 +4504,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       applyViewportCulling();
     });
 
-    // First measured AABB pass once labels have real getBBox sizes
     if (vowlChipsAlwaysVisible) {
       requestAnimationFrame(() => {
         updateLinkLabelBackgrounds();
@@ -4969,7 +4512,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     }
 
-    // Drag functions
     function dragStarted(event: any, d: D3Node) {
       userInteractedRef.current = true; // dragging a node cancels pending entrance refits
       if (!event.active) simulation.alphaTarget(0.3).restart();
@@ -4985,7 +4527,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     function dragEnded(event: any, d: D3Node) {
       if (!event.active) simulation.alphaTarget(0);
       if (!editModeRef.current) {
-        // Keep VOWL neighborhood hubs pinned after drag (new position becomes the pin)
+
         if (visualizationType === 'vowl' && vowlPinnedHubIdsRef.current.has(d.id)) {
           d.fx = d.x;
           d.fy = d.y;
@@ -4994,14 +4536,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           d.fy = null;
         }
       }
-      // Hit-areas skipped path updates during the drag; sync them now, then re-cull
+
       updateEdgePaths(true);
       applyViewportCulling();
     }
 
-    // Node interaction handlers
-    // VOWL clones (per-edge Thing/Literal duplicates) resolve back to their
-    // original node for selection details, callbacks, and context-menu actions.
     function resolveVowlClone(d: D3Node): OntologyNode {
       const originalId = (d as any).metadata?.cloneOf as string | undefined;
       if (!originalId) return d as OntologyNode;
@@ -5010,13 +4549,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     function handleNodeClick(event: any, d: D3Node) {
       event.stopPropagation();
-      // The hover tooltip has no mouseout to clear it until the pointer actually
-      // leaves the node — a click doesn't move the pointer, so the tooltip box
-      // was sitting on top of the freshly-highlighted node/edges it just caused.
+
       d3.selectAll('.graph-tooltip').remove();
 
       if (event.ctrlKey || event.metaKey) {
-        // Multi-select
+
         const newSelected = new Set(selectedNodesRef.current);
         if (newSelected.has(d.id)) {
           newSelected.delete(d.id);
@@ -5025,18 +4562,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         setSelectedNodes(newSelected);
       } else {
-        // Single click — just select the node; navigation to entity details is
-        // deliberately NOT triggered here (right-click > Go to Entity Details).
+
         const original = resolveVowlClone(d);
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(original);
-        // Isolate option: filter the graph down to this node's neighborhood
-        // (right-click > Expand neighborhood walks the isolation from there)
+
         if (vowlOptions.isolateOnSelect && visualizationType === 'vowl') {
           enterFocusMode(original.id);
         }
-        // Focus the inline hierarchy navigator too (sidebar-only — this does not
-        // open the floating popup, see onToggleNavigator/context menu for that).
+
         if (original.type === 'class') {
           setHierarchyRootNode(original);
         }
@@ -5050,7 +4584,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
       const original = resolveVowlClone(d);
 
-      // Show context menu
       setContextMenu({
         visible: true,
         x: event.pageX,
@@ -5058,7 +4591,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         nodeId: original.id
       });
 
-      // Also select the node
       setSelectedNodes(new Set([d.id]));
       setSelectedNodeInfo(original);
     }
@@ -5079,7 +4611,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
 
       if (settings.tooltips) {
-        // Remove any existing tooltips first
+
         d3.selectAll('.graph-tooltip').remove();
 
         const isDarkTip = effectiveDark;
@@ -5127,7 +4659,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }, 450);
     }
 
-    // Zoom behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 10])
       // ~25% finer than d3's default wheel step — noticeably less jumpy on mice
@@ -5135,35 +4666,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         -event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002) * (event.ctrlKey ? 10 : 1) * 0.75
       )
       .on('zoom', (event) => {
-        // A real user gesture (wheel/drag, not a programmatic fit) cancels entrance refits
+
         if (event.sourceEvent) userInteractedRef.current = true;
         g.attr('transform', event.transform);
         currentTransformRef.current = event.transform;
-        // Avoid React re-render on every pan frame — update zoom label on gesture end only
 
-        // VOWL labels otherwise shrink with everything else on zoom-out (the
-        // whole graph sits in one transformed group). Two failure modes,
-        // verified in the test harness at 35 visible nodes:
-        //  - Naively counter-scaling to a fixed legible size at ANY zoom: once
-        //    "Fit to screen" needs k below ~0.4-0.5 to show every node (which
-        //    it does for 30+ nodes), the circles themselves shrink smaller
-        //    than the now-fixed-size text, so labels overflow their circles
-        //    and collide with neighbors — readable in isolation, messy as a
-        //    whole.
-        //  - Not counter-scaling at all: text shrinks to the ~3px illegible
-        //    mush this whole fix was for.
-        // So: counter-scale to stay pinned at the base size between 1:1 and
-        // HIDE_LABEL_ZOOM_THRESHOLD (labels still fit their now similarly-
-        // shrunk-but-not-tiny circles there); below that, hide labels
-        // entirely for a clean structure-only view — same idea as
-        // ontograph's existing showLabels zoom cutoff, just not shared code
-        // since the two modes' text rendering is a fully separate branch.
         if (visualizationType === 'vowl') {
           const k = event.transform.k;
-          // Beat-WebVOWL label policy: labels stay visible at fit zoom.
-          // Counter-scale with a clamp — up to 1.6× the base size so text
-          // never balloons past its (also shrunken) circle; only hide when
-          // the view is a far-out structure overview.
+
           const HIDE_LABEL_ZOOM_THRESHOLD = 0.14;
           const labelSelection = g.selectAll<SVGTextElement, unknown>('text.node-label-text');
           labelSelection.style('display', k < HIDE_LABEL_ZOOM_THRESHOLD ? 'none' : 'inline');
@@ -5176,7 +4686,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .on('end', (event) => {
         setZoomLevel(event.transform.k);
-        // Always track the viewport (cheap ref write) so culling/LOD reads are never stale
+
         const transform = event.transform;
         viewportBoundsRef.current = {
           x: -transform.x / transform.k,
@@ -5185,19 +4695,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           height: height / transform.k,
           scale: transform.k
         };
-        // Re-evaluate which nodes/edges are on screen after every camera move
+
         applyViewportCullingRef.current();
       });
 
     zoomRef.current = zoom;
     svg.call(zoom as any);
-    // Disable default double-click zoom so dblclick on nodes triggers expand/collapse
+
     svg.on('dblclick.zoom', null);
 
-    // Buttery wheel zoom: accumulate a target scale per wheel event, then rAF-lerp
-    // toward it anchored at the pointer. Applied via zoom.transform so d3's internal
-    // gesture state stays consistent. Falls back to native d3 steps when disabled
-    // or when the OS asks for reduced motion.
     let smoothWheelRaf: number | null = null;
     if (SMOOTH_WHEEL_ZOOM && !prefersReducedMotion) {
       svg.on('wheel.zoom', null); // take over from d3's discrete wheel handler
@@ -5210,7 +4716,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const dk = kTarget - cur.k;
         if (Math.abs(dk) < 0.001) { kTarget = null; smoothWheelRaf = null; return; }
         const k = cur.k + dk * 0.28;
-        // Keep the graph point under the pointer fixed while the scale eases in
+
         const gx = (px - cur.x) / cur.k;
         const gy = (py - cur.y) / cur.k;
         const t = d3.zoomIdentity.translate(px - gx * k, py - gy * k).scale(k);
@@ -5234,8 +4740,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     }
 
-    // Entrance fades: nodes pop in with a slight stagger, edges connect up just after.
-    // Only on a fresh first-open layout — never on incremental re-renders.
     if (entrancePlaying) {
       if (entranceRef.current.mode === 'bloom') {
         node
@@ -5252,7 +4756,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .duration(500)
           .style('opacity', 1);
       } else {
-        // Calm entrance: one quiet layer fade, no stagger
+
         g.style('opacity', 0)
           .transition('entrance')
           .duration(250)
@@ -5266,7 +4770,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const h = svgRef.current.clientHeight || height;
       if (!w || !h) return null;
 
-      // VOWL: fit around pinned hubs (not full bbox) so Fit can't re-squash clusters
       const pinned = vowlPinnedHubIdsRef.current;
       if (visualizationType === 'vowl' && pinned.size >= 2) {
         let hubs = simNodes.filter(
@@ -5319,9 +4822,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const bounds = (gRef.current as any).getBBox();
       if (bounds.width < 1 || bounds.height < 1) return null;
       let scale = Math.min(0.9 / Math.max(bounds.width / w, bounds.height / h), 2);
-      // VOWL opens like WebVOWL: readable scale, centered on the dense core
-      // (degree-weighted centroid), allowed to overflow the screen — never
-      // shrunk below 0.55 just to fit. Explicit Fit still fits everything.
+
       if (visualizationType === 'vowl') {
         scale = Math.min(Math.max(scale, 0.55), 1);
         let wx = 0;
@@ -5335,10 +4836,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           wSum += wt;
         }
         if (wSum > 0) {
-          // Center on the densest region: pick the node with the most solid
-          // neighbours within a viewport-sized radius (degree breaks ties).
-          // A raw degree-weighted centroid lands in empty space when the
-          // graph is a set of disconnected islands (e.g. lazy-loaded views).
+
           const solid = simNodes.filter(
             n => !(n as any).__isChip && n.x != null && n.y != null
           );
@@ -5363,14 +4861,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return d3.zoomIdentity.translate(tx, ty).scale(scale);
     };
 
-    // Auto-fit graph to viewport after DOM renders using getBBox for accuracy
     setTimeout(() => {
       if (!svgRef.current || !zoomRef.current) return;
       const svgEl = d3.select(svgRef.current);
       const target = computeFitTransform();
       if (!target) return;
       if (entrancePlaying && !prefersReducedMotion) {
-        // Instant rough fit slightly zoomed out (the settle needs room), then the hero fit
+
         const rough = target.scale(0.85);
         svgEl.call(zoomRef.current.transform as any, rough);
         svgEl.transition('entranceFit')
@@ -5382,12 +4879,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
     }, 50);
 
-    // After an expand/collapse toggle, glide to the toggled node once the
-    // re-anneal converges (timeout fallback: stop() never dispatches 'end').
     if (visualizationType === 'vowl' && pendingToggleFrameRef.current) {
       const frameNodeId = pendingToggleFrameRef.current;
       pendingToggleFrameRef.current = null;
-      // Claim the camera: the settle recenter must not fight the toggle glide.
+
       userInteractedRef.current = true;
       let framed = false;
       const frameToggled = () => {
@@ -5400,10 +4895,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       setTimeout(frameToggled, 5000);
     }
 
-    // WebVOWL parity (centerGraphViewOnLoad): the free-overflow layout keeps
-    // contracting after the t≈50ms fit above, leaving the camera on empty
-    // space — re-center once the anneal converges, unless the user took over.
-    // Timeout fallback because simulation.stop() never dispatches 'end'.
     if (visualizationType === 'vowl' && usePhysics && !isLayoutPaused) {
       let recentered = false;
       const recenter = () => {
@@ -5424,8 +4915,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       setTimeout(recenter, 8000);
     }
 
-    // Entrance completion: when the visible settle ends (or a hard timeout as a
-    // fallback), do one final gentle fit — unless the user has taken the camera.
     let entranceTimeout: ReturnType<typeof setTimeout> | null = null;
     if (entranceRef.current.phase === 'playing') {
       const finishEntrance = () => {
@@ -5449,7 +4938,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       entranceTimeout = setTimeout(finishEntrance, 6000);
     }
 
-    // Log performance metrics
     const endTime = performance.now();
     const renderTimeMs = endTime - startTime;
     renderTime.current = renderTimeMs;
@@ -5457,7 +4945,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.log(`[AdvancedGraphView D3] ⚡ Render completed in ${renderTimeMs.toFixed(2)}ms`);
       console.log(`[AdvancedGraphView D3] 📊 Performance: ${(filteredNodes.length / renderTimeMs * 1000).toFixed(0)} nodes/sec`);
     }
-    // Cleanup
+
     return () => {
       simulation.stop();
       if (entranceTimeout) clearTimeout(entranceTimeout);
@@ -5468,8 +4956,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   // down and rebuilding the whole scene.
   }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, settings.physics, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions]);
 
-  // Auto-fit the viewport when switching to ontograph or changing its layout type
-  // This ensures nodes are always in view after a layout recalculation
   useEffect(() => {
     if (visualizationType !== 'ontograph' || ontographLayoutType === 'spring') return;
 
@@ -5492,19 +4978,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return true;
     };
 
-    // Try at 350ms, retry at 800ms if SVG hasn't rendered yet (getBBox returns 0)
     const t1 = setTimeout(() => { if (!doFit()) { setTimeout(doFit, 450); } }, 350);
     return () => clearTimeout(t1);
   }, [visualizationType, ontographLayoutType, filteredNodes.length, prefersReducedMotion]);
 
-  // Visual update effect to prevent graph movement on selection/hover
   useEffect(() => {
     if (!gRef.current) return;
     const g = d3.select(gRef.current);
 
-    // One pass over edges instead of an allEdges.some() scan per node:
-    // the opacity callback below runs for every node on every hover change,
-    // which made hovering O(nodes × edges) on large graphs.
     const hoverNeighborIds = new Set<string>();
     if (hoveredNode) {
       for (const e of allEdges) {
@@ -5513,18 +4994,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
     }
 
-    // Selection focus: the selected class + everything directly attached to it
-    // (subclasses, properties, Literals, Things) stays bright; the rest dims.
-    // Read the RENDERED edges (post-VOWL transform) — allEdges still holds
-    // pre-split ids, which left Literal/Thing clones dimmed.
     const selectionActive = selectedNodes.size > 0;
     const focusNodeIds = new Set<string>();
     const focusEdgeIds = new Set<string>();
     if (selectionActive) {
       selectedNodes.forEach(id => focusNodeIds.add(id));
-      // Use RENDERED edge endpoints only (post-VOWL Literal/Thing clones).
-      // Do not expand via shared cloneOf originals — that would light up every
-      // Literal in the graph when one data-property neighbor is selected.
+
       g.selectAll('.edge-path').each((d: any) => {
         if (!d) return;
         const sourceId = typeof d.source === 'string' ? d.source : d.source?.id ?? d.from;
@@ -5537,7 +5012,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       });
     }
 
-    // Update edges
     g.selectAll('.edge-path')
       .attr('stroke-width', (d: any) => {
         const baseWidth = visualizationType === 'vowl' ? 1 : 2;
@@ -5568,7 +5042,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (d.type === 'propertyRelation') {
             const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
             const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
-            
+
             if (sourceNode?.type === 'annotation') return 'url(#arrow-vowl-annotation)';
             if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return 'url(#arrow-vowl-data)';
             return 'url(#arrow-vowl-object)';
@@ -5580,9 +5054,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         return null;
       });
-      
-    // Update labels — keep always-visible VOWL chips visible (same density rule
-    // as the main render pass), only hover-gate the rest
+
     const chipAlwaysVisible = (d: any) =>
       vowlChipDensityOk && (d.type === 'propertyRelation' || d.type === 'subClassOf');
     g.selectAll('.edge-label')
@@ -5596,7 +5068,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (!settings.showLabels) return 0;
         return selectionActive && !focusEdgeIds.has(d.id) ? 0.12 : 1;
       });
-      
+
     g.selectAll('.edge-label-bg')
       .attr('opacity', (d: any) => {
         if (visualizationType === 'vowl') {
@@ -5608,9 +5080,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
         return selectionActive && !focusEdgeIds.has(d.id) ? 0.12 : 0.85;
       });
-      
-    // Update nodes — layered highlights (search > selection > hover) on top of
-    // each shape's remembered base styling, so per-type accents survive updates
+
     const searchLower = searchQuery ? searchQuery.toLowerCase() : '';
     const isSearchMatch = (d: any) => !!searchLower && (
       d.label?.toLowerCase().includes(searchLower) ||
@@ -5622,7 +5092,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (!selectionActive || !focusNodeIds.has(d.id) || selectedNodes.has(d.id)) {
           return base;
         }
-        // Punch up pale Literals / hollow Things so the neighborhood reads as focused
+
         if (d.type === 'datatype') return '#f5c842';
         if (isThingIri(d.id) || d.label === 'Thing') return '#eef2ff';
         return base;
@@ -5655,8 +5125,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return base && base !== 'none' ? base : null;
       })
       .style('opacity', (n: any) => {
-        // Dim mode: keep all rendered nodes, fade anything outside the filter focus.
-        // Applies for search matches and Deep dive / ±1 focus (selection seeds).
+
         if (searchFilterMode === 'dim' && searchFocusIds.size > 0) {
           return searchFocusIds.has(n.id) ? 1 : 0.12;
         }
@@ -5669,8 +5138,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return 1;
       });
 
-    // Whole node group (shape + label + badges) dims when a class is selected
-    // and this node isn't in its immediate neighborhood.
     g.selectAll<SVGGElement, any>('.node')
       .style('opacity', (n: any) => {
         if (searchFilterMode === 'dim' && searchFocusIds.size > 0) {
@@ -5680,7 +5147,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return focusNodeIds.has(n.id) ? 1 : 0.1;
       });
 
-    // Disjoint badge follows the same focus rule
     g.selectAll('.disjoint-symbol')
       .style('opacity', (d: any) => {
         if (!selectionActive) return 1;
@@ -5689,9 +5155,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery, searchFilterMode, searchFocusIds, vowlChipDensityOk]);
 
-  // Pulse animation class on selected node groups (CSS keyframes in svg <style>).
-  // Separate effect: this sweep only depends on selection, so hover moves
-  // don't re-touch every node group's class list.
   useEffect(() => {
     if (!gRef.current) return;
     d3.select(gRef.current)
@@ -5699,7 +5162,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .classed('node-selected', (d: any) => selectedNodes.has(d.id));
   }, [selectedNodes, filteredNodes]);
 
-  // Camera glide: smoothly frame a set of node ids (spotlight / search fly-to)
   const glideToNodeIds = useCallback((ids: Set<string>, maxScale = 1.4) => {
     if (!svgRef.current || !zoomRef.current || !gRef.current || ids.size === 0) return;
     const pts: Array<{ x: number; y: number }> = [];
@@ -5725,7 +5187,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .call(zoomRef.current.transform as any, t);
   }, []);
 
-  // Focus mode: after neighborhood visibility updates, re-frame the focused set.
   useEffect(() => {
     if (!focusedNodeId) return;
     const ids = focusedNodeIds ?? new Set([focusedNodeId]);
@@ -5740,9 +5201,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return () => clearTimeout(timer);
   }, [focusedNodeId, focusedNodeIds, webglActive, glideToNodeIds, requestViewportFitAfterBulkExpand]);
 
-  // Spotlight camera: when a class is selected in VOWL, frame it with its
-  // direct neighborhood so the dimmed context never cuts off satellites.
-  // Isolate mode re-renders just the neighborhood and auto-fits — no glide.
   useEffect(() => {
     if (visualizationType !== 'vowl' || selectedNodes.size === 0 || !gRef.current) return;
     if (focusedNodeId || vowlOptions.isolateOnSelect) return;
@@ -5756,14 +5214,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (t) ids.add(t);
       }
     });
-    // Post-settle recenter must not yank the camera away from an explicit selection
+
     userInteractedRef.current = true;
     const timer = setTimeout(() => glideToNodeIds(ids), 120);
     return () => clearTimeout(timer);
   }, [selectedNodes, visualizationType, glideToNodeIds, focusedNodeId, vowlOptions.isolateOnSelect]);
 
-  // Search fly-to: once matches have rendered (and any reveal re-layout has
-  // ticked), glide the camera to frame them.
   useEffect(() => {
     if (!searchQuery || visualizationType !== 'vowl' || !gRef.current) return;
     const q = searchQuery.toLowerCase();
@@ -5781,16 +5237,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return () => clearTimeout(timer);
   }, [searchQuery, visualizationType, glideToNodeIds]);
 
-  /**
-   * ========================================================================
-   * HIERARCHICAL NAVIGATION HANDLERS
-   * ========================================================================
-   */
-  // The initial graph load caps out at maxNodes (5000) and only ships a subset of
-  // edges, so a node's backend-computed `hasChildren: true` can outlive its actual
-  // children being present in allNodes/allEdges — the arrow shows but expand finds
-  // nothing locally. Fetch the missing subclasses on demand in that case, using the
-  // STRUCTURAL (asserted-only) reasoner so this stays fast regardless of ontology size.
   const fetchMissingChildren = useCallback(async (nodeId: string): Promise<{ nodes: OntologyNode[]; edges: OntologyEdge[] }> => {
     const apiBaseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL;
     const authToken = localStorage.getItem('authToken');
@@ -5877,8 +5323,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       };
     });
 
-    // Re-frame on the toggled node once the re-layout settles — otherwise the
-    // camera is left on the space the removed/added subtree used to occupy.
     if (visualizationType === 'vowl') {
       pendingToggleFrameRef.current = nodeId;
     }
@@ -5891,9 +5335,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return;
     }
 
-    // Get parent IRIs from edges
     const parentIds = getParents(nodeId, allEdges, allNodes);
-    
+
     if (parentIds.length === 0) {
       console.log('[User Action] No parents to expand for:', node.label);
       return;
@@ -5919,8 +5362,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         expanded: newExpandedIds
       };
     });
-    
-    // If dialog is open, update it to show the topmost parent as root
+
     if (showHierarchyDialog && parentIds.length > 0) {
       const topmostParent = allNodes.find(n => n.id === parentIds[0]);
       if (topmostParent) {
@@ -6205,11 +5647,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.error('[Graph Dialog] No projectId available');
       return;
     }
-    
+
     const parentId = action.parentNode.id;
     const parentIriForMutation = resolveNodeIri(action.parentNode);
     const newLabel = action.label.trim();
-    
+
     console.log('[Graph Dialog] executeCreateClass called:', {
       relation: action.relation,
       targetNode: action.targetNode.label,
@@ -6218,7 +5660,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       parentId,
       parentIriForMutation
     });
-    
+
     if (!newLabel) {
       setClassActionFeedback({ type: 'error', message: 'Class name cannot be empty.' });
       return;
@@ -6235,7 +5677,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       setClassActionLoading(true);
       setClassActionFeedback(null);
       const newIri = buildClassIri(newLabel, action.parentNode || action.targetNode);
-      
+
       console.log('[Graph Dialog] Sending createClass mutation to backend:', {
         type: 'createClass',
         iri: newIri,
@@ -6246,7 +5688,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const apiBaseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL;
       const authToken = localStorage.getItem('authToken');
       const draftMode = context?.draftMode ?? false;
-      
+
       const response = await fetch(`${apiBaseUrl}/api/ontology/mutations/${projectId}?draft=${draftMode}`, {
         method: 'POST',
         headers: authHeaders(authToken),
@@ -6292,38 +5734,35 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         edge: newEdge
       });
 
-      // Update nodes and edges
       setAllNodes(prev => {
         const updated = [...prev, newNode];
         console.log('[Graph Dialog] Updated allNodes count:', updated.length);
         return updated;
       });
-      
+
       setAllEdges(prev => {
         const updated = [...prev, newEdge];
         console.log('[Graph Dialog] Updated allEdges count:', updated.length);
         return updated;
       });
 
-      // Update hierarchy state - make parent expanded and new node visible
       updateHierarchyState(prev => {
         const visible = new Set(prev.visible);
         const expanded = new Set(prev.expanded);
         visible.add(newIri);
         visible.add(parentId); // Ensure parent is also visible
         expanded.add(parentId); // Expand parent to show new child
-        
+
         console.log('[Graph Dialog] Updated hierarchy state:', {
           visibleCount: visible.size,
           expandedCount: expanded.size,
           newNodeVisible: visible.has(newIri),
           parentExpanded: expanded.has(parentId)
         });
-        
+
         return { visible, expanded };
       });
 
-      // Select the new node and center the camera on it
       setSelectedNodes(new Set([newIri]));
       setSelectedNodeInfo(newNode);
       window.setTimeout(() => {
@@ -6333,12 +5772,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           glideToNodeIds(new Set([newIri]), 1.4);
         }
       }, 180);
-      
-      // Show success feedback
+
       setClassActionFeedback({ type: 'success', message: `✓ Created class "${newLabel}"` });
       setPendingClassAction(null);
-      
-      // Notify the host (Dashboard) that a class was created so it can update its hierarchy
+
       window.dispatchEvent(new CustomEvent('graph-view:class-created', {
         detail: {
           id: newIri,
@@ -6347,7 +5784,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           projectId
         }
       }));
-      
+
       console.log('[Graph Dialog] Class creation completed successfully');
     } catch (actionError) {
       const message = actionError instanceof Error ? actionError.message : 'Failed to create class';
@@ -6374,7 +5811,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     setPendingClassAction({ kind: 'delete', targetNode: node, childCount });
   }, [allNodes, allEdges, canEdit, classActionLoading, projectId, readonly]);
 
-  // rdfs:label rename (IRI unchanged) — used by the WebGL hover card
   const renameClassLabel = useCallback(async (nodeId: string, newLabel: string) => {
     if (readonly || !projectId || !canEdit || classActionLoading) return;
     const node = allNodes.find(n => n.id === nodeId);
@@ -6460,12 +5896,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   }, [executeCreateClass, executeDeleteClass, pendingClassAction]);
 
-  /**
-   * ========================================================================
-   * CONTROL FUNCTIONS
-   * ========================================================================
-   */
-  // Every programmatic camera move shares one duration and easing (instant under reduced motion)
   const cameraTransition = (svg: d3.Selection<SVGSVGElement, unknown, null, undefined>, ms: number = CAMERA_MS) =>
     svg.transition().duration(prefersReducedMotion ? 0 : ms).ease(d3.easeCubicOut);
 
@@ -6495,11 +5925,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   };
 
-  /**
-   * Fit camera to the graph. In VOWL mode we MUST NOT fit the full SVG bbox:
-   * spreading hubs farther just zooms out more (screen gap stays constant). Instead
-   * fit around pinned class hubs and enforce a minimum on-screen hub gap.
-   */
   const computeSmartFitTransform = useCallback((): d3.ZoomTransform | null => {
     if (!svgRef.current || !gRef.current) return null;
     const w = svgRef.current.clientWidth;
@@ -6514,8 +5939,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         n => pinned.has(n.id) && n.x != null && n.y != null && Number.isFinite(n.x) && Number.isFinite(n.y)
       );
       if (hubs.length >= 2) {
-        // VOWL shows a local neighborhood clearly — when we have many hubs,
-        // fit around the densest few so nodes stay readable (not a zoomed-out hairball).
+
         if (hubs.length > 6) {
           const deg = (id: string) => {
             let c = 0;
@@ -6537,7 +5961,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           maxX = Math.max(maxX, hub.x! + localR);
           maxY = Math.max(maxY, hub.y! + localR);
         }
-        // Include nearby members (Literal fans) so the fit isn't hub-circles-only
+
         for (const n of simNodes) {
           if ((n as any).__isChip || n.x == null || n.y == null) continue;
           for (const hub of hubs) {
@@ -6563,12 +5987,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         const bw = Math.max(1, maxX - minX);
         const bh = Math.max(1, maxY - minY);
-        // Prefer a closer camera so class labels stay readable like VOWL
+
         let scale = Math.min(1.15 / Math.max(bw / w, bh / h), 2.2);
         if (minHubDist < Infinity && minHubDist > 1) {
           scale = Math.max(scale, Math.min(220 / minHubDist, 2.0));
         }
-        // Never zoom out so far that a class circle is < ~28px on screen
+
         scale = Math.max(scale, 0.55);
 
         const tx = w / 2 - scale * ((minX + maxX) / 2);
@@ -6580,8 +6004,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const bounds = (gRef.current as any).getBBox();
     if (!bounds || bounds.width < 1 || bounds.height < 1) return null;
 
-    // Prefer node-circle AABB when simulation positions are available — getBBox
-    // can be inflated by long edge labels / VOWL chips.
     let minX = bounds.x;
     let minY = bounds.y;
     let maxX = bounds.x + bounds.width;
@@ -6606,7 +6028,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const bw = Math.max(1, maxX - minX);
     const bh = Math.max(1, maxY - minY);
     let scale = Math.min(0.9 / Math.max(bw / w, bh / h), 2);
-    // Never zoom out so far that a class circle is tiny on screen
+
     scale = Math.max(scale, 0.55);
     const tx = w / 2 - scale * ((minX + maxX) / 2);
     const ty = h / 2 - scale * ((minY + maxY) / 2);
@@ -6628,8 +6050,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const handleFitRef = useRef<() => void>(() => {});
   handleFitRef.current = handleFit;
 
-  // Expand All / deep dive / ±1 bump viewportFitToken; SVG re-uses the
-  // Tree↔Network auto-fit cadence. WebGL watches the same token in its child.
   useEffect(() => {
     if (!viewportFitToken || webglActive) return;
     userInteractedRef.current = false;
@@ -6638,9 +6058,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [viewportFitToken, webglActive]);
 
-  // Switching SVG modes leaves the camera wherever the previous mode was — static
-  // layouts (tree/grid/radial) then render off-screen. Auto-fit after the switch:
-  // once quickly for static layouts, once more after physics has settled.
   const autoFitKey = `${visualizationType}:${ontographLayoutType}:${webglActive}`;
   useEffect(() => {
     if (webglActive) return;
@@ -6759,7 +6176,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, [persistSavedViews, savedViews]);
 
   const handleExport = async (format: ExportFormat) => {
-    // WebGL path: always capture a PNG (SVG button still downloads .png).
+
     if (webglActive) {
       if (format === 'svg') {
         console.info('[Graph Export] WebGL has no SVG export — downloading PNG instead.');
@@ -6778,7 +6195,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return;
     }
 
-    // Exports serialize the live DOM — make sure viewport culling never truncates them
     uncullForExportRef.current();
     if (format === 'svg' && svgRef.current) {
       const svgData = new XMLSerializer().serializeToString(svgRef.current);
@@ -6792,19 +6208,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     } else if (format === 'png' && svgRef.current) {
       try {
         const svgElement = svgRef.current;
-        
-        // Get SVG dimensions
+
         const bbox = svgElement.getBBox();
         const width = Math.max(bbox.width + 40, 800);
         const height = Math.max(bbox.height + 40, 600);
-        
-        // Clone SVG and set explicit dimensions
+
         const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
         clonedSvg.setAttribute('width', width.toString());
         clonedSvg.setAttribute('height', height.toString());
         clonedSvg.setAttribute('viewBox', `${bbox.x - 20} ${bbox.y - 20} ${width} ${height}`);
 
-        // Inline computed styles so CSS variables / theme colors survive export
         const inlineComputedStyles = (source: Element, target: Element) => {
           if (source instanceof Element && target instanceof Element) {
             try {
@@ -6827,42 +6240,36 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           }
         };
         inlineComputedStyles(svgElement, clonedSvg);
-        
-        // Serialize SVG
+
         const svgData = new XMLSerializer().serializeToString(clonedSvg);
-        
-        // Create canvas
+
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
-        
+
         if (!ctx) {
           console.error('Failed to get canvas context');
           return;
         }
-        
-        // Create image
+
         const img = new Image();
         const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
         const url = URL.createObjectURL(svgBlob);
-        
+
         img.onerror = (e) => {
           console.error('Failed to load SVG image for PNG export:', e);
           URL.revokeObjectURL(url);
         };
-        
+
         img.onload = () => {
           URL.revokeObjectURL(url);
-          
-          // Fill white background
+
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, width, height);
-          
-          // Draw SVG
+
           ctx.drawImage(img, 0, 0);
-          
-          // Convert to PNG and download
+
           canvas.toBlob(blob => {
             if (blob) {
               const pngUrl = URL.createObjectURL(blob);
@@ -6880,8 +6287,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         console.error('PNG export failed:', error);
       }
     }
-    // Serialization is synchronous in both branches (PNG captures svgData up front),
-    // so it's safe to restore viewport culling immediately.
+
     applyViewportCullingRef.current();
   };
 
@@ -6896,36 +6302,31 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
   };
 
-  // Load data on mount and when projectId changes
   useEffect(() => {
-    // Guard: Don't fetch if no projectId
+
     if (!projectId) {
       console.warn('[AdvancedGraphView] No projectId, skipping initial fetch');
       return;
     }
-    
-    // Clear existing data when projectId changes to prevent showing stale data
+
     setAllNodes([]);
     setAllEdges([]);
     updateHierarchyState(() => ({
       visible: new Set<string>(),
       expanded: new Set<string>()
     }));
-    
-    // Fetch new data for the current project
+
     console.log('[AdvancedGraphView] 🚀 Initial mount or projectId changed, fetching graph data for:', projectId);
     fetchGraphData();
   }, [projectId]); // Remove fetchGraphData from dependencies to avoid stale closure issues
 
-  // Refetch (bypassing the sessionStorage cache) when classes are created/deleted
-  // elsewhere in the app — the entity editor dispatches these window events.
   useEffect(() => {
     if (!projectId) return;
     let refetchQueued = false;
     const handleMutation = () => {
       if (refetchQueued) return;
       refetchQueued = true;
-      // Small delay so rapid successive mutations coalesce into one refetch.
+
       setTimeout(() => {
         refetchQueued = false;
         console.log('[AdvancedGraphView] 🔄 Ontology mutated elsewhere — refetching graph data');
@@ -6981,7 +6382,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return () => clearTimeout(timer);
   }, [classActionFeedback]);
 
-  // Close context menu on outside click
   useEffect(() => {
     const handleClickOutside = () => {
       if (contextMenu.visible) {
@@ -6993,11 +6393,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return () => document.removeEventListener('click', handleClickOutside);
   }, [contextMenu]);
 
-  /**
-   * ========================================================================
-   * HIERARCHY DIALOG HELPERS
-   * ========================================================================
-   */
   const handleDialogExpand = useCallback((nodeId: string) => {
     const label = allNodes.find(n => n.id === nodeId)?.label || nodeId;
     console.log(`[Dialog] User clicked to expand/collapse node:`, label);
@@ -7068,11 +6463,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     });
   }, [allNodes, allEdges, updateHierarchyState, visibleNodeIds]);
 
-  // Memoize node children and parents map for better performance.
-  // Uses a single O(n+m) batched pass (buildChildrenParentsIndex) instead of calling
-  // getChildren/getParents once per node — each of those re-scans every edge, so doing
-  // it per node is O(n*m), which reaches into the billions of operations and freezes
-  // the tab on large ontologies (tens of thousands of nodes/edges).
   const nodeRelationsMap = useMemo(() => {
     const index = buildChildrenParentsIndex(allNodes, allEdges);
     const relations = new Map<string, { children: string[]; parents: string[]; hasChildren: boolean; hasParents: boolean }>();
@@ -7136,7 +6526,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }
           }}
         >
-          {/* Expand/Collapse Icon */}
+          {}
           <div style={{ width: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {hasChildNodes ? (
               <button
@@ -7172,8 +6562,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               <span style={{ width: '20px' }} />
             )}
           </div>
-          
-          {/* Node Type Icon & Label */}
+
+          {}
           <div
             style={{
               flex: 1,
@@ -7187,7 +6577,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               setSelectedNodeInfo(node);
             }}
           >
-            {/* Type Indicator Circle */}
+            {}
             <div
               style={{
                 width: '8px',
@@ -7198,14 +6588,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }}
               title={node.type}
             />
-            
+
             <span
               title={node.label}
               style={{
                 fontSize: '13px',
                 fontWeight: selectedNodes.has(node.id) ? '600' : '400',
-                // Theme variable, not a hardcoded dark hex — rows sit on var(--surface-1),
-                // which is dark in dark mode (hardcoded #1f2937 made labels invisible there)
+
                 color: 'var(--text-primary, #1f2937)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -7215,8 +6604,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               {node.label}
             </span>
           </div>
-          
-          {/* Type Badge */}
+
+          {}
           <span
             style={{
               fontSize: '10px',
@@ -7237,8 +6626,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
              node.type === 'individual' ? 'Ind' :
              node.type.substring(0, 4)}
           </span>
-          
-          {/* Action Buttons */}
+
+          {}
           {canEdit && (
             <div style={{ display: 'flex', gap: '4px', marginLeft: '6px', opacity: 0.7 }}
               onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
@@ -7388,8 +6777,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             </div>
           )}
         </div>
-        
-        {/* Expanded Children with Smooth Animation */}
+
+        {}
         {isExpanded && hasChildNodes && (
           <div
             style={{
@@ -7405,14 +6794,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     );
   }, [nodeRelationsMap, allNodes, allEdges, expandedNodeIds, selectedNodes, handleExpandParents, handleDialogExpand, startCreateClassAction, startDeleteClassAction, canEdit, classActionLoading]);
 
-  // Shared navigator body — the same content (root node info, tree, action
-  // feedback, footer legend) rendered both inline in the sidebar and inside the
-  // floating "pop out" dialog, so the two never drift apart.
   const hierarchyNavigatorBody = useMemo(() => {
     if (!hierarchyRootNode) return null;
     return (
       <>
-        {/* Root Node Info */}
+        {}
         <div
           style={{
             padding: '8px 12px',
@@ -7428,7 +6814,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         </div>
 
-        {/* Hierarchy Tree */}
+        {}
         <div
           style={{
             flex: 1,
@@ -7459,7 +6845,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         )}
 
-        {/* Footer legend */}
+        {}
         <div
           style={{
             padding: '5px 10px',
@@ -7479,11 +6865,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     );
   }, [hierarchyRootNode, expandedNodeIds, selectedNodes, classActionFeedback, canEdit, classActionLoading, renderHierarchyTree]);
 
-  /**
-   * ========================================================================
-   * RENDER
-   * ========================================================================
-   */
   return (
     <div
       className="advanced-graph-view-d3"
@@ -7493,14 +6874,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       data-graph-mode={visualizationType}
       data-graph-entrance={entrancePhase}
     >
-      {/* Plugin Update Service */}
+      {}
       <PluginUpdateService
         currentVersion="3.1.0"
         pluginId="graph-view-plugin"
         checkInterval={60 * 60 * 1000}
       />
 
-      {/* FOCUS MODE BANNER — appears when a class is isolated to its neighborhood */}
+      {}
       {focusedNodeId && (() => {
         const focusNode = allNodes.find(n => n.id === focusedNodeId);
         return (
@@ -7585,11 +6966,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         );
       })()}
 
-      {/* Main Row with Two Columns */}
+      {}
       <div style={styles.mainRow}>
-        {/* First Column: Toolbar + Graph Area */}
+        {}
         <div style={styles.firstColumn}>
-          {/* Toolbar — minimal primary bar; everything else lives in the View-options popover */}
+          {}
           <GraphToolbar
             styles={styles}
             loading={loading}
@@ -7625,9 +7006,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             showOverflowHint={showToolbarHint}
             onRefresh={() => fetchGraphData({ bypassCache: true })}
             onPresetNetwork={() => {
-              // Network view is the WebGL engine — force-directed at scale.
-              // Never dump every class for huge ontologies (GO etc.): Expand All
-              // packs ForceAtlas2 into an illegible hairball of overlapping labels.
+
               setSettings(prev => prev.renderer === 'webgl' ? prev : { ...prev, renderer: 'webgl' });
               const { newExpandedIds, newVisibleIds, capped } = networkGraphVisibility(allNodes, allEdges);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
@@ -7643,7 +7022,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               setSettings(prev => prev.renderer === 'webgl' ? { ...prev, renderer: 'svg' } : prev);
               setVisualizationType('ontograph');
               setOntographLayoutType('tree');
-              // Tree also becomes unreadable if every GO term is forced visible.
+
               const { newExpandedIds, newVisibleIds, capped } = networkGraphVisibility(allNodes, allEdges);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
               requestViewportFitAfterBulkExpand();
@@ -7655,14 +7034,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }
             }}
             onSetVisualizationType={(next) => {
-              // SVG-mode picker: leave the WebGL engine so the choice is visible.
+
               setSettings(prev => prev.renderer === 'webgl' ? { ...prev, renderer: 'svg' } : prev);
               setVisualizationType(next);
               if (next === 'ontograph' && ontographLayoutType === 'spring') {
                 setOntographLayoutType('tree');
               }
-              // Fresh settle when entering VOWL — don't inherit force-mode positions
-              // that fight the per-edge Thing/Literal topology.
+
               if (next === 'vowl') {
                 nodePositionsRef.current.clear();
                 setClassDistance(170);
@@ -7741,7 +7119,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             onExport={handleExport}
           />
 
-          {/* Suggest the WebGL renderer once graphs outgrow what SVG can keep smooth */}
+          {}
           {!webglActive && webglSupported && filteredNodes.length > 5000 && !webglBannerDismissed && (
             <div
               data-testid="graph-webgl-banner"
@@ -7775,10 +7153,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             </div>
           )}
 
-          {/* Graph workspace: main canvas OR OntoCode local graph (toggled, never both) */}
+          {}
           <div style={styles.graphWorkspace}>
           <div style={{ ...styles.graphContentArea, flex: 1, position: 'relative' }}>
-            {/* Slim rail to reopen the Explorer sidebar when it's collapsed */}
+            {}
             {!showPropertyPanel && (
               <button
                 data-testid="graph-explorer-rail"
@@ -7804,7 +7182,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 <ChevronRight size={14} style={{ transform: 'rotate(180deg)' }} />
               </button>
             )}
-            {/* WebGL renderer (feature-flagged spike) — high-performance path for large graphs */}
+            {}
             {webglActive && (
               <WebGLGraphView
                 ref={webglCamRef}
@@ -7817,13 +7195,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 showGrid={showGrid}
                 physicsEnabled={settings.physics}
                 onNodeClick={(id) => {
-                  // Select only — do not navigate. Entity button / context menu use onGoToEntity.
+
                   const found = allNodes.find(n => n.id === id);
                   setSelectedNodes(new Set([id]));
                   if (found) setSelectedNodeInfo(found);
                 }}
                 onNodeRightClick={(id, pos) => {
-                  // Always allow context menu (Entity / Properties) — not edit-gated.
+
                   setContextMenu({ visible: true, x: pos.x, y: pos.y, nodeId: id });
                 }}
                 hasNodeChildren={(id) => nodeRelationsMap.get(id)?.hasChildren ?? false}
@@ -7839,7 +7217,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 searchPanelOpen={showSearch}
               />
             )}
-            {/* SVG Canvas for Force, VOWL, OntoGraph, and projected 3D Spatial mode */}
+            {}
             {!webglActive && (
             <>
             {svgHoverCard && (
@@ -7957,13 +7335,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={visualizationType === 'spatial3d' ? { ...styles.svg, ...styles.spatial3dSvg } : styles.svg}
             >
                 <defs>
-                  {/* Grid pattern */}
+                  {}
                   {showGrid && (
                     <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
                       <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e5e5e5" strokeWidth="0.5" />
                     </pattern>
                   )}
-                  {/* Search highlight glow filter */}
+                  {}
                   <filter id="search-glow" x="-30%" y="-30%" width="160%" height="160%">
                     <feGaussianBlur stdDeviation="3" result="coloredBlur" />
                     <feFlood floodColor="#f59e0b" floodOpacity="0.6" result="glowColor" />
@@ -7974,8 +7352,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                     </feMerge>
                   </filter>
                 </defs>
-                {/* Micro-interactions: hover lift, smooth highlight transitions,
-                    label halos for readability, selection pulse */}
+                {}
                 <style>{`
                   [data-testid="graph-svg"] .node-shape {
                     transition: stroke 160ms ease, stroke-width 160ms ease, opacity 220ms ease;
@@ -8028,7 +7405,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               </div>
             )}
 
-            {/* Empty state overlay */}
+            {}
             {!loading && filteredNodes.length === 0 && (
               <div style={{
                 position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -8055,7 +7432,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               </div>
             )}
 
-            {/* Search Panel */}
+            {}
             {showSearch && (() => {
               const depthSeeds = getDepthSeeds();
               const hasSeeds = depthSeeds.length > 0;
@@ -8106,7 +7483,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               style={styles.searchInput}
             />
 
-            {/* Filter mode: Dim vs Hide with descriptions */}
+            {}
             <div style={{ padding: '10px 12px 8px' }}>
               <div style={sectionLabel}>Filter mode</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -8162,7 +7539,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               </div>
             </div>
 
-            {/* Depth */}
+            {}
             <div style={{ padding: '4px 12px 10px' }}>
               <div style={sectionLabel}>Depth</div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -8200,7 +7577,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               </label>
             </div>
 
-            {/* Neighborhood expand/collapse */}
+            {}
             <div style={{ padding: '4px 12px 10px', borderTop: '1px solid var(--border)' }}>
               <div style={{ ...sectionLabel, marginTop: 8 }}>Expand around selection</div>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: 8 }}>
@@ -8333,7 +7710,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
       </div>
 
-      {/* OntoCode Insights Panel — right-side column */}
+      {}
       {showAnalytics && (
         <AnalyticsPanel
           analytics={graphAnalytics}
@@ -8361,10 +7738,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         />
       )}
 
-        {/* Graph View Sidebar - Second Column */}
+        {}
         {showPropertyPanel && (
           <div style={{ position: 'relative', display: 'flex', minWidth: 0 }}>
-          {/* Collapse chevron on the panel's left edge — mirrors the reopen rail on the canvas */}
+          {}
           <button
             data-testid="graph-explorer-collapse"
             onClick={() => setShowPropertyPanel(false)}
@@ -8397,8 +7774,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 setSelectedNodes(new Set([node.id]));
                 setSelectedNodeInfo(node);
 
-                // Reveal in graph: if the class is collapsed away, expand its
-                // ancestor path so selection is actually visible on canvas.
                 if (!visibleNodeIds.has(node.id)) {
                   const path = findPathToNode(node.id, allEdges, allNodes);
                   updateHierarchyState(prev => {
@@ -8419,14 +7794,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                   }
                 }
 
-                // Focus the hierarchy navigator for class nodes — shows inline in
-                // the sidebar by default; the floating popup is opt-in only (see
-                // onPopOutHierarchyNavigator/onToggleNavigator/context menu).
                 if (node.type === 'class') {
                   setHierarchyRootNode(node);
                 }
 
-                // Highlight node in graph
                 d3.selectAll('.node')
                   .classed('highlighted', false)
                   .filter((d: any) => d.id === node.id)
@@ -8462,14 +7833,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             datatypeDistance={datatypeDistance}
             onClassDistanceChange={(distance) => {
               setClassDistance(distance);
-              // Restart simulation with new distance
+
               if (simulationRef.current) {
                 simulationRef.current.alpha(0.3).restart();
               }
             }}
             onDatatypeDistanceChange={(distance) => {
               setDatatypeDistance(distance);
-              // Restart simulation with new distance
+
               if (simulationRef.current) {
                 simulationRef.current.alpha(0.3).restart();
               }
@@ -8521,7 +7892,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         )}
       </div>
 
-        {/* Hierarchy Dialog */}
+        {}
         {showHierarchyDialog && hierarchyRootNode && (
           <div
             style={{
@@ -8545,7 +7916,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Dialog Header - Draggable */}
+            {}
             <div
               style={{
                 padding: '8px 12px',
@@ -8563,11 +7934,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 borderTopRightRadius: '8px'
               }}
               onMouseDown={(e) => {
-                // Don't start drag if clicking on buttons
+
                 if ((e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).closest('button')) {
                   return;
                 }
-                
+
                 const startX = e.clientX - hierarchyDialogPosition.x;
                 const startY = e.clientY - hierarchyDialogPosition.y;
 
@@ -8644,7 +8015,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               </div>
             </div>
 
-            {/* Dialog Content - Hidden when minimized */}
+            {}
             {!isDialogMinimized && hierarchyNavigatorBody}
             {!isDialogMinimized && (
               <div
@@ -8780,7 +8151,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         )}
 
-        {/* Loading */}
+        {}
         {loading && (
           <div style={styles.loadingOverlay} data-testid="graph-loading">
             <RefreshCw size={32} className="spinning" />
@@ -8788,7 +8159,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         )}
 
-        {/* Error */}
+        {}
         {error && (
           <div style={styles.errorPanel}>
             <AlertTriangle size={20} color="#ef4444" />
@@ -8796,7 +8167,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         )}
 
-        {/* Context Menu — lean: hover card already has Expand/Focus/Rename/Sub/Delete */}
+        {}
         {contextMenu.visible && contextMenu.nodeId && (
           <div
             style={{
@@ -8859,7 +8230,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           </div>
         )}
 
-      {/* Styles */}
+      {}
       <style>{`
         .advanced-graph-view-d3 {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
@@ -8905,8 +8276,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         }
       `}</style>
 
-      {/* Save-view name prompt — see showSaveViewPrompt declaration for why this
-          replaces window.prompt() */}
+      {}
       {showSaveViewPrompt && (
         <div
           style={{
@@ -8989,7 +8359,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   );
 };
 
-// Styles
 const styles: Record<string, React.CSSProperties> = {
   container: {
     position: 'relative',

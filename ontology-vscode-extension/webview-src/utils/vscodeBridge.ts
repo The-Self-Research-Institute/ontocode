@@ -1,27 +1,4 @@
-/**
- * vscodeBridge.ts
- *
- * A drop-in replacement for the VS Code `window.vscode.postMessage` API.
- * When the React app runs outside VS Code Desktop (browser, Electron without
- * a preload bridge, or VS Code Web), this shim ensures every `postMessage`
- * the app fires still works without breaking.
- *
- * The real VS Code extension handles 33 inbound message types.  
- * This bridge covers ALL 28 types the webview actually sends:
- *
- *  Auth:         requestAuthToken, saveAuthToken, logout
- *  Lifecycle:    webviewReady, fileLoaded, setApiBaseUrl
- *  File I/O:     downloadOntology, downloadFile, downloadCurrentOntology,
- *                openLocalFile, createNewFile, importLocalFile
- *  Upload:       uploadOntology, uploadFileToProject, uploadOntologyContent
- *  API proxy:    apiGet, apiPost, apiPut, apiPatch, apiDelete, proxyRequest
- *  Collab:       requestCollaborationStatus, cursorMoved, broadcastCursor
- *  Notifications: showNotification, error, notification
- *  Citations:    requestZoteroLibrary, removeCitationFromGraphDB,
- *                insertCitation, insertManualCitation, insertCitationToGraphDB
- *  Misc:         showSubscriptionPlans, duplicateFilePromptResponse,
- *                getQueueStatus
- */
+
 
 import apiClient from '../services/apiClient';
 import { notificationService } from '../services/notificationService';
@@ -33,12 +10,10 @@ import { uploadFormDataWithProgress, uploadBlobInChunks } from './uploadWithProg
 
 let browserZoteroLibrarySessionCounter = 0;
 
-// ── Helper: dispatch a synthetic MessageEvent so listener code sees it ──────
 function postToSelf(data: Record<string, any>) {
     window.dispatchEvent(new MessageEvent('message', { data }));
 }
 
-// ── Helper: extract email from JWT auth token ───────────────────────────────
 function getOwnerEmailFromToken(): string | undefined {
     try {
         const token = localStorage.getItem('authToken');
@@ -52,7 +27,6 @@ function getOwnerEmailFromToken(): string | undefined {
     }
 }
 
-/** JWT workspaceId — must be duplicated on upload URL query for FREE-plan owner checks (see extension upload URL). */
 function getWorkspaceIdFromToken(): string | undefined {
     try {
         const token = localStorage.getItem('authToken');
@@ -67,7 +41,6 @@ function getWorkspaceIdFromToken(): string | undefined {
     }
 }
 
-// ── Helper: Blob download (shared by downloadOntology & downloadFile) ───────
 function triggerBlobDownload(content: string | Blob, filename: string) {
     const blob = content instanceof Blob
         ? content
@@ -82,11 +55,9 @@ function triggerBlobDownload(content: string | Blob, filename: string) {
     URL.revokeObjectURL(url);
 }
 
-// ── Helper: Inject missing namespace declarations (including custom) ────────
 function injectDynamicNamespaces(content: string): string {
     if (!content.includes('<rdf:RDF')) return content;
 
-    // Well-known prefix → namespace URI (synced with OWLFormatConverter.java)
     const knownNs: Record<string, string> = {
         rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
         rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
@@ -119,32 +90,24 @@ function injectDynamicNamespaces(content: string): string {
         faldo: 'http://biohackathon.org/resource/faldo#',
     };
 
-    // Scan for prefixes used in XML element/attribute names only (not in text content).
-    // In RDF/XML, namespace prefixes appear as:
-    //   1. Element names: <prefix:LocalName ...>  or  </prefix:LocalName>
-    //   2. Attribute names: prefix:attr="..."
-    // We must NOT match "prefix:text" inside string values like rdfs:label.
     const usedPrefixes = new Set<string>();
 
-    // Match opening/closing element names: <prefix:Name or </prefix:Name
     const elementPrefixRegex = /<\/?([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]/g;
     let m;
     while ((m = elementPrefixRegex.exec(content)) !== null) {
         const p = m[1];
         if (p !== 'xmlns' && p !== 'xml') usedPrefixes.add(p);
     }
-    // Match attribute names: whitespace followed by prefix:attr= (with = to ensure it's an attribute, not text)
+
     const attrPrefixRegex = /\s([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z][a-zA-Z0-9_-]*\s*=/g;
     while ((m = attrPrefixRegex.exec(content)) !== null) {
         const p = m[1];
         if (p !== 'xmlns' && p !== 'xml') usedPrefixes.add(p);
     }
 
-    // Find undeclared prefixes
     const toInject: Array<{ prefix: string; uri: string }> = [];
     const unresolved: string[] = [];
 
-    // Extract document context for dynamic resolution
     const xmlBaseMatch = content.match(/xml:base\s*=\s*"([^"]+)"/);
     const ontologyMatch = content.match(/<owl:Ontology\s+rdf:about\s*=\s*"([^"]+)"/);
     const defaultNsMatch = content.match(/<rdf:RDF[^>]*\sxmlns\s*=\s*"([^"]+)"/);
@@ -160,10 +123,8 @@ function injectDynamicNamespaces(content: string): string {
             continue;
         }
 
-        // Dynamic resolution for custom prefixes
         let resolvedUri: string | null = null;
 
-        // Strategy A: Match prefix:LocalName against full URIs
         const lnRegex = new RegExp(`(?:<|\\s)${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:([a-zA-Z][a-zA-Z0-9_.-]*)`, 'g');
         const localNames: string[] = [];
         let lnMatch;
@@ -180,7 +141,6 @@ function injectDynamicNamespaces(content: string): string {
             }
         }
 
-        // Strategy B: Derive from xml:base / ontology IRI / default namespace
         if (!resolvedUri) {
             const base = xmlBase || ontologyIri || defaultNs;
             if (base) {
@@ -217,11 +177,8 @@ function injectDynamicNamespaces(content: string): string {
     return content.substring(0, insertPos) + injection + content.substring(insertPos);
 }
 
-// ── The bridge itself ───────────────────────────────────────────────────────
 function handleBrowserMessage(message: any) {
     switch (message.type) {
-
-        // ──────── Auth ──────────────────────────────────────────────────────
 
         case 'requestAuthToken': {
             const token = localStorage.getItem('authToken');
@@ -242,18 +199,15 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
-        // ──────── Lifecycle ─────────────────────────────────────────────────
-
         case 'webviewReady': {
-            // In browser the app is already loaded; just send stored token
+
             const token = localStorage.getItem('authToken');
             postToSelf({ type: 'storedAuthToken', token: token || null });
             break;
         }
 
         case 'fileLoaded': {
-            // Extension uses this to initialise collaboration WebSocket.
-            // In browser mode, collaboration goes through direct WS — no-op.
+
             console.log('[BrowserBridge] fileLoaded:', message.projectId);
             break;
         }
@@ -265,19 +219,8 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
-        // ──────── Download ──────────────────────────────────────────────────
-
         case 'downloadOntology': {
-            // Submit the export as a background job and poll until ready, rather than one
-            // long-blocking request — a large ontology's export can take longer than axios's
-            // client-side timeout even though the backend supports far longer. Large exports
-            // stream to disk when the File System Access API is available (avoids ~200MB+
-            // Blob OOM in the tab). See exportService.ts / OntologyExportJobService.java.
-            //
-            // The submit-poll-download cycle can take minutes for large ontologies, so the
-            // caller (Dashboard's export button) keeps its spinner alive until it sees one of
-            // these two messages come back, instead of clearing it right after this fire-and-
-            // forget postMessage resolves.
+
             (async () => {
                 try {
                     await exportOntologyAsBlob(
@@ -310,16 +253,13 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
-        // ──────── Local file open ───────────────────────────────────────────
-
         case 'openLocalFile': {
             (async () => {
                 const fileData = await openOntologyFile();
                 if (!fileData) return;
 
                 if (message.projectId) {
-                    // Workspace flow: save to project library (GridFS) first, then let
-                    // handleLoadProjectFile handle the GraphDB import via fileReady.
+
                     try {
                         const fileContent = fileData.isBase64 ? fileData.fileContent : fileContentToBase64(fileData.fileContent);
                         let contentStr = fileContent;
@@ -353,8 +293,7 @@ function handleBrowserMessage(message: any) {
                         }
                     }
                 } else {
-                    // No project context yet — store as pending so the user can pick
-                    // a project and the upload will trigger via handleProjectSelected.
+
                     postToSelf({
                         type: 'pendingFileUpload',
                         fileName: fileData.fileName,
@@ -369,8 +308,7 @@ function handleBrowserMessage(message: any) {
         }
 
         case 'importLocalFile': {
-            // In the extension this reads from the local FS.
-            // In browser we open a file picker instead.
+
             (async () => {
                 const fileData = await openOntologyFile();
                 if (fileData) {
@@ -389,7 +327,6 @@ function handleBrowserMessage(message: any) {
             (async () => {
                 let fileName = message.fileName;
 
-                // Validate file extension
                 const validExtensions = ['.owl', '.rdf', '.ttl', '.n3', '.nt', '.jsonld'];
                 const hasValidExtension = validExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
 
@@ -399,8 +336,6 @@ function handleBrowserMessage(message: any) {
                     return;
                 }
 
-                // Create minimal empty ontology content with owl:Thing
-                // Note: duplicate check is handled server-side during upload
                 const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.[^/.]+$/, '')}`;
                 const emptyOntologyContent = `<?xml version="1.0"?>
 <rdf:RDF xmlns="${ontologyIRI}#"
@@ -411,7 +346,7 @@ function handleBrowserMessage(message: any) {
      xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
      xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
     <owl:Ontology rdf:about="${ontologyIRI}"/>
-    
+
     <!-- Classes -->
     <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
 </rdf:RDF>`;
@@ -422,7 +357,7 @@ function handleBrowserMessage(message: any) {
                 console.log(`[BrowserBridge] Creating new file: ${fileName} (${fileSize} bytes)`);
 
                 if (message.projectId) {
-                    // Upload directly to project files endpoint using multipart/form-data
+
                     try {
                         postToSelf({ type: 'showLoading', projectId: message.projectId });
                         const fileBlob = new Blob([emptyOntologyContent], { type: 'application/rdf+xml' });
@@ -446,18 +381,16 @@ function handleBrowserMessage(message: any) {
                         postToSelf({ type: 'hideLoading', projectId: message.projectId });
                     }
                 } else {
-                    // No project context — upload directly to GraphDB as standalone ontology
+
                     const standaloneProjectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
                     console.log('[BrowserBridge] No project context, uploading as standalone:', standaloneProjectId);
 
-                    // Upload to GraphDB first
                     postToSelf({ type: 'showLoading', projectId: standaloneProjectId });
 
                     try {
                         const token = localStorage.getItem('authToken');
                         const baseUrl = getGatewayUrl();
 
-                        // Upload file to GraphDB
                         const formData = new FormData();
                         const fileBlob = new Blob([emptyOntologyContent], { type: 'application/rdf+xml' });
                         formData.append('file', fileBlob, fileName);
@@ -476,7 +409,6 @@ function handleBrowserMessage(message: any) {
                         const uploadData = await uploadResp.json();
                         console.log('[BrowserBridge] Standalone file uploaded to GraphDB:', uploadData);
 
-                        // Immediately save to MongoDB to persist the file
                         console.log('[BrowserBridge] Saving to MongoDB for persistence...');
                         const saveResp = await fetch(`${baseUrl}/api/ontology/save/${standaloneProjectId}`, {
                             method: 'POST',
@@ -490,7 +422,6 @@ function handleBrowserMessage(message: any) {
                             console.warn('[BrowserBridge] ⚠️ File uploaded but save failed - may be lost on refresh');
                         }
 
-                        // Notify that file is ready
                         postToSelf({
                             type: 'fileReady',
                             projectId: standaloneProjectId,
@@ -512,12 +443,10 @@ function handleBrowserMessage(message: any) {
                 let fileName = '';
                 let validFileName = false;
 
-                // Validate file extension
                 const validExtensions = ['.owl', '.rdf', '.ttl', '.n3', '.nt', '.jsonld'];
 
-                // Loop until user provides valid unique filename or cancels
                 while (!validFileName) {
-                    // Prompt user for file name
+
                     fileName = prompt('Enter a name for the new ontology file:', fileName || 'my-ontology.owl');
                     if (!fileName) {
                         console.log('[BrowserBridge] User cancelled new file creation');
@@ -530,7 +459,6 @@ function handleBrowserMessage(message: any) {
                         continue;
                     }
 
-                    // Validate file extension
                     const hasValidExtension = validExtensions.some(ext => trimmedFileName.toLowerCase().endsWith(ext));
 
                     if (!hasValidExtension) {
@@ -540,7 +468,6 @@ function handleBrowserMessage(message: any) {
 
                     fileName = trimmedFileName;
 
-                    // Check for duplicates if in project context
                     if (message.projectId) {
                         const token = localStorage.getItem('authToken');
                         const baseUrl = getGatewayUrl();
@@ -569,7 +496,6 @@ function handleBrowserMessage(message: any) {
                     validFileName = true;
                 }
 
-                // Create minimal empty ontology content with owl:Thing
                 const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.[^/.]+$/, '')}`;
                 const emptyOntologyContent = `<?xml version="1.0"?>
 <rdf:RDF xmlns="${ontologyIRI}#"
@@ -580,7 +506,7 @@ function handleBrowserMessage(message: any) {
      xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
      xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
     <owl:Ontology rdf:about="${ontologyIRI}"/>
-    
+
     <!-- Classes -->
     <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
 </rdf:RDF>`;
@@ -591,7 +517,7 @@ function handleBrowserMessage(message: any) {
                 console.log(`[BrowserBridge] Creating new file: ${fileName} (${fileSize} bytes)`);
 
                 if (message.projectId) {
-                    // Upload directly to project files endpoint using multipart/form-data
+
                     try {
                         postToSelf({ type: 'showLoading', projectId: message.projectId });
                         const fileBlob = new Blob([emptyOntologyContent], { type: 'application/rdf+xml' });
@@ -615,18 +541,16 @@ function handleBrowserMessage(message: any) {
                         postToSelf({ type: 'hideLoading', projectId: message.projectId });
                     }
                 } else {
-                    // No project context — upload directly to GraphDB as standalone ontology
+
                     const standaloneProjectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, '');
                     console.log('[BrowserBridge] No project context, uploading as standalone:', standaloneProjectId);
 
-                    // Upload to GraphDB first
                     postToSelf({ type: 'showLoading', projectId: standaloneProjectId });
 
                     try {
                         const token = localStorage.getItem('authToken');
                         const baseUrl = getGatewayUrl();
 
-                        // Upload file to GraphDB
                         const formData = new FormData();
                         const fileBlob = new Blob([emptyOntologyContent], { type: 'application/rdf+xml' });
                         formData.append('file', fileBlob, fileName);
@@ -645,7 +569,6 @@ function handleBrowserMessage(message: any) {
                         const uploadData = await uploadResp.json();
                         console.log('[BrowserBridge] Standalone file uploaded to GraphDB:', uploadData);
 
-                        // Immediately save to MongoDB to persist the file
                         console.log('[BrowserBridge] Saving to MongoDB for persistence...');
                         const saveResp = await fetch(`${baseUrl}/api/ontology/save/${standaloneProjectId}`, {
                             method: 'POST',
@@ -659,7 +582,6 @@ function handleBrowserMessage(message: any) {
                             console.warn('[BrowserBridge] ⚠️ File uploaded but save failed - may be lost on refresh');
                         }
 
-                        // Notify that file is ready
                         postToSelf({
                             type: 'fileReady',
                             projectId: standaloneProjectId,
@@ -676,19 +598,14 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
-        // ──────── Upload ────────────────────────────────────────────────────
-
         case 'uploadOntology': {
             (async () => {
                 const uploadPipelineStart = Date.now();
                 console.log(`[BrowserBridge] [PERF] ⏱️ Upload pipeline started at ${new Date().toISOString()}`);
 
-                // Hoist so the catch block can reference it for error reporting
                     const uploadProjectId = message.projectId
                     || (message.fileName || '').replace(/\.(owl|rdf|ttl|n3|nt|jsonld|zip)$/i, '');
 
-                // ── Notify Dashboard to open progress dialog immediately (but allow cancellation if duplicate) ──
-                // (mirrors what the VS Code extension sends right after file selection)
                 postToSelf({ type: 'showLoading', projectId: uploadProjectId });
 
                 try {
@@ -697,8 +614,6 @@ function handleBrowserMessage(message: any) {
                     const resolvedOwnerEmail = message.ownerEmail || getOwnerEmailFromToken();
                     const resolvedWorkspaceId = message.workspaceId || getWorkspaceIdFromToken();
 
-                    // ── FAST PATH: Check if file already exists in GraphDB (skip upload entirely) ──
-                    // Skip this when forceUpload is set — caller already confirmed GraphDB is empty
                     if (!message.forceUpload) {
                     try {
                         const statusUrl = `${baseUrl}/api/ontology/status/${encodeURIComponent(uploadProjectId)}`;
@@ -723,7 +638,6 @@ function handleBrowserMessage(message: any) {
                     }
                     }
 
-                    // ── Check for duplicate BEFORE uploading (if not explicitly skipping) ──
                     if (!message.skipDuplicateCheck) {
                         console.log('[BrowserBridge] Checking for duplicate file before upload:', message.fileName);
                         try {
@@ -741,10 +655,8 @@ function handleBrowserMessage(message: any) {
                                 const existingFileId = checkData.existingFile?.fileId || checkData.existingFile?.id;
                                 const existingFileName = checkData.existingFile?.fileName || message.fileName;
 
-                                // Cancel the loading state
                                 postToSelf({ type: 'loadingComplete' });
 
-                                // Notify that duplicate exists - open the existing file instead
                                 postToSelf({
                                     type: 'fileReady',
                                     projectId: existingProjectId,
@@ -752,7 +664,6 @@ function handleBrowserMessage(message: any) {
                                     uploadedFileName: existingFileName,
                                 });
 
-                                // Show success message indicating file already exists
                                 postToSelf({
                                     type: 'importStatusUpdate',
                                     status: {
@@ -777,11 +688,6 @@ function handleBrowserMessage(message: any) {
                         console.log('[BrowserBridge] Skipping duplicate check (skipDuplicateCheck=true)');
                     }
 
-                    // ── Convert base64 to upload blob ──
-                    // For large files (>50 MB base64 ≈ >37 MB raw), skip the expensive
-                    // text decode + namespace injection path. The byte-by-byte atob loop
-                    // and regex-based namespace scan each take minutes on 200 MB+ files.
-                    // The backend already handles missing namespaces during RDF parsing.
                     const base64Length = message.fileContent ? message.fileContent.length : 0;
                     const LARGE_FILE_THRESHOLD = 50 * 1024 * 1024; // 50 MB base64 (~37 MB raw)
 
@@ -789,7 +695,7 @@ function handleBrowserMessage(message: any) {
                     const decodeStart = Date.now();
                     const isOntologyPackage = (message.fileName || '').toLowerCase().endsWith('.zip');
                     if (isOntologyPackage || base64Length > LARGE_FILE_THRESHOLD) {
-                        // FAST PATH: chunked base64→binary without text decode or namespace injection
+
                         console.log(`[BrowserBridge] ${isOntologyPackage ? 'Ontology package' : 'Large file'} (${(base64Length / (1024 * 1024)).toFixed(0)} MB base64), using fast binary upload`);
                         const CHUNK = 1024 * 1024; // decode 1 MB at a time
                         const chunks: Uint8Array[] = [];
@@ -803,13 +709,12 @@ function handleBrowserMessage(message: any) {
                         blob = new Blob(chunks as BlobPart[], { type: isOntologyPackage ? 'application/zip' : 'application/octet-stream' });
                         console.log(`[BrowserBridge] [PERF] Large file base64→binary decode: ${Date.now() - decodeStart}ms`);
                     } else {
-                        // SMALL FILE PATH: full text decode + namespace injection
+
                         const byteString = atob(message.fileContent);
                         const bytes = new Uint8Array(byteString.length);
                         for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
                         let fileText = new TextDecoder().decode(bytes);
 
-                        // ── Dynamic namespace injection for RDF/XML files ──
                         if (fileText.includes('<rdf:RDF')) {
                             fileText = injectDynamicNamespaces(fileText);
                         }
@@ -817,10 +722,7 @@ function handleBrowserMessage(message: any) {
                         blob = new Blob([fileText], { type: 'application/rdf+xml' });
                         console.log(`[BrowserBridge] [PERF] Small file decode + namespace injection: ${Date.now() - decodeStart}ms`);
                     }
-                    // CHUNK_UPLOAD_THRESHOLD is kept well under Cloudflare's 100MB proxy cap (and any
-                    // similar CDN/reverse-proxy limit) so large ontologies never hit that wall — this
-                    // path currently doesn't compress before upload (unlike the VS Code extension host
-                    // path), so chunking is this surface's only defense against large-file size caps.
+
                     const CHUNK_UPLOAD_THRESHOLD = 40 * 1024 * 1024; // 40MB
                     const httpPostStart = Date.now();
                     let resp: { ok: boolean; status: number };
@@ -865,19 +767,16 @@ function handleBrowserMessage(message: any) {
                     try { responseData = JSON.parse(responseText); } catch { responseData = { error: responseText }; }
 
                     if (resp.ok && responseData.success !== false) {
-                        // Backend may return a different projectId on replace
+
                         const actualProjectId = responseData.projectId || uploadProjectId;
                         const actualFilename = responseData.filename || message.fileName;
                         const actualFileId = responseData.fileId || responseData.id;
                         console.log('[BrowserBridge] uploadOntology accepted, actualProjectId:', actualProjectId, 'fileId:', actualFileId, 'polling for completion...');
 
-                        // If the server assigned a different projectId, update the Dashboard
                         if (actualProjectId !== uploadProjectId) {
                             postToSelf({ type: 'showLoading', projectId: actualProjectId });
                         }
 
-                        // Poll /api/ontology/status until COMPLETED (GraphDB processes async)
-                        // Time-based timeout: 15 min baseline + 1 min per 50MB
                         const fileSizeMB = base64Length > 0 ? (base64Length * 3 / 4) / (1024 * 1024) : 50; // actual file size (base64 is 4/3x)
                         const timeoutMs = Math.min(
                             7_200_000,
@@ -911,10 +810,8 @@ function handleBrowserMessage(message: any) {
                                         console.log(`[BrowserBridge] [PERF] Status polling completed: ${Date.now() - pollStartTime}ms (${attempt} polls)`);
                                         console.log(`[BrowserBridge] [PERF] ⏱️ Total upload pipeline: ${Date.now() - uploadPipelineStart}ms`);
 
-                                        // Try to get fileId from status response or upload response
                                         let fileId = actualFileId || payload?.fileId || payload?.id;
 
-                                        // If still no fileId, fetch the file list and find by name
                                         if (!fileId) {
                                             console.log('[BrowserBridge] No fileId in response, waiting 1 second before fetching file list...');
                                             await new Promise(r => setTimeout(r, 1000)); // Wait for database sync
@@ -935,7 +832,6 @@ function handleBrowserMessage(message: any) {
                                                     uploadedAt: f.uploadedAt
                                                 })));
 
-                                                // Find the file by name (case-insensitive, check multiple properties)
                                                 const normalizedTarget = actualFilename.toLowerCase();
                                                 const matchedFile = filesList.find((f: any) => {
                                                     const fileName = f.name || f.filename || f.fileName || '';
@@ -956,14 +852,13 @@ function handleBrowserMessage(message: any) {
 
                                         console.log('[BrowserBridge] Sending fileReady with fileId:', fileId);
 
-                                        // Mirror extension: send fileReady first (triggers fetchData in Dashboard)
                                         postToSelf({
                                             type: 'fileReady',
                                             projectId: actualProjectId,
                                             uploadedFileId: fileId,
                                             uploadedFileName: actualFilename
                                         });
-                                        // Also send importStatusUpdate for status tracking UI
+
                                         postToSelf({
                                             type: 'importStatusUpdate',
                                             status: {
@@ -981,9 +876,8 @@ function handleBrowserMessage(message: any) {
                                         return;
                                     }
 
-                                    // Send progress update
                                     if (payload?.statusMessage) {
-                                        // Extract real progress from backend statusMessage (e.g., "Importing... (90%) | ETA...")
+
                                         const progressMatch = payload.statusMessage.match(/\((\d+)%\)/);
                                         const elapsedPct = Math.min(95, Math.floor(((Date.now() - pollStartTime) / timeoutMs) * 100));
                                         const realProgress = progressMatch ? parseInt(progressMatch[1], 10) : elapsedPct;
@@ -1002,7 +896,7 @@ function handleBrowserMessage(message: any) {
                                     console.warn(`[BrowserBridge] Status poll #${attempt} error:`, pollErr);
                                 }
                             }
-                            // Timeout
+
                             postToSelf({ type: 'importFailed', projectId: actualProjectId, error: 'Import timed out waiting for processing to complete' });
                         };
                         pollStatus();
@@ -1034,10 +928,10 @@ function handleBrowserMessage(message: any) {
         case 'uploadFileToProject': {
             (async () => {
                 try {
-                    // Convert content to binary Blob for multipart upload
+
                     let contentStr = message.fileContent;
                     if (/^[A-Za-z0-9+/=]+$/.test(contentStr)) {
-                        // base64 → binary string → Uint8Array
+
                         const binaryStr = atob(contentStr);
                         const bytes = new Uint8Array(binaryStr.length);
                         for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
@@ -1097,22 +991,17 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
-        // ──────── Collaboration ─────────────────────────────────────────────
-
         case 'requestCollaborationStatus': {
-            // In browser mode we talk to the backend over HTTP.
-            // Report connected so the UI doesn't show "Offline".
+
             postToSelf({ type: 'collaborationStatus', connected: true });
             break;
         }
 
         case 'cursorMoved':
         case 'broadcastCursor': {
-            // Requires WebSocket room — no-op in standalone browser mode.
+
             break;
         }
-
-        // ──────── Notifications ─────────────────────────────────────────────
 
         case 'showNotification': {
             const n = message.notification || {};
@@ -1137,8 +1026,6 @@ function handleBrowserMessage(message: any) {
             });
             break;
         }
-
-        // ──────── Citations / Zotero (Sci2Code browser integration) ────────
 
         case 'requestZoteroLibrary': {
             (async () => {
@@ -1170,7 +1057,6 @@ function handleBrowserMessage(message: any) {
                             pageOpts
                         );
 
-                        // Lock in the real total from the first response
                         if (start === 0) {
                             totalResults = total;
                         }
@@ -1178,7 +1064,7 @@ function handleBrowserMessage(message: any) {
                         if (!items || items.length === 0) break;
 
                         if (start === 0) {
-                            // First batch — send as initial payload so the UI can show results fast
+
                             postToSelf({
                                 type: 'zoteroLibraryData',
                                 items,
@@ -1196,7 +1082,6 @@ function handleBrowserMessage(message: any) {
 
                         start += items.length;
 
-                        // Stop if we got the last page
                         if (items.length < PAGE_SIZE || start >= totalResults) break;
                     }
 
@@ -1213,7 +1098,7 @@ function handleBrowserMessage(message: any) {
         }
 
         case 'insertCitation': {
-            // Zotero citation: fetch metadata, format locally, then insert to backend
+
             (async () => {
                 try {
                     const citationKey = message.citationKey;
@@ -1245,7 +1130,7 @@ function handleBrowserMessage(message: any) {
         }
 
         case 'insertManualCitation': {
-            // Manual citation: user provides metadata, format locally, insert to backend
+
             (async () => {
                 try {
                     const item = {
@@ -1288,7 +1173,7 @@ function handleBrowserMessage(message: any) {
         }
 
         case 'insertCitationToGraphDB': {
-            // Direct citation insertion (already formatted content)
+
             (async () => {
                 try {
                     await apiClient.post(`/api/citations/${message.projectId}/insert`, {
@@ -1325,17 +1210,13 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
-        // ──────── Misc ──────────────────────────────────────────────────────
-
         case 'showSubscriptionPlans': {
             postToSelf({ type: 'showSubscriptionPlans' });
             break;
         }
 
         case 'duplicateFilePromptResponse': {
-            // This is a response from the webview to the extension's prompt.
-            // In browser mode the duplicate-check flow is handled inline;
-            // this should not trigger, but log it just in case.
+
             console.log('[BrowserBridge] duplicateFilePromptResponse (no-op in browser):', message);
             break;
         }
@@ -1376,11 +1257,6 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
-        // ──────── API Proxy (apiGet/apiPost/apiPut/apiPatch/apiDelete) ──────
-        // The ApiClient already handles browser mode via direct axios.
-        // These cases only fire if something calls window.vscode.postMessage
-        // with an API type directly (shouldn't happen in browser mode).
-
         case 'apiGet':
         case 'apiPost':
         case 'apiPut':
@@ -1391,9 +1267,6 @@ function handleBrowserMessage(message: any) {
             break;
         }
 
-        // In a real VS Code webview this goes through the extension host
-        // (vscode.env.openExternal) because sandboxed iframes block direct
-        // navigation. A plain browser tab has no such sandbox — just navigate.
         case 'openExternalUrl': {
             if (message.url) {
                 window.location.href = message.url;
@@ -1406,24 +1279,13 @@ function handleBrowserMessage(message: any) {
     }
 }
 
-/**
- * Install the browser bridge.
- *
- * Call this ONCE at startup (e.g. in index.tsx) BEFORE any component mounts.
- * It sets `window.vscode` so that ALL existing code paths
- * (`if (window.vscode) { window.vscode.postMessage(...) }`) work unchanged.
- *
- * In VS Code Desktop `window.vscode` is already provided by the webview;
- * this function does nothing in that case.
- */
 export function installBrowserBridge() {
-    // The Electron preload already installed its own, richer window.vscode (native
-    // dialogs, encrypted token storage, its own Zotero fetch, etc) — never overwrite it.
+
     if ((window as any).__ONTOCODE_NATIVE_VSCODE_BRIDGE__) {
         console.log('[BrowserBridge] Native (Electron) bridge detected — bridge NOT installed');
         return;
     }
-    // Already running inside VS Code Desktop / a preload that set window.vscode
+
     if (window.vscode && !(window as any).__ONTOCODE_BROWSER_BRIDGE__) {
         console.log('[BrowserBridge] VS Code API detected — bridge NOT installed');
         return;
@@ -1434,7 +1296,7 @@ export function installBrowserBridge() {
 
     (window as any).vscode = {
         postMessage: (msg: any) => {
-            // async so callers don't block
+
             Promise.resolve().then(() => handleBrowserMessage(msg));
         },
     };

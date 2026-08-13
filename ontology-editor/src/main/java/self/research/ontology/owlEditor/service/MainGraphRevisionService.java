@@ -2,9 +2,6 @@ package self.research.ontology.owlEditor.service;
 
 import org.springframework.stereotype.Service;
 
-/**
- * Monotonic revision counter for the project main graph (incremented on every publish / direct apply).
- */
 @Service
 public class MainGraphRevisionService {
 
@@ -24,11 +21,6 @@ public class MainGraphRevisionService {
                 .orElse(0L);
     }
 
-    /**
-     * Atomic $inc — a read-then-writeMeta round trip here would race the hierarchy
-     * snapshot rebuild's own read-then-writeMeta (mergeMetaIntoProject), which can
-     * clobber this counter on its write-back. See ProjectMetadataService.incrementMainGraphRevision.
-     */
     public long incrementRevision(String projectId) {
         return metadataService.incrementMainGraphRevision(projectId);
     }

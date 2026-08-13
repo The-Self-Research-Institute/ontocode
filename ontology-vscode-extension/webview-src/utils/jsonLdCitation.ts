@@ -1,12 +1,5 @@
-// JSON-LD syntax validation and Zotero citation node helpers for the Code View.
-//
-// The Code View's other formats (Turtle, RDF/XML, ...) are line-oriented, so a citation
-// can be inserted/removed by splicing text lines. JSON-LD is not line-oriented — splicing
-// raw text at an arbitrary line would almost certainly produce invalid JSON (wrong commas,
-// unbalanced brackets). These helpers instead parse the document, mutate it as a JS object,
-// and re-serialize it, so the result is always syntactically valid JSON.
 
-/** Default prefixes used when a new JSON-LD document/skeleton is created for citation storage. */
+
 export const DEFAULT_JSONLD_CONTEXT: Record<string, string> = {
   rdf: "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
   rdfs: "http://www.w3.org/2000/01/rdf-schema#",
@@ -33,12 +26,6 @@ function positionToLineCol(content: string, position: number): { line: number; c
   return { line, column };
 }
 
-/**
- * Validates that `content` is syntactically valid JSON (JSON-LD is JSON with reserved
- * `@`-keywords, so JSON-syntax validity is what matters for editor error highlighting).
- * Returns a human-readable error message containing "line N" (so CodeHighlighter's
- * generic `parseErrorLines` picker highlights the right line), or null if valid.
- */
 export function validateJsonLdSyntax(content: string): string | null {
   const trimmed = content.trim();
   if (!trimmed) return null; // empty content is allowed, same as other formats
@@ -53,7 +40,7 @@ export function validateJsonLdSyntax(content: string): string | null {
       const { line, column } = positionToLineCol(content, parseInt(posMatch[1], 10));
       return `${message} (line ${line}, column ${column})`;
     }
-    // Some engines report line/column directly already (e.g. "line 4 column 9")
+
     if (/\bline\s+\d+/i.test(message)) return message;
     return `${message} (unable to determine exact line — check for a missing comma, quote, or bracket)`;
   }
@@ -80,7 +67,6 @@ export interface ZoteroCitationFields {
   rights?: string;
 }
 
-/** Builds the JSON-LD node for a Zotero citation, mirroring the fields used by the other formats. */
 export function buildZoteroCitationNode(fields: ZoteroCitationFields): Record<string, any> {
   const citationKey = fields.key.replace(/[^a-zA-Z0-9]/g, "");
   const node: Record<string, any> = {
@@ -111,13 +97,6 @@ export function buildZoteroCitationNode(fields: ZoteroCitationFields): Record<st
   return node;
 }
 
-/**
- * Inserts a citation node into a JSON-LD document's `@graph` array (creating one if needed),
- * returning the re-serialized document. Always produces syntactically valid JSON.
- *
- * `afterIndex`, if given, splices the node in right after that `@graph` array index (e.g. next
- * to whichever node the user clicked) instead of appending it at the very end.
- */
 export function insertCitationNodeIntoJsonLd(
   content: string,
   node: Record<string, any>,
@@ -132,8 +111,7 @@ export function insertCitationNodeIntoJsonLd(
     try {
       parsed = JSON.parse(trimmed);
     } catch {
-      // Existing content isn't valid JSON — don't try to guess where to splice; start fresh
-      // rather than producing something that's also invalid.
+
       parsed = { "@context": DEFAULT_JSONLD_CONTEXT, "@graph": [] };
     }
   }
@@ -169,7 +147,6 @@ function skipWhitespace(s: string, i: number): number {
   return i;
 }
 
-/** Returns the index right after a complete JSON value (string/object/array/literal) starting at `i`. */
 function skipJsonValue(s: string, i: number): number {
   i = skipWhitespace(s, i);
   const ch = s[i];
@@ -201,7 +178,6 @@ function skipJsonValue(s: string, i: number): number {
     return i;
   }
 
-  // number, true, false, null
   while (i < s.length && !/[,\]\}\s]/.test(s[i])) i++;
   return i;
 }
@@ -213,12 +189,6 @@ function lineAt(s: string, pos: number): number {
   return line;
 }
 
-/**
- * Given the raw JSON-LD text as currently rendered and a 0-based line the user clicked,
- * finds the index (within the top-level `@graph`/root array) of the element that line falls
- * inside, or the nearest preceding element if the click landed between elements. Returns null
- * if no usable array/position could be determined (caller should then append at the end).
- */
 export function findGraphInsertionIndex(content: string, clickedLine: number): number | null {
   const graphKeyMatch = content.match(/"@graph"\s*:\s*\[/);
   let arrayOpen: number;
@@ -253,16 +223,10 @@ export function findGraphInsertionIndex(content: string, clickedLine: number): n
     break; // reached the array's closing ']' (or malformed content)
   }
 
-  // Clicked below the last element (e.g. on trailing whitespace/brackets) — insert after it.
   if (lastElementEndLine >= 0 && clickedLine > lastElementEndLine) return index;
   return null;
 }
 
-/**
- * Removes the citation node whose `@id` is `urn:citation:<citationUri>` from a JSON-LD
- * document's `@graph` (or top-level array). Returns the re-serialized document and whether
- * a node was actually removed.
- */
 export function removeCitationNodeFromJsonLd(
   content: string,
   citationUri: string,

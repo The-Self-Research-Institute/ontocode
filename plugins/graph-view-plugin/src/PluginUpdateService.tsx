@@ -1,11 +1,4 @@
-/**
- * ============================================================================
- * PLUGIN UPDATE SERVICE
- * ============================================================================
- *
- * Automatically checks for plugin updates and notifies users
- * Handles versioning and seamless updates
- */
+
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Download, X, RefreshCw, CheckCircle, AlertTriangle } from 'lucide-react';
@@ -36,9 +29,6 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
   const [updateSuccess, setUpdateSuccess] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
 
-  /**
-   * Compare semantic versions
-   */
   const isNewerVersion = useCallback((latest: string, current: string): boolean => {
     const latestParts = latest.split('.').map(Number);
     const currentParts = current.split('.').map(Number);
@@ -54,9 +44,6 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
     return false;
   }, []);
 
-  /**
-   * Check for updates from the plugin registry
-   */
   const checkForUpdates = useCallback(async () => {
     setChecking(true);
     setUpdateError(null);
@@ -64,7 +51,6 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
     try {
       console.log('[PluginUpdateService] Checking for updates for plugin:', pluginId);
 
-      // Check from plugin registry API
       const response = await fetch(
         `${(window as any).API_BASE_URL}/api/plugins/${pluginId}/latest-version`,
         {
@@ -80,13 +66,11 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
 
         setLatestVersion(data);
 
-        // Check if update is available
         if (isNewerVersion(data.version, currentVersion)) {
           console.log('[PluginUpdateService] Update available:', data.version);
           setUpdateAvailable(true);
           setShowNotification(true);
 
-          // Store update check time
           localStorage.setItem(`plugin-update-check-${pluginId}`, Date.now().toString());
         } else {
           console.log('[PluginUpdateService] Plugin is up to date');
@@ -102,9 +86,6 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
     }
   }, [pluginId, currentVersion, isNewerVersion]);
 
-  /**
-   * Install the update
-   */
   const installUpdate = useCallback(async () => {
     if (!latestVersion) return;
 
@@ -134,7 +115,6 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
         setUpdateAvailable(false);
         setShowNotification(false);
 
-        // Refresh the page after 2 seconds to load new version
         setTimeout(() => {
           window.location.reload();
         }, 2000);
@@ -150,17 +130,13 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
     }
   }, [pluginId, latestVersion]);
 
-  /**
-   * Auto-check for updates on mount and periodically
-   */
   useEffect(() => {
-    // Check immediately if last check was more than checkInterval ago
+
     const lastCheck = localStorage.getItem(`plugin-update-check-${pluginId}`);
     if (!lastCheck || Date.now() - parseInt(lastCheck) > checkInterval) {
       checkForUpdates();
     }
 
-    // Set up periodic checks
     const interval = setInterval(() => {
       checkForUpdates();
     }, checkInterval);
@@ -174,7 +150,7 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
 
   return (
     <>
-      {/* Update notification */}
+      {}
       {showNotification && updateAvailable && latestVersion && (
         <div style={styles.notification}>
           <div style={styles.notificationContent}>
@@ -237,7 +213,7 @@ export const PluginUpdateService: React.FC<PluginUpdateServiceProps> = ({
         </div>
       )}
 
-      {/* Success message */}
+      {}
       {updateSuccess && (
         <div style={styles.successNotification}>
           <CheckCircle size={20} style={{ color: '#10b981' }} />

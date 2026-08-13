@@ -6,10 +6,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.ReasoningHeapMonitor;
 
-/**
- * Periodic pass: evict only stale + oldest finished results when heap is not comfortable.
- * Does not wipe the whole cache when heap is healthy (e.g. 40% after A and B finish).
- */
 @Slf4j
 @Service
 public class ReasoningMemoryJanitor {

@@ -4,9 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Result of checking whether a user's draft can be published safely.
- */
 public class DraftPublishAnalysis {
 
     public enum ConflictType {

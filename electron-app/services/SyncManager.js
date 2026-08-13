@@ -1,21 +1,4 @@
-/**
- * SyncManager — OntoCode Desktop
- *
- * Manages decentralized peer-to-peer sync via an embedded Syncthing process.
- * Syncthing handles file-level sync between devices with no central server.
- *
- * Architecture:
- *   - Syncthing binary lives in resources/backend/syncthing/<platform>/
- *   - Each workspace folder is shared as a Syncthing "folder"
- *   - Users pair devices by exchanging Device IDs (or scanning a QR code)
- *   - Syncthing's REST API (port 18384) is used to add/remove shared folders
- *   - The React UI reads sync state via IPC → SyncManager → Syncthing REST API
- *
- * Share links:
- *   - A "share link" encodes { deviceId, apiKey, folderIds } as a base64 URL
- *   - The receiving device imports the link, adds the peer, and accepts the folder
- *   - This is decentralized — the two devices sync directly or via relays
- */
+
 
 const { app } = require('electron');
 const { spawn } = require('child_process');
@@ -24,8 +7,6 @@ const fs    = require('fs');
 const http  = require('http');
 const https = require('https');
 const crypto = require('crypto');
-
-// ── Constants ────────────────────────────────────────────────────────────────
 
 const SYNC_PORT     = 18384;   // Syncthing GUI/REST API port (offset from default 8384)
 const SYNC_TCP_PORT = 22000;   // Syncthing sync protocol port
@@ -39,11 +20,9 @@ const SYNC_DATA_DIR = path.join(app.getPath('userData'), 'sync');
 const SYNC_CONFIG_DIR = path.join(SYNC_DATA_DIR, 'config');
 const SYNC_CONFIG_FILE = path.join(SYNC_CONFIG_DIR, 'config.xml');
 
-// ── State ────────────────────────────────────────────────────────────────────
 let syncProcess = null;
 let _logCallback = null;
 
-// ── Key storage ──────────────────────────────────────────────────────────────
 function generateOrLoadApiKey() {
     const keyFile = path.join(
         app.isPackaged ? app.getPath('userData') : path.join(__dirname, '..'),
@@ -57,14 +36,11 @@ function generateOrLoadApiKey() {
     return key;
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
-
 module.exports = {
     SYNC_PORT,
 
     onLog(cb) { _logCallback = cb; },
 
-    /** Start Syncthing. Resolves when its REST API is ready. */
     async start() {
         const bin = syncBin();
         if (!bin) {
@@ -111,7 +87,6 @@ module.exports = {
         }
     },
 
-    /** Stop Syncthing gracefully. */
     async stop() {
         if (!syncProcess || syncProcess.killed) return;
         return new Promise(resolve => {
@@ -124,15 +99,10 @@ module.exports = {
         });
     },
 
-    /** Is the sync engine running? */
     isRunning() {
         return !!syncProcess && !syncProcess.killed && syncProcess.exitCode === null;
     },
 
-    /**
-     * Get the local device ID (Syncthing's permanent identity).
-     * Returns a string like "ABCDE12-..." or null if unavailable.
-     */
     async getDeviceId() {
         try {
             const status = await apiGet('/rest/system/status');
@@ -140,10 +110,6 @@ module.exports = {
         } catch { return null; }
     },
 
-    /**
-     * List all folders currently shared via Syncthing.
-     * Returns [{ id, label, path, paused, status }]
-     */
     async listFolders() {
         try {
             const config = await apiGet('/rest/config');
@@ -156,12 +122,6 @@ module.exports = {
         } catch { return []; }
     },
 
-    /**
-     * Share a workspace folder. Adds it to Syncthing config.
-     * @param {string} folderPath  Absolute path to the workspace folder
-     * @param {string} label       Display name (e.g. "MyOntology")
-     * @returns {string} folderId  The Syncthing folder ID to share with peers
-     */
     async shareFolder(folderPath, label) {
         const folderId = `ontocode-${crypto.randomBytes(4).toString('hex')}`;
         const config   = await apiGet('/rest/config');
@@ -190,16 +150,9 @@ module.exports = {
         return folderId;
     },
 
-    /**
-     * Add a remote peer and share a folder with them.
-     * @param {string} deviceId   Remote device ID (from their share link)
-     * @param {string} folderId   Folder to share with them
-     * @param {string} peerName   Display name for the peer
-     */
     async addPeer(deviceId, folderId, peerName) {
         const config = await apiGet('/rest/config');
 
-        // Add device if not already there
         config.devices = config.devices || [];
         if (!config.devices.find(d => d.deviceID === deviceId)) {
             config.devices.push({
@@ -212,7 +165,6 @@ module.exports = {
             });
         }
 
-        // Add device to the folder's share list
         const folder = (config.folders || []).find(f => f.id === folderId);
         if (folder) {
             folder.devices = folder.devices || [];
@@ -225,9 +177,6 @@ module.exports = {
         log('ok', `Peer ${deviceId.slice(0, 7)}… added to folder ${folderId}`);
     },
 
-    /**
-     * Remove a peer from a shared folder.
-     */
     async removePeer(deviceId, folderId) {
         const config = await apiGet('/rest/config');
         const folder = (config.folders || []).find(f => f.id === folderId);
@@ -237,11 +186,6 @@ module.exports = {
         await apiPut('/rest/config', config);
     },
 
-    /**
-     * Generate a shareable link that encodes this device's ID + folder IDs.
-     * The receiving device imports this link to start syncing.
-     * Format: ontocode-sync://<base64(JSON)>
-     */
     async generateShareLink(folderIds) {
         const deviceId = await this.getDeviceId();
         if (!deviceId) throw new Error('Sync engine not running');
@@ -250,10 +194,6 @@ module.exports = {
         return `ontocode-sync://${encoded}`;
     },
 
-    /**
-     * Parse a share link received from another user.
-     * Returns { deviceId, folderIds }
-     */
     parseShareLink(link) {
         const encoded = link.replace('ontocode-sync://', '');
         try {
@@ -263,7 +203,6 @@ module.exports = {
         }
     },
 
-    /** Get real-time sync completion % for a folder (0-100). */
     async folderCompletion(folderId, deviceId) {
         try {
             const data = await apiGet(`/rest/db/completion?folder=${folderId}&device=${deviceId}`);
@@ -271,7 +210,6 @@ module.exports = {
         } catch { return null; }
     },
 
-    /** Pause or resume a shared folder. */
     async setFolderPaused(folderId, paused) {
         const config = await apiGet('/rest/config');
         const folder = (config.folders || []).find(f => f.id === folderId);
@@ -281,8 +219,6 @@ module.exports = {
         }
     },
 };
-
-// ── Syncthing binary locator ─────────────────────────────────────────────────
 
 function syncBin() {
     const platform = process.platform;
@@ -294,14 +230,12 @@ function syncBin() {
     for (const c of candidates) {
         if (fs.existsSync(c)) return c;
     }
-    // Fall back to PATH
+
     try {
         require('child_process').execSync(platform === 'win32' ? 'where syncthing' : 'which syncthing');
         return 'syncthing';
     } catch { return null; }
 }
-
-// ── Config helpers ───────────────────────────────────────────────────────────
 
 function ensureDirs() {
     [SYNC_CONFIG_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
@@ -311,8 +245,6 @@ function ensureSyncConfig() {
     if (fs.existsSync(SYNC_CONFIG_FILE)) return;
     // Syncthing generates its own config on first run; nothing to pre-create.
 }
-
-// ── Syncthing REST helpers ───────────────────────────────────────────────────
 
 function syncApiRequest(method, urlPath, body) {
     return new Promise((resolve, reject) => {
@@ -343,8 +275,6 @@ function syncApiRequest(method, urlPath, body) {
 function apiGet(urlPath)        { return syncApiRequest('GET',  urlPath, null); }
 function apiPut(urlPath, body)  { return syncApiRequest('PUT',  urlPath, body); }
 
-// ── Startup wait ─────────────────────────────────────────────────────────────
-
 function waitForSyncApi(timeoutMs) {
     return new Promise((resolve, reject) => {
         const deadline = Date.now() + timeoutMs;
@@ -366,8 +296,6 @@ function waitForSyncApi(timeoutMs) {
         attempt();
     });
 }
-
-// ── Logger ───────────────────────────────────────────────────────────────────
 
 function log(level, msg) {
     console.log(`[SYNC][${level.toUpperCase()}] ${msg}`);

@@ -57,7 +57,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl mx-4 flex flex-col max-h-[80vh]">
-        {/* Header */}
+        {}
         <div className="px-4 py-3 border-b flex justify-between items-center bg-gray-50">
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
           <button 
@@ -68,9 +68,9 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
           </button>
         </div>
 
-        {/* Content */}
+        {}
         <div className="flex-1 overflow-hidden flex">
-          {/* Left Panel - Property Hierarchy */}
+          {}
           <div className="w-1/2 border-r flex flex-col">
             <div className="p-3 border-b bg-gray-50">
               <div className="flex items-center justify-between mb-2">
@@ -90,7 +90,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
                 className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            
+
             {isHierarchyVisible && (
               <div className="flex-1 overflow-y-auto p-2">
                 {filteredProperties.length > 0 ? (
@@ -115,7 +115,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
             )}
           </div>
 
-          {/* Right Panel - Chain Builder */}
+          {}
           <div className="w-1/2 flex flex-col">
             <div className="p-3 border-b bg-gray-50">
               <h4 className="text-sm font-semibold text-gray-700">Property Chain</h4>
@@ -153,7 +153,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
               )}
             </div>
 
-            {/* Chain Preview */}
+            {}
             {chain.length > 0 && (
               <div className="p-3 border-t bg-gray-50">
                 <p className="text-xs text-gray-500 mb-1">Chain Preview:</p>
@@ -165,7 +165,7 @@ const PropertyChainDialog: React.FC<PropertyChainDialogProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
+        {}
         <div className="px-4 py-3 border-t bg-gray-50 flex justify-between items-center">
           <div className="text-xs text-gray-500">
             {chain.length > 0 ? (

@@ -1,26 +1,21 @@
-/**
- * Ask-the-graph: deterministic NL question → highlighted subgraph.
- * Structure-only: terms are matched to node labels, then typed edge paths
- * connect the term groups. No LLM in the loop — an LLM can later replace
- * parseQuestion() without touching the path machinery.
- */
+
 
 import type Graph from 'graphology';
 
 export interface AskResult {
-  /** Every node to emphasize (answers + connecting paths). */
+
   subgraph: Set<string>;
-  /** The nodes that answer the question (strong highlight). */
+
   answers: Set<string>;
-  /** Human-readable summary for the answer card. */
+
   summary: string;
-  /** Distinct predicates used on connecting paths. */
+
   predicates: string[];
-  /** Optional technical detail (e.g. AI-generated SPARQL) shown in the card. */
+
   detail?: string;
-  /** Natural-language answer composed by the local AI. */
+
   answer?: string;
-  /** Raw SPARQL result rows (when the result came from a query). */
+
   rows?: Array<Record<string, string>>;
 }
 
@@ -32,7 +27,6 @@ const STOPWORDS = new Set([
   'graph', 'ontology', 'node', 'nodes', 'class', 'classes'
 ]);
 
-/** quality/qualities, sensor/sensors, process/processes → shared stem. */
 function stem(word: string): string {
   let w = word.toLowerCase();
   if (w.endsWith('ies')) w = w.slice(0, -3) + 'y';
@@ -48,7 +42,6 @@ function parseQuestion(question: string): string[] {
     .map(stem);
 }
 
-/** Question terms that match no node label — candidates for AI synonym mapping. */
 export function getUnmatchedTerms(graph: Graph, question: string): string[] {
   return parseQuestion(question).filter(term =>
     !graph.someNode((_id, attrs) => stemmedIncludes(String(attrs.label ?? ''), term))
@@ -63,7 +56,6 @@ export function askGraph(
   const terms = parseQuestion(question);
   if (terms.length === 0) return null;
 
-  // Map each term to the nodes whose label contains it (or an AI-mapped synonym label)
   const groups: Array<{ term: string; ids: Set<string> }> = [];
   for (const term of terms) {
     const synLabels = new Set((synonyms?.[term] ?? []).map(l => l.toLowerCase()));
@@ -77,7 +69,6 @@ export function askGraph(
   }
   if (groups.length === 0) return null;
 
-  // Single concept: the answer is the group plus its immediate neighborhood
   if (groups.length === 1) {
     const [g] = groups;
     const subgraph = new Set<string>(g.ids);
@@ -90,7 +81,6 @@ export function askGraph(
     };
   }
 
-  // Two+ concepts: connect the first group to the last via shortest paths (≤ 4 hops)
   const source = groups[0];
   const target = groups[groups.length - 1];
   const subgraph = new Set<string>();
@@ -127,7 +117,6 @@ function stemmedIncludes(label: string, term: string): boolean {
   return label.split(/[^a-zA-Z0-9]+/).some(w => stem(w) === term);
 }
 
-/** BFS from start until any node in goals; returns the node path or null. */
 function shortestPath(graph: Graph, start: string, goals: Set<string>, maxDepth: number): string[] | null {
   if (goals.has(start)) return [start];
   const prev = new Map<string, string>();

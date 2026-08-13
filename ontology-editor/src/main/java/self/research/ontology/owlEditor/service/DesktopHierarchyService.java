@@ -23,9 +23,6 @@ import java.util.stream.Collectors;
 
 import static self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport.getLabel;
 
-/**
- * OWLAPI in-memory hierarchy (desktop + cloud fast-open).
- */
 @Service
 @Conditional(FastOpenCondition.class)
 public class DesktopHierarchyService {
@@ -84,7 +81,6 @@ public class DesktopHierarchyService {
             .orElse(0);
     }
 
-    /** Flat all-classes list for the graph view — served from the live in-memory model. */
     public List<OntologyDto.TreeNode> allClasses(String projectId, int limit) {
         return ontologyCache.get(projectId)
             .map(c -> snapshotBuilder.buildAllClasses(c.ontology(), limit, Imports.EXCLUDED))
@@ -109,10 +105,6 @@ public class DesktopHierarchyService {
             .orElse(Collections.emptyList());
     }
 
-    /**
-     * Batch annotation lookup: returns a map of classIri → annotation value for the given property.
-     * Used by the "Render by annotation property" feature.
-     */
     public Map<String, String> batchAnnotations(String projectId, List<String> iris, String propertyIri) {
         return ontologyCache.get(projectId)
             .map(c -> {
@@ -208,7 +200,6 @@ public class DesktopHierarchyService {
         details.put("label", label != null ? label : cls.getIRI().getShortForm());
         details.put("annotations", annotations);
 
-        // subClassOfAxioms: ALL superclasses (named + restrictions) with Manchester syntax definition
         List<OWLClassExpression> subClassExprs = ont.subClassAxiomsForSubClass(cls)
             .map(ax -> ax.getSuperClass())
             .filter(ce -> !ce.isOWLThing() && !ce.isOWLNothing())
@@ -221,7 +212,6 @@ public class DesktopHierarchyService {
         }
         details.put("subClassOfAxioms", subClassOfAxioms);
 
-        // equivalentClassesAxioms: named + anonymous (restrictions, complex expressions)
         List<OWLClassExpression> eqExprs = ont.equivalentClassesAxioms(cls)
             .flatMap(ax -> ax.classExpressions())
             .filter(ce -> !ce.equals(cls))
@@ -234,7 +224,6 @@ public class DesktopHierarchyService {
         }
         details.put("equivalentClassesAxioms", equivalentClassesAxioms);
 
-        // disjointClassesAxioms: named disjoint classes only
         List<OWLClassExpression> disjointExprs = ont.disjointClassesAxioms(cls)
             .flatMap(ax -> ax.classExpressions())
             .filter(ce -> !ce.equals(cls) && !ce.isAnonymous())
@@ -284,11 +273,6 @@ public class DesktopHierarchyService {
         return details;
     }
 
-    /**
-     * OWLAPI in-memory supplements for class details.
-     * Covers multi-valued annotations merge, AllDisjointClasses, disjointUnion, hasKey,
-     * GCIs, anonymous ancestor axioms, and structural-reasoner inferred axioms.
-     */
     private void supplementClassDetails(OWLOntology ont, OWLReasoner reasoner, String classIri,
                                         Map<String, Object> details) {
         if (details == null || details.isEmpty()) {
@@ -300,7 +284,6 @@ public class DesktopHierarchyService {
         org.semanticweb.owlapi.model.parameters.Imports imp =
                 org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
 
-        // --- AllDisjointClasses members (merge into disjoint list) ---
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> disjointAxioms = (List<Map<String, Object>>) details
                 .computeIfAbsent("disjointClassesAxioms", k -> new ArrayList<>());
@@ -327,7 +310,6 @@ public class DesktopHierarchyService {
             }
         }
 
-        // --- disjointUnionOf ---
         List<Map<String, Object>> disjointUnionAxioms = new ArrayList<>();
         ont.disjointUnionAxioms(cls).forEach(ax -> {
             List<String> members = ax.classExpressions()
@@ -349,7 +331,6 @@ public class DesktopHierarchyService {
         });
         details.put("disjointUnionAxioms", disjointUnionAxioms);
 
-        // --- hasKey ---
         List<Map<String, Object>> hasKeyAxioms = new ArrayList<>();
         int hasKeyIdx = 0;
         for (OWLHasKeyAxiom ax : ont.getAxioms(AxiomType.HAS_KEY, imp)) {
@@ -380,7 +361,6 @@ public class DesktopHierarchyService {
         }
         details.put("hasKeyAxioms", hasKeyAxioms);
 
-        // --- GCIs involving this class as superclass ---
         List<Map<String, String>> generalClassAxioms = new ArrayList<>();
         int gciLimit = 200;
         for (OWLSubClassOfAxiom ax : ont.getAxioms(AxiomType.SUBCLASS_OF, imp)) {
@@ -404,7 +384,6 @@ public class DesktopHierarchyService {
         }
         details.put("generalClassAxioms", generalClassAxioms);
 
-        // --- Anonymous ancestor axioms (named ancestors with anonymous supers) ---
         List<Map<String, String>> anonymousAncestorAxioms = new ArrayList<>();
         Set<String> seenAncestorKeys = new LinkedHashSet<>();
         Deque<OWLClass> queue = new ArrayDeque<>();
@@ -442,7 +421,6 @@ public class DesktopHierarchyService {
         }
         details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
 
-        // --- Structural-reasoner inferred axioms (only when a reasoner is already cached) ---
         if (reasoner != null) {
             Set<OWLClassExpression> assertedEquiv = ont.equivalentClassesAxioms(cls)
                     .flatMap(ax -> ax.classExpressions())
@@ -599,7 +577,7 @@ public class DesktopHierarchyService {
             m.put("id", pIri + "_data_value_" + fStr); m.put("isRestriction", true);
             m.put("propertyIri", pIri); m.put("restrictionType", "value"); m.put("fillerIri", fStr);
         } else {
-            // Complex: intersection, union, complement, oneOf
+
             m.put("id", idPrefix); m.put("isRestriction", false); m.put("isComplex", true);
         }
         return m;
@@ -702,11 +680,6 @@ public class DesktopHierarchyService {
         return individual;
     }
 
-    /**
-     * usage: covers every axiom type that references this class.
-     * Uses EntitySearcher.getReferencingAxioms equivalent via OWLOntology.referencingAxioms()
-     * which is an O(1) HashMap lookup in OWLAPI — milliseconds even on Mondo (3.1M triples).
-     */
     private Map<String, Object> buildClassUsage(OWLOntology ont, String classIri) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
         OWLClass cls = df.getOWLClass(IRI.create(classIri));
@@ -721,7 +694,6 @@ public class DesktopHierarchyService {
         List<Map<String, String>> instances = new ArrayList<>();
         List<Map<String, String>> annotations = new ArrayList<>();
 
-        // referencingAxioms is O(1) — OWLAPI indexes entity→axioms in a HashMap at load time
         ont.referencingAxioms(cls, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED).forEach(axiom -> {
             if (axiom instanceof OWLSubClassOfAxiom ax) {
                 if (ax.getSubClass().equals(cls) && !ax.getSuperClass().isAnonymous()) {
@@ -729,7 +701,7 @@ public class DesktopHierarchyService {
                 } else if (ax.getSuperClass().equals(cls) && !ax.getSubClass().isAnonymous()) {
                     subClasses.add(labeledEntry(ont, ax.getSubClass().asOWLClass()));
                 } else if (!ax.getSubClass().equals(cls) && !ax.getSubClass().isAnonymous()) {
-                    // cls appears inside the superclass restriction expression; subclass is the owning class
+
                     restrictions.add(usageEntry("SubClassOf restriction", ax.getSubClass().asOWLClass(), ont, ax.toString()));
                 }
             } else if (axiom instanceof OWLEquivalentClassesAxiom ax) {

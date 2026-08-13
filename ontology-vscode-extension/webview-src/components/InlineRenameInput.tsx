@@ -7,10 +7,6 @@ interface InlineRenameInputProps {
   className?: string;
 }
 
-/**
- * Inline rename input component for entity renaming
- * Supports Enter to confirm, Escape to cancel
- */
 const InlineRenameInput: React.FC<InlineRenameInputProps> = ({
   initialValue,
   onConfirm,
@@ -21,7 +17,7 @@ const InlineRenameInput: React.FC<InlineRenameInputProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Focus and select all text when component mounts
+
     if (inputRef.current) {
       inputRef.current.focus();
       inputRef.current.select();
@@ -45,7 +41,7 @@ const InlineRenameInput: React.FC<InlineRenameInputProps> = ({
   };
 
   const handleBlur = () => {
-    // Confirm on blur if value changed
+
     if (value.trim() && value !== initialValue) {
       onConfirm(value.trim());
     } else {

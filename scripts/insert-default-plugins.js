@@ -1,25 +1,9 @@
-/**
- * =============================================================================
- * INSERT DEFAULT PLUGINS DIRECTLY INTO MONGODB
- * =============================================================================
- * 
- * This script inserts the default plugins directly into MongoDB, bypassing
- * the need for authentication. This is useful for initial setup.
- * 
- * Plugins:
- * 1. Fuzzy Ontology Plugin
- * 2. Graph View Plugin
- * 3. SWRL Editor Plugin
- * 4. Change Assistant Plugin
- * 5. SPARQL Query Plugin
- *    (Reasoner features ship inside the core dashboard now.)
- */
+
 
 const { MongoClient } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 
-// Load environment variables from workspace .env if available
 try {
   const dotenvPath = path.resolve(__dirname, '..', '.env');
   if (fs.existsSync(dotenvPath)) {
@@ -31,7 +15,6 @@ try {
   console.warn('⚠ Could not load .env file:', error.message);
 }
 
-// Configuration - Use environment variable if available (for Docker), otherwise use local default
 const MONGO_URL = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://localhost:27017';
 const MONGO_USERNAME = process.env.MONGODB_USERNAME || process.env.MONGO_USERNAME || process.env.MONGO_USER || "admin";
 const MONGO_PASSWORD = process.env.MONGODB_PASSWORD || process.env.MONGO_PASSWORD || process.env.MONGO_PASS || "changeme123";
@@ -39,7 +22,6 @@ const MONGO_AUTH_SOURCE = process.env.MONGODB_AUTH_SOURCE || process.env.MONGO_A
 const DB_NAME = process.env.MONGODB_DATABASE || process.env.MONGO_DB_NAME || 'ontology';
 const PLUGINS_COLLECTION = 'plugins';
 
-// Default plugins
 const DEFAULT_PLUGINS = [
   {
     pluginId: 'fuzzy-ontology-plugin',
@@ -213,9 +195,6 @@ Perfect for users who need to:
   }
 ];
 
-/**
- * Connect to MongoDB
- */
 async function connectToMongo() {
   const options = {};
 
@@ -228,7 +207,7 @@ async function connectToMongo() {
   }
 
   let client = new MongoClient(MONGO_URL, options);
-  
+
   try {
     await client.connect();
     console.log('✅ Connected to MongoDB');
@@ -239,7 +218,7 @@ async function connectToMongo() {
     }
     return client;
   } catch (error) {
-    // If authentication fails, try without credentials
+
     if (error.message.includes('Authentication failed') && MONGO_USERNAME) {
       console.log('⚠️  Authentication failed, trying without credentials...');
       client = new MongoClient(MONGO_URL, {});
@@ -251,9 +230,6 @@ async function connectToMongo() {
   }
 }
 
-/**
- * Insert plugins into database
- */
 async function insertPlugins(client) {
   const db = client.db(DB_NAME);
   const pluginsCollection = db.collection(PLUGINS_COLLECTION);
@@ -262,9 +238,9 @@ async function insertPlugins(client) {
 
   for (const plugin of DEFAULT_PLUGINS) {
     try {
-      // Check if plugin already exists
+
       const existing = await pluginsCollection.findOne({ pluginId: plugin.pluginId });
-      
+
       if (existing) {
         console.log(`⚠️  Plugin "${plugin.name}" already exists. Updating...`);
         await pluginsCollection.updateOne(
@@ -273,7 +249,7 @@ async function insertPlugins(client) {
             $set: {
               ...plugin,
               updatedAt: new Date(),
-              // Preserve existing stats
+
               totalDownloads: existing.totalDownloads || 0,
               totalInstalls: existing.totalInstalls || 0,
               averageRating: existing.averageRating || 0.0,
@@ -294,9 +270,6 @@ async function insertPlugins(client) {
   }
 }
 
-/**
- * Verify insertion
- */
 async function verifyPlugins(client) {
   const db = client.db(DB_NAME);
   const pluginsCollection = db.collection(PLUGINS_COLLECTION);
@@ -312,24 +285,19 @@ async function verifyPlugins(client) {
   });
 }
 
-/**
- * Main execution
- */
 async function main() {
   console.log('=============================================================================');
   console.log('INSERT DEFAULT PLUGINS INTO MONGODB');
   console.log('=============================================================================\n');
 
   let client;
-  
+
   try {
-    // Connect to MongoDB
+
     client = await connectToMongo();
 
-    // Insert plugins
     await insertPlugins(client);
 
-    // Verify
     await verifyPlugins(client);
 
     console.log('\n=============================================================================');
@@ -340,7 +308,7 @@ async function main() {
 
   } catch (error) {
     console.error('\n❌ Error:', error.message);
-    
+
     if (error.message.includes('ECONNREFUSED')) {
       console.error('\n⚠️  MongoDB is not running!');
       console.error('   Please start MongoDB first');
@@ -348,7 +316,7 @@ async function main() {
       console.error('\n⚠️  Authentication required. Set MONGO_USERNAME and MONGO_PASSWORD (or MONGODB_USERNAME / MONGODB_PASSWORD).');
       console.error('   Optional: MONGO_AUTH_SOURCE (defaults to "admin"), MONGO_DB_NAME, MONGO_URL');
     }
-    
+
     process.exit(1);
   } finally {
     if (client) {
@@ -358,7 +326,6 @@ async function main() {
   }
 }
 
-// Run the script
 main().catch(error => {
   console.error('Fatal error:', error);
   process.exit(1);

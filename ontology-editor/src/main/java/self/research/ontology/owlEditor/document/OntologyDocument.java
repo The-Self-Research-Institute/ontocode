@@ -15,8 +15,6 @@ public class OntologyDocument {
     private Date createdAt;
     private Date updatedAt;
 
-    // Existing getters and setters...
-
     public String getId() {
         return id;
     }
@@ -33,7 +31,6 @@ public class OntologyDocument {
         this.projectId = projectId;
     }
 
-    // ADD THIS GETTER AND SETTER
     public Map<String, Object> getMetadata() {
         return metadata;
     }

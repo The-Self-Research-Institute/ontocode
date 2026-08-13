@@ -36,10 +36,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-/**
- * Controller for reasoning operations on ontologies.
- * Provides endpoints for consistency checking, classification, realization, and inference.
- */
 @RestController("pluginReasonerController")
 @RequestMapping("/api/reasoner")
 @CrossOrigin(originPatterns = "*")
@@ -73,13 +69,6 @@ public class ReasonerController {
         return new RestTemplate(f);
     }
 
-    // Cache for loaded ontologies — bounded LRU, max 20 entries, thread-safe.
-    // Eviction must release the per-project resources tied to the entry
-    // (manager reference, warmed reasoners); otherwise every evicted ontology
-    // stays pinned in managerRefs and heap grows without bound, and a later
-    // reload would overwrite managerRefs while ReasonerService still caches a
-    // reasoner wrapping the old ontology (stale results / "Manager on ontology
-    // ... is null" once the old manager is collected).
     private final Map<String, OWLOntology> ontologyCache = java.util.Collections.synchronizedMap(
         new java.util.LinkedHashMap<>(16, 0.75f, true) {
             @Override
@@ -93,30 +82,14 @@ public class ReasonerController {
         }
     );
 
-    // Keeps a strong reference to each manager so the GC cannot collect it.
-    // OWLAPI 5.x stores the manager as a WeakReference inside OWLOntologyImpl;
-    // without this map the manager is eligible for GC as soon as the local variable
-    // in loadOntologyFromStream() goes out of scope, which causes the
-    // "Manager on ontology ... is null" error on the next OWLAPI call.
     private final Map<String, OWLOntologyManager> managerRefs = new ConcurrentHashMap<>();
 
-    // Per-project load locks: prevents two concurrent requests from both missing
-    // the ontologyCache, each creating a different OWLOntologyManager, and then
-    // overwriting each other's managerRefs entry — which would make the first
-    // manager GC-eligible while the ReasonerService cache still holds the first
-    // OWLOntology (whose WeakReference to that manager then goes null).
-    // Deliberately NOT evicted with the LRU: removing a lock while a load holds
-    // it would reintroduce the concurrent-load race this lock exists to prevent,
-    // and each entry is a bare Object (negligible memory).
     private final ConcurrentHashMap<String, Object> loadLocks = new ConcurrentHashMap<>();
 
-    // Async classification task tracking
     private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
     private final Set<String> cleanupScheduledTaskIds = ConcurrentHashMap.newKeySet();
     private final ExecutorService classifyExecutor = Executors.newFixedThreadPool(2);
-    // Delayed task-entry removal runs on its own scheduler: parking a
-    // Thread.sleep on classifyExecutor would occupy one of its two worker
-    // threads for the full delay and starve real classification jobs.
+
     private final ScheduledExecutorService taskCleanupScheduler =
         Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "reasoner-task-cleanup");
@@ -139,11 +112,6 @@ public class ReasonerController {
         }
     }
 
-    /**
-     * Extract parent project prefix from hierarchical IDs ({@code proj-xxx--fileId}).
-     * Canonical project IDs are often the full string ({@code proj-xxx--uuid}); try that
-     * first in {@link #loadOntology} and only fall back to this prefix when needed.
-     */
     private String extractBaseProjectId(String projectId) {
         if (projectId == null || !projectId.contains("--")) {
             return projectId;
@@ -153,15 +121,6 @@ public class ReasonerController {
         return baseId;
     }
 
-    /**
-     * Load ontology from multiple sources in priority order:
-     * 1. Editor service (for ontologies being edited)
-     * 2. GridFS (for uploaded ontologies)
-     * 3. Local filesystem (development fallback)
-     *
-     * Tries the full {@code projectId} first (e.g. {@code proj-abc--uuid}), then the parent
-     * prefix before the first {@code --} for legacy partition/file-scoped IDs.
-     */
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
 
@@ -190,24 +149,16 @@ public class ReasonerController {
             ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
     }
 
-    /** No source (editor service, GridFS, filesystem) yielded an ontology for the project. */
     static class OntologyNotFoundException extends RuntimeException {
         OntologyNotFoundException(String message) {
             super(message);
         }
     }
 
-    /**
-     * Map an endpoint failure to a response: a missing ontology becomes a 404
-     * with a diagnose hint, anything else a 500. Shared by every reasoning
-     * endpoint so the mapping cannot drift between them.
-     */
     private ResponseEntity<Map<String, Object>> reasoningFailure(Exception e, String projectId, String action) {
         log.error("Error {} for project {}", action, projectId, e);
         String message = e.getMessage() != null ? e.getMessage() : e.toString();
-        // technicalDetail always carries the real exception class + message + first
-        // in-app stack frame, independent of how "friendly" the top-level error text
-        // is — so the desktop UI can show a "Details" toggle instead of a dead end.
+
         String technicalDetail = buildTechnicalDetail(e);
 
         if (e instanceof OntologyNotFoundException) {
@@ -262,7 +213,6 @@ public class ReasonerController {
         ));
     }
 
-    /** Exception class + message + first frame from our own code, for a "Details" panel — not for the headline message. */
     private String buildTechnicalDetail(Throwable e) {
         StringBuilder sb = new StringBuilder();
         sb.append(e.getClass().getName());
@@ -289,24 +239,16 @@ public class ReasonerController {
         if (lookupId == null || lookupId.isBlank()) {
             return null;
         }
-        // Fast path: return cached without acquiring a lock.
+
         OWLOntology cached = ontologyCache.get(lookupId);
         if (cached != null) {
             log.info("Returning cached ontology for project: {}", lookupId);
             return cached;
         }
 
-        // Serialize concurrent loads for the same projectId. Without this, two
-        // requests arriving simultaneously (e.g. via Promise.all) both miss the
-        // cache, each create a separate OWLOntologyManager, and the second
-        // overwrites managerRefs[lookupId] — leaving the first manager with no
-        // strong reference so the GC collects it while the ReasonerService cache
-        // still holds the first OWLOntology. That OWLOntology's WeakReference to
-        // the now-collected manager then goes null, producing:
-        // "Manager on ontology ... is null".
         Object lock = loadLocks.computeIfAbsent(lookupId, k -> new Object());
         synchronized (lock) {
-            // Double-check inside the lock in case another thread just finished loading.
+
             cached = ontologyCache.get(lookupId);
             if (cached != null) {
                 log.info("Returning cached ontology for project: {} (loaded by concurrent thread)", lookupId);
@@ -353,14 +295,6 @@ public class ReasonerController {
         return base + "/api/ontology-file/" + encoded;
     }
 
-    /**
-     * Forward the caller's Bearer token to editor-service requests. The editor
-     * enforces JWT on /api/** in cloud (require-jwt=true), so an unauthenticated
-     * fetch 401s and silently hides ontologies that exist only in the editor.
-     * Outside a request context (or without a bearer token) the entity carries
-     * no Authorization header, matching desktop/dev where the editor exempts
-     * localhost callers.
-     */
     private org.springframework.http.HttpEntity<Void> editorAuthEntity() {
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         org.springframework.web.context.request.RequestAttributes attrs =
@@ -374,10 +308,6 @@ public class ReasonerController {
         return new org.springframework.http.HttpEntity<>(headers);
     }
 
-    /**
-     * Fetch ontology from the editor service API
-     * Uses configured editor URL: ${ontology.editor.url}
-     */
     private OWLOntology loadOntologyFromEditorService(String projectId) {
         log.debug("Attempting to fetch from editor service at: {}", editorServiceUrl);
         try {
@@ -386,7 +316,7 @@ public class ReasonerController {
 
             ResponseEntity<byte[]> response = restTemplate.exchange(
                 url, org.springframework.http.HttpMethod.GET, editorAuthEntity(), byte[].class);
-            
+
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
                 try (InputStream inputStream = new java.io.ByteArrayInputStream(response.getBody())) {
                     OWLOntology ontology = loadOntologyFromStream(projectId, inputStream, "editor service");
@@ -449,10 +379,6 @@ public class ReasonerController {
         return null;
     }
 
-    /**
-     * Check ontology consistency
-     * POST /api/reasoner/{projectId}/consistency
-     */
     @PostMapping("/{projectId}/consistency")
     public ResponseEntity<Map<String, Object>> checkConsistency(
             @PathVariable String projectId,
@@ -465,21 +391,20 @@ public class ReasonerController {
             }
 
             log.info("Checking consistency for project: {} with {}", projectId, reasonerType);
-            
+
             OWLOntology ontology = loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
+
             long startTime = System.currentTimeMillis();
             boolean isConsistent = reasonerService.isConsistent(ontology, type);
             long duration = System.currentTimeMillis() - startTime;
-            
+
             Map<String, Object> result = new HashMap<>();
             result.put("consistent", isConsistent);
             result.put("reasonerType", type.getDisplayName());
             result.put("durationMs", duration);
             result.put("projectId", projectId);
-            
-            // If inconsistent, get unsatisfiable classes
+
             if (!isConsistent) {
                 Set<OWLClass> unsatisfiable = reasonerService.getUnsatisfiableClasses(ontology, type);
                 List<Map<String, String>> unsatisfiableList = unsatisfiable.stream()
@@ -490,19 +415,14 @@ public class ReasonerController {
                     .collect(Collectors.toList());
                 result.put("unsatisfiableClasses", unsatisfiableList);
             }
-            
+
             return ResponseEntity.ok(result);
-            
+
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "checking consistency");
         }
     }
 
-    /**
-     * Classify the ontology (compute class hierarchy) — async version.
-     * Returns immediately with a taskId; poll GET /api/reasoner/{projectId}/classify/status/{taskId} for results.
-     * POST /api/reasoner/{projectId}/classify
-     */
     @PostMapping("/{projectId}/classify")
     public ResponseEntity<Map<String, Object>> classify(
             @PathVariable String projectId,
@@ -516,10 +436,8 @@ public class ReasonerController {
 
             log.info("Classifying ontology for project: {} with {}", projectId, reasonerType);
 
-            // Pre-validate reasoner type
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
-            // Pre-load ontology on the request thread so errors surface immediately
             OWLOntology ontology = loadOntology(projectId);
 
             String taskId = UUID.randomUUID().toString();
@@ -567,10 +485,6 @@ public class ReasonerController {
         }
     }
 
-    /**
-     * Poll for async classification results.
-     * GET /api/reasoner/{projectId}/classify/status/{taskId}
-     */
     @GetMapping("/{projectId}/classify/status/{taskId}")
     public ResponseEntity<Map<String, Object>> classifyStatus(
             @PathVariable String projectId,
@@ -596,8 +510,7 @@ public class ReasonerController {
 
         if (("COMPLETED".equals(status) || "FAILED".equals(status))
                 && cleanupScheduledTaskIds.add(taskId)) {
-            // Cleanup after first retrieval — keep for 60s in case of retry.
-            // The set guards against re-scheduling on every poll.
+
             taskCleanupScheduler.schedule(() -> {
                 classifyTasks.remove(taskId);
                 cleanupScheduledTaskIds.remove(taskId);
@@ -607,10 +520,6 @@ public class ReasonerController {
         return ResponseEntity.ok(response);
     }
 
-    /**
-     * Realize the ontology (compute instances)
-     * POST /api/reasoner/{projectId}/realize
-     */
     @PostMapping("/{projectId}/realize")
     public ResponseEntity<Map<String, Object>> realize(
             @PathVariable String projectId,
@@ -626,14 +535,13 @@ public class ReasonerController {
 
             OWLOntology ontology = loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
+
             long startTime = System.currentTimeMillis();
             reasonerService.realize(ontology, type);
             long duration = System.currentTimeMillis() - startTime;
-            
-            // Get realization results
+
             Map<String, Object> realizationData = reasonerService.getRealizationResults(ontology, type);
-            
+
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("reasonerType", type.getDisplayName());
@@ -641,18 +549,14 @@ public class ReasonerController {
             result.put("message", "Realization completed successfully");
             result.put("instances", realizationData.get("instances"));
             result.put("totalInstances", realizationData.get("totalInstances"));
-            
+
             return ResponseEntity.ok(result);
-            
+
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "during realization");
         }
     }
 
-    /**
-     * Explain why the ontology is inconsistent
-     * POST /api/reasoner/{projectId}/explain-inconsistency
-     */
     @PostMapping("/{projectId}/explain-inconsistency")
     public ResponseEntity<Map<String, Object>> explainInconsistency(
             @PathVariable String projectId,
@@ -661,27 +565,23 @@ public class ReasonerController {
         try {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
             log.info("Explaining inconsistency for project: {} with {}", projectId, reasonerType);
-            
+
             OWLOntology ontology = loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
+
             Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type);
-            
+
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.putAll(explanation);
-            
+
             return ResponseEntity.ok(result);
-            
+
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "explaining inconsistency");
         }
     }
 
-    /**
-     * Get inferred axioms
-     * GET /api/reasoner/{projectId}/inferred-axioms
-     */
     @GetMapping("/{projectId}/inferred-axioms")
     public ResponseEntity<Map<String, Object>> getInferredAxioms(
             @PathVariable String projectId,
@@ -696,20 +596,20 @@ public class ReasonerController {
 
             OWLOntology ontology = loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
+
             long startTime = System.currentTimeMillis();
             Set<OWLAxiom> inferredAxioms = reasonerService.getInferredAxioms(ontology, type);
             long duration = System.currentTimeMillis() - startTime;
-            
+
             List<Map<String, String>> axiomsList = inferredAxioms.stream()
-                .limit(100) // Limit to first 100 to avoid huge responses
+                .limit(100)
                 .map(axiom -> Map.of(
                     "axiomType", axiom.getAxiomType().getName(),
                     "readable", formatAxiom(axiom, ontology),
                     "axiom", axiom.toString()
                 ))
                 .collect(Collectors.toList());
-            
+
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("axioms", axiomsList);
@@ -723,10 +623,6 @@ public class ReasonerController {
         }
     }
 
-    /**
-     * Get reasoner statistics
-     * GET /api/reasoner/{projectId}/stats
-     */
     @GetMapping("/{projectId}/stats")
     public ResponseEntity<Map<String, Object>> getReasonerStats(
             @PathVariable String projectId,
@@ -735,22 +631,18 @@ public class ReasonerController {
         try {
             OWLOntology ontology = loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
+
             Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
             stats.put("success", true);
             stats.put("projectId", projectId);
-            
+
             return ResponseEntity.ok(stats);
-            
+
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "getting reasoner stats");
         }
     }
 
-    /**
-     * Stop reasoning for a project — dispose warmed reasoner sessions.
-     * POST /api/reasoner/{projectId}/stop
-     */
     @PostMapping("/{projectId}/stop")
     public ResponseEntity<Map<String, Object>> stopReasoner(
             @PathVariable String projectId,
@@ -778,22 +670,18 @@ public class ReasonerController {
         }
     }
 
-    /**
-     * Clear reasoner cache
-     * POST /api/reasoner/clear-cache
-     */
     @PostMapping("/clear-cache")
     public ResponseEntity<Map<String, Object>> clearCache() {
         try {
             reasonerService.clearCache();
             ontologyCache.clear();
             managerRefs.clear();
-            
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "message", "Cache cleared successfully"
             ));
-            
+
         } catch (Exception e) {
             log.error("Error clearing cache", e);
             return ResponseEntity.status(500).body(Map.of(
@@ -803,16 +691,6 @@ public class ReasonerController {
         }
     }
 
-    /**
-     * Clear the reasoner cache for a single project only (targeted eviction).
-     * Called by ontology-editor after every save so a stale, pre-edit cached
-     * ontology can never keep serving reasoning results — without dropping
-     * every other project's/user's cached reasoner state the way the global
-     * clear-cache above does. IDs can be hierarchical (proj-xxx--uuid); evict
-     * both the full id and the base prefix since either could be the actual
-     * cache key depending on which one loadOntology() resolved against.
-     * POST /api/reasoner/clear-cache/{projectId}
-     */
     @PostMapping("/clear-cache/{projectId}")
     public ResponseEntity<Map<String, Object>> clearCacheForProject(@PathVariable String projectId) {
         try {
@@ -848,10 +726,6 @@ public class ReasonerController {
         }
     }
 
-    /**
-     * Diagnostic endpoint to check GridFS file storage status
-     * GET /api/reasoner/diagnose/{projectId}
-     */
     @GetMapping("/diagnose/{projectId}")
     public ResponseEntity<Map<String, Object>> diagnoseFileStorage(@PathVariable String projectId) {
         try {
@@ -860,7 +734,6 @@ public class ReasonerController {
             diagnosis.put("timestamp", new java.util.Date());
             diagnosis.put("editorServiceUrl", editorServiceUrl);
 
-            // Check editor service for full ID and parent prefix (if applicable)
             List<String> idsToTry = new ArrayList<>();
             idsToTry.add(projectId);
             if (projectId != null && projectId.contains("--")) {
@@ -888,8 +761,7 @@ public class ReasonerController {
                 editorChecks.put(id, check);
             }
             diagnosis.put("editorService", editorChecks);
-            
-            // Check GridFS by metadata.projectId
+
             GridFSFile fileByMetadata = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
             if (fileByMetadata != null) {
                 diagnosis.put("foundInGridFS", true);
@@ -901,7 +773,7 @@ public class ReasonerController {
                 diagnosis.put("metadata", fileByMetadata.getMetadata());
                 diagnosis.put("status", "OK - File found in GridFS");
             } else {
-                // Try by filename
+
                 GridFSFile fileByFilename = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
                 if (fileByFilename != null) {
                     diagnosis.put("foundInGridFS", true);
@@ -917,8 +789,7 @@ public class ReasonerController {
                     diagnosis.put("status", "ERROR - File not found in GridFS");
                 }
             }
-            
-            // Check filesystem fallback locations
+
             List<Map<String, Object>> filesystemChecks = new ArrayList<>();
             List<Path> candidateFiles = Arrays.asList(
                 Paths.get("..", "ontology-editor", "data", "projects", projectId, "ontology.current.owl"),
@@ -926,7 +797,7 @@ public class ReasonerController {
                 Paths.get("ontology-editor", "data", "projects", projectId, "ontology.current.owl"),
                 Paths.get(projectId + ".owl")
             );
-            
+
             for (Path candidate : candidateFiles) {
                 Path absolute = candidate.toAbsolutePath().normalize();
                 Map<String, Object> fileCheck = new HashMap<>();
@@ -939,11 +810,9 @@ public class ReasonerController {
                 filesystemChecks.add(fileCheck);
             }
             diagnosis.put("filesystemFallback", filesystemChecks);
-            
-            // Check if cached
+
             diagnosis.put("cachedInMemory", ontologyCache.containsKey(projectId));
-            
-            // List recent GridFS files for reference
+
             List<Map<String, Object>> recentFiles = new ArrayList<>();
             gridfs.find(new Query().limit(10))
                 .sort(new org.bson.Document("uploadDate", -1))
@@ -958,8 +827,7 @@ public class ReasonerController {
                     recentFiles.add(fileInfo);
                 });
             diagnosis.put("recentGridFSFiles", recentFiles);
-            
-            // Provide suggestions
+
             List<String> suggestions = new ArrayList<>();
             if (!diagnosis.containsKey("foundInGridFS") || !(Boolean) diagnosis.get("foundInGridFS")) {
                 suggestions.add("File not found in GridFS - the upload may have failed or the file was deleted");
@@ -968,9 +836,9 @@ public class ReasonerController {
                 suggestions.add("Check MongoDB GridFS collections: db.fs.files and db.fs.chunks");
             }
             diagnosis.put("suggestions", suggestions);
-            
+
             return ResponseEntity.ok(diagnosis);
-            
+
         } catch (Exception e) {
             log.error("Error diagnosing file storage for project: {}", projectId, e);
             return ResponseEntity.status(500).body(Map.of(
@@ -981,16 +849,10 @@ public class ReasonerController {
         }
     }
 
-    // Helper methods
-
     private boolean workerAvailable() {
         return reasonerWorkerEnabled && reasonerWorkerClient != null;
     }
 
-    /**
-     * Submit a reasoning job to the isolated reasoner worker and return the
-     * async-accepted contract shared by all worker-backed endpoints.
-     */
     private ResponseEntity<Map<String, Object>> submitToWorker(String jobType, String projectId, String reasonerType) {
         Map<String, Object> worker = reasonerWorkerClient.submit(jobType, projectId, reasonerType);
         if (Boolean.FALSE.equals(worker.get("success"))) {
@@ -1046,15 +908,14 @@ public class ReasonerController {
 
     private String formatAxiom(OWLAxiom axiom, OWLOntology ontology) {
         String axiomString = axiom.toString();
-        
-        // Replace IRIs with labels where possible
+
         for (OWLEntity entity : axiom.getSignature()) {
             String label = getLabel(entity, ontology);
             if (!label.isEmpty()) {
                 axiomString = axiomString.replace(entity.getIRI().toString(), label);
             }
         }
-        
+
         return axiomString;
     }
 }

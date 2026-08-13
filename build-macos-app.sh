@@ -1,7 +1,4 @@
 #!/bin/bash
-# ========================================
-# Create OntoCode.app for macOS
-# ========================================
 
 echo "========================================"
 echo "  Building OntoCode.app for macOS"
@@ -12,12 +9,10 @@ APP_NAME="OntoCode.app"
 BUNDLE_ID="com.coretopia.ontocode"
 APP_VERSION="1.0.0"
 
-# Create app bundle structure
 echo "Creating app bundle structure..."
 mkdir -p "${APP_NAME}/Contents/MacOS"
 mkdir -p "${APP_NAME}/Contents/Resources"
 
-# Create Info.plist
 echo "Creating Info.plist..."
 cat > "${APP_NAME}/Contents/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -50,7 +45,6 @@ cat > "${APP_NAME}/Contents/Info.plist" << 'EOF'
 </plist>
 EOF
 
-# Create launcher script
 echo "Creating launcher script..."
 cat > "${APP_NAME}/Contents/MacOS/launcher" << 'EOFSCRIPT'
 #!/bin/bash
@@ -215,10 +209,8 @@ end tell
 APPLESCRIPT
 EOFSCRIPT
 
-# Make launcher executable
 chmod +x "${APP_NAME}/Contents/MacOS/launcher"
 
-# Create a simple icon (optional - using emoji as placeholder)
 echo "Creating app icon..."
 cat > "${APP_NAME}/Contents/Resources/appicon.icns" << 'EOF'
 # Placeholder - in production, use a real .icns file
@@ -248,7 +240,6 @@ echo "  - Create workspace in ~/OntoCode"
 echo "  - Open http://localhost:3000"
 echo ""
 
-# Ask if user wants to copy to Applications
 read -p "Copy to /Applications now? (y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then

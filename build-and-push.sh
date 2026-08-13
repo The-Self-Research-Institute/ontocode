@@ -1,28 +1,10 @@
 #!/bin/bash
-# Build multi-platform Docker images and push to registry.
-#
-# Usage:
-#   ./build-and-push.sh [registry] [version] [services...]
-#
-# Examples:
-#   ./build-and-push.sh                              # build all services
-#   ./build-and-push.sh ontocode latest editor       # build only editor
-#   ./build-and-push.sh ontocode latest auth editor  # build auth + editor
-#   ./build-and-push.sh ontocode latest gateway web  # build gateway + web
-#
-# Available service names:
-#   fuseki  graphdb  auth  gateway  editor  reasoner-worker  swrl  plugin  plugin-init  web
-#
-# On EC2 (pull & restart after pushing):
-#   ./build-and-push.sh ontocode latest editor && \
-#   ssh ec2 "cd /opt/ontocode && docker compose pull owl-editor && docker compose up -d owl-editor"
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-# Local deploy/login secrets (gitignored)
 if [[ -f "$ROOT/.env.deploy" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/.env.deploy"
@@ -30,22 +12,16 @@ fi
 
 REGISTRY=${1:-ontocode}
 VERSION=${2:-latest}
-# Everything from arg 3 onward is a service filter (empty = build all)
+
 shift 2 2>/dev/null || true
 FILTER=("$@")
 
-# Platforms: default amd64-only (DEV/prod EC2 + typical WSL hosts).
-# Dual-arch triggers QEMU arm64 and often fails apk/apt under emulation.
-# Override when you need Apple Silicon / multi-arch:
-#   BUILD_PLATFORMS=linux/amd64,linux/arm64
 BUILD_PLATFORMS="${BUILD_PLATFORMS:-linux/amd64}"
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
 
 should_build() {
     local name="$1"
     if [ ${#FILTER[@]} -eq 0 ]; then
-        return 0  # no filter → build everything
+        return 0
     fi
     for f in "${FILTER[@]}"; do
         if [ "$f" = "$name" ]; then
@@ -57,7 +33,6 @@ should_build() {
 
 ts() { date '+%H:%M:%S'; }
 
-# Ordered catalog so progress [i/n] is stable and predictable.
 ALL_BUILD_SERVICES=(fuseki graphdb auth gateway editor reasoner-worker swrl plugin plugin-init web)
 TO_BUILD=()
 for _svc in "${ALL_BUILD_SERVICES[@]}"; do
@@ -75,10 +50,10 @@ next_step() {
 }
 
 build() {
-    local label="$1"   # e.g. "auth"
-    local tag="$2"     # e.g. ontocode-auth
-    local file="$3"    # e.g. Dockerfile.auth
-    local extra="${4:-}"  # optional extra flags like --no-cache
+    local label="$1"
+    local tag="$2"
+    local file="$3"
+    local extra="${4:-}"
 
     next_step "build+push $tag ($label)"
     echo " Dockerfile : $file"
@@ -99,7 +74,6 @@ build() {
     echo " [$(ts)] DONE  $tag pushed  (${BUILD_INDEX}/${BUILD_TOTAL})  elapsed=$(( $(date +%s) - _t0 ))s"
 }
 
-# Builds run SEQUENTIALLY. Default is linux/amd64 to avoid QEMU arm64.
 fail() {
     echo ""
     echo "============================================"
@@ -108,8 +82,6 @@ fail() {
     docker buildx rm ontocode-builder 2>/dev/null || true
     exit 1
 }
-
-# ── Header ────────────────────────────────────────────────────────────────────
 
 echo "============================================"
 echo "   Building OntoCode Images"
@@ -131,12 +103,10 @@ if [ "$BUILD_TOTAL" -eq 0 ]; then
     exit 0
 fi
 
-# ── Prerequisites ─────────────────────────────────────────────────────────────
-
 echo "Checking prerequisites..."
-# Prefer Ubuntu Docker Engine over Windows Docker Desktop stub on /mnt/c.
+
 export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
-# Drop Windows drive mounts from PATH so docker.exe cannot shadow /usr/bin/docker.
+
 _clean_path=""
 IFS=':' read -ra _pparts <<< "${PATH}"
 for _p in "${_pparts[@]}"; do
@@ -170,8 +140,6 @@ if ! docker buildx version >/dev/null 2>&1; then
 fi
 echo "OK: docker + buildx ($(command -v docker))"
 
-# Host JDKs (SWRL=17, other Java modules=21). Soft for pure Docker pushes.
-# Optional on EC2 when only Docker builds run (image already has JDK).
 if [[ -f "$ROOT/scripts/check-jdk-prereqs.sh" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/scripts/check-jdk-prereqs.sh"
@@ -180,7 +148,6 @@ else
   echo "NOTE: scripts/check-jdk-prereqs.sh missing — skipping host JDK check (OK for Docker-only builds)"
 fi
 
-# Docker Hub login (optional via .env.deploy: DOCKER_USERNAME + DOCKER_PASSWORD or DOCKER_HUB_TOKEN)
 if [[ -n "${DOCKER_USERNAME:-}" && -n "${DOCKER_PASSWORD:-${DOCKER_HUB_TOKEN:-}}" ]]; then
     echo "Logging into Docker Hub as ${DOCKER_USERNAME}..."
     if printf '%s\n' "${DOCKER_PASSWORD:-${DOCKER_HUB_TOKEN}}" \
@@ -200,15 +167,11 @@ elif ! docker system info 2>/dev/null | grep -qi "Username:"; then
 fi
 echo ""
 
-# ── Buildx setup ─────────────────────────────────────────────────────────────
-
 echo "Setting up buildx..."
 docker buildx create --name ontocode-builder --use --driver docker-container 2>/dev/null \
     || docker buildx use ontocode-builder
 docker buildx inspect --bootstrap
 echo ""
-
-# ── Builds ───────────────────────────────────────────────────────────────────
 
 trap fail ERR
 
@@ -235,8 +198,6 @@ should_build plugin-init && build "plugin-init" ontocode-plugin-init Dockerfile.
 should_build web        && build "web"          ontocode-web         Dockerfile.webapp "--no-cache"
 
 trap - ERR
-
-# ── Cleanup & summary ─────────────────────────────────────────────────────────
 
 echo ""
 echo "Cleaning up buildx builder..."

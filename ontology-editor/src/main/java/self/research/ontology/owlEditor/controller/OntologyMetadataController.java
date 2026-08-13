@@ -20,9 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * REST controller for ontology metadata operations (annotations, imports, GCIs)
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/ontology/metadata")
@@ -83,13 +80,7 @@ public class OntologyMetadataController {
     @GetMapping("/{projectId:.+}")
     public ResponseEntity<?> getMetadata(@PathVariable String projectId) {
         try {
-            // Not converted to owlapi-first: getMetadata() already serves from a MongoDB cache
-            // kept in sync at mutation time in the common case, only falling through to a live
-            // SPARQL query on a cache miss (or for an active drafter). The sync-before-SPARQL-
-            // fallback now happens inside getMetadata() itself, on the cache-miss branch only —
-            // calling it here unconditionally forced a Fuseki round-trip (and on desktop, a lazy
-            // Fuseki cold start) on every cache-hit call too, which is most of them, and this
-            // endpoint is fetched on every project open.
+
             Map<String, Object> metadata = metadataService.getMetadata(projectId);
             return ResponseEntity.ok(Map.of("success", true, "data", metadata));
         } catch (Exception e) {
@@ -97,8 +88,6 @@ public class OntologyMetadataController {
             return ResponseEntity.ok(Map.of("success", false, "error", e.getMessage()));
         }
     }
-
-    // ========== Ontology Annotations ==========
 
     @GetMapping("/{projectId:.+}/annotations")
     public ResponseEntity<?> getAnnotations(@PathVariable String projectId) {
@@ -111,7 +100,7 @@ public class OntologyMetadataController {
             }
         }
         try {
-            // Fallback (no OWLAPI fast path applicable): sync then read via SPARQL.
+
             projectImportService.syncProjectToFuseki(projectId);
             List<Map<String, String>> annotations = metadataService.getOntologyAnnotations(projectId);
             return ResponseEntity.ok(Map.of("success", true, "data", annotations));
@@ -188,8 +177,6 @@ public class OntologyMetadataController {
         }
     }
 
-    // ========== Ontology Imports ==========
-
     @GetMapping("/{projectId:.+}/imports")
     public ResponseEntity<?> getImports(@PathVariable String projectId) {
         if (owlApiMetadataQueryService != null) {
@@ -201,7 +188,7 @@ public class OntologyMetadataController {
             }
         }
         try {
-            // Fallback (no OWLAPI fast path applicable): sync then read via SPARQL.
+
             projectImportService.syncProjectToFuseki(projectId);
             List<String> imports = metadataService.getOntologyImports(projectId);
             return ResponseEntity.ok(Map.of("success", true, "data", imports));
@@ -214,9 +201,7 @@ public class OntologyMetadataController {
     @GetMapping("/{projectId:.+}/imports/closure")
     public ResponseEntity<?> getImportClosure(@PathVariable String projectId) {
         try {
-            // Not converted to owlapi-first: this walks owl:imports transitively across the whole
-            // merged graph (including triples pulled in by manual import resolution), which isn't
-            // what a single OWLOntology's own import declarations model — sync first instead.
+
             projectImportService.syncProjectToFuseki(projectId);
             Map<String, List<Map<String, Object>>> closure = metadataService.getImportClosure(projectId);
             return ResponseEntity.ok(Map.of("success", true, "closure", closure));
@@ -248,12 +233,6 @@ public class OntologyMetadataController {
         }
     }
 
-    /**
-     * Best-effort: fetch the content behind a manually-declared owl:imports IRI and merge its
-     * triples into the same graph (draft or public) the declaration was just written to. The
-     * owl:imports triple above is added regardless of the outcome here — this only decides
-     * whether the import is "declaration only" or actually resolved.
-     */
     private Map<String, Object> resolveManualImportContent(String projectId, String importIri, boolean draft, String userId) {
         Map<String, Object> resolution = new HashMap<>();
         try {
@@ -304,8 +283,6 @@ public class OntologyMetadataController {
         }
     }
 
-    // ========== Ontology IRIs ==========
-
     @PutMapping("/{projectId}/iri")
     public ResponseEntity<?> updateOntologyIRIs(@PathVariable String projectId,
                                                @RequestBody Map<String, String> request) {
@@ -322,15 +299,10 @@ public class OntologyMetadataController {
         }
     }
 
-    // ========== General Class Axioms ==========
-
     @GetMapping("/{projectId}/gci")
     public ResponseEntity<?> getGeneralClassAxioms(@PathVariable String projectId) {
         try {
-            // Not converted to owlapi-first: GCIs are keyed by their RDF blank-node id here, and
-            // update/delete match against that same id string. An OWLAPI read would identify GCIs
-            // by class expression instead, desyncing that id scheme and silently breaking edits
-            // unless the write paths were converted in lockstep — sync first instead.
+
             projectImportService.syncProjectToFuseki(projectId);
             List<Map<String, Object>> gcis = metadataService.getGeneralClassAxioms(projectId);
             return ResponseEntity.ok(Map.of("success", true, "data", gcis));
@@ -404,15 +376,10 @@ public class OntologyMetadataController {
         }
     }
 
-    // ========== Prefixes ==========
-
     @GetMapping("/{projectId:.+}/prefixes")
     public ResponseEntity<?> getPrefixes(@PathVariable String projectId) {
         try {
-            // Not converted to owlapi-first: like getMetadata(), prefixes are served from a
-            // MongoDB cache kept in sync by every prefix mutation. The sync-before-SPARQL-
-            // fallback now happens inside getPrefixes() itself, on the cache-miss branch only —
-            // see getMetadata() above for why calling it here unconditionally was the bug.
+
             List<Map<String, String>> prefixes = metadataService.getPrefixes(projectId);
             return ResponseEntity.ok(Map.of("success", true, "data", prefixes));
         } catch (Exception e) {

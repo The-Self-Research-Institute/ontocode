@@ -46,7 +46,7 @@ const EntityPreferencesContext = createContext<EntityPreferencesContextType | un
 
 export const EntityPreferencesProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [preferences, setPreferences] = useState<EntityPreferences>(() => {
-    // Load from localStorage
+
     const stored = localStorage.getItem('entityPreferences');
     if (stored) {
       try {
@@ -59,7 +59,7 @@ export const EntityPreferencesProvider: React.FC<{ children: ReactNode }> = ({ c
   });
 
   useEffect(() => {
-    // Save to localStorage whenever preferences change
+
     localStorage.setItem('entityPreferences', JSON.stringify(preferences));
   }, [preferences]);
 

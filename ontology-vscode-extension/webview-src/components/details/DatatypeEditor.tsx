@@ -151,7 +151,6 @@ const DescriptionTab: React.FC<{
     };
   }, [item?.id, projectId]);
 
-  // Auto-reload when a collaborator modifies this datatype's definitions
   useEffect(() => {
     const handleRemoteEdit = (e: Event) => {
       const edit = (e as CustomEvent).detail;
@@ -205,7 +204,7 @@ const DescriptionTab: React.FC<{
 
   return (
     <div className="space-y-3">
-      {/* Datatype Definitions Panel */}
+      {}
       <Panel
         title="Datatype Definitions"
         defaultOpen={true}
@@ -250,7 +249,7 @@ const DescriptionTab: React.FC<{
         </div>
       </Panel>
 
-      {/* Add Definition Dialog */}
+      {}
       <DatatypeDefinitionDialog
         isOpen={isAddDialogOpen}
         onClose={() => setIsAddDialogOpen(false)}
@@ -295,7 +294,7 @@ const DatatypeEditor: React.FC<{
         </div>
       )}
 
-      {/* Header with IRI */}
+      {}
       <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
           <div className="bg-red-200 text-red-800 p-1 rounded text-xs font-bold">D</div>
@@ -307,7 +306,7 @@ const DatatypeEditor: React.FC<{
       </div>
       <CollaboratorPresenceBar entityId={item.id} />
 
-      {/* Tabs */}
+      {}
       <div className="flex border-b border-gray-200 bg-gray-50 flex-shrink-0">
         <button
           onClick={() => setActiveTab('annotations')}
@@ -329,7 +328,7 @@ const DatatypeEditor: React.FC<{
         </button>
       </div>
 
-      {/* Main Content */}
+      {}
       <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
         {activeTab === 'usage' && (
           <UsageTab datatypeIri={item.id} projectId={projectId} label={item.label} />
