@@ -1,13 +1,7 @@
-/**
- * Cleanup Long-Running Queries in GraphDB
- * Kills queries that have been running for more than 15 minutes
- *
- * Run with: node cleanup-long-queries.js
- */
+
 
 const axios = require('axios');
 
-// Configuration
 const GRAPHDB_URL = 'http://localhost:7200';
 const GRAPHDB_REPO = 'ontocode';
 const MAX_QUERY_TIME_MINUTES = 15;
@@ -18,7 +12,7 @@ async function cleanupLongQueries() {
     console.log('╚════════════════════════════════════════╝\n');
 
     try {
-        // Get list of running queries
+
         console.log(`Checking for queries running longer than ${MAX_QUERY_TIME_MINUTES} minutes...`);
 
         let response;
@@ -29,7 +23,7 @@ async function cleanupLongQueries() {
                 }
             });
         } catch (err) {
-            // If monitoring endpoint not available in GraphDB Free edition
+
             if (err.response && err.response.status === 406) {
                 console.log('\n⚠️  Query monitoring API not available in GraphDB Free edition');
                 console.log('Alternative: Use GraphDB Workbench → Monitor → Queries');
@@ -61,7 +55,7 @@ async function cleanupLongQueries() {
 
             if (queryAge > maxAgeMs) {
                 try {
-                    // Kill the query
+
                     await axios.delete(`${GRAPHDB_URL}/rest/monitor/query/${query.trackAlias}`, {
                         headers: {
                             'Accept': 'application/json'
@@ -94,5 +88,4 @@ async function cleanupLongQueries() {
     }
 }
 
-// Run cleanup
 cleanupLongQueries();

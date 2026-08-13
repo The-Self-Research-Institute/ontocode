@@ -3,15 +3,25 @@ package self.research.ontology.owlEditor.controller;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.rdf4j.rio.RDFFormat;
+import org.semanticweb.owlapi.formats.NTriplesDocumentFormat;
+import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
+import org.semanticweb.owlapi.model.OWLOntology;
+import org.semanticweb.owlapi.model.OWLOntologyStorageException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import self.research.ontology.owlEditor.service.ImportQueueManager;
 import self.research.ontology.owlEditor.service.MainGraphRevisionService;
+import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
 
+import java.io.IOException;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -22,6 +32,10 @@ public class InternalReasoningSupportController {
     private final SparqlDatasetService datasetService;
     private final ImportQueueManager importQueueManager;
     private final MainGraphRevisionService mainGraphRevisionService;
+    private final ProjectImportService importService;
+
+    @Autowired(required = false) @Nullable
+    private OwlApiOntologyContext owlApiContext;
 
     @GetMapping("/reasoning/{projectId}/triple-count")
     public ResponseEntity<Map<String, Object>> tripleCount(@PathVariable String projectId) {
@@ -41,6 +55,17 @@ public class InternalReasoningSupportController {
     public ResponseEntity<StreamingResponseBody> exportTurtle(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId) {
+
+        if ((userId == null || userId.isBlank()) && owlApiContext != null && owlApiContext.hasOntology(projectId)) {
+            Optional<OWLOntology> snapshot = snapshotOntology(projectId);
+            if (snapshot.isPresent()) {
+                StreamingResponseBody body = out -> writeOntology(snapshot.get(), new TurtleDocumentFormat(), out);
+                return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/turtle")).body(body);
+            }
+        }
+        if (!ensureFusekiReady(projectId)) {
+            return ResponseEntity.status(503).build();
+        }
         StreamingResponseBody body = out -> datasetService.exportDatasetToStream(projectId, userId, RDFFormat.TURTLE, out);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("text/turtle"))
@@ -51,10 +76,56 @@ public class InternalReasoningSupportController {
     public ResponseEntity<StreamingResponseBody> exportNTriples(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId) {
+
+        if ((userId == null || userId.isBlank()) && owlApiContext != null && owlApiContext.hasOntology(projectId)) {
+            Optional<OWLOntology> snapshot = snapshotOntology(projectId);
+            if (snapshot.isPresent()) {
+                StreamingResponseBody body = out -> writeOntology(snapshot.get(), new NTriplesDocumentFormat(), out);
+                return ResponseEntity.ok().contentType(MediaType.parseMediaType("application/n-triples")).body(body);
+            }
+        }
+        if (!ensureFusekiReady(projectId)) {
+            return ResponseEntity.status(503).build();
+        }
         StreamingResponseBody body = out -> datasetService.exportDatasetToStream(projectId, userId, RDFFormat.NTRIPLES, out);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/n-triples"))
                 .body(body);
+    }
+
+    private Optional<OWLOntology> snapshotOntology(String projectId) {
+        return owlApiContext.ontology(projectId).map(live -> {
+            try {
+                return org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager()
+                        .copyOntology(live, org.semanticweb.owlapi.model.parameters.OntologyCopy.DEEP);
+            } catch (Exception e) {
+                log.warn("[InternalReasoning] Failed to snapshot in-memory OWLAPI model for {}: {}", projectId, e.getMessage());
+                return null;
+            }
+        }).filter(java.util.Objects::nonNull);
+    }
+
+    private void writeOntology(OWLOntology ontology, org.semanticweb.owlapi.model.OWLDocumentFormat format,
+                                java.io.OutputStream out) throws IOException {
+        try {
+            ontology.getOWLOntologyManager().saveOntology(ontology, format, out);
+        } catch (OWLOntologyStorageException e) {
+            throw new IOException("Failed to serialize ontology: " + e.getMessage(), e);
+        }
+    }
+
+    private boolean ensureFusekiReady(String projectId) {
+        try {
+            Map<String, Object> result = importService.syncProjectToFuseki(projectId);
+            if (Boolean.FALSE.equals(result.get("synced"))) {
+                log.warn("[InternalReasoning] Fuseki sync failed for {} before export: {}", projectId, result.get("error"));
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("[InternalReasoning] Fuseki sync failed for {} before export: {}", projectId, e.getMessage());
+            return false;
+        }
     }
 
     @GetMapping("/reasoning/{projectId}/revision")

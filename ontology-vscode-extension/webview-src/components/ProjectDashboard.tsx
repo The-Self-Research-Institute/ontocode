@@ -37,7 +37,7 @@ import {
 import apiClient from "../services/apiClient";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
-import { isDesktop } from "../utils/desktop";
+import { isDesktop, prewarmDesktopReasoningServices } from "../utils/desktop";
 import { clearSessionCache } from "../utils/sessionCleanup";
 import InviteMemberModal from "./InviteMemberModal";
 import SettingsModal from "./SettingsModal";
@@ -68,7 +68,7 @@ interface ProjectMember {
   email: string;
   role: string;
   joinedAt: string;
-  /** WORKSPACE_OWNER | WORKSPACE_ADMIN when auto-linked on shared projects */
+
   workspaceEditorLink?: string | null;
 }
 
@@ -146,7 +146,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [newProjectDescription, setNewProjectDescription] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // Project settings modal state
   const [projectSettingsModal, setProjectSettingsModal] = useState<Project | null>(null);
   const [editingProjectName, setEditingProjectName] = useState("");
   const [editingProjectDescription, setEditingProjectDescription] = useState("");
@@ -157,12 +156,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [newMemberRole, setNewMemberRole] = useState("VIEWER");
   const [addingMember, setAddingMember] = useState(false);
 
-  // Toast notification state
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "warning" | "info" } | null>(null);
   const [upgradingPlan, setUpgradingPlan] = useState(false);
   const [openMenuProjectId, setOpenMenuProjectId] = useState<string | null>(null); // Track which project menu is open
 
-  // Confirmation modal state
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
     message: string;
@@ -188,7 +185,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     member.workspaceEditorLink !== "WORKSPACE_OWNER" &&
     (member.workspaceEditorLink !== "WORKSPACE_ADMIN" || isWorkspaceOwner);
 
-  /** Resolved workspace role: JWT, team membership, or workspace owner id. */
   const workspaceRoleResolved = useMemo((): WorkspaceRole | null => {
     const jwt = normalizeRole(user?.workspaceRole);
     if ((WORKSPACE_ROLES as readonly string[]).includes(jwt)) return jwt as WorkspaceRole;
@@ -225,7 +221,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const canManageProjectRow = (project: Project) =>
     canManageProjectSettings(projectRoleForUser(project), effectiveWorkspaceRole);
 
-  // Paid purchases are account-level and handled by the /subscription page.
   const handleUpgradePlan = async () => {
     setShowPlanDetails(false);
     setUpgradingPlan(false);
@@ -236,15 +231,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  // Helper function to show toast
   const showToast = (message: string, type: "success" | "error" | "warning" | "info" = "info") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   };
 
-  // Settle any still-pending promise-based confirm before another dialog
-  // replaces it: its awaiting caller must never hang, and a later cancel of
-  // the replacing dialog must not resolve the stranded promise by mistake.
   const settlePendingConfirm = (value: boolean) => {
     if (confirmResolveRef.current) {
       confirmResolveRef.current(value);
@@ -252,7 +243,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  // Helper function to show confirmation modal
   const showConfirm = (options: {
     title: string;
     message: string;
@@ -293,14 +283,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   }, []);
 
   useEffect(() => {
+    prewarmDesktopReasoningServices();
+  }, []);
+
+  useEffect(() => {
     getAppVersion().then(setAppVersion).catch(() => setAppVersion(""));
   }, []);
 
-  // Poll workspace state every 15s. Two responsibilities:
-  //   1. Surface member changes (pending → active when invitees accept).
-  //   2. Bug #38: detect when the owner upgrades / downgrades / cancels
-  //      and force-refresh the JWT so members pick up the new plan
-  //      without having to switch workspaces and back.
   useEffect(() => {
     if (isDesktop() || !user?.workspaceId) return;
 
@@ -334,7 +323,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         setWorkspaceOwnerId(workspaceData?.ownerId || null);
         setWorkspaceDisplayName(workspaceData?.name || "");
 
-        // ── Plan / billing-status change detection (Bug #38) ──
         const currentPlan = String(workspaceData?.subscriptionPlan || "").toUpperCase();
         const currentStatus = String(workspaceData?.billingStatus || "").toUpperCase();
         const planChanged = currentPlan && currentPlan !== lastSeenPlan;
@@ -344,8 +332,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             "[ProjectDashboard] Subscription state changed (%s/%s -> %s/%s) — refreshing permissions",
             lastSeenPlan, lastSeenStatus, currentPlan, currentStatus,
           );
-          // refreshPermissions re-issues the JWT and updates the user object,
-          // which propagates the new `subscriptionPlan` through useSubscription.
+
           await refreshPermissions().catch(() => undefined);
         }
         lastSeenPlan = currentPlan || lastSeenPlan;
@@ -357,7 +344,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     return () => clearInterval(interval);
   }, [user?.workspaceId, user?.subscriptionPlan, refreshPermissions]);
 
-  // Refresh project list on workspace events (e.g. PROJECT_DELETED broadcast via WebSocket)
   useEffect(() => {
     const handler = async (e: Event) => {
       const event = (e as CustomEvent).detail;
@@ -375,7 +361,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     return () => window.removeEventListener("workspaceEvent", handler);
   }, [user?.workspaceId]);
 
-  // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => setOpenMenuProjectId(null);
     if (openMenuProjectId) {
@@ -389,7 +374,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       setLoading(true);
       setLoadError(null);
 
-      // Load projects for current workspace only
       const projectsResponse = user?.workspaceId
         ? await apiClient.get(`/api/projects/my?workspaceId=${user.workspaceId}`)
         : await apiClient.get(`/api/projects/my`);
@@ -413,24 +397,20 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         console.log("[ProjectDashboard] No projects returned from API");
       }
 
-      // Workspace members / invites are cloud-only — desktop is single-user local.
       if (!isDesktop() && user?.workspaceId) {
         try {
           const workspaceResponse = await apiClient.get(`/api/workspaces/${user.workspaceId}`);
           const workspaceData = workspaceResponse?.data || workspaceResponse;
           const members = workspaceData?.members || [];
 
-          // Store workspace owner ID
           setWorkspaceOwnerId(workspaceData?.ownerId || null);
           setWorkspaceDisplayName(workspaceData?.name || "");
 
           console.log("[ProjectDashboard] Workspace members from backend:", members);
           console.log("[ProjectDashboard] Workspace owner ID:", workspaceData?.ownerId);
 
-          // Convert workspace members to workspace members format
-          // Now includes both ACTIVE and PENDING members from the workspace
           const teamMembersList = members.map((member: any) => {
-            // Determine status: if userId is null, it's a pending member
+
             const isPending = member.status === "PENDING" || (!member.userId && member.invitationToken);
             return {
               id: member.userId || `pending-${member.email}`,
@@ -453,12 +433,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         }
       }
     } catch (error: any) {
-      // Bug #41: previously this auto-called clearCacheAndLogout(), which
-      // wiped the session whenever projects failed to load (e.g. right
-      // after the owner cancelled and the workspace lost paid access).
-      // Result: the user couldn't even reach billing to renew. Now we
-      // surface the error and offer routes back to billing / workspace
-      // selection. Only an explicit 401 should force a re-login.
+
       console.error("Error loading dashboard data:", error);
       const status = error?.status ?? error?.response?.status;
       if (status === 401) {
@@ -505,12 +480,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   const handleInviteMember = async (email: string, role: string) => {
     try {
-      // Check if member already exists in workspace
+
       const workspaceResponse = await apiClient.get(`/api/workspaces/${user?.workspaceId}`);
       const workspace = workspaceResponse?.data?.workspace || workspaceResponse?.data;
       const members = workspace?.members || [];
 
-      // Check if user is already a member
       const existingMember = members.find((m: any) => m.email?.toLowerCase() === email.toLowerCase());
       const isActiveMember =
         existingMember &&
@@ -522,7 +496,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         return;
       }
 
-      // Check pending invitations (do not swallow duplicate detection in a catch)
       let pendingInvites: any[] = [];
       try {
         const pendingResponse = await apiClient.get(`/api/invitations/workspace/${user?.workspaceId}`);
@@ -556,7 +529,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       return response;
     } catch (error: any) {
       console.error("Error inviting member:", error);
-      // Re-throw with proper error structure
+
       throw {
         message: error?.error || error?.message || "Failed to send invitation",
         response: error,
@@ -565,7 +538,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   };
 
   const handleRemoveMember = async (member: TeamMember, projectId?: string) => {
-    // Non-owner may leave the workspace (self-removal)
+
     if (member.email === user?.email) {
       if (member.roles.some((r) => r.toUpperCase() === "OWNER")) {
         showToast(
@@ -590,19 +563,16 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       return;
     }
 
-    // Prevent removing workspace owner
     if (member.roles.some(r => r.toUpperCase() === "OWNER")) {
       showToast("Cannot remove workspace owner. Please transfer ownership or delete the workspace.", "error");
       return;
     }
 
-    // If member is PENDING, use cancel invitation flow
     if (member.status === "PENDING") {
       handleCancelInvitation(member);
       return;
     }
 
-    // Show confirmation modal for active members
     showConfirm({
       title: "Remove Workspace Member",
       message: `Are you sure you want to remove ${member.username} (${member.email}) from this workspace? This action cannot be undone.`,
@@ -638,7 +608,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       member.invitationToken,
     );
 
-    // Show confirmation modal
     showConfirm({
       title: "Cancel Invitation",
       message: `Are you sure you want to cancel the invitation for ${member.email}? The invitation link will no longer work.`,
@@ -653,7 +622,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           await loadData();
         } catch (error: any) {
           console.error("[ProjectDashboard] Error cancelling invitation:", error);
-          // Handle ApiError and other error formats
+
           const errorMessage =
             error?.error || error?.response?.data?.error || error?.message || "Failed to cancel invitation";
           showToast(`Failed to cancel invitation: ${errorMessage}`, "error");
@@ -685,7 +654,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     setNewName(currentName);
   };
 
-  // Open project settings modal
   const openProjectSettings = (project: Project) => {
     setProjectSettingsModal(project);
     setEditingProjectName(project.name);
@@ -693,21 +661,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     setProjectSettingsTab("general");
   };
 
-  // Save project settings (name and description)
   const handleSaveProjectSettings = async () => {
     if (!projectSettingsModal) return;
 
     try {
       setSavingProject(true);
 
-      // Update project name if changed
       if (editingProjectName.trim() !== projectSettingsModal.name) {
         await apiClient.patch(`/api/projects/${projectSettingsModal.projectId}/rename`, {
           name: editingProjectName.trim(),
         });
       }
 
-      // Update project description if changed
       if (editingProjectDescription !== (projectSettingsModal.description || "")) {
         await apiClient.patch(`/api/projects/${projectSettingsModal.projectId}`, {
           description: editingProjectDescription,
@@ -725,7 +690,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  // Delete project
   const handleDeleteProject = (project: Project) => {
     showConfirm({
       title: "Delete Project",
@@ -747,7 +711,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     });
   };
 
-  // Remove member from project
   const handleRemoveProjectMember = (project: Project, member: ProjectMember) => {
     showConfirm({
       title: "Remove Project Member",
@@ -758,7 +721,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         try {
           await apiClient.delete(`/api/projects/${project.projectId}/members/${member.userId}`);
           showToast(`${member.username} has been removed from the project`, "success");
-          // Refresh project data
+
           const updatedProjectResponse = await apiClient.get(`/api/projects/${project.projectId}`);
           const updatedProject =
             updatedProjectResponse?.data?.project || updatedProjectResponse?.project || updatedProjectResponse;
@@ -773,14 +736,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     });
   };
 
-  // Update member role in project
   const handleUpdateProjectMemberRole = async (project: Project, member: ProjectMember, newRole: string) => {
     try {
       await apiClient.patch(`/api/projects/${project.projectId}/members/${member.userId}/role`, {
         role: newRole,
       });
       showToast(`${member.username}'s role updated to ${newRole}`, "success");
-      // Refresh project data
+
       const updatedProjectResponse = await apiClient.get(`/api/projects/${project.projectId}`);
       const updatedProject =
         updatedProjectResponse?.data?.project || updatedProjectResponse?.project || updatedProjectResponse;
@@ -792,14 +754,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  // Add member to project
   const handleAddProjectMember = async () => {
     if (!projectSettingsModal || !newMemberEmail.trim()) return;
 
     try {
       setAddingMember(true);
 
-      // Backend expects `email` (see ProjectController.AddMemberRequest)
       await apiClient.post(`/api/projects/${projectSettingsModal.projectId}/members`, {
         email: newMemberEmail.trim(),
         role: newMemberRole,
@@ -807,12 +767,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
       showToast(`Member added successfully`, "success");
 
-      // Reset form
       setNewMemberEmail("");
       setNewMemberRole("VIEWER");
       setShowAddMemberForm(false);
 
-      // Refresh project data
       const updatedProjectResponse = await apiClient.get(`/api/projects/${projectSettingsModal.projectId}`);
       const updatedProject =
         updatedProjectResponse?.data?.project || updatedProjectResponse?.project || updatedProjectResponse;
@@ -827,7 +785,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  // Get available workspace members (not already in project)
   const getAvailableTeamMembers = () => {
     if (!projectSettingsModal) return [];
 
@@ -837,12 +794,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       if (projectMemberUsernames.has(member.username.toLowerCase()) || member.status !== "ACTIVE") {
         return false;
       }
-      // Workspace owner/admins always get implicit access to shared projects
-      // (backend auto-links them — see applyImplicitWorkspaceLeadershipEditors),
-      // but that backfill only runs at project creation or after the first
-      // member is added. Until then they aren't literally in project.members
-      // yet, so exclude them here too rather than offering a redundant
-      // "add" that's already guaranteed.
+
       return !member.roles.some((r) => {
         const upper = r.toUpperCase();
         return upper === "OWNER" || upper === "ADMIN";
@@ -853,8 +805,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const filteredProjects = useMemo(() => {
     console.log("[ProjectDashboard] Recalculating filteredProjects, projects:", projects.length);
 
-    // Backend already filters projects by membership for non-owner/admin users
-    // Just apply the local search filter here
     return projects.filter(
       (project) =>
         project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -887,7 +837,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             >
               Retry
             </button>
-            {/* Bug #41: always offer a way out so the user isn't stranded. */}
+            {}
             <button
               onClick={() => switchWorkspace()}
               className="px-5 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
@@ -916,7 +866,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
-      {/* Toast Notification */}
+      {}
       {toast && (
         <div
           className={`fixed top-4 right-4 z-[100] px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 max-w-md animate-in slide-in-from-top-2 ${
@@ -940,7 +890,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       )}
 
-      {/* Browser-mode: open a local file when there is no pending file */}
+      {}
       {!pendingFile && onOpenLocalFile && (
         <div className="bg-gradient-to-r from-indigo-600 to-blue-600 text-white px-4 py-3 flex-shrink-0">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -961,7 +911,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       )}
 
-      {/* Pending File Upload Banner */}
+      {}
       {pendingFile && (
         <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-4 py-3 flex-shrink-0">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -981,7 +931,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       )}
 
-      {/* Header */}
+      {}
       <header className="bg-white border-b border-gray-200 flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 py-3 sm:py-4">
@@ -1023,7 +973,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             </div>
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap justify-start sm:justify-end w-full sm:w-auto">
               <AppVersionBadge variant="header" />
-              {/* Workspace Subscription Plan Badge — hidden in desktop (no plans/pricing) */}
+              {}
               {!isDesktop() && (isWorkspaceOwner ? (
                 <button
                   onClick={() => setShowPlanDetails(true)}
@@ -1149,10 +1099,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       </header>
 
-      {/* Main Content */}
+      {}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
-          {/* Search and View Controls */}
+          {}
           <div className="flex justify-between items-center mb-6">
             <div className="flex-1 max-w-lg">
               <div className="relative">
@@ -1182,7 +1132,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             </div>
           </div>
 
-          {/* Projects Grid/List */}
+          {}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
@@ -1322,7 +1272,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             </div>
           </div>
 
-          {/* Workspace Members — cloud collaboration only */}
+          {}
           {!isDesktop() && (
           <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-6">
@@ -1480,10 +1430,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       </main>
 
-      {/* Create Project Modal */}
+      {}
       <CreateProjectModal isOpen={showCreateProject} onClose={() => setShowCreateProject(false)} onSuccess={loadData} />
 
-      {/* Rename Project Modal */}
+      {}
       {renaming && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
@@ -1525,7 +1475,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       )}
 
-      {/* Invite Member Modal — cloud only */}
+      {}
       {!isDesktop() && (
         <InviteMemberModal
           isOpen={showInviteMember}
@@ -1549,7 +1499,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         />
       )}
 
-      {/* Confirmation Modal */}
+      {}
       {confirmModal && (
         <ConfirmationModal
           isOpen={true}
@@ -1566,13 +1516,13 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         />
       )}
 
-      {/* Admin Settings Modal */}
+      {}
       <AdminSettingsModal
         isOpen={showAdminSettings}
         onClose={() => setShowAdminSettings(false)}
       />
 
-      {/* Settings Modal */}
+      {}
       <SettingsModal
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
@@ -1590,11 +1540,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         }}
       />
 
-      {/* Project Settings Modal */}
+      {}
       {projectSettingsModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
-            {/* Header */}
+            {}
             <div className="flex items-center justify-between p-6 border-b">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
@@ -1613,7 +1563,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               </button>
             </div>
 
-            {/* Tabs */}
+            {}
             <div className="flex border-b">
               <button
                 onClick={() => setProjectSettingsTab("general")}
@@ -1654,9 +1604,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               )}
             </div>
 
-            {/* Content */}
+            {}
             <div className="flex-1 overflow-y-auto p-6">
-              {/* General Tab */}
+              {}
               {projectSettingsTab === "general" && (
                 <div className="space-y-6">
                   <div>
@@ -1711,7 +1661,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 </div>
               )}
 
-              {/* Members Tab — cloud collaboration only */}
+              {}
               {!isDesktop() && projectSettingsTab === "members" && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
@@ -1731,7 +1681,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                     )}
                   </div>
 
-                  {/* Add Member Form */}
+                  {}
                   {showAddMemberForm && (
                     <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 space-y-3">
                       <h4 className="font-medium text-gray-900">Add New Member</h4>
@@ -1864,7 +1814,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 </div>
               )}
 
-              {/* Danger Zone Tab */}
+              {}
               {projectSettingsTab === "danger" && (
                 <div className="space-y-6">
                   <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -1897,7 +1847,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               )}
             </div>
 
-            {/* Footer */}
+            {}
             {projectSettingsTab === "general" && (
               <div className="flex items-center justify-end gap-3 p-6 border-t bg-gray-50">
                 <button
@@ -1923,7 +1873,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </div>
       )}
 
-      {/* Plan Details Modal */}
+      {}
       {showPlanDetails && (
         <Suspense fallback={null}>
           <PlanDetailsModal
@@ -1937,10 +1887,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         </Suspense>
       )}
 
-      {/* User Guide Modal */}
+      {}
       <UserGuideModal isOpen={showUserGuide} onClose={() => setShowUserGuide(false)} />
 
-      {/* Report Issue Modal */}
+      {}
       {isReportIssueModalOpen && (
         <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
       )}

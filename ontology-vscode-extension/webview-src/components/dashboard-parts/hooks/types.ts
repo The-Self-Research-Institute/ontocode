@@ -1,4 +1,4 @@
-// Shared types for Dashboard hooks inter-communication
+
 import type {
   TreeNode,
   Property,
@@ -109,7 +109,6 @@ export interface UnsavedChangesDialogState {
   onLeave: () => void;
 }
 
-// Re-export commonly used types
 export type {
   TreeNode,
   Property,

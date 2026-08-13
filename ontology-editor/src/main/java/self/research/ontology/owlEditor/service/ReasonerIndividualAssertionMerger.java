@@ -25,14 +25,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Merges reasoner-inferred property assertions into individual detail responses.
- *
- * <p><b>Heap safety (web):</b> never calls {@link ReasonerService#getReasoner} on read —
- * only uses an already-warmed reasoner from classify/realize. Queries
- * {@code getObjectProperties}/{@code getDataProperties} per individual (not the full
- * ontology signature). Caps inferred rows per request.
- */
 @Service
 public class ReasonerIndividualAssertionMerger {
 
@@ -44,7 +36,6 @@ public class ReasonerIndividualAssertionMerger {
     @Value("${ontocode.reasoner.max-inferred-assertions-per-read:200}")
     private int maxInferredPerRead;
 
-    /** Max object/data properties to query per individual read (signature scan cap for web heap/CPU). */
     @Value("${ontocode.reasoner.max-property-scan-per-individual-read:400}")
     private int maxPropertyScanPerRead;
 

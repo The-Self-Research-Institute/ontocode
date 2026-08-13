@@ -30,7 +30,7 @@ public class JwtUtil {
     private String SECRET_KEY;
 
     @Value("${jwt.expiration}")
-    private long EXPIRATION_TIME; // in milliseconds
+    private long EXPIRATION_TIME;
 
     @PostConstruct
     public void validateSecrets() {
@@ -59,12 +59,6 @@ public class JwtUtil {
         return extractClaim(token, Claims::getSubject);
     }
 
-    /**
-     * Extract the email (subject) from a token that may already be expired.
-     * Used exclusively by the refresh endpoint so that a token expiring between
-     * the last 60-second client-side check and the actual refresh call does not
-     * produce a hard 401 and force the user out.
-     */
     public String extractEmailAllowExpired(String token) {
         try {
             return extractClaim(token, Claims::getSubject);
@@ -115,13 +109,12 @@ public class JwtUtil {
         if (userId != null) {
             claims.put("userId", userId);
         }
-        // Include plan so downstream services can enforce access without a DB call
+
         claims.put("plan", planName != null ? planName.toUpperCase() : "FREE");
         claims.put("username", userDetails.getUsername());
         return createToken(claims, email);
     }
 
-    // Overloaded method for workspace-scoped tokens
     public String generateToken(String username, Map<String, Object> additionalClaims) {
         return createToken(additionalClaims, username);
     }
@@ -138,7 +131,7 @@ public class JwtUtil {
 
     public Boolean validateToken(String token, UserDetails userDetails) {
         final String email = extractEmail(token);
-        // During transition, we check if the subject matches the UserDetails username (which will now be the email)
+
         return (email.equals(userDetails.getUsername()) && !isTokenExpired(token));
     }
 

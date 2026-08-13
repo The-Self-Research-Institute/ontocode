@@ -31,9 +31,6 @@ public class OntologyCrudController {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyCrudController.class);
 
-    // Dedicated pool for async history recording + collaboration broadcast.
-    // Isolated from the ForkJoinPool.commonPool used by SPARQL query parallelism.
-    // 4 threads: enough for burst concurrent mutations without unbounded growth.
     private static final ExecutorService historyExecutor = Executors.newFixedThreadPool(4);
 
     private final OntologyMutationService mutationService;
@@ -64,8 +61,6 @@ public class OntologyCrudController {
                                     @RequestBody MutationRequest request,
                                     @RequestParam(required = false, defaultValue = "true") boolean draft) {
 
-        // Enforce requireDraftForMembers: silently redirect public mutations to draft if the
-        // project owner has turned on draft-only mode and this user is not the owner.
         if (!draft && !desktopMode) {
             String userId = request.userId() != null ? request.userId() : "anonymous";
             if (metadataService.isRequireDraftForMembers(projectId)) {
@@ -109,7 +104,7 @@ public class OntologyCrudController {
             ));
         } else {
             try {
-                // Apply directly to GraphDB and record to history
+
                 log.info("[MUTATION] Applying {} operations directly to GraphDB for project {}",
                     request.ops().size(), projectId);
 
@@ -121,8 +116,6 @@ public class OntologyCrudController {
 
                 mutationService.apply(projectId, request.ops());
 
-                // Record history and broadcast asynchronously — mutation is already applied and
-                // committed; history/broadcast are best-effort and must not block the response.
                 final String finalUserId = userId;
                 final String finalUsername = username;
                 final List<OntologyMutationService.MutationOp> ops = request.ops();
@@ -167,7 +160,7 @@ public class OntologyCrudController {
             }
         }
     }
-    
+
     @PostMapping("/make-siblings-disjoint/{projectId}")
     public ResponseEntity<?> makeSiblingsDisjoint(@PathVariable String projectId,
                                                   @RequestBody MakeSiblingsDisjointRequest request,
@@ -176,12 +169,10 @@ public class OntologyCrudController {
                                                   @RequestParam(required = false, defaultValue = "false") boolean draft) {
         mutationService.makeSiblingsDisjoint(projectId, request.classIds(), draft, userId);
 
-        // Draft edits are private — never broadcast them to other collaborators.
         if (draft) {
             return ResponseEntity.ok(Map.of("success", true, "draft", true));
         }
 
-        // Broadcast disjoint axiom changes to collaborators
         for (int i = 0; i < request.classIds().size(); i++) {
             for (int j = i + 1; j < request.classIds().size(); j++) {
                 OntologyMutationService.MutationOp disjointOp = new OntologyMutationService.MutationOp(
@@ -193,18 +184,18 @@ public class OntologyCrudController {
                     null,
                     request.classIds().get(j),
                     null,
-                    null, // restrictionType
-                    null, // cardinality
-                    null, // axiomType
-                    null, // oldValue
-                    null, // language
-                    null, // datatype
-                    null  // ancestorIri
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
                 );
                 collaborativeEditService.broadcastMutation(projectId, disjointOp, userId, username);
             }
         }
-        
+
         return ResponseEntity.ok(Map.of("success", true));
     }
 
@@ -214,6 +205,6 @@ public class OntologyCrudController {
         String username,
         String sessionId
     ) {}
-    
+
     public record MakeSiblingsDisjointRequest(List<String> classIds) {}
 }

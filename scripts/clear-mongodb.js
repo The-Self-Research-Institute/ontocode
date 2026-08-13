@@ -1,12 +1,10 @@
-// MongoDB Cleanup Script
-// Run with: mongosh mongodb://localhost:27017/ontocode clear-mongodb.js
+
 
 const dbName = 'ontocode';
 
 print('=== MongoDB Cleanup Script ===');
 print(`Connecting to database: ${dbName}`);
 
-// Switch to the database
 db = db.getSiblingDB(dbName);
 
 print('\nCollections before cleanup:');
@@ -17,7 +15,6 @@ db.getCollectionNames().forEach(function(collection) {
 
 print('\n=== Starting cleanup ===\n');
 
-// Drop all collections
 const collections = db.getCollectionNames();
 collections.forEach(function(collection) {
     print(`Dropping collection: ${collection}`);

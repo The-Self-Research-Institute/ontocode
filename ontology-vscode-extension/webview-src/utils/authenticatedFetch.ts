@@ -1,6 +1,5 @@
 import { isDesktop } from './desktop';
 
-/** Headers with Bearer token when logged in (cloud web only). */
 export function getAuthHeaders(extra?: HeadersInit): Headers {
   const headers = new Headers(extra);
   if (!isDesktop()) {
@@ -12,7 +11,6 @@ export function getAuthHeaders(extra?: HeadersInit): Headers {
   return headers;
 }
 
-/** fetch() that attaches JWT — use in plugins and any code outside apiClient. */
 export async function authenticatedFetch(
   input: RequestInfo | URL,
   init?: RequestInit,

@@ -131,7 +131,6 @@ const PropertyUsageTab: React.FC<{ projectId: string; propertyIri: string; label
   );
 };
 
-
 const PropertyEditor: React.FC<{
   item: Property;
   onUpdate: (updatedItem: Property) => void;
@@ -180,9 +179,6 @@ const PropertyEditor: React.FC<{
     const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
     const [classLabelLookup, setClassLabelLookup] = useState<Map<string, string>>(new Map());
 
-    // Domain (and object-property Range) items are class IRIs — resolve them to labels for
-    // display, same as AnnotationPropertyEditor does for super-property IRIs. Without this,
-    // MultiSelectItem's fallback (getDisplayName) shows the raw IRI's last path segment.
     useEffect(() => {
         if (!projectId) return;
         let alive = true;
@@ -204,8 +200,7 @@ const PropertyEditor: React.FC<{
     }, [projectId]);
 
     useEffect(() => {
-        // Always reset previous entity's inferred details immediately so we
-        // never display a previously-selected property's data while loading.
+
         setInferredDetails(null);
         if (viewMode !== 'inferred' || !item.id || !projectId) return;
 
@@ -242,15 +237,14 @@ const PropertyEditor: React.FC<{
     const isObjectProperty = item.type === 'ObjectProperty';
     const isDataProperty = item.type === 'DatatypeProperty';
     const isAnnotationProperty = item.type === 'AnnotationProperty';
-    
-    // Theme colors based on property type
+
     const themeColor = isObjectProperty ? 'blue' : isDataProperty ? 'green' : 'orange';
     const headerGradient = isObjectProperty 
         ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
         : isDataProperty 
         ? 'bg-gradient-to-r from-green-500 to-green-600' 
         : 'bg-gradient-to-r from-orange-500 to-amber-500';
-    
+
     const characteristics = isObjectProperty 
         ? [
             { key: 'Functional', label: 'Functional' },
@@ -264,13 +258,12 @@ const PropertyEditor: React.FC<{
         : isDataProperty 
         ? [{ key: 'Functional', label: 'Functional' }]
         : []; // Annotation properties don't have characteristics
-    
+
     const handleCharacteristicChange = async (char: string, checked: boolean) => {
         if (isViewOnly) { onViewOnlyAction?.(); return; }
         const currentChars = item.characteristics || [];
         const newChars = checked ? [...currentChars, char] : currentChars.filter(c => c !== char);
-        
-        // Optimistic update
+
         onUpdate({ ...item, characteristics: newChars });
 
         try {
@@ -281,7 +274,7 @@ const PropertyEditor: React.FC<{
             }
         } catch (error) {
             console.error("Failed to update characteristic", error);
-            // Revert on error
+
             onUpdate({ ...item, characteristics: currentChars });
         }
     };
@@ -365,7 +358,7 @@ const PropertyEditor: React.FC<{
             await ontologyMutationService.deletePropertyChain(projectId, item.id, chain);
         } catch (error) {
             console.error("Failed to delete property chain:", error);
-            // Revert if the API call fails
+
             onUpdate({ ...item, propertyChains: item.propertyChains });
         }
     };
@@ -380,11 +373,11 @@ const PropertyEditor: React.FC<{
             console.log("Property chain added:", expression);
         } catch (error) {
             console.error("Failed to add property chain:", error);
-            // Revert on failure
+
             onUpdate({ ...item, propertyChains: item.propertyChains });
         }
     };
-    
+
     const openChainEditor = () => {
         setIsChainDialogOpen(true);
     };
@@ -409,7 +402,7 @@ const PropertyEditor: React.FC<{
 
     return (
         <div className="flex flex-col h-full bg-white">
-            {/* Header with IRI */}
+            {}
             <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 overflow-hidden">
                     <div className={`p-1 rounded text-xs font-bold ${isObjectProperty ? 'bg-blue-200 text-blue-800' : isDataProperty ? 'bg-green-200 text-green-800' : 'bg-orange-200 text-orange-800'}`}>
@@ -430,7 +423,7 @@ const PropertyEditor: React.FC<{
             </div>
             <CollaboratorPresenceBar entityId={item.id} />
 
-            {/* Tabs */}
+            {}
             <div className="flex border-b border-gray-200 bg-gray-50">
                 <button 
                     onClick={() => setActiveTab('annotations')}
@@ -467,11 +460,11 @@ const PropertyEditor: React.FC<{
                 </button>
             </div>
 
-            {/* Main Content */}
+            {}
             <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
                 {activeTab === 'annotations' && (
                     <div className="space-y-0">
-                        {/* Annotations Panel Header */}
+                        {}
                         <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
                             <span className="text-sm font-semibold">Annotations: {item.label}</span>
                             <div className="flex items-center gap-1">
@@ -480,7 +473,7 @@ const PropertyEditor: React.FC<{
                                 </button>
                             </div>
                         </div>
-                        {/* Annotations Content */}
+                        {}
                         <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm">
                             <AnnotationsDisplay annotations={item.annotations} onDelete={onDeleteAnnotation} onEdit={onEditAnnotation} isViewOnly={isViewOnly} onViewOnlyAction={onViewOnlyAction} />
                         </div>
@@ -496,13 +489,13 @@ const PropertyEditor: React.FC<{
 
                 {activeTab === 'description' && (
                     <div className="space-y-0">
-                        {/* Description Panel Header */}
+                        {}
                         <div className={`${headerGradient} text-white px-3 py-2 flex items-center justify-between rounded-t-sm`}>
                             <span className="text-sm font-semibold">Description: {item.label}</span>
                         </div>
-                        {/* Description Content */}
+                        {}
                         <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-3">
-                            {/* Characteristics - only for Object/Data properties */}
+                            {}
                             {!isAnnotationProperty && characteristics.length > 0 && (
                                 <div className="mb-3">
                                     <div className={`${isObjectProperty ? 'bg-blue-600' : 'bg-green-600'} text-white px-2 py-1.5 rounded-t-sm text-xs font-medium`}>

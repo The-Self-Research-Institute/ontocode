@@ -219,7 +219,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
     const content = (
         <>
-            {/* Toast */}
+            {}
             {toast && (
                 <div className={`mx-6 mt-4 px-4 py-3 rounded-lg flex items-center gap-2 text-sm font-medium
                     ${toast.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
@@ -228,7 +228,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                 </div>
             )}
 
-            {/* Body */}
+            {}
             <div className={`overflow-y-auto flex-1 px-6 py-5 space-y-8 ${pageMode ? 'max-w-2xl mx-auto w-full' : ''}`}>
 
                     {loading ? (
@@ -237,7 +237,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                         </div>
                     ) : (
                         <>
-                            {/* ── Maintenance Mode ────────────────────────────────── */}
+                            {}
                             <section>
                                 <div className="flex items-center gap-2 mb-1">
                                     <Wrench className="w-4 h-4 text-yellow-500" />
@@ -247,7 +247,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                     When ON, only allowed users can log in. Everyone else sees the maintenance page.
                                 </p>
 
-                                {/* Toggle */}
+                                {}
                                 <button
                                     onClick={toggleMaintenance}
                                     disabled={saving}
@@ -272,7 +272,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                     {saving && <Loader2 className="w-4 h-4 animate-spin ml-auto" />}
                                 </button>
 
-                                {/* Custom message */}
+                                {}
                                 <div className="mt-4">
                                     <p className="text-sm font-medium text-gray-700 mb-2">Custom message (shown to blocked users)</p>
                                     <div className="flex gap-2">
@@ -287,7 +287,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                     </div>
                                 </div>
 
-                                {/* Schedule */}
+                                {}
                                 <div className="mt-4 p-4 border border-gray-200 rounded-xl">
                                     <div className="flex items-center justify-between mb-3">
                                         <div className="flex items-center gap-2">
@@ -312,7 +312,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
                                     {settings.maintenanceScheduleEnabled && (
                                         <div className="space-y-3">
-                                            {/* All-day / Time range / Daily window tabs */}
+                                            {}
                                             <div className="flex gap-2">
                                                 <button
                                                     onClick={() => setScheduleMode('allday')}
@@ -430,7 +430,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                     )}
                                 </div>
 
-                                {/* Allowed emails during maintenance */}
+                                {}
                                 <div className="mt-4">
                                     <p className="text-sm font-medium text-gray-700 mb-2">
                                         Individual emails allowed during maintenance
@@ -467,7 +467,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                     </div>
                                 </div>
 
-                                {/* Allowed domains during maintenance */}
+                                {}
                                 <div className="mt-4">
                                     <p className="text-sm font-medium text-gray-700 mb-2">
                                         Domains that can still access during maintenance
@@ -507,7 +507,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
                             <hr className="border-gray-100" />
 
-                            {/* ── Enterprise bypass (beta / partner) ───────────────── */}
+                            {}
                             <section>
                                 <div className="flex items-center gap-2 mb-1">
                                     <Building2 className="w-4 h-4 text-purple-500" />
@@ -596,7 +596,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
                             <hr className="border-gray-100" />
 
-                            {/* ── Active Users ─────────────────────────────────── */}
+                            {}
                             <section>
                                 <div className="flex items-center justify-between mb-1">
                                     <div className="flex items-center gap-2">
@@ -624,7 +624,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
 
                                 {connections && (
                                     <>
-                                        {/* Safe-to-migrate banner */}
+                                        {}
                                         <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 mb-4
                                             ${connections.safeToMigrate
                                                 ? 'border-green-300 bg-green-50'
@@ -646,7 +646,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                             </div>
                                         </div>
 
-                                        {/* User list */}
+                                        {}
                                         {connections.users.length > 0 && (
                                             <div className="space-y-2">
                                                 {connections.users.map(u => (
@@ -667,7 +667,7 @@ const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({ isOpen, onClose
                                 )}
                             </section>
 
-                            {/* Last updated */}
+                            {}
                             {settings.updatedAt && (
                                 <p className="text-xs text-gray-400 text-right">
                                     Last updated by {settings.updatedBy} at {new Date(settings.updatedAt).toLocaleString()}

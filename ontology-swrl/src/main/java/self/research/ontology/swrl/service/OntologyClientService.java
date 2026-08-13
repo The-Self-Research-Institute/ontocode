@@ -8,7 +8,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.cache.annotation.CacheConfig;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.retry.annotation.Backoff;
@@ -22,42 +21,30 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
-/**
- * IMPROVED VERSION - Fixed blocking WebClient, added retry logic, and better error handling
- */
 @Service
 @CacheConfig(cacheNames = "ontologies")
 public class OntologyClientService {
 
     private static final Logger logger = LoggerFactory.getLogger(OntologyClientService.class);
-    
+
     private final RestTemplate restTemplate;
     private final String editorServiceUrl;
 
     public OntologyClientService(
             RestTemplateBuilder restTemplateBuilder,
             @Value("${ontology.editor.service.url}") String editorServiceUrl) {
-        
+
         this.editorServiceUrl = editorServiceUrl;
-        
-        // ✅ FIXED: Use RestTemplate instead of blocking WebClient
+
         this.restTemplate = restTemplateBuilder
             .rootUri(editorServiceUrl)
             .setConnectTimeout(Duration.ofSeconds(10))
             .setReadTimeout(Duration.ofSeconds(30))
             .build();
-            
+
         logger.info("Initialized OntologyClientService with URL: {}", editorServiceUrl);
     }
 
-    /**
-     * Fetch ontology with caching and retry logic
-     * 
-     * ✅ FIXED: No more blocking WebClient calls
-     * ✅ ADDED: Retry logic with exponential backoff
-     * ✅ IMPROVED: Better error messages
-     */
-    @Cacheable(key = "#projectId")
     @Retryable(
         value = { RestClientException.class },
         maxAttempts = 3,
@@ -68,7 +55,7 @@ public class OntologyClientService {
         long startTime = System.currentTimeMillis();
 
         try {
-            // Stream ontology directly into OWL parser to avoid holding entire byte[] in heap
+
             OWLOntology ontology = restTemplate.execute(
                 "/api/ontology/export/{projectId}",
                 org.springframework.http.HttpMethod.GET,
@@ -95,13 +82,13 @@ public class OntologyClientService {
 
             long loadTime = System.currentTimeMillis() - startTime;
             logger.info("Successfully loaded ontology for project {} in {}ms. " +
-                       "Classes: {}, Properties: {}, Individuals: {}", 
-                       projectId, 
+                       "Classes: {}, Properties: {}, Individuals: {}",
+                       projectId,
                        loadTime,
                        ontology.getClassesInSignature().size(),
                        ontology.getObjectPropertiesInSignature().size(),
                        ontology.getIndividualsInSignature().size());
-            
+
             return ontology;
 
         } catch (RestClientException e) {
@@ -109,7 +96,7 @@ public class OntologyClientService {
             throw new OWLOntologyCreationException(
                 "Failed to fetch ontology from editor service: " + e.getMessage(), e
             );
-            
+
         } catch (Exception e) {
             logger.error("Unexpected error fetching ontology for project: {}", projectId, e);
             if (e.getCause() instanceof OWLOntologyCreationException) {
@@ -121,25 +108,16 @@ public class OntologyClientService {
         }
     }
 
-    /**
-     * ✅ NEW: Evict cached ontology when it's updated
-     */
     @CacheEvict(key = "#projectId")
     public void invalidateCache(String projectId) {
         logger.info("Invalidated ontology cache for project: {}", projectId);
     }
 
-    /**
-     * ✅ NEW: Evict all cached ontologies
-     */
     @CacheEvict(allEntries = true)
     public void invalidateAllCache() {
         logger.info("Invalidated all ontology caches");
     }
 
-    /**
-     * ✅ NEW: Check if ontology exists without loading it
-     */
     public boolean ontologyExists(String projectId) {
         try {
             ResponseEntity<Void> response = restTemplate.getForEntity(
@@ -147,19 +125,16 @@ public class OntologyClientService {
                 Void.class,
                 projectId
             );
-            
+
             return response.getStatusCode() == HttpStatus.OK;
-            
+
         } catch (Exception e) {
-            logger.warn("Error checking ontology existence for project {}: {}", 
+            logger.warn("Error checking ontology existence for project {}: {}",
                        projectId, e.getMessage());
             return false;
         }
     }
 
-    /**
-     * ✅ NEW: Get ontology metadata without loading full ontology
-     */
     public OntologyMetadata getOntologyMetadata(String projectId) {
         try {
             return restTemplate.getForObject(
@@ -167,43 +142,37 @@ public class OntologyClientService {
                 OntologyMetadata.class,
                 projectId
             );
-            
+
         } catch (Exception e) {
             logger.error("Failed to get metadata for project {}", projectId, e);
             return null;
         }
     }
 
-    /**
-     * ✅ NEW: Preload ontologies for multiple projects
-     */
     public void preloadOntologies(List<String> projectIds) {
         logger.info("Preloading {} ontologies", projectIds.size());
-        
+
         projectIds.parallelStream().forEach(projectId -> {
             try {
                 fetchOntology(projectId);
             } catch (Exception e) {
-                logger.warn("Failed to preload ontology for project {}: {}", 
+                logger.warn("Failed to preload ontology for project {}: {}",
                            projectId, e.getMessage());
             }
         });
-        
+
         logger.info("Completed preloading ontologies");
     }
 
-    /**
-     * ✅ NEW: Health check for editor service
-     */
     public boolean isEditorServiceHealthy() {
         try {
             ResponseEntity<Map> response = restTemplate.getForEntity(
                 "/actuator/health",
                 Map.class
             );
-            
+
             return response.getStatusCode() == HttpStatus.OK;
-            
+
         } catch (Exception e) {
             logger.error("Editor service health check failed", e);
             return false;
@@ -215,9 +184,6 @@ public class OntologyClientService {
     }
 }
 
-/**
- * ✅ NEW: Ontology metadata DTO
- */
 class OntologyMetadata {
     private String projectId;
     private String name;
@@ -227,8 +193,6 @@ class OntologyMetadata {
     private long sizeInBytes;
     private String lastModified;
 
-    // Constructors, getters, setters
-    
     public OntologyMetadata() {}
 
     public String getProjectId() { return projectId; }

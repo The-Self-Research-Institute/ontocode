@@ -2,10 +2,6 @@ package self.research.ontology.owlEditor.service;
 
 import org.springframework.stereotype.Service;
 
-/**
- * @deprecated Use {@link ManchesterExpressionService#addGeneralClassAxiom} directly.
- * Kept as a thin delegate for existing injections.
- */
 @Service
 public class GeneralClassAxiomService {
 

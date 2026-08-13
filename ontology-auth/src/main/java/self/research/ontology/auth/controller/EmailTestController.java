@@ -21,22 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Admin-only test endpoints for manually triggering every transactional /
- * billing email. Useful to verify SMTP configuration and to preview a
- * template after a copy / styling change.
- *
- * <p>Disabled by default. Enable per environment with
- * {@code email.test-endpoints.enabled=true}. Recommended: turn on in dev
- * and staging, leave OFF in production.
- *
- * <p>All endpoints require the caller to hold {@code ROLE_ADMIN}.
- *
- * <p>Endpoints accept a JSON body of the form:
- * <pre>{ "to": "you@example.com", "username": "Pranesh" }</pre>
- * Other fields default to representative sample values so an operator can
- * "smoke test" the whole pipeline with one curl.
- */
 @RestController
 @RequestMapping("/api/admin/test-emails")
 @ConditionalOnProperty(prefix = "email.test-endpoints", name = "enabled", havingValue = "true")
@@ -55,10 +39,6 @@ public class EmailTestController {
     @Value("${app.base-url:http://localhost:8082}")
     private String baseUrl;
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Request body shape
-    // ─────────────────────────────────────────────────────────────────────
-
     public record TestEmailRequest(
         String to,
         String username,
@@ -69,15 +49,6 @@ public class EmailTestController {
         Long days
     ) {}
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Auth helpers
-    // ─────────────────────────────────────────────────────────────────────
-
-    /**
-     * Resolve the authenticated user and verify ROLE_ADMIN. Returns the
-     * user on success, throws on missing principal so the @ExceptionHandler
-     * can convert to a 401.
-     */
     private User requireAdmin(UserDetails principal) {
         if (principal == null) {
             throw new SecurityException("Authentication required.");
@@ -99,10 +70,6 @@ public class EmailTestController {
                 "success", false,
                 "error", e.getMessage()));
     }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Index — list every endpoint and what it exercises
-    // ─────────────────────────────────────────────────────────────────────
 
     @GetMapping
     public ResponseEntity<?> index(@AuthenticationPrincipal UserDetails principal) {
@@ -133,18 +100,13 @@ public class EmailTestController {
         ));
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Auth / account emails
-    // ─────────────────────────────────────────────────────────────────────
-
     @PostMapping("/verification")
     public ResponseEntity<?> verification(
             @AuthenticationPrincipal UserDetails principal,
             @RequestBody TestEmailRequest req) {
         requireAdmin(principal);
         String to = requireTo(req);
-        // Token is a synthetic placeholder so a tester can see the full URL
-        // pattern without burning a real verification token.
+
         emailService.sendVerificationEmail(to, "test-token-" + System.currentTimeMillis());
         return ok("verification", to);
     }
@@ -168,10 +130,6 @@ public class EmailTestController {
         emailService.sendPasswordChangeEmail(to, defaultUsername(req, to));
         return ok("password-changed", to);
     }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Billing emails
-    // ─────────────────────────────────────────────────────────────────────
 
     @PostMapping("/trial-started")
     public ResponseEntity<?> trialStarted(
@@ -207,7 +165,7 @@ public class EmailTestController {
         String to = requireTo(req);
         String amount = req.amount() != null && !req.amount().isBlank() ? req.amount() : "$59.00 USD";
         String nextBilling = LocalDateTime.now().plusMonths(1).format(DATE_FMT);
-        // Synthetic invoice URL so the "View invoice" button renders.
+
         String invoiceUrl = baseUrl + "/invoices/test-" + System.currentTimeMillis();
         emailService.sendPaymentSucceededEmail(
                 to, defaultUsername(req, to), defaultPlan(req), amount, nextBilling, invoiceUrl);
@@ -255,10 +213,6 @@ public class EmailTestController {
         return ok("renewal-reminder", to);
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Workspace / project emails
-    // ─────────────────────────────────────────────────────────────────────
-
     @PostMapping("/project-access")
     public ResponseEntity<?> projectAccess(
             @AuthenticationPrincipal UserDetails principal,
@@ -271,16 +225,12 @@ public class EmailTestController {
         return ok("project-access", to);
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Helpers
-    // ─────────────────────────────────────────────────────────────────────
-
     private static String requireTo(TestEmailRequest req) {
         if (req == null || req.to() == null || req.to().isBlank()) {
             throw new IllegalArgumentException("`to` is required.");
         }
         String to = req.to().trim();
-        // Cheap shape check; the SMTP server is the real validator.
+
         if (!to.contains("@") || to.length() < 5) {
             throw new IllegalArgumentException("`to` does not look like an email address.");
         }
@@ -291,8 +241,7 @@ public class EmailTestController {
         if (req != null && req.username() != null && !req.username().isBlank()) {
             return req.username().trim();
         }
-        // Fall back to the local-part of the email so the email body still
-        // looks personalised even when the caller skipped username.
+
         int at = to.indexOf('@');
         return at > 0 ? to.substring(0, at) : "Tester";
     }

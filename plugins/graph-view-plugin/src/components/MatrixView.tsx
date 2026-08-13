@@ -12,11 +12,6 @@ interface MatrixViewProps {
   onEdgeClick?: (edgeId: string) => void;
 }
 
-/**
- * Matrix/Adjacency View Component
- * Displays nodes on both axes with relationships shown as cells
- * Best for: Analyzing dense relationships, finding patterns
- */
 export const MatrixView: React.FC<MatrixViewProps> = ({
   nodes,
   edges,
@@ -43,12 +38,10 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
       padding
     });
 
-    // Color scale for edge types
     const colorScale = d3.scaleOrdinal<string>()
       .domain(['subClassOf', 'instanceOf', 'propertyRelation', 'domain', 'range', 'custom'])
       .range(['#667eea', '#10b981', '#f59e0b', '#06b6d4', '#8b5cf6', '#6b7280']);
 
-    // Draw matrix cells
     svg.append('g')
       .selectAll('rect')
       .data(matrixData.cells)
@@ -65,8 +58,7 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
         d3.select(this)
           .attr('stroke', '#000')
           .attr('stroke-width', 2);
-        
-        // Show tooltip
+
         const tooltip = d3.select('body').append('div')
           .attr('class', 'matrix-tooltip')
           .style('position', 'absolute')
@@ -96,7 +88,6 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
         onEdgeClick?.(d.edge.id);
       });
 
-    // Draw X-axis labels (top)
     svg.append('g')
       .attr('class', 'x-labels')
       .selectAll('text')
@@ -115,7 +106,6 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
         onNodeClick?.(d.node.id);
       });
 
-    // Draw Y-axis labels (left)
     svg.append('g')
       .attr('class', 'y-labels')
       .selectAll('text')
@@ -134,7 +124,6 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
         onNodeClick?.(d.node.id);
       });
 
-    // Draw legend
     const legendData = [
       { type: 'subClassOf', label: 'Subclass' },
       { type: 'instanceOf', label: 'Instance' },
@@ -176,7 +165,6 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
   );
 };
 
-// Helper function for node colors
 function getNodeColor(type: string): string {
   const colors: Record<string, string> = {
     class: '#667eea',

@@ -9,17 +9,6 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * In-memory cache of loaded OWLOntology instances keyed by projectId.
- *
- * Loading a large ontology (e.g. Mondo, 3.1M triples) into OWLAPI can take
- * 8-12 minutes. When the ontology hasn't changed between classify calls (same
- * revision), we reuse the already-loaded model and only recreate the reasoner,
- * dropping the reload cost to near zero.
- *
- * Cache is skipped for draft-mode exports (userId != null) since those include
- * per-user overlay triples that differ between users.
- */
 @Component
 public class OntologyCache {
 

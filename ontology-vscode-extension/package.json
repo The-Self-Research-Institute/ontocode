@@ -2,7 +2,7 @@
   "name": "ontocode-extension",
   "displayName": "OntoCode OWL Editor",
   "description": "Edit OWL files with authentication and web-based interface",
-  "version": "1.1.0-beta.16",
+  "version": "1.1.0-beta.18",
   "publisher": "self",
   "license": "AGPL-3.0-only",
   "icon": "images/icon.png",
@@ -83,7 +83,7 @@
       },
       {
         "command": "ontocode.insertCitation",
-        "title": "Insert Citation",
+        "title": "Insert Citation (Sci2Code)",
         "category": "OntoCode",
         "icon": "$(book)"
       },
@@ -94,12 +94,12 @@
       },
       {
         "command": "ontocode.configureZotero",
-        "title": "OntoCode: Configure Citation Library",
+        "title": "OntoCode: Configure Zotero API Key",
         "category": "OntoCode"
       },
       {
         "command": "ontocode.testZoteroConnection",
-        "title": "OntoCode: Test Citation Library Connection",
+        "title": "OntoCode: Test Zotero Connection",
         "category": "OntoCode"
       },
       {
@@ -223,7 +223,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src --ext ts",
+    "lint": "eslint src",
     "test": "node ./out/test/runTest.js",
     "build-webview": "cd webview-src && npm run build:vscode",
     "compile-web": "webpack --config webpack.config.js --mode development --watch",

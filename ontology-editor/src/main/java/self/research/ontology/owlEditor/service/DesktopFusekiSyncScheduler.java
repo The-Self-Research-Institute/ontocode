@@ -14,10 +14,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Silent background Fuseki sync for OWLAPI-first desktop.
- * Editor open and mutations use OWLAPI only; this catches Fuseki up without blocking the UI.
- */
 @Service
 @ConditionalOnProperty(name = "ontocode.desktop.owlapi-first", havingValue = "true")
 public class DesktopFusekiSyncScheduler {
@@ -27,7 +23,9 @@ public class DesktopFusekiSyncScheduler {
     private static final long OPEN_DELAY_MS = 3_000;
     private static final long MUTATION_DEBOUNCE_MS = 20_000;
     private static final long RETRY_DELAY_MS = 45_000;
-    private static final int MAX_RETRIES = 4;
+
+    private static final int QUICK_RETRIES = 4;
+    private static final long SLOW_RETRY_DELAY_MS = 120_000;
 
     private final ProjectImportService projectImportService;
     private final SparqlDatasetService datasetService;
@@ -48,12 +46,10 @@ public class DesktopFusekiSyncScheduler {
         this.datasetService = datasetService;
     }
 
-    /** After ontology open / OWLAPI warm — short delay, no debounce stacking. */
     public void scheduleAfterOpen(String projectId) {
         schedule(projectId, OPEN_DELAY_MS, false);
     }
 
-    /** After OWLAPI mutation — debounce bursts of edits into one upload. */
     public void scheduleAfterMutation(String projectId) {
         schedule(projectId, MUTATION_DEBOUNCE_MS, true);
     }
@@ -87,9 +83,7 @@ public class DesktopFusekiSyncScheduler {
                 retryCounts.remove(projectId);
                 return;
             }
-            // Lazy desktop Fuseki may not be started yet — the Electron shell
-            // launches it on demand. Probe first so we defer with one log line
-            // instead of connection-refused stack traces from the sync path.
+
             if (!datasetService.isFusekiReachable()) {
                 log.info("[FusekiBg] Fuseki not reachable yet — deferring sync for {}", projectId);
                 scheduleRetry(projectId);
@@ -115,11 +109,15 @@ public class DesktopFusekiSyncScheduler {
 
     private void scheduleRetry(String projectId) {
         AtomicInteger attempts = retryCounts.computeIfAbsent(projectId, id -> new AtomicInteger(0));
-        if (attempts.incrementAndGet() > MAX_RETRIES) {
-            log.info("[FusekiBg] Giving up silent sync for {} after {} retries (Fuseki may be offline)", projectId, MAX_RETRIES);
-            return;
+        int attemptNumber = attempts.incrementAndGet();
+        boolean slow = attemptNumber > QUICK_RETRIES;
+        if (slow && attemptNumber == QUICK_RETRIES + 1) {
+            log.info("[FusekiBg] {} still not synced after {} quick retries — backing off to a {}s interval "
+                            + "until Fuseki becomes reachable (not giving up: a pending sync must not stay stale)",
+                    projectId, QUICK_RETRIES, SLOW_RETRY_DELAY_MS / 1000);
         }
-        ScheduledFuture<?> future = executor.schedule(() -> runSync(projectId), RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
+        long delay = slow ? SLOW_RETRY_DELAY_MS : RETRY_DELAY_MS;
+        ScheduledFuture<?> future = executor.schedule(() -> runSync(projectId), delay, TimeUnit.MILLISECONDS);
         scheduled.put(projectId, future);
     }
 }

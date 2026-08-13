@@ -111,6 +111,14 @@ export const ReasonerExplanationModal = ({
                                         Classes: {(violation.disjointClasses as string[]).join(", ")}
                                       </div>
                                     )}
+                                    {Array.isArray(violation.typeDerivations) &&
+                                      violation.typeDerivations
+                                        .filter((d: any) => d.via)
+                                        .map((d: any, di: number) => (
+                                          <div key={di} className="text-gray-500 italic">
+                                            {d.class} — inherited via {d.via}
+                                          </div>
+                                        ))}
                                     {violation.individualIri && (
                                       <div className="text-gray-500">{violation.individualIri}</div>
                                     )}
@@ -144,6 +152,15 @@ export const ReasonerExplanationModal = ({
                               </div>
                             );
                           })}
+                        </div>
+                      )}
+                      {cause.axioms && Array.isArray(cause.axioms) && (
+                        <div className="text-[11px] text-gray-700 space-y-1">
+                          {cause.axioms.map((axiom: string, i: number) => (
+                            <div key={i} className="bg-white border rounded px-2 py-1 font-mono">
+                              {axiom}
+                            </div>
+                          ))}
                         </div>
                       )}
                       {cause.tips && Array.isArray(cause.tips) && (

@@ -21,11 +21,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Merges reasoner-inferred class instances into SPARQL asserted lists after classify.
- * Uses only warmed reasoners (no new reasoning on read).
- * Instance-count merge only touches classes already in the SPARQL map (no full-signature scan on web).
- */
 @Service
 public class ReasonerClassInstanceMerger {
 
@@ -105,7 +100,6 @@ public class ReasonerClassInstanceMerger {
         OWLReasoner reasoner = reasonerOpt.get();
         Map<String, Map<String, Integer>> merged = new LinkedHashMap<>(assertedCounts);
 
-        // Heap-safe: only update classes already in the SPARQL count map — never scan full signature on web reads.
         for (String classIri : new ArrayList<>(merged.keySet())) {
             try {
                 OWLClass cls = ontology.getOWLOntologyManager().getOWLDataFactory()

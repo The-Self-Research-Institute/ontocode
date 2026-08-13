@@ -4,9 +4,6 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
 
-/**
- * JVM heap usage helpers for reasoning retention policies (editor + worker).
- */
 public final class ReasoningHeapMonitor {
 
     private ReasoningHeapMonitor() {}

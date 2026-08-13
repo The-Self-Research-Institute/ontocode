@@ -38,7 +38,7 @@ const AddImportDialog: React.FC<AddImportDialogProps> = ({ isOpen, onClose, onAd
       }}
     >
       <div className="bg-[#F0F0F0] rounded-lg shadow-2xl w-[500px] flex flex-col overflow-hidden border border-gray-400" onClick={e => e.stopPropagation()}>
-        {/* Header */}
+        {}
         <div className="bg-white px-4 py-2 flex justify-between items-center border-b border-gray-300">
           <div className="flex items-center gap-2">
             <div className="w-5 h-5 bg-blue-600 rounded flex items-center justify-center">
@@ -56,13 +56,13 @@ const AddImportDialog: React.FC<AddImportDialogProps> = ({ isOpen, onClose, onAd
             <p className="text-xs text-gray-600 mb-4">
               Select how you would like to import an ontology. You can import from a web URL or a local file IRI.
             </p>
-            
+
             <div className="space-y-3">
               <label className={`flex items-center gap-3 p-3 border rounded-md cursor-pointer transition-colors ${importType === 'url' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                <input 
-                  type="radio" 
-                  name="importType" 
-                  checked={importType === 'url'} 
+                <input
+                  type="radio"
+                  name="importType"
+                  checked={importType === 'url'}
                   onChange={() => setImportType('url')}
                   className="text-blue-600"
                 />
@@ -76,10 +76,10 @@ const AddImportDialog: React.FC<AddImportDialogProps> = ({ isOpen, onClose, onAd
               </label>
 
               <label className={`flex items-center gap-3 p-3 border rounded-md cursor-pointer transition-colors ${importType === 'local' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                <input 
-                  type="radio" 
-                  name="importType" 
-                  checked={importType === 'local'} 
+                <input
+                  type="radio"
+                  name="importType"
+                  checked={importType === 'local'}
                   onChange={() => setImportType('local')}
                   className="text-blue-600"
                 />
@@ -109,7 +109,7 @@ const AddImportDialog: React.FC<AddImportDialogProps> = ({ isOpen, onClose, onAd
           </div>
         </div>
 
-        {/* Footer */}
+        {}
         <div className="bg-[#F0F0F0] p-4 flex justify-end gap-2 border-t border-gray-300">
           <button
             onClick={handleSubmit}

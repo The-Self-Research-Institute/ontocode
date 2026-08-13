@@ -36,13 +36,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Loads an OWL file into OWLAPI after Fuseki import completes and stores the
- * parsed model + structural reasoner in ProjectOntologyCache.
- *
- * fast path: one in-memory parse, then instant hierarchy without Fuseki SPARQL.
- * Active on desktop and on cloud when {@code ontocode.fastopen.enabled=true} (default).
- */
 @Service
 @Conditional(FastOpenCondition.class)
 public class DesktopOntologyLoader {
@@ -76,16 +69,10 @@ public class DesktopOntologyLoader {
     @Autowired(required = false)
     private DesktopOpenMetricsService openMetricsService;
 
-    // Background OWLAPI parses (post-upload warms, pre-warms, re-warms).
-    // NOTE: dispatched explicitly — the previous @Async self-invocation of
-    // loadAndCacheAsync bypassed the Spring proxy and ran parses synchronously
-    // on the caller thread (import worker / HTTP thread).
     @Autowired
     @Qualifier("desktopModelExecutor")
     private Executor backgroundWarmExecutor;
 
-    // Interactive file-open warms get their own lane so a user opening a file
-    // never queues behind bulk-upload parses.
     @Autowired
     @Qualifier("desktopInteractiveWarmExecutor")
     private Executor interactiveWarmExecutor;
@@ -93,11 +80,9 @@ public class DesktopOntologyLoader {
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
-    /** Cloud fast-open: skip reasoner precompute; serve asserted hierarchy immediately after parse. */
     @Value("${ontocode.fastopen.skip-reasoner-precompute:true}")
     private boolean skipReasonerPrecompute;
 
-    /** When false (web default), OWLAPI loads only via POST /warm — Fuseki handles reads. */
     @Value("${ontocode.fastopen.auto-warm:false}")
     private boolean autoWarm;
 
@@ -108,11 +93,6 @@ public class DesktopOntologyLoader {
         return autoWarm;
     }
 
-    /**
-     * At startup, kick off OWLAPI loading for the most recently accessed projects
-     * (up to 3) so the first project the user opens is already warm — .
-     * Uses the existing desktopModelExecutor thread pool (max 2 concurrent loads).
-     */
     @EventListener(ApplicationReadyEvent.class)
     public void preWarmRecentProjectsAsync() {
         if (!autoWarm || projectRepository == null) {
@@ -128,7 +108,7 @@ public class DesktopOntologyLoader {
                         java.time.Instant tb = b.getUpdatedAt() != null ? b.getUpdatedAt() : java.time.Instant.EPOCH;
                         return tb.compareTo(ta);
                     })
-                    .limit(3)
+                    .limit(cache.getMaxProjects())
                     .forEach(p -> {
                         try {
                             triggerLazyLoadIfNeeded(p.getId());
@@ -145,10 +125,6 @@ public class DesktopOntologyLoader {
     private final Set<String> loadingInProgress = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, CompletableFuture<Boolean>> warmWaiters = new ConcurrentHashMap<>();
 
-    /**
-     * Block until the OWLAPI model is cached (or timeout). Used by the desktop UI
-     * so the first screen uses in-memory APIs instead of slow SPARQL.
-     */
     public Map<String, Object> warmProject(String projectId, long timeoutMs) {
         if (isHierarchyReady(projectId)) {
             return warmResponse(projectId, true, 0L);
@@ -216,12 +192,10 @@ public class DesktopOntologyLoader {
     }
 
     private boolean isHierarchyReady(String projectId) {
-        // Parsed into OWLAPI cache = ready for queries; top-level count may still be zero
-        // for empty ontologies and must not block warm/open for minutes.
+
         return cache.has(projectId);
     }
 
-    /** Brief wait for async OWLAPI parse to register (avoids racing triggerLazyLoad). */
     private void awaitLoadStart(String projectId, long maxWaitMs) {
         long deadline = System.currentTimeMillis() + maxWaitMs;
         while (System.currentTimeMillis() < deadline) {
@@ -241,7 +215,7 @@ public class DesktopOntologyLoader {
         Map<String, Object> warm = new java.util.LinkedHashMap<>();
         warm.put("ready", ready);
         warm.put("owlapiReady", cache.has(projectId));
-        // pending = still loading OWLAPI. sparqlFallback = only when OWLAPI path is abandoned.
+
         boolean pending = !ready && (loadingInProgress.contains(projectId) || cache.has(projectId));
         warm.put("pending", pending);
         warm.put("sparqlFallback", !desktopMode || !owlApiFirst
@@ -262,7 +236,6 @@ public class DesktopOntologyLoader {
         return warm;
     }
 
-    /** True while OWLAPI is parsing/loading in the background for this project. */
     public boolean isLoading(String projectId) {
         return loadingInProgress.contains(projectId);
     }
@@ -271,11 +244,6 @@ public class DesktopOntologyLoader {
         triggerLazyLoadIfNeeded(projectId, false);
     }
 
-    /**
-     * @param interactive true when a user is actively opening this project — the
-     *                    parse runs on the interactive lane instead of queueing
-     *                    behind background upload warms.
-     */
     public void triggerLazyLoadIfNeeded(String projectId, boolean interactive) {
         if (!autoWarm) {
             return;
@@ -293,10 +261,6 @@ public class DesktopOntologyLoader {
         );
     }
 
-    /**
-     * After restart, OWLAPI cache is empty but GridFS/Mongo still have the file.
-     * Write ontology.original.owl + ontology.current.owl so warm can parse locally.
-     */
     private void materializeOntologyOnDiskIfMissing(String projectId) {
         if (storageManager.findCurrentOntology(projectId).isPresent()) {
             return;
@@ -332,11 +296,6 @@ public class DesktopOntologyLoader {
         }
     }
 
-    /**
-     * After an OWLAPI cache eviction (non-patchable mutation), kick off a background
-     * re-parse so the next editor session returns to the fast path without blocking
-     * the mutation response.
-     */
     public void scheduleRewarm(String projectId) {
         if (!autoWarm) {
             return;
@@ -351,24 +310,16 @@ public class DesktopOntologyLoader {
         triggerLazyLoadIfNeeded(projectId);
     }
 
-    /**
-     * Evicts any cached in-memory OWLAPI model for this project. Callers that just wrote a new
-     * on-disk ontology (merge, re-import) MUST call this before {@link #startParallelWarm} —
-     * otherwise its {@code cache.has(projectId)} fast-path silently keeps serving the stale,
-     * pre-write model instead of re-parsing the file that was just written.
-     */
     public void evictCache(String projectId) {
         cache.evict(projectId);
     }
 
-    /** Number of classes in the cached ontology's signature, or 0 if nothing is cached. */
     public long classCount(String projectId) {
         return cache.get(projectId)
                 .map(cached -> cached.ontology().classesInSignature().count())
                 .orElse(0L);
     }
 
-    /** Start OWLAPI parse in parallel with Fuseki import (fast-open). */
     public void startParallelWarm(String projectId, Path owlFilePath) {
         startParallelWarm(projectId, owlFilePath, false);
     }
@@ -384,9 +335,7 @@ public class DesktopOntologyLoader {
         if (!loadingInProgress.add(projectId)) {
             return;
         }
-        // Dispatch through explicit executors. Do NOT call the @Async method
-        // directly — self-invocation bypasses the Spring proxy and would run the
-        // parse synchronously on this thread (import worker or HTTP thread).
+
         Executor lane = interactive ? interactiveWarmExecutor : backgroundWarmExecutor;
         try {
             lane.execute(() -> runLoadAndComplete(projectId, owlFilePath));
@@ -400,18 +349,12 @@ public class DesktopOntologyLoader {
     private Optional<Path> findFastestParseSource(String projectId) {
         Path dir = storageManager.projectDir(projectId);
 
-        // Crash / unsaved-exit recovery: a leftover draft holds edits newer than
-        // ANY other artifact — including a dirty-marker Fuseki export (Fuseki may
-        // lag the draft by the sync debounce). Always recover the draft first.
         Path draft = storageManager.draftOntologyPath(projectId);
         if (java.nio.file.Files.exists(draft)) {
             log.info("[Desktop] Unsaved draft found for {} — recovering from {}", projectId, draft);
             return Optional.of(draft);
         }
 
-        // Mutations since the last import live only in Fuseki — the on-disk artifacts
-        // are stale. Export fresh before parsing, or a re-warm would resurrect
-        // pre-mutation data into the OWLAPI fast path.
         Path dirtyMarker = dir.resolve("ontology.dirty");
         if (java.nio.file.Files.exists(dirtyMarker)) {
             try {
@@ -496,8 +439,7 @@ public class DesktopOntologyLoader {
         Runtime rt = Runtime.getRuntime();
         long maxHeapMb = rt.maxMemory() / (1024 * 1024);
         long estimatedModelMb = Math.max(64, fileSizeMb * 3);
-        // Reserve for Spring Boot runtime + Fuseki client + other beans (~700MB observed).
-        // usedNow tells us the actual current usage so we don't evict live data.
+
         long usedNowMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
         long heapReserveMb = Math.max(768, usedNowMb + 256);
         if (estimatedModelMb > maxHeapMb - heapReserveMb) {
@@ -535,12 +477,6 @@ public class DesktopOntologyLoader {
                         owlFilePath.toString());
             }
 
-            // show the asserted hierarchy immediately (no reasoner), same as
-            // Cloud fast-open. Precomputing a structural reasoner over the whole ontology here
-            // made every top-level/count query on Desktop pay reasoner.getSuperClasses() calls
-            // per candidate class - for large ontologies (GO/ChEBI, 50k-90k classes) that alone
-            // took minutes. The "Start Reasoner" plugin builds its own reasoner independently
-            // (ReasonerController -> ReasonerService.getReasoner) and is unaffected.
             boolean assertedOnly = skipReasonerPrecompute;
             OWLReasoner reasoner = null;
             if (!assertedOnly) {
@@ -571,20 +507,12 @@ public class DesktopOntologyLoader {
         return Map.of();
     }
 
-    /** Persist in-memory OWLAPI model to the DRAFT file (autosave after each mutation).
-     *  The saved ontology (ontology.current.owl) is only touched by {@link #saveProject}.
-     *  A draft left behind after a crash / unsaved exit is recovered on next open. */
     public void persistToDisk(String projectId) throws java.io.IOException {
         Path target = storageManager.draftOntologyPath(projectId);
         writeModelTo(projectId, target);
         log.info("[Desktop] Autosaved OWLAPI model to draft {}", target);
     }
 
-    /**
-     * Explicit Save: promote the draft to ontology.current.owl and delete the
-     * draft folder. When no draft exists but a model is in memory, serialize it
-     * directly (covers save-after-recovery edge cases).
-     */
     public boolean saveProject(String projectId) throws java.io.IOException {
         if (storageManager.promoteDraft(projectId)) {
             return true;
@@ -599,7 +527,6 @@ public class DesktopOntologyLoader {
         return false;
     }
 
-    /** Discard unsaved changes: delete draft, evict the in-memory model, re-warm from saved file. */
     public void discardDraft(String projectId) throws java.io.IOException {
         storageManager.deleteDraft(projectId);
         cache.evict(projectId);
@@ -618,7 +545,7 @@ public class DesktopOntologyLoader {
         Files.createDirectories(target.getParent());
         var ontology = cached.get().ontology();
         var manager = cached.get().manager();
-        // Write via temp file + move so a crash mid-write never corrupts the target.
+
         Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
         try (var out = Files.newOutputStream(tmp)) {
             manager.saveOntology(ontology, new org.semanticweb.owlapi.formats.RDFXMLDocumentFormat(), out);

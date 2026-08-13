@@ -1,8 +1,4 @@
-/**
- * Adapter from the plugin's OntologyNode/OntologyEdge model to a graphology graph
- * for the Sigma.js WebGL renderer. Colors come from the canonical node palette so
- * the WebGL view matches the SVG renderer's identity encoding.
- */
+
 
 import Graph from 'graphology';
 import { OntologyNode, OntologyEdge } from '../types';
@@ -25,8 +21,7 @@ export function buildGraphologyGraph(
   nodes.forEach((node, index) => {
     if (graph.hasNode(node.id)) return;
     const saved = options.positions?.get(node.id);
-    // Phyllotaxis seed when no saved position — keeps the initial frame sane
-    // before the headless force layout takes over.
+
     const angle = index * 2.399963;
     const radius = 12 * Math.sqrt(index);
     graph.addNode(node.id, {
@@ -46,7 +41,7 @@ export function buildGraphologyGraph(
       graph.addEdgeWithKey(edge.id, edge.from, edge.to, {
         label: edge.label || '',
         size: edge.type === 'subClassOf' ? 1.5 : 1,
-        color: options.dark ? '#4b5563' : '#cbd5e1',
+        color: options.dark ? '#556274' : '#aab8cc',
         edgeType: edge.type
       });
     } catch {
@@ -54,10 +49,14 @@ export function buildGraphologyGraph(
     }
   });
 
+  graph.forEachNode(id => {
+    const degree = graph.degree(id);
+    graph.setNodeAttribute(id, 'size', Math.min(18, 4 + Math.sqrt(degree) * 2.4));
+  });
+
   return graph;
 }
 
-/** True when the host can create a WebGL context (Electron GPU blocklist, remote desktop, etc.). */
 export function isWebGLAvailable(): boolean {
   try {
     const canvas = document.createElement('canvas');

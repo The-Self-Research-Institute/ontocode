@@ -1,6 +1,4 @@
-/**
- * SPARQL Query Plugin Types
- */
+
 
 export interface SparqlQuery {
   id: string;

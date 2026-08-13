@@ -1,25 +1,7 @@
 #!/usr/bin/env node
-/*
- * Delete one OntoCode user and their owned data from MongoDB and GraphDB.
- *
- * Dry-run is the default. Add --execute to actually delete.
- *
- * Examples:
- *   node scripts/delete-user-complete.js user@example.com
- *   node scripts/delete-user-complete.js user@example.com --execute --yes
- *
- * Environment:
- *   MONGODB_URI          default mongodb://admin:changeme123@localhost:27017/ontocode?authSource=admin
- *   MONGODB_DATABASE     optional override, default parsed from URI or ontocode
- *   FUSEKI_URL           default http://localhost:3030
- *   FUSEKI_DATASET       default ontocode
- *   DATA_DIR             optional, only used with --delete-project-dirs
- */
 
 const nodeCrypto = require("crypto");
 
-// Some MongoDB/BSON versions expect Web Crypto on globalThis. Older Node
-// runtimes do not expose it by default, which causes "crypto is not defined".
 if (!globalThis.crypto && nodeCrypto.webcrypto) {
   globalThis.crypto = nodeCrypto.webcrypto;
 }
@@ -361,7 +343,6 @@ async function buildUserPlan(db, user) {
     counts[name] = await db.collection(name).countDocuments(userChangeQuery).catch(() => 0);
   }
 
-  // draft_pull_requests use authorId (not userId) for the user reference
   const draftPRDeleteQuery = orQuery([
     inClause("projectId", projectIdsToDelete),
     inClause("authorId", userRefIds),

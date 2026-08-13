@@ -1,13 +1,11 @@
 #!/bin/sh
-# --- CONFIGURATION ---
+
 REPO_ID="ontocode"
 GRAPHDB_URL="http://graphdb:7200"
-# ---------------------
 
 echo "--- GraphDB Initialization ---"
 echo "Target URL: $GRAPHDB_URL"
 
-# Wait for GraphDB to be ready
 for i in $(seq 1 30); do
     if curl -s -f "$GRAPHDB_URL/rest/repositories" > /dev/null; then
         echo "GraphDB is UP!"
@@ -17,7 +15,6 @@ for i in $(seq 1 30); do
     sleep 5
 done
 
-# Check if repository exists
 if curl -s "$GRAPHDB_URL/rest/repositories" | grep -q "$REPO_ID"; then
     echo "Repository '$REPO_ID' already exists."
 else

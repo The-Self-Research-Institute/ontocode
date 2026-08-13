@@ -1,9 +1,9 @@
 import { VisualizationType } from './types';
 
-export type OntographLayoutType = 'vertical' | 'horizontal' | 'radial' | 'grid' | 'tree' | 'spring';
+export type OntographLayoutType = 'vertical' | 'horizontal' | 'radial' | 'grid' | 'tree' | 'spring' | 'cluster';
 
-const VISUALIZATION_TYPES: VisualizationType[] = ['force', 'vowl', 'ontograph', 'spatial3d'];
-const ONTOGRAPH_LAYOUT_TYPES: OntographLayoutType[] = ['vertical', 'horizontal', 'radial', 'grid', 'tree', 'spring'];
+const VISUALIZATION_TYPES: VisualizationType[] = ['vowl', 'ontograph'];
+const ONTOGRAPH_LAYOUT_TYPES: OntographLayoutType[] = ['vertical', 'horizontal', 'radial', 'grid', 'tree', 'spring', 'cluster'];
 
 export interface LastGraphView {
   version: 1;
@@ -13,36 +13,37 @@ export interface LastGraphView {
 }
 
 export interface VowlDisplayOptions {
-  /** Hide "(disjoint)" captions and property-characteristic suffixes. */
+
   compactNotation: boolean;
-  /** Extra cap on label length, on top of the shape-fitted budget. */
+
   maxLabelChars: number;
-  /** Hide nodes whose degree is below this value (0 = show all). */
+
   degreeCollapsing: number;
-  /** Hide classes whose only relationship is a single subClassOf. */
+
   hideSolitarySubclasses: boolean;
-  /** Tint external classes differently from internal ones. */
+
   colorExternals: boolean;
-  /** Show owl:unionOf / intersectionOf / complementOf / oneOf operator nodes. */
+
   showSetOperators: boolean;
-  /** Merge owl:equivalentClass into one double-border node with comma labels. */
+
   mergeEquivalents: boolean;
-  /** Show owl:disjointWith axiom edges. */
+
   showDisjointness: boolean;
-  /** Show property self-loops (domain === range on the same class). */
+
   showPropertyLoops: boolean;
-  /** Multiplier on the base shape width (1 = default size). */
+
+  isolateOnSelect: boolean;
+
   nodeWidthScale: number;
-  /** Multiplier on the base shape height (1 = default size). */
+
   nodeHeightScale: number;
-  /** Label font size in px. Truncation budgets are derived from this, so labels
-   *  always stay inside their shape regardless of the chosen size. */
+
   labelFontSize: number;
 }
 
 export const DEFAULT_VOWL_OPTIONS: VowlDisplayOptions = {
   compactNotation: false,
-  // Room for "Document, CreativeWork"-style equivalent labels
+
   maxLabelChars: 36,
   degreeCollapsing: 0,
   hideSolitarySubclasses: false,
@@ -51,7 +52,8 @@ export const DEFAULT_VOWL_OPTIONS: VowlDisplayOptions = {
   mergeEquivalents: true,
   showDisjointness: true,
   showPropertyLoops: true,
-  // Closer to VOWL proportions (less bulky than 1.15)
+  isolateOnSelect: false,
+
   nodeWidthScale: 1.0,
   nodeHeightScale: 1.0,
   labelFontSize: 11
@@ -61,16 +63,15 @@ export interface GraphUiPrefs {
   version: 1;
   showLegend: boolean;
   showPropertyPanel: boolean;
-  /** Sessions since the toolbar restructure shipped; drives the one-time overflow hint. */
+
   toolbarHintSessions?: number;
-  /** Notation/density options — persisted per user (VOWL forgets these on reload). */
+
   vowlOptions?: VowlDisplayOptions;
 }
 
 const lastViewKey = (projectId: string) => `ontocode.graphView.lastView.${projectId}`;
 const UI_PREFS_KEY = 'ontocode.graphView.uiPrefs';
 
-// localStorage can be unavailable or throw in restricted webviews / privacy modes.
 export function safeGetItem(key: string): string | null {
   try {
     return window.localStorage.getItem(key);

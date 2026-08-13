@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 
 @Configuration
 public class WebClientConfig {
-    
+
     @Bean
     public WebClient.Builder webClientBuilder(SparqlProperties props) {
         ConnectionProvider provider = ConnectionProvider.builder("sparql-pool")
@@ -46,13 +46,12 @@ public class WebClientConfig {
     @Bean
     public PoolingHttpClientConnectionManager httpConnectionManager() {
         PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
-        // classDetails alone fires ~20 parallel SPARQL queries; keep a generous pool so concurrent
-        // user actions (children, datatypes, properties) don't starve and queue on connection acquire.
+
         connectionManager.setMaxTotal(200);
         connectionManager.setDefaultMaxPerRoute(100);
         return connectionManager;
     }
-    
+
     @Bean
     public RestTemplate restTemplate(PoolingHttpClientConnectionManager connectionManager) {
         RequestConfig requestConfig = RequestConfig.custom()

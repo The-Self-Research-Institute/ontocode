@@ -23,11 +23,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
-/**
- * JWT Authentication Filter for validating Bearer tokens
- * Extracts and validates JWT tokens from Authorization header
- * Sets authentication context for authenticated requests
- */
 @Slf4j
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -51,9 +46,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
-        // Desktop: no sign-in — always use the seeded local principal. Electron never
-        // sends Authorization; do not parse web JWTs here (web UI must not share a
-        // desktop-mode auth instance on the same port).
         if (desktopMode) {
             if (SecurityContextHolder.getContext().getAuthentication() == null) {
                 var auth = new UsernamePasswordAuthenticationToken(
@@ -84,9 +76,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     .parseClaimsJws(token)
                     .getPayload();
 
-                // Use email as the principal name so getCurrentUserEmail() → authentication.getName()
-                // returns the email address that userRepository.findByEmail() expects.
-                // JWT sub = display username; email claim = email for userRepository.findByEmail()
                 Object emailObj = claims.get("email");
                 log.info("[JWT Filter] email claim raw: {} (type: {})", emailObj, emailObj != null ? emailObj.getClass().getSimpleName() : "null");
                 String emailClaim = emailObj instanceof String ? (String) emailObj : null;

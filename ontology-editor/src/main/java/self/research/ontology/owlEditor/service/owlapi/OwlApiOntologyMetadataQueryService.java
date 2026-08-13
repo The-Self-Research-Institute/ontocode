@@ -14,22 +14,6 @@ import java.util.stream.Collectors;
 
 import static self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport.IMPORTS_EXCLUDED;
 
-/**
- * Desktop owlapi-first reads for ontology-level metadata that has a clean, identity-safe OWLAPI
- * equivalent (no downstream string-matched update/delete coupling): ontology-level annotations,
- * direct owl:imports, and the flat class/property signature used by the SWRL entity picker.
- *
- * Deliberately NOT covered here (left on the sync-then-SPARQL-read fallback, still correct just
- * not owlapi-first):
- *  - General class axioms: the SPARQL read keys GCIs by their RDF blank-node id, and GCI
- *    update/delete match against that same id string — switching the read to an OWLAPI class
- *    expression (Manchester-rendered) would desync that identity scheme and silently break edits.
- *  - Import closure: walks owl:imports transitively across the whole merged graph (including
- *    triples pulled in by manual import resolution), which isn't what a single OWLOntology's own
- *    import declarations model.
- *  - Ontology metadata / prefixes: already served from a MongoDB cache kept in sync at mutation
- *    time; Fuseki is only touched on a cache miss, so there's no staleness to fix by going OWLAPI.
- */
 @Service
 @Conditional(FastOpenCondition.class)
 public class OwlApiOntologyMetadataQueryService {

@@ -17,9 +17,6 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.Executor;
 
-/**
- * Serves precomputed hierarchy snapshots to the web UI; schedules OWLAPI builds after import.
- */
 @Service
 public class HierarchyIndexService {
 
@@ -35,12 +32,6 @@ public class HierarchyIndexService {
     @Value("${ontocode.hierarchy.snapshot.legacy-sparql-fallback:false}")
     private boolean legacySparqlFallback;
 
-    /**
-     * True desktop deployment only (single user, single process — the same instance that
-     * wrote a mutation is guaranteed to serve the next read). NOT the same as "OWLAPI fast-open
-     * cache is warm": fast-open defaults to enabled on cloud too, so {@link DesktopOntologyLoader}
-     * is a non-null bean there as well and must not be used as a desktop-mode proxy.
-     */
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
@@ -149,19 +140,13 @@ public class HierarchyIndexService {
         if (!snapshotEnabled || !buildService.isEnabled()) {
             return;
         }
-        // Desktop: skip snapshot only when OWLAPI already serves hierarchy (heap-sized files).
-        // Gated on true desktop mode, not just "OWLAPI cache is warm" — on cloud, fast-open is
-        // enabled by default too, so another instance (or this one after LRU eviction) can still
-        // need the shared snapshot even while this instance's local cache is warm.
+
         if (desktopMode && ontologyCache != null && ontologyCache.has(projectId)) {
             return;
         }
         String revision = Instant.now().toString();
         log.info("[HierarchyIndex] Scheduling snapshot build for {}", projectId);
-        // Submit to the executor directly. Do NOT rely on @Async here: scheduleBuild()
-        // and buildAsync() live in the same bean, so an @Async self-invocation is bypassed
-        // by Spring's proxy and runs synchronously on the caller (the import worker thread),
-        // blocking the import queue slot for the entire build on large ontologies.
+
         hierarchyIndexExecutor.execute(() -> buildService.buildAndStore(projectId, revision));
     }
 

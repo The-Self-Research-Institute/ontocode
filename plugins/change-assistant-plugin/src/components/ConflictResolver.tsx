@@ -38,7 +38,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
+        {}
         <div className="border-b p-4 bg-orange-50">
           <div className="flex items-center gap-3">
             <AlertTriangle className="w-6 h-6 text-orange-600" />
@@ -51,9 +51,9 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
           </div>
         </div>
 
-        {/* Content */}
+        {}
         <div className="p-6 space-y-6">
-          {/* Base Value (if available) */}
+          {}
           {conflict.baseValue && (
             <div className="bg-gray-50 rounded-lg p-4">
               <div className="text-sm font-semibold text-gray-700 mb-2">Original Value</div>
@@ -63,9 +63,9 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
             </div>
           )}
 
-          {/* Conflict Options */}
+          {}
           <div className="grid grid-cols-2 gap-4">
-            {/* Local Change */}
+            {}
             <div
               onClick={() => setSelectedResolution('accept_local')}
               className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
@@ -90,7 +90,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
               </div>
             </div>
 
-            {/* Remote Change */}
+            {}
             <div
               onClick={() => setSelectedResolution('accept_remote')}
               className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
@@ -116,7 +116,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
             </div>
           </div>
 
-          {/* Manual Merge Option */}
+          {}
           <div
             onClick={() => setSelectedResolution('merge')}
             className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
@@ -146,7 +146,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
             />
           </div>
 
-          {/* Conflict Resolution Tips */}
+          {}
           <div className="bg-blue-50 rounded-lg p-4">
             <h4 className="text-sm font-semibold text-blue-900 mb-2">Resolution Tips</h4>
             <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
@@ -158,7 +158,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
           </div>
         </div>
 
-        {/* Footer */}
+        {}
         <div className="border-t p-4 bg-gray-50 flex justify-end gap-3">
           <button
             onClick={onCancel}

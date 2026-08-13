@@ -14,9 +14,6 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Simple DOI normalization, format validation and optional Crossref existence check.
- */
 public class DOIValidator {
     private static final Logger log = LoggerFactory.getLogger(DOIValidator.class);
 
@@ -34,15 +31,15 @@ public class DOIValidator {
     public static String normalize(String raw) {
         if (raw == null) return "";
         String s = raw.trim();
-        // strip common DOI URL wrappers
+
         s = s.replaceAll("(?i)^https?://(dx\\.)?doi\\.org/", "");
-        // percent-decode if possible
+
         try {
             s = URLDecoder.decode(s, StandardCharsets.UTF_8.name());
         } catch (Exception e) {
-            // ignore and use original
+
         }
-        // strip trailing punctuation commonly added when pasted
+
         s = s.replaceAll("[.,;:)\\]\\}]+$", "");
         return s;
     }
@@ -55,9 +52,9 @@ public class DOIValidator {
 
     public static class ValidationResult {
         public final boolean ok;
-        public final String reason; // "malformed", "not-found", "rate-limited", "service-error"
-        public final Integer statusCode; // HTTP status if applicable
-        public final Long retryAfterSeconds; // suggested wait for rate-limit
+        public final String reason;
+        public final Integer statusCode;
+        public final Long retryAfterSeconds;
 
         public ValidationResult(boolean ok, String reason, Integer statusCode, Long retryAfterSeconds) {
             this.ok = ok;
@@ -73,13 +70,6 @@ public class DOIValidator {
         public static ValidationResult serviceError(int status) { return new ValidationResult(false, "service-error", status, null); }
     }
 
-    /**
-     * Check DOI existence via Crossref REST API. This performs network calls and
-     * respects Retry-After for 429 responses. Does not throw on normal HTTP errors.
-     *
-     * @param raw DOI or DOI-wrapped string
-     * @param maxRetries number of retry attempts on 429 (exponential backoff)
-     */
     public static ValidationResult checkExistsCrossref(String raw, int maxRetries) {
         String doi = normalize(raw);
         if (!isValidFormat(doi)) return ValidationResult.malformed();

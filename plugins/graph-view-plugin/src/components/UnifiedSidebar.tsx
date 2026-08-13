@@ -27,7 +27,6 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'classes' | 'properties' | 'individuals' | 'details' | 'statistics'>('details');
 
-  // Statistics calculation
   const statistics = useMemo(() => {
     const stats = {
       classCount: 0,
@@ -51,7 +50,6 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
     return stats;
   }, [allNodes, allEdges]);
 
-  // Categorize nodes
   const categorizedNodes = useMemo(() => {
     return {
       classes: allNodes.filter(n => n.type === 'class'),
@@ -206,7 +204,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
 
   return (
     <div style={propertyPanelStyles.panel}>
-      {/* Header */}
+      {}
       <div style={propertyPanelStyles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <FileText size={18} />
@@ -215,7 +213,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
         <button onClick={onClose} style={closeBtn}>×</button>
       </div>
 
-      {/* Tab Bar */}
+      {}
       <div style={propertyPanelStyles.tabBar}>
         {selectedNodeInfo && (
           <button
@@ -266,9 +264,9 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
         </button>
       </div>
 
-      {/* Content */}
+      {}
       <div style={propertyPanelStyles.content}>
-        {/* Details Tab */}
+        {}
         {activeTab === 'details' && selectedNodeInfo && (
           <div>
             <div style={propertyPanelStyles.propertyItem}>
@@ -355,7 +353,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
           </div>
         )}
 
-        {/* Classes Tab */}
+        {}
         {activeTab === 'classes' && (
           <div>
             {categorizedNodes.classes.length > 0 ? (
@@ -379,7 +377,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
           </div>
         )}
 
-        {/* Properties Tab */}
+        {}
         {activeTab === 'properties' && (
           <div>
             {categorizedNodes.objectProperties.length > 0 && (
@@ -430,7 +428,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
           </div>
         )}
 
-        {/* Individuals Tab */}
+        {}
         {activeTab === 'individuals' && (
           <div>
             {categorizedNodes.individuals.length > 0 ? (
@@ -454,7 +452,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
           </div>
         )}
 
-        {/* Statistics Tab */}
+        {}
         {activeTab === 'statistics' && (
           <div>
             <div style={{ marginBottom: '16px' }}>
@@ -491,7 +489,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = ({
               </div>
             </div>
 
-            {/* VOWL Legend in Statistics Tab */}
+            {}
             {viewMode === 'vowl' && vowlLegend && (
               <div>
                 <div style={{ fontWeight: '600', marginBottom: '8px', color: 'var(--text-primary)' }}>VOWL Notation Legend</div>

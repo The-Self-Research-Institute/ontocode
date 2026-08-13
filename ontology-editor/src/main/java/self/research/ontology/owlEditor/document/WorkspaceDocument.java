@@ -3,10 +3,6 @@ package self.research.ontology.owlEditor.document;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
-/**
- * Read-only view of the workspace collection (owned by ontology-auth service).
- * Only the fields needed for plan enforcement are mapped.
- */
 @Document(collection = "workspaces")
 public class WorkspaceDocument {
 

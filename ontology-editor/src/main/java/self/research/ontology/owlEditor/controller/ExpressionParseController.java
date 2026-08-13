@@ -11,9 +11,6 @@ import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditS
 
 import java.util.Map;
 
-/**
- * Manchester OWL Syntax expression parser for UI validation (GCA editor, class expressions, etc.).
- */
 @RestController
 @RequestMapping("/api/ontology")
 @CrossOrigin(originPatterns = "*")
@@ -169,7 +166,7 @@ public class ExpressionParseController {
         try {
             manchesterExpressionService.addGeneralClassAxiom(
                     projectId, request.subClassExpression.trim(), request.superClassExpression.trim(), draft, userId);
-            // Draft edits are private to the author — do not broadcast them to other collaborators.
+
             if (!draft) {
                 collaborativeEditService.broadcastMutation(projectId,
                         new OntologyMutationService.MutationOp(

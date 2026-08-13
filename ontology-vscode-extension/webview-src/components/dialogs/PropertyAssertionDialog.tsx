@@ -7,30 +7,25 @@ interface PropertyAssertionDialogProps {
   isOpen: boolean;
   title: string;
   isObjectProperty: boolean;
-  
-  // Hierarchy Data
+
   objectPropertiesTree?: TreeNode[];
   dataPropertiesTree?: TreeNode[];
-  
-  // Legacy/Simple mode props
+
   propertySuggestions?: { label: string; value: string }[];
   targetSuggestions?: { label: string; value: string }[];
-  
-  // Initial values
+
   initialPropertyLabel?: string;
   initialTargetLabel?: string;
-  
-  // Callbacks
-  onConfirm: (data: { 
-    propertyLabel: string; 
-    targetLabel: string; 
+
+  onConfirm: (data: {
+    propertyLabel: string;
+    targetLabel: string;
     isObjectProperty: boolean;
     language?: string;
     datatype?: string;
   }) => void;
   onCancel: () => void;
-  
-  // Legacy props
+
   propertyLabel?: string;
   targetLabel?: string;
   showTypeSelector?: boolean;
@@ -64,18 +59,17 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
   initialTargetLabel = '',
   onConfirm,
   onCancel,
-  // Legacy props handling
+
   propertyLabel: legacyPropertyLabel,
   targetLabel: legacyTargetLabel,
   onChange
 }) => {
-  // Initialize state with either new props or legacy props
+
   const [propertyLabel, setPropertyLabel] = useState(initialPropertyLabel || legacyPropertyLabel || '');
   const [targetLabel, setTargetLabel] = useState(initialTargetLabel || legacyTargetLabel || '');
   const [language, setLanguage] = useState('');
   const [datatype, setDatatype] = useState('xsd:string');
-  
-  // For hierarchy selection
+
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -91,18 +85,16 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
     }
   }, [isOpen, initialPropertyLabel, initialTargetLabel, legacyPropertyLabel, legacyTargetLabel]);
 
-  // Update property label when node selected
   useEffect(() => {
     if (selectedNode) {
       setPropertyLabel(selectedNode.label || selectedNode.id);
-      // If legacy onChange is present, call it
+
       if (onChange) {
         onChange({ propertyLabel: selectedNode.label || selectedNode.id, targetLabel, isObjectProperty });
       }
     }
   }, [selectedNode]);
 
-  // Handle manual input changes for legacy support
   const handlePropertyChange = (val: string) => {
     setPropertyLabel(val);
     if (onChange) onChange({ propertyLabel: val, targetLabel, isObjectProperty });
@@ -148,7 +140,7 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
         }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
+        {}
         <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
           <div className="font-semibold">{title}</div>
           <button onClick={onCancel} className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800">
@@ -156,9 +148,9 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
           </button>
         </div>
 
-        {/* Body */}
+        {}
         <div className="flex-1 flex min-h-0">
-          {/* Left: Property Hierarchy */}
+          {}
           {showHierarchy && (
             <div className="w-1/3 border-r flex flex-col" style={{ borderColor: 'var(--border)' }}>
               <div className="p-2 border-b" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
@@ -184,10 +176,10 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
             </div>
           )}
 
-          {/* Right: Form */}
+          {}
           <div className={`flex-1 p-4 flex flex-col gap-4 overflow-auto ${!showHierarchy ? 'w-full' : ''}`}>
-            
-            {/* Property Name (Read-only if selected from tree, or editable) */}
+
+            {}
             <div>
               <label className="block text-xs font-medium mb-1 opacity-70">
                 {isObjectProperty ? 'Object Property' : 'Data Property'}
@@ -198,8 +190,8 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                 onChange={e => handlePropertyChange(e.target.value)}
                 list={propertySuggestions.length ? "prop-suggestions" : undefined}
                 className="w-full px-3 py-2 rounded border text-sm"
-                style={{ 
-                  backgroundColor: 'var(--bg)', 
+                style={{
+                  backgroundColor: 'var(--bg)',
                   color: 'var(--text-primary)',
                   borderColor: 'var(--border)'
                 }}
@@ -212,7 +204,7 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
               )}
             </div>
 
-            {/* Target / Value */}
+            {}
             <div className="flex-1 flex flex-col">
               <label className="block text-xs font-medium mb-1 opacity-70">
                 {isObjectProperty ? 'Individual' : 'Value'}
@@ -225,8 +217,8 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                     onChange={e => handleTargetChange(e.target.value)}
                     list="target-suggestions"
                     className="w-full px-3 py-2 rounded border text-sm"
-                    style={{ 
-                      backgroundColor: 'var(--bg)', 
+                    style={{
+                      backgroundColor: 'var(--bg)',
                       color: 'var(--text-primary)',
                       borderColor: 'var(--border)'
                     }}
@@ -241,8 +233,8 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                   value={targetLabel}
                   onChange={e => handleTargetChange(e.target.value)}
                   className="w-full flex-1 px-3 py-2 rounded border text-sm resize-none font-mono"
-                  style={{ 
-                    backgroundColor: 'var(--bg)', 
+                  style={{
+                    backgroundColor: 'var(--bg)',
                     color: 'var(--text-primary)',
                     borderColor: 'var(--border)'
                   }}
@@ -251,7 +243,7 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
               )}
             </div>
 
-            {/* Data Property Extras */}
+            {}
             {!isObjectProperty && (
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -261,8 +253,8 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                     value={language}
                     onChange={e => setLanguage(e.target.value)}
                     className="w-full px-3 py-2 rounded border text-sm"
-                    style={{ 
-                      backgroundColor: 'var(--bg)', 
+                    style={{
+                      backgroundColor: 'var(--bg)',
                       color: 'var(--text-primary)',
                       borderColor: 'var(--border)'
                     }}
@@ -275,8 +267,8 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
                     value={datatype}
                     onChange={e => setDatatype(e.target.value)}
                     className="w-full px-3 py-2 rounded border text-sm"
-                    style={{ 
-                      backgroundColor: 'var(--bg)', 
+                    style={{
+                      backgroundColor: 'var(--bg)',
                       color: 'var(--text-primary)',
                       borderColor: 'var(--border)'
                     }}
@@ -291,12 +283,12 @@ const PropertyAssertionDialog: React.FC<PropertyAssertionDialogProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
+        {}
         <div className="px-4 py-3 border-t flex justify-end gap-2" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-2)' }}>
           <button
             onClick={onCancel}
             className="px-4 py-2 rounded text-sm border hover-overlay"
-            style={{ 
+            style={{
               borderColor: 'var(--border)',
               color: 'var(--text-primary)'
             }}

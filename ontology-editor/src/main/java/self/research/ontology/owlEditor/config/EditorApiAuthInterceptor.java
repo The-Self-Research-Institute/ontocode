@@ -17,10 +17,6 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import javax.crypto.SecretKey;
 import java.util.List;
 
-/**
- * Validates JWT signature on mutating API requests when {@code ontocode.editor.require-jwt} is enabled.
- * Desktop localhost and read-only endpoints are exempt.
- */
 @Component
 public class EditorApiAuthInterceptor implements HandlerInterceptor {
 
@@ -58,7 +54,7 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         }
 
         String method = request.getMethod();
-        // OPTIONS passes through so CORS preflight works; all other methods require auth below.
+
         if (HttpMethod.OPTIONS.matches(method)) {
             return true;
         }
@@ -70,7 +66,6 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             }
         }
 
-        // Large-file load tests may POST directly to :8083 with ownerEmail (bypass gateway).
         if (HttpMethod.POST.matches(method) && path.contains("/api/ontology/upload/")
                 && request.getParameter("ownerEmail") != null && !request.getParameter("ownerEmail").isBlank()) {
             return true;

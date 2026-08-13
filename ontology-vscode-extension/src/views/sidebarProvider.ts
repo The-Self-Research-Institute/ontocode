@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 import { sci2CodeService } from '../services/sci2CodeService';
 
-// Local literal, not imported from extension.ts, to avoid a circular import
-// (extension.ts is what constructs this provider).
 const AUTH_TOKEN_KEY = 'ontocode.authToken';
 
 class SidebarItem extends vscode.TreeItem {
@@ -19,13 +17,6 @@ class SidebarItem extends vscode.TreeItem {
   }
 }
 
-/**
- * Flat command-launcher list for the OntoCode Activity Bar sidebar — a
- * discoverability home for features otherwise only reachable via the
- * Command Palette, a keybinding, or a right-click menu. The citation library
- * status row is a read-only snapshot (getConnectionStatus() never prompts —
- * see sci2CodeService.ts) refreshed whenever the view is (re)rendered.
- */
 export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -51,16 +42,15 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
     const items: SidebarItem[] = [
       this.buildStatusItem(status),
       new SidebarItem(
-        'Insert Citation',
+        'Insert Citation (Sci2Code)',
         new vscode.ThemeIcon('book'),
-        { command: 'ontocode.insertCitation', title: 'Insert Citation' }
+        { command: 'ontocode.insertCitation', title: 'Insert Citation (Sci2Code)' }
       ),
       new SidebarItem(
-        // configureZotero itself now also covers changing the key and
-        // disconnecting once already connected — see zoteroApiService.ts.
-        'Configure Citation Library',
+
+        'Configure Zotero API Key',
         new vscode.ThemeIcon('gear'),
-        { command: 'ontocode.configureZotero', title: 'Configure Citation Library' }
+        { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' }
       ),
       new SidebarItem(
         'Open Webview',
@@ -69,7 +59,6 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
       ),
     ];
 
-    // Only meaningful (and only offered) when there's an actual session.
     if (authToken) {
       items.push(
         new SidebarItem(
@@ -91,21 +80,21 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
   private buildStatusItem(status: 'connected' | 'not-configured' | 'unavailable'): SidebarItem {
     if (status === 'connected') {
       return new SidebarItem(
-        'Citation Library: Connected',
+        'Zotero: Connected',
         new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green')),
-        { command: 'ontocode.configureZotero', title: 'Configure Citation Library' }
+        { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' }
       );
     }
     if (status === 'not-configured') {
       return new SidebarItem(
-        'Citation Library: Not Configured',
+        'Zotero: Not Configured',
         new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow')),
-        { command: 'ontocode.configureZotero', title: 'Configure Citation Library' },
+        { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' },
         'Click to configure'
       );
     }
     return new SidebarItem(
-      'Citation Library: Unavailable',
+      'Zotero: Unavailable',
       new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.red'))
     );
   }

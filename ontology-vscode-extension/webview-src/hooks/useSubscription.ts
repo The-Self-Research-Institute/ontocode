@@ -18,16 +18,9 @@ export interface SubscriptionLimits {
     hasSLAGuarantee: boolean;
     hasOnPremise: boolean;
     hasWhiteLabel: boolean;
-    /**
-     * Master export gate — controls Dashboard "Export" menu, Code View
-     * "Copy All" and "Download" actions, and any other path that lets
-     * the user pull the ontology out of the platform.
-     */
+
     hasExport: boolean;
-    /**
-     * Multi-format export (Turtle / RDF/XML / N-Triples / OWL/XML / Manchester / Functional).
-     * Implies {@link hasExport}. Free remains gated on this and on `hasExport`.
-     */
+
     hasMultipleExportFormats: boolean;
     maxWorkspaces: number;
 }
@@ -57,9 +50,7 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
         maxTeamMembers: 10,
         storageGB: 100,
         hasBasicCollaboration: true,
-        // Bug #49: Pro now includes real-time collaboration. Enterprise
-        // remains differentiated by SLA, custom integrations, on-premise,
-        // dedicated support, and advanced security — not by collaboration.
+
         hasAdvancedCollaboration: true,
         hasVersionControl: true,
         hasCustomPlugins: true,
@@ -101,15 +92,12 @@ export const PLAN_LIMITS: Record<string, SubscriptionLimits> = {
 export const useSubscription = () => {
     const { user } = useAuth();
 
-    // Desktop is a local single-user app — all features are unlocked regardless of cloud plan.
     const plan = isDesktop() ? 'enterprise' : (user?.subscriptionPlan || 'free').toLowerCase();
     const limits = useMemo(() => PLAN_LIMITS[plan] || PLAN_LIMITS.free, [plan]);
 
     const canAccessFeature = (feature: keyof SubscriptionLimits): boolean => {
         const value = limits[feature];
-        // Strict default: unknown / non-boolean keys are treated as DENIED rather
-        // than allowed, so a missing entry can't accidentally unlock a paid
-        // feature for free users (this is the bug that allowed export on free).
+
         return typeof value === 'boolean' ? value : false;
     };
 

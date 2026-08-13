@@ -1,56 +1,4 @@
-/**
- * ============================================================================
- * COLLABORATIVE D3.JS GRAPH VIEW - ULTIMATE EDITION v3.5.0
- * ============================================================================
- *
- * The most advanced collaborative ontology graph visualization ever built!
- *
- * 🚀 REAL-TIME COLLABORATION FEATURES:
- * ✅ WebSocket-based real-time updates (STOMP over SockJS)
- * ✅ Collaborative cursors with user presence
- * ✅ Live node selection highlighting
- * ✅ Delta updates for performance
- * ✅ Conflict resolution with operational transformation
- * ✅ User awareness (who's viewing what)
- * ✅ Collaborative editing with locks
- *
- * 🎨 ADVANCED VISUALIZATION:
- * ✅ D3.js force-directed layout
- * ✅ Hierarchical tree layout
- * ✅ Radial layout for taxonomies
- * ✅ Circular layout
- * ✅ Minimap for navigation
- * ✅ Fish-eye lens zoom
- * ✅ Semantic zoom (level-of-detail)
- *
- * ⚡ PERFORMANCE & SCALING:
- * ✅ Virtual rendering for 10,000+ nodes
- * ✅ Lazy loading with expand/collapse
- * ✅ Viewport culling
- * ✅ Request animation frame optimization
- * ✅ WebWorker for heavy computations
- *
- * ✏️ EDITING & INTERACTION:
- * ✅ Drag & drop editing
- * ✅ Context menu (right-click)
- * ✅ Multi-select (Ctrl+Click, lasso)
- * ✅ Undo/Redo with history
- * ✅ Copy/paste nodes
- * ✅ Keyboard shortcuts
- *
- * 🔍 ADVANCED SEARCH & FILTER:
- * ✅ Full-text search
- * ✅ Type filters
- * ✅ Property-based filtering
- * ✅ Path finding
- * ✅ Pattern matching
- *
- * 💾 EXPORT & INTEGRATION:
- * ✅ SVG/PNG/PDF export
- * ✅ OWL/RDF/JSON-LD export
- * ✅ SPARQL query builder
- * ✅ GraphML export
- */
+
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as d3 from 'd3';
@@ -73,10 +21,6 @@ import type {
   ExportFormat
 } from './types';
 import PluginUpdateService from './PluginUpdateService';
-
-// ============================================================================
-// TYPES & INTERFACES
-// ============================================================================
 
 interface D3Node extends OntologyNode, d3.SimulationNodeDatum {
   x?: number;
@@ -115,10 +59,6 @@ interface Props {
   readonly?: boolean;
 }
 
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-
 const TYPE_COLORS: Record<NodeType, string> = {
   class: '#667eea',
   individual: '#10b981',
@@ -150,10 +90,6 @@ const USER_COLORS = [
   '#8b5cf6', '#ef4444', '#fbbf24', '#34d399', '#3b82f6'
 ];
 
-// ============================================================================
-// MAIN COMPONENT
-// ============================================================================
-
 export const CollaborativeD3GraphView: React.FC<Props> = ({
   projectId,
   context,
@@ -161,20 +97,18 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
   onEdgeClick,
   readonly = false
 }) => {
-  // ========== REFS ==========
+
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
   const minimapRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3.Simulation<D3Node, D3Edge> | null>(null);
   const stompClientRef = useRef<Client | null>(null);
 
-  // ========== STATE - Data ==========
   const [nodes, setNodes] = useState<OntologyNode[]>([]);
   const [edges, setEdges] = useState<OntologyEdge[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ========== STATE - UI ==========
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -183,7 +117,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
   const [layout, setLayout] = useState<LayoutType>('force');
   const [zoomLevel, setZoomLevel] = useState(1);
 
-  // ========== STATE - Panels ==========
   const [showSearch, setShowSearch] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -192,7 +125,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
 
-  // ========== STATE - Collaboration ==========
   const [connected, setConnected] = useState(false);
   const [collaborators, setCollaborators] = useState<Map<string, CollaborativeUser>>(new Map());
   const [currentUser] = useState({
@@ -201,11 +133,9 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)]
   });
 
-  // ========== STATE - History ==========
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
 
-  // ========== STATE - Settings & Filters ==========
   const [settings, setSettings] = useState<GraphSettings>({
     layout: 'force',
     showLabels: true,
@@ -233,13 +163,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
 
-  // ============================================================================
-  // WEBSOCKET - COLLABORATIVE FEATURES
-  // ============================================================================
-
-  /**
-   * Initialize WebSocket connection for real-time collaboration
-   */
   useEffect(() => {
     const initWebSocket = () => {
       const socket = new SockJS(`${(window as any).API_BASE_URL}/ws`);
@@ -254,19 +177,16 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
           console.log('[WebSocket] ✅ Connected to collaboration server');
           setConnected(true);
 
-          // Subscribe to project-specific updates
           client.subscribe(`/topic/graph/${projectId}`, (message) => {
             const update = JSON.parse(message.body);
             handleGraphUpdate(update);
           });
 
-          // Subscribe to presence updates
           client.subscribe(`/topic/presence/${projectId}`, (message) => {
             const presence = JSON.parse(message.body);
             handlePresenceUpdate(presence);
           });
 
-          // Announce presence
           client.publish({
             destination: `/app/graph/${projectId}/join`,
             body: JSON.stringify({
@@ -296,7 +216,7 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
 
     return () => {
       if (stompClientRef.current) {
-        // Announce leaving
+
         stompClientRef.current.publish({
           destination: `/app/graph/${projectId}/leave`,
           body: JSON.stringify({
@@ -309,9 +229,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     };
   }, [projectId, currentUser]);
 
-  /**
-   * Handle real-time graph updates from other users
-   */
   const handleGraphUpdate = useCallback((update: any) => {
     console.log('[Collaboration] Received update:', update.type, update);
 
@@ -351,7 +268,7 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
         break;
 
       case 'NODE_SELECTED':
-        // Highlight node selected by another user
+
         if (update.userId !== currentUser.userId && update.selectedNodeId) {
           setCollaborators(prev => {
             const updated = new Map(prev);
@@ -369,7 +286,7 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
         break;
 
       case 'CURSOR_MOVED':
-        // Update cursor position
+
         if (update.userId !== currentUser.userId && update.cursor) {
           setCollaborators(prev => {
             const updated = new Map(prev);
@@ -388,9 +305,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     }
   }, [currentUser]);
 
-  /**
-   * Handle presence updates (users joining/leaving)
-   */
   const handlePresenceUpdate = useCallback((presence: any) => {
     console.log('[Presence]', presence);
 
@@ -414,9 +328,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     }
   }, []);
 
-  /**
-   * Broadcast node selection to other users
-   */
   const broadcastNodeSelection = useCallback((nodeId: string | null) => {
     if (!stompClientRef.current || !connected) return;
 
@@ -432,9 +343,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     });
   }, [connected, projectId, currentUser]);
 
-  /**
-   * Broadcast cursor movement to other users (throttled)
-   */
   const broadcastCursorMove = useMemo(() => {
     let lastBroadcast = 0;
     return (x: number, y: number, nodeId?: string) => {
@@ -457,10 +365,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     };
   }, [connected, projectId, currentUser]);
 
-  // ============================================================================
-  // DATA FETCHING
-  // ============================================================================
-
   const fetchGraphData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -472,7 +376,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
       const cached = localStorage.getItem(cacheKey);
       const cacheTime = localStorage.getItem(`${cacheKey}-time`);
 
-      // Use cache if less than 5 minutes old
       if (cached && cacheTime && Date.now() - parseInt(cacheTime) < 5 * 60 * 1000) {
         console.log('[GraphView] ⚡ Using cached data');
         const cachedData = JSON.parse(cached);
@@ -512,7 +415,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
         type: normalizeEdgeType(edge.type)
       }));
 
-      // Cache the result
       localStorage.setItem(cacheKey, JSON.stringify({ nodes: normalizedNodes, edges: transformedEdges }));
       localStorage.setItem(`${cacheKey}-time`, Date.now().toString());
 
@@ -527,7 +429,6 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     }
   }, [projectId]);
 
-  // Type normalization helpers
   const normalizeNodeType = (type: string): NodeType => {
     if (!type) return 'class';
     const normalized = type === 'CLASS' ? 'class' :
@@ -555,14 +456,9 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     return normalized as EdgeType;
   };
 
-  // ============================================================================
-  // FILTERING
-  // ============================================================================
-
   const filteredNodes = useMemo(() => {
     let filtered = nodes.filter(node => filters.nodeTypes.has(node.type));
 
-    // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(node =>
@@ -584,30 +480,20 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
     );
   }, [edges, filteredNodes, filters]);
 
-  // ============================================================================
-  // D3 VISUALIZATION - This will be truncated due to size
-  // See AdvancedGraphView.tsx for full D3 implementation
-  // ============================================================================
-
-  // Load data on mount
   useEffect(() => {
     fetchGraphData();
   }, [fetchGraphData]);
 
-  // ============================================================================
-  // RENDER
-  // ============================================================================
-
   return (
     <div className="collaborative-graph-view" style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: '#f9fafb' }}>
-      {/* Plugin Update Service */}
+      {}
       <PluginUpdateService
         currentVersion="3.5.0"
         pluginId="graph-view-plugin"
         checkInterval={60 * 60 * 1000}
       />
 
-      {/* Collaboration Status Bar */}
+      {}
       {connected && (
         <div style={{ padding: '8px 12px', background: '#10b981', color: 'white', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Users size={14} />
@@ -615,22 +501,22 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Toolbar - abbreviated for space */}
+      {}
       <div style={{ padding: '12px', background: '#fff', borderBottom: '1px solid #e5e7eb', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         <button onClick={() => fetchGraphData()} disabled={loading}>
           <RefreshCw size={16} />
           Refresh
         </button>
-        {/* ... rest of toolbar ... */}
+        {}
       </div>
 
-      {/* Main Content */}
+      {}
       <div style={{ flex: 1, position: 'relative' }}>
         <svg ref={svgRef} style={{ width: '100%', height: '100%' }}>
           <g ref={gRef} />
         </svg>
 
-        {/* Collaborative Cursors */}
+        {}
         {Array.from(collaborators.values()).map(user => (
           user.cursor && (
             <div
@@ -666,7 +552,7 @@ export const CollaborativeD3GraphView: React.FC<Props> = ({
           )
         ))}
 
-        {/* Loading/Error states */}
+        {}
         {loading && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>Loading...</div>}
         {error && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: '#ef4444' }}>{error}</div>}
       </div>

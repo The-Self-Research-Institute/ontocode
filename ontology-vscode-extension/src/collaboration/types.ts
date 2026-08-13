@@ -1,43 +1,35 @@
-/**
- * Types for collaborative editing messages and state.
- */
+
 
 export enum OperationType {
-    // Class operations
+
     CLASS_ADDED = 'CLASS_ADDED',
     CLASS_MODIFIED = 'CLASS_MODIFIED',
     CLASS_DELETED = 'CLASS_DELETED',
     CLASS_RENAMED = 'CLASS_RENAMED',
-    
-    // Property operations
+
     PROPERTY_ADDED = 'PROPERTY_ADDED',
     PROPERTY_MODIFIED = 'PROPERTY_MODIFIED',
     PROPERTY_DELETED = 'PROPERTY_DELETED',
     PROPERTY_RENAMED = 'PROPERTY_RENAMED',
-    
-    // Individual operations
+
     INDIVIDUAL_ADDED = 'INDIVIDUAL_ADDED',
     INDIVIDUAL_MODIFIED = 'INDIVIDUAL_MODIFIED',
     INDIVIDUAL_DELETED = 'INDIVIDUAL_DELETED',
-    
-    // Annotation operations
+
     ANNOTATION_ADDED = 'ANNOTATION_ADDED',
     ANNOTATION_MODIFIED = 'ANNOTATION_MODIFIED',
     ANNOTATION_DELETED = 'ANNOTATION_DELETED',
-    
-    // Relationship operations
+
     SUBCLASS_ADDED = 'SUBCLASS_ADDED',
     SUBCLASS_REMOVED = 'SUBCLASS_REMOVED',
     PROPERTY_DOMAIN_ADDED = 'PROPERTY_DOMAIN_ADDED',
     PROPERTY_DOMAIN_REMOVED = 'PROPERTY_DOMAIN_REMOVED',
     PROPERTY_RANGE_ADDED = 'PROPERTY_RANGE_ADDED',
     PROPERTY_RANGE_REMOVED = 'PROPERTY_RANGE_REMOVED',
-    
-    // Axiom operations
+
     AXIOM_ADDED = 'AXIOM_ADDED',
     AXIOM_REMOVED = 'AXIOM_REMOVED',
-    
-    // Bulk operations
+
     BULK_IMPORT = 'BULK_IMPORT',
     BULK_DELETE = 'BULK_DELETE'
 }
@@ -119,9 +111,6 @@ export interface CollaborationState {
     pendingEdits: EditOperation[];
 }
 
-/**
- * Common interface for CollaborationManager implementations
- */
 export interface ICollaborationManager {
     connect(): Promise<void>;
     disconnect(): Promise<void>;

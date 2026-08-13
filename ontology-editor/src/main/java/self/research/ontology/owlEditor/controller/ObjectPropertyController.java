@@ -36,9 +36,7 @@ public class ObjectPropertyController {
     public ResponseEntity<?> objectProperties(@PathVariable String projectId,
                                               @RequestParam(defaultValue = "100") int limit,
                                               @RequestParam(defaultValue = "0") int offset) {
-        // On desktop, Fuseki sync after a mutation is deferred (debounced), so reading via
-        // queryService (SPARQL) unconditionally returns stale pre-mutation data for that whole
-        // window — same bug class as OntologyQueryController's /classes/instances had.
+
         Optional<ResponseEntity<?>> owl = fastPath.owlApiOnlyOrWarming(projectId, () -> {
             if (owlApiPropertyQueryService == null) {
                 throw new IllegalStateException("OWLAPI property service unavailable");

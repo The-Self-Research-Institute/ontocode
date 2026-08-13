@@ -1,8 +1,5 @@
 package self.research.ontology.owlEditor.service;
 
-/**
- * Supported reasoner types.
- */
 public enum ReasonerType {
     HERMIT("HermiT"),
     PELLET("Pellet"),

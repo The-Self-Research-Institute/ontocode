@@ -45,7 +45,7 @@ public class AuthRequests {
         )
         private String password;
 
-        private String role; // "admin" or "user"
+        private String role;
 
         public String getUsername() {
             return username;

@@ -49,7 +49,6 @@ export const REASONER_OPTIONS = Object.keys(REASONER_ID_MAP);
 
 export const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || "HERMIT";
 
-/** Parse entity declaration counts from warm, cache-status, top-level, or metadata API payloads. */
 export function extractDeclarationCountsPatch(countsRes: any): Record<string, number> | null {
   const data = countsRes?.data ?? countsRes;
   if (!data || typeof data !== "object") return null;

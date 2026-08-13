@@ -6,7 +6,6 @@ type TabCountBadgeProps = {
   count: number;
 };
 
-/** Tab count with a short crossfade between spinner and numeric badge. */
 export const TabCountBadge: React.FC<TabCountBadgeProps> = ({ loading, count }) => (
   <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5">
     {loading ? (

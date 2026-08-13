@@ -8,9 +8,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Precomputed class hierarchy (OWLAPI structural reasoner), served to cloud web UI.
- */
 @Document(collection = "hierarchy_snapshots")
 public class HierarchySnapshotDoc {
 
@@ -29,7 +26,6 @@ public class HierarchySnapshotDoc {
     private int topLevelTotal;
     private int topLevelComputedLimit;
 
-    /** parent class IRI → direct asserted children */
     private Map<String, List<OntologyDto.TreeNode>> childrenByParent;
 
     private Map<String, Object> meta = Map.of();

@@ -69,7 +69,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
   };
 
   const scrollToSection = (sectionId: string) => {
-    // Map section IDs to state keys
+
     const sectionMap: Record<string, string> = {
       "section-workspace": "workspace",
       "section-billing": "billing",
@@ -83,7 +83,6 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
       "section-codeview": "codeView",
     };
 
-    // Collapse all sections and expand only the clicked one
     const sectionKey = sectionMap[sectionId];
     if (sectionKey) {
       setExpandedSections({
@@ -101,10 +100,9 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
       });
     }
 
-    // Scroll to the section
     const element = document.getElementById(sectionId);
     if (element) {
-      // Add a small delay to allow the section to expand before scrolling
+
       setTimeout(() => {
         element.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 100);
@@ -114,7 +112,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
   return (
     <div style={styles.overlay}>
       <div style={styles.modal}>
-        {/* Header */}
+        {}
         <div style={styles.header}>
           <div style={styles.headerTitle}>
             <BookOpen size={24} style={{ color: "#3b82f6" }} />
@@ -130,7 +128,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
           </div>
         </div>
 
-        {/* Content */}
+        {}
         <div style={styles.content}>
           <p style={styles.intro}>
             Welcome to OntoCode! This guide follows the logical workflow for setting up and using OntoCode. Start with
@@ -139,7 +137,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             efficiently.
           </p>
 
-          {/* Table of Contents Navigation */}
+          {}
           <div style={styles.tableOfContents}>
             <h3 style={styles.tocTitle}>Quick Navigation</h3>
             <div style={styles.tocGrid}>
@@ -669,7 +667,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
           </div>
           )}
 
-          {/* Section 4: How to Create a Project */}
+          {}
           <div id="section-project" style={styles.section}>
             <button onClick={() => toggleSection("project")} style={styles.sectionHeader}>
               {expandedSections.project ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -879,7 +877,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
           </div>
           )}
 
-          {/* Section 6: How to Create a New File */}
+          {}
           <div id="section-file" style={styles.section}>
             <button onClick={() => toggleSection("createFile")} style={styles.sectionHeader}>
               {expandedSections.createFile ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -1019,7 +1017,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             )}
           </div>
 
-          {/* Section 7: Collaboration */}
+          {}
           <div id="section-collaboration" style={styles.section}>
             <button onClick={() => toggleSection("collaboration")} style={styles.sectionHeader}>
               {expandedSections.collaboration ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -1171,7 +1169,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             )}
           </div>
 
-          {/* Section 8: Report an Issue */}
+          {}
           <div id="section-report" style={styles.section}>
             <button onClick={() => toggleSection("reportIssue")} style={styles.sectionHeader}>
               {expandedSections.reportIssue ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -1344,7 +1342,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             )}
           </div>
 
-          {/* Section 9: Code View */}
+          {}
           <div id="section-codeview" style={styles.section}>
             <button onClick={() => toggleSection("codeView")} style={styles.sectionHeader}>
               {expandedSections.codeView ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
@@ -1584,7 +1582,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
             )}
           </div>
 
-          {/* Quick Reference */}
+          {}
           <div style={styles.quickReference}>
             <h3 style={styles.quickRefTitle}>Quick Reference</h3>
             <div style={styles.quickRefGrid}>
@@ -1612,7 +1610,6 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
   );
 };
 
-// Styles
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: "fixed",

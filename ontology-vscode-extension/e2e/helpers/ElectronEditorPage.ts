@@ -3,9 +3,6 @@ import { EditorPage } from './EditorPage';
 import { loadDesktopAuth } from './desktopApi';
 import { assertElectronWindow } from '../fixtures/electronDesktop';
 
-/**
- * Editor helper for the real Electron window (file:// or Vite in dev shell).
- */
 export class ElectronEditorPage extends EditorPage {
   constructor(page: Page) {
     super(page);

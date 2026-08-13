@@ -1,25 +1,4 @@
-/**
- * COMPLETE OPTIMIZED CONTROLLER
- *
- * This integrates ALL optimizations into a production-ready controller:
- * ✅ Disable inference during import
- * ✅ Streaming import (no memory bloat)
- * ✅ Batch operations
- * ✅ Connection pooling
- * ✅ Progress tracking
- * ✅ Performance monitoring
- * ✅ Async processing for large files
- * ✅ Automatic method selection
- * ✅ Error handling and rollback
- * ✅ Compression support
- * ✅ Parallel processing
- *
- * Expected Performance:
- * - 122MB files: 5-7 minutes (vs 15-20 minutes before)
- * - Handles 10+ concurrent uploads
- * - Real-time progress tracking
- * - Automatic alerts on performance issues
- */
+
 
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -46,7 +25,6 @@ public class CompleteOptimizedController {
     private final PerformanceMonitoring monitor;
     private final BatchInsertOptimization batchImporter;
 
-    // Constructor
     public CompleteOptimizedController(Repository repository) {
         this.graphDbRepository = repository;
         this.connectionPool = new ConnectionPoolOptimization(repository);
@@ -54,9 +32,6 @@ public class CompleteOptimizedController {
         this.batchImporter = new BatchInsertOptimization();
     }
 
-    /**
-     * MAIN UPLOAD ENDPOINT - Automatically optimized
-     */
     @PostMapping("/upload/{projectId}")
     public ResponseEntity<?> uploadOntology(
             @PathVariable String projectId,
@@ -77,14 +52,12 @@ public class CompleteOptimizedController {
             System.out.println("Compressed: " + compressed);
             System.out.println("Owner: " + ownerEmail);
 
-            // Start monitoring
             monitor.startImport(projectId, fileSize, fileName);
 
-            // Determine if async processing is needed
-            boolean isLargeFile = fileSize > 50 * 1024 * 1024; // > 50MB
+            boolean isLargeFile = fileSize > 50 * 1024 * 1024;
 
             if (isLargeFile) {
-                // Process asynchronously for large files
+
                 System.out.println("Large file detected - processing asynchronously");
 
                 connectionPool.submitImport(projectId, () -> {
@@ -101,7 +74,7 @@ public class CompleteOptimizedController {
                 ));
 
             } else {
-                // Process synchronously for small files
+
                 BatchInsertOptimization.ImportStats stats =
                     importWithAllOptimizations(projectId, file, compressed);
 
@@ -132,22 +105,18 @@ public class CompleteOptimizedController {
         }
     }
 
-    /**
-     * CORE IMPORT METHOD - All optimizations applied
-     */
     private BatchInsertOptimization.ImportStats importWithAllOptimizations(
             String projectId,
             MultipartFile file,
             boolean compressed) throws Exception {
 
-        // Save file temporarily
         File tempFile = File.createTempFile("ontology-", ".owl");
         try (FileOutputStream fos = new FileOutputStream(tempFile)) {
             fos.write(file.getBytes());
         }
 
         try {
-            // Progress callback
+
             BatchInsertOptimization.ProgressCallback progressCallback = (processed, speed, percent) -> {
                 monitor.updateProgress(projectId, processed, "importing");
                 System.out.println(String.format(
@@ -156,7 +125,6 @@ public class CompleteOptimizedController {
                 ));
             };
 
-            // Use auto-optimized import (selects best method based on file size)
             BatchInsertOptimization.ImportStats stats =
                 batchImporter.importAutoOptimized(
                     graphDbRepository,
@@ -165,25 +133,21 @@ public class CompleteOptimizedController {
                     progressCallback
                 );
 
-            // Mark as complete
             monitor.completeImport(projectId, true, stats.totalTriples, null);
 
             return stats;
 
         } finally {
-            // Clean up temp file
+
             if (tempFile.exists()) {
                 tempFile.delete();
             }
         }
     }
 
-    /**
-     * GET IMPORT STATUS - Check progress of async imports
-     */
     @GetMapping("/import-status/{projectId}")
     public ResponseEntity<?> getImportStatus(@PathVariable String projectId) {
-        // Check if import is active
+
         PerformanceMonitoring.ImportMetrics metrics = monitor.getActiveImports()
             .stream()
             .filter(m -> m.projectId.equals(projectId))
@@ -202,7 +166,6 @@ public class CompleteOptimizedController {
             ));
         }
 
-        // Check completed imports
         PerformanceMonitoring.ImportMetrics completed = monitor.getRecentImports(50)
             .stream()
             .filter(m -> m.projectId.equals(projectId))
@@ -226,9 +189,6 @@ public class CompleteOptimizedController {
         ));
     }
 
-    /**
-     * GET OVERALL STATS - System performance metrics
-     */
     @GetMapping("/stats")
     public ResponseEntity<?> getStats() {
         PerformanceMonitoring.OverallStats stats = monitor.getOverallStats();
@@ -256,9 +216,6 @@ public class CompleteOptimizedController {
         ));
     }
 
-    /**
-     * GET ACTIVE IMPORTS - List all currently processing imports
-     */
     @GetMapping("/active-imports")
     public ResponseEntity<?> getActiveImports() {
         return ResponseEntity.ok(
@@ -277,9 +234,6 @@ public class CompleteOptimizedController {
         );
     }
 
-    /**
-     * PROMETHEUS METRICS ENDPOINT
-     */
     @GetMapping("/metrics")
     public ResponseEntity<String> getPrometheusMetrics() {
         return ResponseEntity.ok()
@@ -287,13 +241,10 @@ public class CompleteOptimizedController {
             .body(monitor.exportPrometheusMetrics());
     }
 
-    /**
-     * HEALTH CHECK
-     */
     @GetMapping("/health")
     public ResponseEntity<?> health() {
         try {
-            // Test GraphDB connection
+
             try (RepositoryConnection conn = graphDbRepository.getConnection()) {
                 long size = conn.size();
                 return ResponseEntity.ok(Map.of(
@@ -311,9 +262,6 @@ public class CompleteOptimizedController {
         }
     }
 
-    /**
-     * Cleanup on shutdown
-     */
     @PreDestroy
     public void shutdown() {
         System.out.println("Shutting down optimized controller...");

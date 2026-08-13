@@ -14,14 +14,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Base64;
 
-/**
- * Mirror of the editor's MdcLoggingFilter, scoped to ontology-swrl.
- * Same cascade rule: {@code email + file > email + project > email + workspace > email}.
- *
- * <p>SWRL endpoints are all project-scoped, so {@code projectId} and (when
- * the request targets a specific file's rule set) {@code fileId} are
- * usually present. Workspace context is rare but propagated when present.
- */
 @Component
 @Order(1)
 public class MdcLoggingFilter extends OncePerRequestFilter {
@@ -62,7 +54,7 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             String wsId = textClaim(claims, "workspaceId");
             if (wsId != null) MDC.put("workspaceId", wsId);
         } catch (Exception ignored) {
-            // Malformed token — silently leave MDC blank.
+
         }
     }
 

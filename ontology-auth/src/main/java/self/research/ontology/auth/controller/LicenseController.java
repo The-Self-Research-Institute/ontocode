@@ -20,11 +20,6 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Issues a downloadable, signed desktop-license file for the authenticated
- * user's current plan. The user imports this file into OntoCode Desktop, which
- * verifies the signature and derives the whole user identity from it.
- */
 @RestController
 @RequestMapping("/api/billing/license")
 public class LicenseController {
@@ -87,7 +82,6 @@ public class LicenseController {
         return plan != null && !plan.isBlank() ? plan.toUpperCase() : "FREE";
     }
 
-    /** Advisory feature flags carried in the license (plan drives client gating). */
     private Map<String, Object> featuresFor(String plan) {
         boolean paid = "PRO".equals(plan) || "ENTERPRISE".equals(plan);
         Map<String, Object> features = new LinkedHashMap<>();

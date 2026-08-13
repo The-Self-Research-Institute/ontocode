@@ -4,9 +4,6 @@ import org.eclipse.rdf4j.model.Value;
 
 import java.util.*;
 
-/**
- * Collects multiple annotation values per property.
- */
 public final class AnnotationValueCollector {
 
     private AnnotationValueCollector() {}
@@ -32,7 +29,6 @@ public final class AnnotationValueCollector {
         add(annotations, propertyIri, value);
     }
 
-    /** Backward-compatible single-value map for legacy clients. */
     public static Map<String, String> toSingleValueMap(Map<String, List<String>> multi) {
         Map<String, String> single = new LinkedHashMap<>();
         if (multi == null) {

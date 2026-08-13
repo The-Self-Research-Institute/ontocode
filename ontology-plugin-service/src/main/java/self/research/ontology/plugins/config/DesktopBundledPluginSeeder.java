@@ -24,10 +24,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Seeds bundled plugin JS bundles from the installer into MongoDB/GridFS on first
- * desktop startup so /api/plugins/{id}/download works offline.
- */
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "ontocode.desktop.mode", havingValue = "true")

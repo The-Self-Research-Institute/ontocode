@@ -5,16 +5,11 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-/**
- * Estimates import duration for queue wait times.
- * Baseline: file-size tiers (~1–5 min for large files). When recent imports of
- * similar size exist, uses their actual bulk-load duration (no byte-rate extrapolation).
- */
 @Service
 public class ImportTimeEstimator {
 
     private static final long DEFAULT_ESTIMATED_DURATION_MS = 3 * 60 * 1000;
-    /** Hard cap per file — large ontologies typically finish within a few minutes. */
+
     private static final long MAX_ESTIMATE_MS = 8 * 60 * 1000;
     private static final long MIN_ESTIMATE_MS = 20_000;
     private static final int MAX_SAMPLES = 20;
@@ -42,7 +37,7 @@ public class ImportTimeEstimator {
         long similarSampleMs = averageDurationForSimilarSize(fileSizeBytes);
 
         if (similarSampleMs > 0) {
-            // Trust measured times for similar-sized files, but stay within tier bounds.
+
             long blended = Math.round((tierEstimate + similarSampleMs) / 2.0);
             return clamp(blended);
         }
@@ -61,9 +56,6 @@ public class ImportTimeEstimator {
                 .orElse(DEFAULT_ESTIMATED_DURATION_MS));
     }
 
-    /**
-     * Typical bulk-import duration by file size (observed: large OWL files ~1–5 min).
-     */
     static long tierEstimateMs(long fileSizeBytes) {
         if (fileSizeBytes <= 0) {
             return DEFAULT_ESTIMATED_DURATION_MS;

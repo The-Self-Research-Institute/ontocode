@@ -108,7 +108,6 @@ export const ImportProgressIndicator: React.FC<ImportProgressIndicatorProps> = (
   );
 };
 
-// Compact version for menu bar
 export const ImportProgressBadge: React.FC<ImportProgressIndicatorProps> = ({
   importStatus,
   onClick
@@ -162,7 +161,6 @@ export const ImportProgressBadge: React.FC<ImportProgressIndicatorProps> = ({
   );
 };
 
-// Draggable toast-style notification
 export const ImportProgressToast: React.FC<{
   importStatus: ImportStatus;
   onDismiss?: () => void;
@@ -236,7 +234,7 @@ export const ImportProgressToast: React.FC<{
       }}
     >
       <div className="bg-white rounded-lg shadow-2xl border border-gray-200 min-w-[300px] max-w-[400px]">
-        {/* Drag handle */}
+        {}
         <div
           className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-gray-50 rounded-t-lg cursor-grab active:cursor-grabbing"
           onMouseDown={handleMouseDown}
@@ -253,7 +251,7 @@ export const ImportProgressToast: React.FC<{
           )}
         </div>
 
-        {/* Content */}
+        {}
         <div className="p-4">
           <div className="flex items-start gap-3">
             <div className="flex-shrink-0 mt-0.5">

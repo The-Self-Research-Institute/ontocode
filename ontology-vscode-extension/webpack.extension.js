@@ -8,12 +8,6 @@ const webpack = require('webpack');
 const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 const TerserPlugin = require('terser-webpack-plugin');
 
-// ── Bake the cloud API host into the extension bundle ────────────────────────
-// extension.ts reads `process.env.CLOUD_GATEWAY_URL || '<prod default>'` at runtime,
-// but on a user's machine that env var is unset → it always fell back to prod. Inline
-// it at build time from the SAME source the webview uses (webview-src/.env.production,
-// currently the dev API), or an explicit ENV_FILE, so a dev-config build produces a
-// dev-pointing extension. Empty values fall through to the prod default in extension.ts.
 function loadCloudEnv() {
   const envPath = process.env.ENV_FILE
     ? path.resolve(__dirname, process.env.ENV_FILE)
@@ -33,7 +27,6 @@ const pick = (...keys) => {
   return '';
 };
 
-/**@type {import('webpack').Configuration}*/
 const config = {
   target: 'node', // vscode extensions run in a Node.js-context 📖 https://webpack.js.org/configuration/node/
   cache: {

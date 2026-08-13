@@ -7,9 +7,6 @@ import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import java.time.Instant;
 import java.util.Map;
 
-/**
- * Manual / ops trigger for hierarchy snapshot rebuild (same pipeline as post-import).
- */
 @RestController
 @RequestMapping("/api/hierarchy-worker")
 @CrossOrigin

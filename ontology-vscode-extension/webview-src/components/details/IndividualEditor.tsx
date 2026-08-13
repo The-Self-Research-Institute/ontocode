@@ -71,7 +71,7 @@ const IndividualUsageTab: React.FC<{
         <div className="text-xs text-gray-600">
           Found <span className="font-bold text-purple-600">{usages.length}</span> uses of <span className="font-semibold">{label}</span>
         </div>
-        
+
         <div className="flex items-center gap-2">
           <div className="flex-1 relative">
             <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -161,9 +161,6 @@ const IndividualEditor: React.FC<{
   const [deletingTypeIri, setDeletingTypeIri] = useState<string | null>(null);
   const [inferredTypes, setInferredTypes] = useState<Array<{ iri: string; label: string }>>([]);
 
-  // Always-latest ref for `item` — lets the details-fetch effect below detect whether a
-  // newer edit (e.g. via the annotation add/edit dialog) landed while its own request was
-  // still in flight, so it doesn't clobber that edit with a now-stale server response.
   const itemRef = useRef(item);
   useEffect(() => {
     itemRef.current = item;
@@ -216,9 +213,6 @@ const IndividualEditor: React.FC<{
     return () => { alive = false; };
   }, [projectId, item.id, isReasonerRunning, selectedReasoner]);
 
-  // Fetch individual details when component mounts or item changes.
-  // Uses an "alive" flag so stale responses from a previously selected
-  // individual are discarded (prevents showing the previous individual's data).
   useEffect(() => {
     if (!projectId || !item.id) return;
 
@@ -227,22 +221,18 @@ const IndividualEditor: React.FC<{
     const itemAtFetchStart = item;
     setIsLoading(true);
 
-    // Watchdog: avoid the spinner getting stuck if backend hangs.
     const watchdog = setTimeout(() => {
       if (alive) setIsLoading(false);
     }, 30000);
 
     (async () => {
       try {
-        // Use query parameter endpoint to avoid URL encoding issues with IRI containing #
+
         const response = await apiClient.get<any>(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(currentId)}`);
         if (!alive || currentId !== item.id) return;
 
         const details = response?.data || response;
 
-        // If a newer edit (e.g. via the annotation add/edit dialog) landed locally while
-        // this request was still in flight, this response is now stale — applying it would
-        // silently revert that edit until the user reselects the individual.
         const latestItem = itemRef.current;
         if (latestItem.id !== currentId || latestItem !== itemAtFetchStart) {
           console.log(`[IndividualEditor] Skipping stale details response for "${currentId}" — local item changed since fetch started`);
@@ -274,7 +264,6 @@ const IndividualEditor: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, projectId]);
 
-  // Auto-reload when a collaborator modifies this individual
   useEffect(() => {
     const handleRemoteEdit = (e: Event) => {
       const edit = (e as CustomEvent).detail;
@@ -292,14 +281,13 @@ const IndividualEditor: React.FC<{
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id]);
 
-  // Separate positive/negative property assertions
   const positiveObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative && !a.isInferred) || [];
   const positiveDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && !a.isNegative && !a.isInferred) || [];
   const inferredObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && !a.isNegative && a.isInferred) || [];
   const inferredDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && !a.isNegative && a.isInferred) || [];
   const negativeObjectPropertyAssertions = item.propertyAssertions?.filter(a => a.isObjectProperty && a.isNegative) || [];
   const negativeDataPropertyAssertions = item.propertyAssertions?.filter(a => !a.isObjectProperty && a.isNegative) || [];
-  
+
   const [activeTab, setActiveTab] = useState<'types' | 'usage'>('types');
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editorTitle, setEditorTitle] = useState("");
@@ -319,8 +307,7 @@ const IndividualEditor: React.FC<{
         notificationService.warning("Validation Error", "Property and value cannot be empty.");
         return;
     }
-    
-    // Build proper IRIs from the input
+
     const baseIri = item.id.substring(0, item.id.lastIndexOf('#') + 1) || 'http://example.com/onto#';
     const propertyIri = propLabel.startsWith('http') 
       ? propLabel 
@@ -330,9 +317,9 @@ const IndividualEditor: React.FC<{
         ? targetLabel 
         : `${baseIri}${targetLabel.replace(/\s+/g, '_')}`)
       : targetLabel;
-    
+
     try {
-      // Call mutation service to persist
+
       if (isNegativeAssertion) {
         if (isObjProp) {
           await ontologyMutationService.addNegativeObjectPropertyAssertion(
@@ -355,11 +342,7 @@ const IndividualEditor: React.FC<{
           );
         }
       }
-      
-      // Update local state — use the locals derived from `data` above (propLabel/targetLabel/
-      // isObjProp), not `newAssertion` state, which is still blank at this point (only ever
-      // populated on dialog-close) and was producing rows with no property/target label until
-      // the next refetch replaced them with the backend's resolved values.
+
       const newAssertionObject: PropertyAssertion = {
           id: `assertion-${Date.now()}`,
           propertyIri: propertyIri,
@@ -441,7 +424,7 @@ const IndividualEditor: React.FC<{
   const handleDeleteAssertion = async (assertion: PropertyAssertion) => {
     setDeletingId(prev => new Set(prev).add(assertion.id));
     try {
-      // Call mutation service to persist deletion
+
       if (assertion.isNegative) {
         if (assertion.isObjectProperty && assertion.targetIri) {
           await ontologyMutationService.deleteNegativeObjectPropertyAssertion(
@@ -465,8 +448,7 @@ const IndividualEditor: React.FC<{
           );
         }
       }
-      
-      // Update local state
+
       onUpdate({ ...item, propertyAssertions: item.propertyAssertions?.filter(a => a.id !== assertion.id) });
     } catch (error) {
       console.error('Failed to delete property assertion:', error);
@@ -479,7 +461,7 @@ const IndividualEditor: React.FC<{
   const handleAddSameAs = async (iri: string) => {
       try {
           await ontologyMutationService.addSameIndividual(projectId, item.id, iri, userId, username);
-          // Optimistic update
+
           onUpdate({ ...item, sameIndividualAs: [...(item.sameIndividualAs || []), iri] });
       } catch (e) { console.error(e); }
   };
@@ -487,7 +469,7 @@ const IndividualEditor: React.FC<{
   const handleAddDifferentFrom = async (iri: string) => {
       try {
           await ontologyMutationService.addDifferentIndividual(projectId, item.id, iri, userId, username);
-          // Optimistic update
+
           onUpdate({ ...item, differentIndividualFrom: [...(item.differentIndividualFrom || []), iri] });
       } catch (e) { console.error(e); }
   };
@@ -511,10 +493,10 @@ const IndividualEditor: React.FC<{
       setEditorAction(() => action);
       setIsEditorOpen(true);
   };
-  
+
   return (
     <div className="flex flex-col h-full bg-white">
-      {/* Header with IRI */}
+      {}
       <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
         <div className="flex items-center gap-2 overflow-hidden">
           <div className="bg-purple-200 text-purple-800 p-1 rounded text-xs font-bold">I</div>
@@ -526,7 +508,7 @@ const IndividualEditor: React.FC<{
       </div>
       <CollaboratorPresenceBar entityId={item.id} />
 
-      {/* Tabs */}
+      {}
       <div className="flex border-b border-gray-200 bg-gray-50">
         <button 
           onClick={() => setActiveTab('types')}
@@ -553,7 +535,7 @@ const IndividualEditor: React.FC<{
       <div className="flex-1 overflow-y-auto bg-gray-50 p-3 space-y-4">
         {activeTab === 'types' && (
           <>
-        {/* Annotations Section */}
+        {}
         <Panel title="Annotations" defaultOpen={true} themeColor="bg-gradient-to-b from-gray-50 to-gray-100 text-gray-800 border-gray-200"
           actions={
             <button onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-purple-600" title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}>
@@ -566,10 +548,10 @@ const IndividualEditor: React.FC<{
           </div>
         </Panel>
 
-        {/* Description Section */}
+        {}
         <Panel title="Description" defaultOpen={true} themeColor="bg-gradient-to-b from-purple-50 to-purple-100 text-purple-900 border-purple-200">
           <div className="p-3 space-y-4">
-            {/* Types */}
+            {}
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Types</h4>
@@ -625,7 +607,7 @@ const IndividualEditor: React.FC<{
               </div>
             </div>
 
-            {/* Object Property Assertions */}
+            {}
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Object property assertions</h4>
@@ -673,7 +655,7 @@ const IndividualEditor: React.FC<{
               </div>
             </div>
 
-            {/* Data Property Assertions */}
+            {}
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Data property assertions</h4>
@@ -721,7 +703,7 @@ const IndividualEditor: React.FC<{
               </div>
             </div>
 
-            {/* Negative Object Property Assertions */}
+            {}
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Negative object property assertions</h4>
@@ -752,7 +734,7 @@ const IndividualEditor: React.FC<{
               </div>
             </div>
 
-            {/* Negative Data Property Assertions */}
+            {}
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Negative data property assertions</h4>
@@ -783,7 +765,7 @@ const IndividualEditor: React.FC<{
               </div>
             </div>
 
-            {/* Add Assertion Dialog */}
+            {}
             <PropertyAssertionDialog
               isOpen={isAddingAssertion}
               title={
@@ -811,13 +793,13 @@ const IndividualEditor: React.FC<{
               }}
             />
 
-            {/* Same Individual As / Different Individual From Section */}
+            {}
             <div className="mb-4 last:mb-0">
               <div className="flex justify-between items-center mb-1">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Same Individual As / Different Individual From</h4>
               </div>
               <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm p-1.5">
-                {/* Same Individual As */}
+                {}
                 <MultiSelectSection
                     title="Same Individual As"
                     items={item.sameIndividualAs}
@@ -832,7 +814,7 @@ const IndividualEditor: React.FC<{
                     parentEntityIri={item.id}
                 />
 
-                {/* Different Individual From */}
+                {}
                 <MultiSelectSection
                     title="Different Individual From"
                     items={item.differentIndividualFrom}
@@ -862,7 +844,7 @@ const IndividualEditor: React.FC<{
         )}
       </div>
 
-      {/* Manchester Syntax Editor Dialog */}
+      {}
       {isEditorOpen && (
         <ManchesterSyntaxEditor
           isOpen={isEditorOpen}
@@ -876,8 +858,8 @@ const IndividualEditor: React.FC<{
         />
       )}
 
-      {/* selector for same/different individuals */}
-      {/* type selector */}
+      {}
+      {}
       {typeDialogOpen && (
         <ClassExpressionDialog
           isOpen={true}
@@ -914,7 +896,7 @@ const IndividualEditor: React.FC<{
           onConfirm={async (inds) => {
             const editingIri = sameDiffDialog.editingIri;
             if (editingIri) {
-              // Replace: single API call per selection (usually 1 when editing)
+
               for (const ind of inds) {
                 try {
                   await ontologyMutationService.replaceIndividualRelation(

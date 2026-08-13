@@ -39,16 +39,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Stripe payment and subscription service.
- *
- * Security posture:
- * - API secret key loaded exclusively from environment variables — never hardcoded.
- * - Webhook signature verified with Stripe-Signature header before any processing.
- * - Card data never touches this server; Stripe Checkout handles PCI scope.
- * - Idempotency keys used on all mutating Stripe calls.
- * - Only Stripe customer/subscription IDs are stored in the database.
- */
 @Service
 public class StripeService {
 
@@ -137,15 +127,6 @@ public class StripeService {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Customer Management
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Retrieves or creates a Stripe Customer for the given user.
-     * The Stripe customer ID is persisted in MongoDB so only one customer
-     * is ever created per user account.
-     */
     public Customer getOrCreateCustomer(User user) throws StripeException {
         if (user.getStripeCustomerId() != null) {
             return Customer.retrieve(user.getStripeCustomerId());
@@ -165,12 +146,6 @@ public class StripeService {
         return customer;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Native Payment Flow (SetupIntent → Subscription)
-    // Step 1: create a SetupIntent so the frontend can collect the card
-    // Step 2: createSubscriptionAfterSetup once the card is saved
-    // ─────────────────────────────────────────────────────────────────────────
-
     public String createSetupIntent(User user) throws StripeException {
         Customer customer = getOrCreateCustomer(user);
 
@@ -189,31 +164,23 @@ public class StripeService {
     public String createSubscriptionAfterSetup(User user, String setupIntentId,
             String planName, String interval, String workspaceId) throws StripeException {
 
-        // Guard against a retried/duplicated /subscribe request racing past the
-        // "does the user already have a subscription" check below and creating
-        // two Stripe subscriptions for the same account.
         if (!tryClaimSubscriptionCreationLock(user.getId())) {
             throw new IllegalStateException(
                     "Your previous subscription request is still being processed. " +
                     "Please wait a moment, refresh, and check your billing page before retrying.");
         }
         try {
-            // Re-fetch the freshest state now that we hold the lock — the `user` passed in
-            // may have been loaded before a just-finished concurrent request created a subscription.
+
             user = userRepository.findById(user.getId())
                     .orElseThrow(() -> new IllegalStateException("Authenticated user not found in database"));
 
             validateAllowedPlanChange(user, planName, interval);
 
-            // Model B/C: one subscription per user account.
-            // If an active/trialing subscription exists, treat this as an UPDATE (plan/interval change),
-            // using the newly confirmed payment method from the SetupIntent.
             boolean hasExistingSub = user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank();
             String existingStatus = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus() : "";
             boolean existingIsActiveLike =
                     "active".equalsIgnoreCase(existingStatus) || "trialing".equalsIgnoreCase(existingStatus);
 
-            // Retrieve and validate setup intent
             SetupIntent setupIntent = SetupIntent.retrieve(setupIntentId);
             if (!"succeeded".equals(setupIntent.getStatus())) {
                 throw new IllegalStateException("Card setup not completed. Status: " + setupIntent.getStatus());
@@ -221,7 +188,6 @@ public class StripeService {
             assertSetupIntentBelongsToUser(user, setupIntent);
             String paymentMethodId = setupIntent.getPaymentMethod();
 
-            // Set as customer default for future invoices
             Customer customer = Customer.retrieve(user.getStripeCustomerId());
             customer.update(CustomerUpdateParams.builder()
                     .setInvoiceSettings(CustomerUpdateParams.InvoiceSettings.builder()
@@ -233,7 +199,7 @@ public class StripeService {
 
             com.stripe.model.Subscription subscription;
             if (hasExistingSub && existingIsActiveLike) {
-                // Update existing subscription's price (monthly ↔ yearly, PRO ↔ ENTERPRISE) and default payment method.
+
                 subscription = Subscription.retrieve(user.getStripeSubscriptionId());
                 if (subscription.getItems() == null || subscription.getItems().getData() == null || subscription.getItems().getData().isEmpty()) {
                     throw new IllegalStateException("Existing subscription has no items to update.");
@@ -242,9 +208,6 @@ public class StripeService {
                 String itemId = subscription.getItems().getData().get(0).getId();
                 String idempotencyKey = "sub-update-immediate-v2-" + user.getId() + "-" + subscription.getId() + "-" + priceId + "-" + setupIntentId;
 
-                // Switching monthly → annual: reset the billing cycle to start now so
-                // currentPeriodEnd reflects the new annual period instead of staying
-                // pinned to the old monthly cycle's end date.
                 boolean switchingToAnnualFromMonthly = "yearly".equalsIgnoreCase(interval)
                         && "monthly".equalsIgnoreCase(user.getBillingInterval());
 
@@ -256,7 +219,7 @@ public class StripeService {
                                         .setPrice(priceId)
                                         .build()
                         )
-                        // Charge plan upgrades immediately instead of deferring prorations to the next renewal invoice.
+
                         .setCancelAtPeriodEnd(false)
                         .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.ALWAYS_INVOICE)
                         .setPaymentBehavior(SubscriptionUpdateParams.PaymentBehavior.ERROR_IF_INCOMPLETE)
@@ -279,10 +242,7 @@ public class StripeService {
                 log.info("Updated subscription {} for user {} to {}/{}",
                         subscription.getId(), user.getUsername(), planName.toUpperCase(), interval);
             } else {
-                // Bug #39 / #40: Stripe does not track trial eligibility per
-                // customer, so a user who cancels and re-subscribes would
-                // otherwise be granted a brand-new trial each time. We enforce
-                // "trial only on first ever subscription" via `hasUsedFreeTrial`.
+
                 SubscriptionCreateParams.Builder createParams = SubscriptionCreateParams.builder()
                         .setCustomer(customer.getId())
                         .addItem(SubscriptionCreateParams.Item.builder().setPrice(priceId).build())
@@ -292,8 +252,6 @@ public class StripeService {
                         .putMetadata("billingInterval", interval.toLowerCase())
                         .putMetadata("workspaceId", workspaceId != null ? workspaceId : "");
 
-                // A prior stripeSubscriptionId means the user has already subscribed once —
-                // guard against data inconsistency where hasUsedFreeTrial wasn't persisted.
                 boolean hadPriorSubscription = user.getStripeSubscriptionId() != null
                         && !user.getStripeSubscriptionId().isBlank();
                 boolean firstEverSubscription = !user.isHasUsedFreeTrial()
@@ -312,16 +270,11 @@ public class StripeService {
                             user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt(), hadPriorSubscription, planName);
                 }
 
-                // Idempotency key scoped to this setupIntentId: an exact retry of the same
-                // confirmed card setup (e.g. client retry after a slow/hung request) returns
-                // the original subscription instead of creating a second one.
                 String createIdempotencyKey = "sub-create-" + user.getId() + "-" + setupIntentId;
                 subscription = com.stripe.model.Subscription.create(
                         createParams.build(),
                         com.stripe.net.RequestOptions.builder().setIdempotencyKey(createIdempotencyKey).build());
 
-                // Mark trial as consumed in the same transaction as the
-                // subscription create — see userRepository.save below.
                 user.setHasUsedFreeTrial(true);
                 if (user.getFirstSubscriptionAt() == null) {
                     user.setFirstSubscriptionAt(LocalDateTime.now());
@@ -331,7 +284,6 @@ public class StripeService {
             applySubscriptionSnapshotToUser(user, subscription, planName, interval);
             userRepository.save(user);
 
-            // Sync to ALL user-owned workspaces (Account-level billing)
             workspaceService.syncWorkspacesToOwnerPlan(user);
 
             log.info("Subscription {} ({}) created for user {} / workspace {}",
@@ -342,10 +294,6 @@ public class StripeService {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Update default payment method for a customer
-    // ─────────────────────────────────────────────────────────────────────────
-
     public void updateDefaultPaymentMethod(User user, String setupIntentId, String workspaceId) throws StripeException {
         SetupIntent setupIntent = SetupIntent.retrieve(setupIntentId);
         if (!"succeeded".equals(setupIntent.getStatus())) {
@@ -354,7 +302,6 @@ public class StripeService {
         assertSetupIntentBelongsToUser(user, setupIntent);
         String paymentMethodId = setupIntent.getPaymentMethod();
 
-        // Update customer-level default
         Customer customer = Customer.retrieve(user.getStripeCustomerId());
         customer.update(CustomerUpdateParams.builder()
                 .setInvoiceSettings(CustomerUpdateParams.InvoiceSettings.builder()
@@ -362,7 +309,6 @@ public class StripeService {
                         .build())
                 .build());
 
-        // Update the workspace's active subscription default payment method
         String subId = null;
         if (workspaceId != null && !workspaceId.isBlank()) {
             Optional<Workspace> wsOpt = workspaceRepository.findByWorkspaceId(workspaceId);
@@ -382,10 +328,6 @@ public class StripeService {
         log.info("Updated default payment method to {} for user {}", paymentMethodId, user.getUsername());
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Cancel a specific workspace's subscription
-    // ─────────────────────────────────────────────────────────────────────────
-
     public void cancelWorkspaceSubscription(User user, String workspaceId) throws StripeException {
         Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
                 .orElseThrow(() -> new IllegalStateException("Workspace not found"));
@@ -403,7 +345,6 @@ public class StripeService {
         workspace.setCollaborationEnabled(false);
         workspaceRepository.save(workspace);
 
-        // Clear user-level reference if it points to the same subscription
         if (subId.equals(user.getStripeSubscriptionId())) {
             user.setSubscriptionStatus("canceled");
             user.setAutoRenewEnabled(false);
@@ -414,40 +355,18 @@ public class StripeService {
         log.info("Subscription {} canceled for workspace {} by user {}", subId, workspaceId, user.getUsername());
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Cancel the user's account-level subscription (Model B)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Schedules account-level cancellation at the end of the current billing period.
-     * Access remains active until Stripe ends the subscription.
-     */
     public void cancelAccountSubscription(User user) throws StripeException {
         disableAutoRenew(user);
         log.info("Account subscription {} scheduled to cancel at period end for user {}",
                 user.getStripeSubscriptionId(), user.getUsername());
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Checkout Session (kept for backward compatibility)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Creates a Stripe Checkout Session for subscribing to a plan.
-     * Stripe Checkout hosts the payment form — card data never hits our server.
-     *
-     * @param user     authenticated user
-     * @param planName PRO or ENTERPRISE
-     * @param interval monthly or yearly
-     * @return Stripe Checkout client secret for embedded checkout
-     */
     public String createCheckoutSession(User user, String planName, String interval, String workspaceId) throws StripeException {
         validateAllowedPlanChange(user, planName, interval);
 
         String priceId = resolvePriceId(planName, interval);
         Customer customer = getOrCreateCustomer(user);
 
-        // Bug #39 / #40: trial is granted only on the first ever subscription.
         SessionCreateParams.SubscriptionData.Builder subData = SessionCreateParams.SubscriptionData.builder()
                 .putMetadata("userId", user.getId())
                 .putMetadata("planName", planName.toUpperCase())
@@ -479,7 +398,6 @@ public class StripeService {
             builder.putMetadata("workspaceId", workspaceId);
         }
 
-        // Guard: Account-level subscription check (Model C: One subscription per account)
         if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
             String status = user.getSubscriptionStatus();
             if (!"canceled".equalsIgnoreCase(status) && !"unpaid".equalsIgnoreCase(status)) {
@@ -489,7 +407,6 @@ public class StripeService {
 
         Session session = Session.create(builder.build());
 
-        // Store pending lock on the workspace to block re-entry while webhook is in flight
         if (workspaceId != null && !workspaceId.isBlank()) {
             workspaceRepository.findByWorkspaceId(workspaceId).ifPresent(ws -> {
                 ws.setPendingCheckoutSessionId(session.getId());
@@ -502,14 +419,6 @@ public class StripeService {
         return session.getClientSecret();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Customer Portal
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Creates a Stripe Billing Portal session so the user can manage their
-     * payment method, view invoices, and update their plan directly via Stripe UI.
-     */
     public String createBillingPortalSession(User user) throws StripeException {
         if (user.getStripeCustomerId() == null) {
             throw new IllegalStateException("No billing account found. Please subscribe first.");
@@ -526,14 +435,6 @@ public class StripeService {
         return session.getUrl();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Auto-Renew Control
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Disables auto-renewal. The subscription remains active until the end
-     * of the current billing period, then cancels automatically.
-     */
     public void disableAutoRenew(User user) throws StripeException {
         requireActiveSubscription(user);
 
@@ -555,9 +456,6 @@ public class StripeService {
         sendAutoRenewDisabledEmailOnce(user, subscription);
     }
 
-    /**
-     * Re-enables auto-renewal, cancelling a previously scheduled cancellation.
-     */
     public void enableAutoRenew(User user) throws StripeException {
         requireActiveSubscription(user);
 
@@ -580,19 +478,6 @@ public class StripeService {
         sendAutoRenewEnabledEmailOnce(user, subscription);
     }
 
-    /**
-     * Switches a paid subscription between monthly and annual billing.
-     *
-     * Annual → Monthly: no immediate charge. The new monthly price takes effect at the
-     * end of the current billing period (billing_cycle_anchor stays unchanged, no proration).
-     * The user keeps full value of their already-paid annual period.
-     *
-     * Monthly → Annual: charged immediately. Proration credit for unused monthly days is
-     * applied and an invoice is raised for the annual price difference.
-     *
-     * Returns the effective change date (ISO string) — "now" for immediate changes,
-     * currentPeriodEnd for at-renewal changes.
-     */
     public Map<String, Object> previewIntervalChange(User user, String newInterval) throws StripeException {
         requireActiveSubscription(user);
         String normalizedNew = normalizeBillingInterval(newInterval);
@@ -611,7 +496,6 @@ public class StripeService {
                     "description", "No charge — your annual plan continues until renewal");
         }
 
-        // Monthly → Annual: use Stripe upcoming invoice to preview exact proration charge
         String currentPlan = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
         String newPriceId = resolvePriceId(currentPlan.toUpperCase(), "yearly");
 
@@ -630,8 +514,7 @@ public class StripeService {
                         .setPrice(newPriceId)
                         .build())
                 .setSubscriptionProrationBehavior(InvoiceUpcomingParams.SubscriptionProrationBehavior.ALWAYS_INVOICE)
-                // Mirror the billing-cycle-anchor reset applied in changeSubscriptionInterval()
-                // so the previewed amount matches what will actually be charged.
+
                 .setSubscriptionBillingCycleAnchor(InvoiceUpcomingParams.SubscriptionBillingCycleAnchor.NOW)
                 .build();
 
@@ -663,7 +546,6 @@ public class StripeService {
         String normalizedNew = normalizeBillingInterval(newInterval);
         String normalizedCurrent = normalizeBillingInterval(user.getBillingInterval());
 
-        // Cancel a pending annual→monthly downgrade: user is on annual, has pending monthly, requests annual
         if ("annual".equals(normalizedCurrent) && "annual".equals(normalizedNew)
                 && "monthly".equals(user.getPendingBillingInterval())) {
             user.setPendingBillingInterval(null);
@@ -694,16 +576,14 @@ public class StripeService {
         }
 
         String itemId = subscription.getItems().getData().get(0).getId();
-        // Each switch attempt gets a unique suffix: Stripe rejects the same key if the
-        // subscription state has changed since the first use (e.g. after a previous switch).
+
         String idempotencyKey = "interval-switch-" + user.getId() + "-" + subscription.getId()
                 + "-" + newPriceId + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
         boolean annualToMonthly = "annual".equals(normalizedCurrent) && "monthly".equals(normalizedNew);
 
         if (annualToMonthly) {
-            // Annual → Monthly: keep the annual plan running until period end, then switch.
-            // Do NOT update the Stripe subscription now — no charge, no billing cycle reset.
+
             LocalDateTime periodEnd = LocalDateTime.ofInstant(
                     Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()), ZoneOffset.UTC);
             user.setPendingBillingInterval("monthly");
@@ -720,9 +600,6 @@ public class StripeService {
             );
         }
 
-        // Monthly → Annual: charge the difference immediately via ALWAYS_INVOICE.
-        // Reset the billing cycle to start now so currentPeriodEnd reflects the new
-        // annual period instead of staying pinned to the old monthly cycle's end date.
         SubscriptionUpdateParams params = SubscriptionUpdateParams.builder()
                 .addItem(
                         SubscriptionUpdateParams.Item.builder()
@@ -755,11 +632,6 @@ public class StripeService {
         );
     }
 
-    /**
-     * Immediately cancels the subscription (prorated refund not issued).
-     * Idempotent: if the subscription is already cancelled (e.g. double-click), local state
-     * is still reconciled and no Stripe API error is surfaced.
-     */
     public void cancelSubscriptionImmediately(User user) throws StripeException {
         requireActiveSubscription(user);
 
@@ -779,18 +651,6 @@ public class StripeService {
         log.info("Subscription {} immediately canceled for user {}", user.getStripeSubscriptionId(), user.getUsername());
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Webhook Event Verification
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Verifies the Stripe webhook signature and returns the parsed Event.
-     * Throws SignatureVerificationException if the signature is invalid —
-     * the caller must reject the request with HTTP 400.
-     *
-     * @param payload   raw request body bytes (must be the original, unmodified bytes)
-     * @param sigHeader value of the Stripe-Signature HTTP header
-     */
     public String getPublishableKey() {
         return stripePublishableKey;
     }
@@ -842,10 +702,6 @@ public class StripeService {
         return Webhook.constructEvent(new String(payload), sigHeader, webhookSecret);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Webhook Event Handlers (called after idempotency check)
-    // ─────────────────────────────────────────────────────────────────────────
-
     public void handleCheckoutSessionCompleted(Session session) {
         String userId = session.getClientReferenceId();
         if (userId == null) return;
@@ -858,7 +714,6 @@ public class StripeService {
 
         User user = optUser.get();
 
-        // Store subscription ID on user for billing portal access
         if (session.getSubscription() != null && user.getStripeSubscriptionId() == null) {
             user.setStripeSubscriptionId(session.getSubscription());
             if (user.getSubscriptionStatus() == null) {
@@ -866,9 +721,6 @@ public class StripeService {
             }
         }
 
-        // Mark trial consumed here (mirrors createSubscriptionAfterSetup) so that if the
-        // customer.subscription.created webhook is delayed or missed, a second checkout
-        // attempt cannot grant a second free trial.
         if (!user.isHasUsedFreeTrial()) {
             user.setHasUsedFreeTrial(true);
         }
@@ -877,7 +729,6 @@ public class StripeService {
         }
         userRepository.save(user);
 
-        // Clear embedded-checkout lock (otherwise the workspace stays stuck in "pending checkout")
         if (session.getId() != null) {
             workspaceRepository.findByPendingCheckoutSessionId(session.getId()).ifPresent(ws -> {
                 ws.setPendingCheckoutSessionId(null);
@@ -971,7 +822,6 @@ public class StripeService {
             String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "PRO";
             String accessEndDate = formatSubscriptionAccessEnd(subscription);
 
-            // Only clear user-level subscription if it matches this subscription
             if (subscription.getId().equals(user.getStripeSubscriptionId())) {
                 user.setStripeSubscriptionId(null);
                 user.setSubscriptionStatus("canceled");
@@ -987,10 +837,7 @@ public class StripeService {
     }
 
     public void handleInvoicePaymentFailed(Invoice invoice) {
-        // Proration invoices from upgrade attempts (PRO→ENTERPRISE, monthly→annual, etc.) use
-        // ERROR_IF_INCOMPLETE — Stripe rolls back the subscription update when payment fails.
-        // The user's current plan is still active; do NOT mark it past_due.
-        // Send a targeted "upgrade payment failed" email instead.
+
         String billingReason = invoice.getBillingReason();
         if ("subscription_update".equals(billingReason)) {
             log.warn("[InvoicePaymentFailed] Proration invoice {} failed (billingReason=subscription_update). " +
@@ -1026,11 +873,8 @@ public class StripeService {
             log.warn("[InvoicePaymentFailed] user={} invoice={} billingReason={} — status set to past_due",
                     user.getUsername(), invoice.getId(), billingReason);
 
-            // Sync status to ALL workspaces (disables collaboration while past_due)
             workspaceService.syncWorkspacesToOwnerPlan(user);
 
-            // Dedup: one payment-failed email per invoice regardless of how many times
-            // Stripe retries the same invoice (default: up to 4 attempts over ~3 weeks).
             String emailKey = "payment-failed:" + invoice.getId();
             if (!reserveEmailLog(emailKey, user, invoice, "payment_failed")) {
                 log.info("[InvoicePaymentFailed] Skipping duplicate payment-failed email for invoice {} / user {}",
@@ -1057,12 +901,6 @@ public class StripeService {
         });
     }
 
-    /**
-     * Customer must complete 3DS authentication or bank debit setup; funds are not captured yet.
-     * Sets a temporary status to disable collaboration until Stripe confirms payment via
-     * {@link #handleInvoicePaymentSucceeded} (restores "active") or
-     * {@link #handleInvoicePaymentFailed} (sets "past_due").
-     */
     public void handleInvoicePaymentActionRequired(Invoice invoice) {
         findUserForInvoice(invoice).ifPresentOrElse(user -> {
             log.warn("[InvoicePaymentActionRequired] user={} invoice={} — awaiting 3DS/ACH. " +
@@ -1076,7 +914,7 @@ public class StripeService {
     }
 
     public void handleInvoicePaymentSucceeded(Invoice invoice) {
-        // ── Step 0: Entry log — makes every invocation auditable from grep ───
+
         log.info("[InvoicePaymentSucceeded] invoiceId={} customerId={} subscriptionId={} amountPaid={} amountDue={} customerEmail={}",
                 invoice.getId(),
                 invoice.getCustomer(),
@@ -1087,10 +925,7 @@ public class StripeService {
 
         Optional<User> userOpt = findUserForInvoice(invoice);
         if (userOpt.isEmpty()) {
-            // ── Step 0a: Last-resort fallback — pull the email from Stripe directly ───
-            // The local user lookup chain may miss if customer.subscription.created
-            // hasn't persisted yet, or if the user record was created with a different
-            // customer ID and never reconciled.
+
             String fallbackEmail = invoice.getCustomerEmail();
             if ((fallbackEmail == null || fallbackEmail.isBlank()) && invoice.getCustomer() != null) {
                 try {
@@ -1099,7 +934,7 @@ public class StripeService {
                     if (fallbackEmail != null && !fallbackEmail.isBlank()) {
                         userOpt = userRepository.findByEmailIgnoreCase(fallbackEmail);
                         if (userOpt.isPresent()) {
-                            // Repair the link so future events resolve via the fast path.
+
                             User repaired = userOpt.get();
                             if (repaired.getStripeCustomerId() == null
                                     || !invoice.getCustomer().equals(repaired.getStripeCustomerId())) {
@@ -1124,12 +959,6 @@ public class StripeService {
         User user = userOpt.get();
         Long paidAmount = resolvePaidAmount(invoice);
 
-        // Resolve the correct next-period-end: prefer the subscription's live
-        // currentPeriodEnd over invoice.getPeriodEnd(). For proration invoices
-        // generated when a trial is ended immediately (setTrialEnd = now), the
-        // invoice covers the trial period and its periodEnd == today, which is
-        // wrong for "next billing date". The subscription's currentPeriodEnd is
-        // always the actual renewal date.
         long nowEpoch = Instant.now().getEpochSecond();
         Long resolvedPeriodEnd = null;
         if (invoice.getSubscription() != null) {
@@ -1144,9 +973,7 @@ public class StripeService {
                         invoice.getSubscription(), ex.getMessage());
             }
         }
-        // Fallback: scan line items for the latest future period end.
-        // Needed when the subscription.currentPeriodEnd hasn't been committed yet
-        // (race condition on proration/trial-end invoices where periodEnd == today).
+
         if (resolvedPeriodEnd == null && invoice.getLines() != null && invoice.getLines().getData() != null) {
             for (InvoiceLineItem line : invoice.getLines().getData()) {
                 if (line.getPeriod() != null && line.getPeriod().getEnd() != null) {
@@ -1161,8 +988,6 @@ public class StripeService {
             resolvedPeriodEnd = invoice.getPeriodEnd();
         }
 
-        // invoice.payment_succeeded is a reliable fallback if
-        // customer.subscription.updated is delayed/missed.
         if (paidAmount > 0) {
             user.setSubscriptionStatus("active");
             if (resolvedPeriodEnd != null) {
@@ -1174,7 +999,6 @@ public class StripeService {
                     user.getUsername(), user.getEmail(), resolvedPeriodEnd);
         }
 
-        // Apply pending annual→monthly downgrade on subscription_cycle renewal
         if ("monthly".equals(user.getPendingBillingInterval())
                 && "subscription_cycle".equals(invoice.getBillingReason())
                 && invoice.getSubscription() != null) {
@@ -1202,14 +1026,12 @@ public class StripeService {
             }
         }
 
-        // Skip $0 invoices (e.g. trial-start invoice with no charge)
         if (paidAmount == 0) {
             log.info("[InvoicePaymentSucceeded] Skipping payment success email for zero-amount invoice {} / user {} (email={})",
                     invoice.getId(), user.getUsername(), user.getEmail());
             return;
         }
 
-        // Sync status to ALL workspaces (restores collaboration if paid)
         workspaceService.syncWorkspacesToOwnerPlan(user);
 
         String amount = String.format("$%.2f %s",
@@ -1240,12 +1062,6 @@ public class StripeService {
         }
     }
 
-    /**
-     * Records an invoice that couldn't be matched to a local user so support
-     * can manually reconcile. Writes to {@code stripe_unmatched_invoices}.
-     * The collection grows slowly (only failures land here) and provides the
-     * audit trail that {@code findUserForInvoice}'s warn-only log does not.
-     */
     private void recordUnmatchedInvoice(Invoice invoice, String discoveredEmail) {
         try {
             Document doc = new Document("invoiceId", invoice.getId())
@@ -1267,10 +1083,6 @@ public class StripeService {
                     invoice.getId(), persistEx.getMessage(), persistEx);
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Helpers
-    // ─────────────────────────────────────────────────────────────────────────
 
     private Optional<User> resolveUserForSubscription(Subscription subscription) {
         String userId = subscription.getMetadata() != null ? subscription.getMetadata().get("userId") : null;
@@ -1327,8 +1139,7 @@ public class StripeService {
         if (invoice.getAmountPaid() != null) {
             return invoice.getAmountPaid();
         }
-        // Some test/API-version payloads may omit amount_paid. For a success
-        // event, amount_due is the best fallback for formatting the receipt.
+
         if (invoice.getAmountDue() != null) {
             return invoice.getAmountDue();
         }
@@ -1443,8 +1254,7 @@ public class StripeService {
     }
 
     private void sendAutoRenewDisabledEmailOnce(User user, Subscription subscription) {
-        // Key scoped to today (UTC) — one email per toggle action per day.
-        // Avoids duplicates from webhook retries while still notifying on genuine re-toggles.
+
         String key = "auto-renew-disabled:" + subscription.getId() + ":" + LocalDate.now(ZoneOffset.UTC);
         if (!reserveEmailLog(key, user, subscription, "auto_renew_disabled")) {
             log.info("Skipping duplicate auto-renew disabled email for subscription {} / user {}",
@@ -1467,7 +1277,7 @@ public class StripeService {
     }
 
     private void sendAutoRenewEnabledEmailOnce(User user, Subscription subscription) {
-        // Key scoped to today (UTC) — one email per toggle action per day.
+
         String key = "auto-renew-enabled:" + subscription.getId() + ":" + LocalDate.now(ZoneOffset.UTC);
         if (!reserveEmailLog(key, user, subscription, "auto_renew_enabled")) {
             log.info("Skipping duplicate auto-renew enabled email for subscription {} / user {}",
@@ -1540,7 +1350,6 @@ public class StripeService {
                 user.setSubscriptionCanceledAt(null);
             }
 
-            // Extract price/plan info from the first subscription item
             if (subscription.getItems() != null && subscription.getItems().getData() != null
                     && !subscription.getItems().getData().isEmpty()) {
                 SubscriptionItem item = subscription.getItems().getData().get(0);
@@ -1556,9 +1365,7 @@ public class StripeService {
                 if (derivedPlanName != null) {
                     String currentPlan = user.getSubscriptionPlanName();
                     if (currentPlan != null && planRank(derivedPlanName) < planRank(currentPlan)) {
-                        // Stripe Billing Portal allows plan changes that our API blocks.
-                        // Preserve the existing plan and log for admin review — the subscription
-                        // in Stripe should be manually corrected in the Dashboard.
+
                         log.error("[SubscriptionUpdate] Downgrade blocked via webhook: user={} {} → {}. " +
                                   "Keeping {}. Review subscription {} in Stripe Dashboard.",
                                   user.getUsername(), currentPlan, derivedPlanName,
@@ -1569,7 +1376,6 @@ public class StripeService {
                 }
             }
 
-            // Set period end
             if (subscription.getCurrentPeriodEnd() != null) {
                 user.setSubscriptionCurrentPeriodEnd(
                         LocalDateTime.ofInstant(Instant.ofEpochSecond(subscription.getCurrentPeriodEnd()), ZoneOffset.UTC));
@@ -1577,7 +1383,6 @@ public class StripeService {
 
             userRepository.save(user);
 
-            // Sync after persist so account-level fields are durable before workspace projection.
             workspaceService.syncWorkspacesToOwnerPlan(user);
 
             log.info("Subscription {} for user {} — status={}, autoRenew={}",
@@ -1585,20 +1390,11 @@ public class StripeService {
         });
     }
 
-    /**
-     * Copies Stripe subscription state onto the user after create/update API calls.
-     * Uses the subscription line item for plan and cadence when possible so Mongo matches Stripe.
-     * Billing interval is stored as {@code monthly} or {@code annual} (not {@code yearly}) for UI consistency.
-     */
     private void applySubscriptionSnapshotToUser(User user, Subscription subscription,
             String requestedPlan, String requestedInterval) {
         user.setStripeSubscriptionId(subscription.getId());
         user.setSubscriptionStatus(subscription.getStatus());
 
-        // When a trial is ended immediately (setTrialEnd = now), Stripe may return
-        // currentPeriodEnd == trial-end timestamp in the update response — before the
-        // invoice is processed and the new billing cycle is committed.  If the value
-        // is in the past, re-fetch the subscription to get the definitive period end.
         Long rawPeriodEnd = subscription.getCurrentPeriodEnd();
         if (rawPeriodEnd != null && rawPeriodEnd <= Instant.now().getEpochSecond()) {
             try {
@@ -1733,8 +1529,6 @@ public class StripeService {
                 }
             }
 
-            // Collect unique backup payment methods across both card and link types.
-            // Deduplicate cards by fingerprint, link by type (only one needed).
             List<Map<String, Object>> backups = new ArrayList<>();
             java.util.Set<String> seenKeys = new java.util.HashSet<>();
 
@@ -1784,10 +1578,6 @@ public class StripeService {
         return data;
     }
 
-    /**
-     * Sets a payment method as the customer's default and retries the latest open/uncollectible invoice.
-     * Used when the user explicitly chooses a backup card after a payment failure.
-     */
     public void setDefaultPaymentMethod(User user, String paymentMethodId) throws StripeException {
         if (user.getStripeCustomerId() == null) {
             throw new IllegalStateException("No billing account found.");
@@ -1796,13 +1586,11 @@ public class StripeService {
             throw new IllegalArgumentException("paymentMethodId is required.");
         }
 
-        // Verify the PM belongs to this customer before setting it
         PaymentMethod pm = PaymentMethod.retrieve(paymentMethodId);
         if (!user.getStripeCustomerId().equals(pm.getCustomer())) {
             throw new IllegalArgumentException("Payment method does not belong to your account.");
         }
 
-        // Set as customer default
         Customer.retrieve(user.getStripeCustomerId()).update(
                 CustomerUpdateParams.builder()
                         .setInvoiceSettings(CustomerUpdateParams.InvoiceSettings.builder()
@@ -1811,7 +1599,6 @@ public class StripeService {
                         .build()
         );
 
-        // Also set on the active subscription so future renewals use it
         if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
             Subscription.retrieve(user.getStripeSubscriptionId()).update(
                     SubscriptionUpdateParams.builder()
@@ -1820,7 +1607,6 @@ public class StripeService {
             );
         }
 
-        // Retry the latest open or uncollectible invoice immediately
         InvoiceListParams invoiceParams = InvoiceListParams.builder()
                 .setCustomer(user.getStripeCustomerId())
                 .setLimit(5L)
@@ -1923,20 +1709,8 @@ public class StripeService {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Subscription-creation lock — prevents a retried/duplicated /subscribe
-    // request from racing past the "existing subscription?" check and
-    // creating two Stripe subscriptions for the same account.
-    // ─────────────────────────────────────────────────────────────────────────
-
     private static final long SUBSCRIPTION_CREATION_LOCK_TTL_SECONDS = 120;
 
-    /**
-     * Atomically claims the lock via a single findAndModify — only one caller can
-     * win when two requests arrive concurrently. A lock older than the TTL is
-     * treated as abandoned (e.g. the instance holding it crashed) and can be
-     * reclaimed, so a failed request never permanently locks the user out.
-     */
     private boolean tryClaimSubscriptionCreationLock(String userId) {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime staleBefore = now.minusSeconds(SUBSCRIPTION_CREATION_LOCK_TTL_SECONDS);
@@ -1960,9 +1734,6 @@ public class StripeService {
                 User.class);
     }
 
-    /**
-     * Ensures a confirmed SetupIntent was created for this user's Stripe customer (prevents re-use of another account's setup).
-     */
     private void assertSetupIntentBelongsToUser(User user, SetupIntent setupIntent) {
         if (user.getStripeCustomerId() == null || user.getStripeCustomerId().isBlank()) {
             throw new IllegalStateException("Billing account not ready.");
@@ -1976,10 +1747,6 @@ public class StripeService {
         }
     }
 
-    /**
-     * Reads the live subscription status from Stripe and updates MongoDB if it differs.
-     * Returns the up-to-date status string. Falls back to cached MongoDB value on Stripe errors.
-     */
     public String syncStatusFromStripe(User user) {
         String cached = user.getSubscriptionStatus() != null ? user.getSubscriptionStatus() : "";
         if (user.getStripeSubscriptionId() == null || user.getStripeSubscriptionId().isBlank()) {
@@ -1989,9 +1756,6 @@ public class StripeService {
             Subscription sub = Subscription.retrieve(user.getStripeSubscriptionId());
             String liveStatus = sub.getStatus() != null ? sub.getStatus() : "";
 
-            // Also check if the stored period end is stale (can happen when trial ends immediately
-            // and Stripe returns trial-end timestamp as currentPeriodEnd before invoice processing).
-            // Use UTC and !isAfter (<=) so a date of "today" is also treated as stale.
             LocalDateTime nowUtc = LocalDateTime.now(ZoneOffset.UTC);
             boolean periodEndStale = sub.getCurrentPeriodEnd() != null
                     && (user.getSubscriptionCurrentPeriodEnd() == null

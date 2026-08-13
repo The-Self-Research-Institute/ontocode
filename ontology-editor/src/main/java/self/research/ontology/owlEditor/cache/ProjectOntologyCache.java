@@ -16,12 +16,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * In-memory cache of parsed OWLOntology + optional structural OWLReasoner.
- *
- * Active in desktop mode and in cloud when fast-open is enabled (default).
- * Cloud fast-open uses asserted hierarchy (no reasoner precompute) for open times.
- */
 @Component
 @Conditional(FastOpenCondition.class)
 public class ProjectOntologyCache {
@@ -36,19 +30,14 @@ public class ProjectOntologyCache {
 
         void dispose() {
             if (reasoner != null) {
-                try { reasoner.dispose(); } catch (Exception e) { /* ignore */ }
+                try { reasoner.dispose(); } catch (Exception e) {  }
             }
-            try { manager.removeOntology(ontology); } catch (Exception e) { /* ignore */ }
+            try { manager.removeOntology(ontology); } catch (Exception e) {  }
         }
     }
 
     private final Map<String, Long> cachedMutationVersions = new ConcurrentHashMap<>();
 
-    // Configurable via -Dontocode.desktop.cache.maxProjects=N. Default is 1 on desktop
-    // (single user working on one file at a time; entries always carry a precomputed
-    // reasoner — heavy) and 4 in cloud/webapp (this cache is shared across all
-    // concurrent users on the instance, and fast-open entries there skip the
-    // reasoner — lighter per entry).
     private final int maxProjects;
 
     private final Map<String, CachedOntology> cache;
@@ -68,6 +57,10 @@ public class ProjectOntologyCache {
                 return false;
             }
         });
+    }
+
+    public int getMaxProjects() {
+        return maxProjects;
     }
 
     public void put(String projectId, OWLOntology ontology, OWLReasoner reasoner,

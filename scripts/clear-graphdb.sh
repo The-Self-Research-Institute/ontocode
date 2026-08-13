@@ -1,6 +1,4 @@
 #!/bin/bash
-# GraphDB Cleanup Script
-# This script clears all data from the GraphDB repository
 
 GRAPHDB_URL="http://localhost:7200"
 REPOSITORY="ontocode"
@@ -10,7 +8,6 @@ echo "GraphDB URL: $GRAPHDB_URL"
 echo "Repository: $REPOSITORY"
 echo ""
 
-# Check if GraphDB is running
 echo "Checking if GraphDB is accessible..."
 if ! curl -s -f "${GRAPHDB_URL}/rest/repositories" > /dev/null; then
     echo "ERROR: Cannot connect to GraphDB at ${GRAPHDB_URL}"
@@ -21,7 +18,6 @@ fi
 echo "✓ GraphDB is accessible"
 echo ""
 
-# Get current statement count
 echo "Checking current data..."
 QUERY="SELECT (COUNT(*) as ?count) WHERE { ?s ?p ?o }"
 COUNT=$(curl -s -X POST "${GRAPHDB_URL}/repositories/${REPOSITORY}" \
@@ -33,7 +29,6 @@ COUNT=$(curl -s -X POST "${GRAPHDB_URL}/repositories/${REPOSITORY}" \
 echo "Current triple count: ${COUNT:-0}"
 echo ""
 
-# Clear all statements
 echo "=== Starting cleanup ==="
 echo "Clearing all triples from repository: ${REPOSITORY}"
 
@@ -54,7 +49,6 @@ else
     exit 1
 fi
 
-# Verify deletion
 echo ""
 echo "Verifying cleanup..."
 COUNT_AFTER=$(curl -s -X POST "${GRAPHDB_URL}/repositories/${REPOSITORY}" \

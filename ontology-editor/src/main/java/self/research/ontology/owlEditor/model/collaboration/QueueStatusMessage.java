@@ -5,9 +5,6 @@ import lombok.Data;
 
 import java.util.List;
 
-/**
- * WebSocket message for queue status updates
- */
 @Data
 @Builder
 public class QueueStatusMessage {
@@ -15,7 +12,7 @@ public class QueueStatusMessage {
     private int queuePosition;
     private int totalInQueue;
     private long estimatedWaitTimeMs;
-    private String status; // QUEUED, PROCESSING, COMPLETED, FAILED
+    private String status;
     private String message;
     private Long timestamp;
     private QueueStats queueStats;
@@ -27,7 +24,7 @@ public class QueueStatusMessage {
         private int queuedImports;
         private long averageProcessingTimeMs;
         private List<QueuedProject> queue;
-        /** Project IDs currently being actively imported (not just queued). */
+
         private List<String> activeProjectIds;
     }
 

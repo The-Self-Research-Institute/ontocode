@@ -28,10 +28,6 @@ import java.util.ArrayList;
 import java.util.stream.Collectors;
 import java.util.Map;
 
-/**
- * REST and WebSocket controller for collaborative graph visualization.
- * Handles graph data queries, lazy loading, and real-time updates.
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/collab-graph")
@@ -45,14 +41,9 @@ public class GraphViewController {
     private final self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
     private final java.util.Map<String, OWLOntology> ontologyCache = new HashMap<>();
 
-    // Desktop lazy Fuseki flag — non-final so Lombok's @RequiredArgsConstructor skips it.
     @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.owlapi-first:false}")
     private boolean desktopOwlApiFirst;
 
-    /**
-     * Load ontology from GridFS with caching
-     * Pass forceReload=true to bypass cache and get fresh data
-     */
     private OWLOntology loadOntology(String projectId) throws Exception {
         return loadOntology(projectId, false);
     }
@@ -77,20 +68,14 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Generate graph data directly from GraphDB (live data)
-     * This fetches the current state from GraphDB, not from GridFS snapshot
-     * Includes all OWL relationships: subClassOf, domain, range, equivalentClass, etc.
-     */
     private Map<String, Object> generateGraphFromGraphDB(String projectId, int maxNodes) {
         log.info("📊 Generating graph from GraphDB for project: {}", projectId);
-        
-        // Fetch all OWL entities (classes, properties, individuals)
+
         String sparql = """
             PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
-            
+
             SELECT DISTINCT ?entity ?type ?label WHERE {
                 ?entity a ?type .
                 OPTIONAL { ?entity rdfs:label ?label }
@@ -116,21 +101,20 @@ public class GraphViewController {
                                 type.contains("ObjectProperty") ? "objectProperty" :
                                 type.contains("DatatypeProperty") ? "dataProperty" :
                                 "individual";
-                
+
                 GraphGeneratingService.Node node = new GraphGeneratingService.Node(
                     getNodeId(entityIri), label, nodeType, entityIri
                 );
                 nodes.add(node);
             }
-            
+
             log.info("✅ Fetched {} nodes from GraphDB", nodes.size());
-            
-            // Fetch ALL types of edges: subClassOf, domain, range, equivalentClass, instanceOf, subPropertyOf
+
             String edgeSparql = """
                 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
-                
+
                 SELECT DISTINCT ?from ?to ?edgeType ?property WHERE {
                     {
                         # SubClass relationships
@@ -174,31 +158,31 @@ public class GraphViewController {
                     FILTER(!isBlank(?from) && !isBlank(?to))
                 }
                 """;
-            
+
             result = datasetService.execSelect(projectId, edgeSparql);
-            
+
             while (result.hasNext()) {
                 var binding = result.next();
                 String fromIri = binding.getValue("from").stringValue();
                 String toIri = binding.getValue("to").stringValue();
                 String edgeType = binding.getValue("edgeType").stringValue();
-                
+
                 String from = getNodeId(fromIri);
                 String to = getNodeId(toIri);
-                
+
                 GraphGeneratingService.Edge edge = new GraphGeneratingService.Edge(
                     from, to, edgeType, edgeType
                 );
                 edges.add(edge);
             }
-            
+
             log.info("✅ Fetched {} edges from GraphDB (subClassOf, domain, range, instanceOf, etc.)", edges.size());
-            
+
         } catch (Exception e) {
             log.error("❌ Error fetching graph from GraphDB", e);
             throw new RuntimeException("Failed to generate graph from GraphDB: " + e.getMessage(), e);
         }
-        
+
         return Map.of(
             "success", true,
             "projectId", projectId,
@@ -208,11 +192,11 @@ public class GraphViewController {
             "timestamp", System.currentTimeMillis()
         );
     }
-    
+
     private String getNodeId(String iri) {
         return iri.replaceAll("[^a-zA-Z0-9]", "_");
     }
-    
+
     private String getLocalName(String iri) {
         int hashIndex = iri.lastIndexOf('#');
         int slashIndex = iri.lastIndexOf('/');
@@ -222,13 +206,6 @@ public class GraphViewController {
             : iri;
     }
 
-    /**
-     * Get initial graph structure for a project.
-     * Returns root-level nodes only for large ontologies.
-     * Now fetches from GraphDB (live data) instead of GridFS (snapshot)
-     *
-     * GET /api/collab-graph/{projectId}/initial
-     */
     @GetMapping("/{projectId}/initial")
     public ResponseEntity<Map<String, Object>> getInitialGraph(
             @PathVariable String projectId,
@@ -236,23 +213,19 @@ public class GraphViewController {
             @RequestParam(defaultValue = "false") boolean forceReload
     ) {
         try {
-            log.info("Fetching initial graph for project: {} (max {} nodes, forceReload={}, source=GraphDB)", 
+            log.info("Fetching initial graph for project: {} (max {} nodes, forceReload={}, source=GraphDB)",
                 projectId, maxNodes, forceReload);
 
-            // Clear cache if forceReload is true
             if (forceReload) {
                 ontologyCache.remove(projectId);
                 graphGeneratingService.clearGraphCache();
                 log.info("Cleared caches for project: {}", projectId);
             }
 
-            // Fetch directly from GraphDB (live data)
             return ResponseEntity.ok(generateGraphFromGraphDB(projectId, maxNodes));
 
         } catch (Exception e) {
-            // Desktop lazy Fuseki: store may still be starting — signal retryable
-            // 503 instead of a terminal 500. Webapp keeps 500 (its Fuseki is
-            // always up, so connection-refused there is a genuine outage).
+
             if (desktopOwlApiFirst && self.research.ontology.owlEditor.util.TripleStoreErrors.isConnectionRefused(e)) {
                 log.info("Initial graph deferred for {} — triple store not up yet", projectId);
                 return ResponseEntity.status(503).body(Map.of(
@@ -269,11 +242,6 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Expand a node to load its children (lazy loading).
-     *
-     * GET /api/collab-graph/{projectId}/expand/{nodeId}
-     */
     @GetMapping("/{projectId}/expand/{nodeId}")
     public ResponseEntity<Map<String, Object>> expandNode(
             @PathVariable String projectId,
@@ -299,7 +267,6 @@ public class GraphViewController {
             List<GraphGeneratingService.Node> allNodes = graph.getNodes();
             List<GraphGeneratingService.Edge> allEdges = graph.getEdges();
 
-            // Find connected nodes
             Set<String> expandedNodeIds = new HashSet<>();
             expandedNodeIds.add(nodeId);
             for (GraphGeneratingService.Edge edge : allEdges) {
@@ -336,11 +303,6 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Search for nodes by label or IRI.
-     *
-     * GET /api/collab-graph/{projectId}/search
-     */
     @GetMapping("/{projectId}/search")
     public ResponseEntity<Map<String, Object>> searchNodes(
             @PathVariable String projectId,
@@ -363,7 +325,7 @@ public class GraphViewController {
             String lowerQuery = query.toLowerCase();
 
             List<GraphGeneratingService.Node> results = allNodes.stream()
-                .filter(n -> n.getLabel().toLowerCase().contains(lowerQuery) || 
+                .filter(n -> n.getLabel().toLowerCase().contains(lowerQuery) ||
                             n.getId().toLowerCase().contains(lowerQuery))
                 .limit(limit)
                 .collect(Collectors.toList());
@@ -385,11 +347,6 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Get graph delta updates since a timestamp.
-     *
-     * GET /api/collab-graph/{projectId}/delta
-     */
     @GetMapping("/{projectId}/delta")
     public ResponseEntity<Map<String, Object>> getGraphDelta(
             @PathVariable String projectId,
@@ -398,7 +355,6 @@ public class GraphViewController {
         try {
             log.debug("Fetching graph delta for project: {} since: {}", projectId, since);
 
-            // Return empty delta for now - full change tracking would require modification tracking
             Map<String, Object> delta = Map.of(
                 "addedNodes", List.of(),
                 "removedNodes", List.of(),
@@ -423,15 +379,6 @@ public class GraphViewController {
         }
     }
 
-    // ==================== WebSocket Message Handlers ====================
-
-    /**
-     * Handle node selection from graph view clients.
-     * Broadcasts to other viewers showing which node the user selected.
-     *
-     * STOMP: /app/graph/{projectId}/select
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/select")
     public void handleNodeSelection(
             @DestinationVariable String projectId,
@@ -456,13 +403,6 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Handle cursor movement in graph view.
-     * Broadcasts cursor position to other viewers (debounced on client side).
-     *
-     * STOMP: /app/graph/{projectId}/cursor
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/cursor")
     public void handleCursorMove(
             @DestinationVariable String projectId,
@@ -493,13 +433,6 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Handle node expansion request (lazy loading).
-     * Fetches child nodes and broadcasts to all viewers.
-     *
-     * STOMP: /app/graph/{projectId}/expand
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/expand")
     public void handleNodeExpansion(
             @DestinationVariable String projectId,
@@ -510,7 +443,6 @@ public class GraphViewController {
             String username = (String) payload.get("username");
             String nodeId = (String) payload.get("nodeId");
 
-            // Fetch child nodes
             OWLOntology ontology = loadOntology(projectId);
             if (ontology == null) {
                 log.error("Project not found: {}", projectId);
@@ -521,7 +453,6 @@ public class GraphViewController {
             List<GraphGeneratingService.Node> allNodes = graph.getNodes();
             List<GraphGeneratingService.Edge> allEdges = graph.getEdges();
 
-            // Find connected nodes
             Set<String> expandedNodeIds = new HashSet<>();
             expandedNodeIds.add(nodeId);
             for (GraphGeneratingService.Edge edge : allEdges) {
@@ -540,13 +471,12 @@ public class GraphViewController {
                 .filter(e -> expandedNodeIds.contains(e.getSource()) && expandedNodeIds.contains(e.getTarget()))
                 .collect(Collectors.toList());
 
-            // Convert to GraphUpdateMessage format
             List<GraphUpdateMessage.GraphNode> childNodes = nodes.stream()
                 .map(node -> GraphUpdateMessage.GraphNode.builder()
                     .id(node.getId())
                     .label(node.getLabel())
                     .type(node.getType())
-                    .hasChildren(false) // Can be enhanced later
+                    .hasChildren(false)
                     .expanded(false)
                     .build())
                 .toList();
@@ -575,23 +505,15 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Clear all caches for a specific project.
-     * Use this after ontology modifications to ensure fresh data is loaded.
-     *
-     * POST /api/collab-graph/{projectId}/clear-cache
-     */
     @PostMapping("/{projectId}/clear-cache")
     public ResponseEntity<Map<String, Object>> clearCache(@PathVariable String projectId) {
         try {
             log.info("Clearing all caches for project: {}", projectId);
-            
-            // Clear ontology cache
+
             ontologyCache.remove(projectId);
-            
-            // Clear graph cache
+
             graphGeneratingService.clearGraphCache();
-            
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "message", "All caches cleared for project " + projectId,
@@ -606,11 +528,6 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Get active users viewing the graph.
-     *
-     * GET /api/collab-graph/{projectId}/active-users
-     */
     @GetMapping("/{projectId}/active-users")
     public ResponseEntity<Map<String, Object>> getActiveUsers(@PathVariable String projectId) {
         try {

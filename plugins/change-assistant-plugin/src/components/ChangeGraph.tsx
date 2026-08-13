@@ -10,7 +10,7 @@ interface ChangeGraphProps {
 }
 
 const ChangeGraph: React.FC<ChangeGraphProps> = ({ data }) => {
-  // Find max value for scaling
+
   const maxValue = Math.max(
     ...data.additions,
     ...data.deletions,
@@ -50,21 +50,21 @@ const ChangeGraph: React.FC<ChangeGraphProps> = ({ data }) => {
         </div>
       ) : (
         <div className="relative">
-          {/* Y-axis labels */}
+          {}
           <div className="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs text-gray-400">
             <span>{maxValue}</span>
             <span>{Math.round(maxValue / 2)}</span>
             <span>0</span>
           </div>
 
-          {/* Chart area */}
+          {}
           <div className="ml-10">
-            {/* Grid lines */}
+            {}
             <div className="absolute left-10 right-0 top-0 h-px bg-gray-100"></div>
             <div className="absolute left-10 right-0 top-1/2 h-px bg-gray-100" style={{ top: `${barHeight / 2}px` }}></div>
             <div className="absolute left-10 right-0 h-px bg-gray-200" style={{ top: `${barHeight}px` }}></div>
 
-            {/* Bars */}
+            {}
             <div className="flex items-end justify-around gap-1" style={{ height: `${barHeight}px` }}>
               {data.labels.map((label, i) => {
                 const addHeight = (data.additions[i] / maxValue) * barHeight;
@@ -74,19 +74,19 @@ const ChangeGraph: React.FC<ChangeGraphProps> = ({ data }) => {
                 return (
                   <div key={label} className="flex-1 flex flex-col items-center">
                     <div className="flex items-end gap-0.5 h-full">
-                      {/* Addition bar */}
+                      {}
                       <div
                         className="w-3 bg-green-500 rounded-t transition-all duration-300 hover:bg-green-600 cursor-pointer"
                         style={{ height: `${Math.max(addHeight, data.additions[i] > 0 ? 4 : 0)}px` }}
                         title={`Additions: ${data.additions[i]}`}
                       />
-                      {/* Deletion bar */}
+                      {}
                       <div
                         className="w-3 bg-red-500 rounded-t transition-all duration-300 hover:bg-red-600 cursor-pointer"
                         style={{ height: `${Math.max(delHeight, data.deletions[i] > 0 ? 4 : 0)}px` }}
                         title={`Deletions: ${data.deletions[i]}`}
                       />
-                      {/* Modification bar */}
+                      {}
                       <div
                         className="w-3 bg-blue-500 rounded-t transition-all duration-300 hover:bg-blue-600 cursor-pointer"
                         style={{ height: `${Math.max(modHeight, data.modifications[i] > 0 ? 4 : 0)}px` }}
@@ -98,7 +98,7 @@ const ChangeGraph: React.FC<ChangeGraphProps> = ({ data }) => {
               })}
             </div>
 
-            {/* X-axis labels */}
+            {}
             <div className="flex justify-around mt-2 text-xs text-gray-500">
               {data.labels.map(label => (
                 <span key={label} className="flex-1 text-center">{label}</span>
@@ -108,7 +108,7 @@ const ChangeGraph: React.FC<ChangeGraphProps> = ({ data }) => {
         </div>
       )}
 
-      {/* Summary stats */}
+      {}
       <div className="flex justify-center gap-6 mt-4 pt-3 border-t text-xs">
         <div className="text-center">
           <div className="font-semibold text-green-600">{data.additions.reduce((a, b) => a + b, 0)}</div>

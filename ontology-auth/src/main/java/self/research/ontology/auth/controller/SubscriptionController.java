@@ -21,10 +21,6 @@ import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Value;
 
-/**
- * REST endpoints for subscription management.
- * All endpoints require a valid JWT (enforced by SecurityConfig).
- */
 @RestController
 @RequestMapping("/api/billing")
 public class SubscriptionController {
@@ -49,10 +45,6 @@ public class SubscriptionController {
         this.planFeatureConfigService = planFeatureConfigService;
         this.systemSettingsService = systemSettingsService;
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // GET /api/billing/plans — plan pricing (public, no auth required)
-    // ─────────────────────────────────────────────────────────────────────────
 
     @GetMapping("/plans")
     public ResponseEntity<?> getPlans() {
@@ -79,18 +71,10 @@ public class SubscriptionController {
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // GET /api/billing/public-config — Stripe publishable key for frontend
-    // ─────────────────────────────────────────────────────────────────────────
-
     @GetMapping("/public-config")
     public ResponseEntity<?> getPublicConfig() {
         return ResponseEntity.ok(Map.of("stripePublishableKey", stripeService.getPublishableKey()));
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // GET /api/billing/subscription — current subscription status
-    // ─────────────────────────────────────────────────────────────────────────
 
     @GetMapping("/subscription")
     public ResponseEntity<?> getSubscription(@AuthenticationPrincipal UserDetails principal) {
@@ -109,8 +93,7 @@ public class SubscriptionController {
                 "enterpriseDomainBypass", true
             ));
         }
-        // Sync live status + period end from Stripe to repair any stale snapshot in MongoDB
-        // (e.g. period end stuck at trial-end timestamp after immediate trial→paid upgrade).
+
         String liveStatus = stripeService.syncStatusFromStripe(user);
         return ResponseEntity.ok(Map.ofEntries(
                 Map.entry("planName",               orEmpty(user.getSubscriptionPlanName())),
@@ -143,11 +126,6 @@ public class SubscriptionController {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/checkout — start a new subscription
-    // Body: { "planName": "PRO", "interval": "monthly" }
-    // ─────────────────────────────────────────────────────────────────────────
-
     @PostMapping("/checkout")
     public ResponseEntity<?> createCheckout(
             @AuthenticationPrincipal UserDetails principal,
@@ -166,7 +144,6 @@ public class SubscriptionController {
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid interval. Must be monthly, yearly, or annual"));
         }
 
-        // Accept both "annual" and "yearly" from clients; normalize for Stripe price mapping.
         String normalizedInterval = "annual".equalsIgnoreCase(interval) ? "yearly" : interval.toLowerCase();
 
         try {
@@ -188,11 +165,6 @@ public class SubscriptionController {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/setup — create SetupIntent to collect card details
-    // Returns: { clientSecret, stripePublishableKey }
-    // ─────────────────────────────────────────────────────────────────────────
-
     @PostMapping("/setup")
     public ResponseEntity<?> createSetup(@AuthenticationPrincipal UserDetails principal) {
         try {
@@ -211,11 +183,6 @@ public class SubscriptionController {
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to create payment setup"));
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/subscribe — create subscription after card is set up
-    // Body: { "setupIntentId": "seti_xxx", "planName": "PRO", "interval": "monthly", "workspaceId": "..." }
-    // ─────────────────────────────────────────────────────────────────────────
 
     @PostMapping("/subscribe")
     public ResponseEntity<?> subscribe(
@@ -265,11 +232,6 @@ public class SubscriptionController {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/update-payment-method — swap card after setup
-    // Body: { "setupIntentId": "seti_xxx", "workspaceId": "..." }
-    // ─────────────────────────────────────────────────────────────────────────
-
     @PostMapping("/update-payment-method")
     public ResponseEntity<?> updatePaymentMethod(
             @AuthenticationPrincipal UserDetails principal,
@@ -291,11 +253,6 @@ public class SubscriptionController {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/cancel-workspace — cancel a specific workspace subscription
-    // Body: { "workspaceId": "..." }
-    // ─────────────────────────────────────────────────────────────────────────
-
     @PostMapping("/cancel-workspace")
     public ResponseEntity<?> cancelWorkspaceSubscription(
             @AuthenticationPrincipal UserDetails principal,
@@ -303,15 +260,13 @@ public class SubscriptionController {
         String workspaceId = body.get("workspaceId");
         try {
             User user = resolveUser(principal);
-            // Empty workspaceId = account-level cancellation (Model B)
+
             if (workspaceId == null || workspaceId.isBlank()) {
                 stripeService.cancelAccountSubscription(user);
                 return ResponseEntity.ok(Map.of(
                         "message", "Auto-renewal disabled. Your subscription remains active until the end of the current billing period."));
             }
-            // Bug #42: cancellation is destructive and changes the
-            // billing relationship for every member of the workspace.
-            // hasAccess() only proves membership — we need ownership.
+
             Workspace workspace = workspaceService.getWorkspace(workspaceId)
                     .orElse(null);
             if (workspace == null) {
@@ -331,10 +286,6 @@ public class SubscriptionController {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/portal — open Stripe customer portal
-    // ─────────────────────────────────────────────────────────────────────────
-
     @PostMapping("/portal")
     public ResponseEntity<?> createPortalSession(@AuthenticationPrincipal UserDetails principal) {
         try {
@@ -348,10 +299,6 @@ public class SubscriptionController {
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to open billing portal"));
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/auto-renew/disable — turn off auto-renewal
-    // ─────────────────────────────────────────────────────────────────────────
 
     @PostMapping("/auto-renew/disable")
     public ResponseEntity<?> disableAutoRenew(@AuthenticationPrincipal UserDetails principal) {
@@ -370,10 +317,6 @@ public class SubscriptionController {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/auto-renew/enable — re-enable auto-renewal
-    // ─────────────────────────────────────────────────────────────────────────
-
     @PostMapping("/auto-renew/enable")
     public ResponseEntity<?> enableAutoRenew(@AuthenticationPrincipal UserDetails principal) {
         try {
@@ -390,12 +333,6 @@ public class SubscriptionController {
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to enable auto-renewal"));
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/use-payment-method — set a backup card as default
-    // and retry any outstanding invoice with it (user-initiated, never automatic)
-    // Body: { "paymentMethodId": "pm_xxx" }
-    // ─────────────────────────────────────────────────────────────────────────
 
     @PostMapping("/use-payment-method")
     public ResponseEntity<?> usePaymentMethod(
@@ -423,11 +360,6 @@ public class SubscriptionController {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // GET /api/billing/preview-interval-change?interval=annual
-    // Returns the exact charge amount before committing the switch
-    // ─────────────────────────────────────────────────────────────────────────
-
     @GetMapping("/preview-interval-change")
     public ResponseEntity<?> previewIntervalChange(
             @AuthenticationPrincipal UserDetails principal,
@@ -449,11 +381,6 @@ public class SubscriptionController {
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to preview interval change"));
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/change-interval — switch between monthly and annual
-    // Body: { "interval": "monthly" | "annual" }
-    // ─────────────────────────────────────────────────────────────────────────
 
     @PostMapping("/change-interval")
     public ResponseEntity<?> changeInterval(
@@ -478,10 +405,6 @@ public class SubscriptionController {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // POST /api/billing/cancel — immediately cancel subscription
-    // ─────────────────────────────────────────────────────────────────────────
-
     @PostMapping("/cancel")
     public ResponseEntity<?> cancelSubscription(@AuthenticationPrincipal UserDetails principal) {
         try {
@@ -495,12 +418,6 @@ public class SubscriptionController {
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to cancel subscription"));
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // GET /api/billing/workspace-owner-status/{workspaceId}
-    // Returns the workspace owner's subscription status so members/viewers
-    // can be redirected out if the owner's plan has expired.
-    // ─────────────────────────────────────────────────────────────────────────
 
     @GetMapping("/workspace-owner-status/{workspaceId}")
     public ResponseEntity<?> getWorkspaceOwnerStatus(
@@ -546,10 +463,6 @@ public class SubscriptionController {
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to check workspace status"));
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Helpers
-    // ─────────────────────────────────────────────────────────────────────────
 
     private User resolveUser(UserDetails principal) {
         return userRepository.findByEmail(principal.getUsername())

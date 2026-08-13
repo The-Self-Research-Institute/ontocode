@@ -1,7 +1,4 @@
-/**
- * Core Fuzzy Logic Engine
- * Implements t-norms, t-conorms, and fuzzy operations based on research
- */
+
 
 export type MembershipDegree = number; // [0, 1]
 
@@ -17,9 +14,6 @@ export enum TCoNorm {
   LUKASIEWICZ = 'lukasiewicz'
 }
 
-/**
- * T-Norm operations for fuzzy conjunction (AND)
- */
 export class FuzzyConjunction {
 
   static product(a: MembershipDegree, b: MembershipDegree): MembershipDegree {
@@ -48,9 +42,6 @@ export class FuzzyConjunction {
   }
 }
 
-/**
- * T-CoNorm operations for fuzzy disjunction (OR)
- */
 export class FuzzyDisjunction {
 
   static probabilistic(a: MembershipDegree, b: MembershipDegree): MembershipDegree {
@@ -79,9 +70,6 @@ export class FuzzyDisjunction {
   }
 }
 
-/**
- * Fuzzy negation (NOT)
- */
 export class FuzzyNegation {
 
   static standard(a: MembershipDegree): MembershipDegree {
@@ -97,9 +85,6 @@ export class FuzzyNegation {
   }
 }
 
-/**
- * Fuzzy implication operators
- */
 export class FuzzyImplication {
 
   static kleeneDienes(a: MembershipDegree, b: MembershipDegree): MembershipDegree {
@@ -119,9 +104,6 @@ export class FuzzyImplication {
   }
 }
 
-/**
- * Membership function types
- */
 export enum MembershipFunctionType {
   TRIANGULAR = 'triangular',
   TRAPEZOIDAL = 'trapezoidal',
@@ -135,15 +117,8 @@ export interface MembershipFunctionParams {
   parameters: number[];
 }
 
-/**
- * Membership function generator
- */
 export class MembershipFunction {
 
-  /**
-   * Triangular membership function
-   * params: [a, b, c] where a < b < c
-   */
   static triangular(x: number, params: number[]): MembershipDegree {
     const [a, b, c] = params;
     if (x <= a || x >= c) return 0;
@@ -152,10 +127,6 @@ export class MembershipFunction {
     return (c - x) / (c - b);
   }
 
-  /**
-   * Trapezoidal membership function
-   * params: [a, b, c, d] where a < b < c < d
-   */
   static trapezoidal(x: number, params: number[]): MembershipDegree {
     const [a, b, c, d] = params;
     if (x <= a || x >= d) return 0;
@@ -164,28 +135,16 @@ export class MembershipFunction {
     return (d - x) / (d - c);
   }
 
-  /**
-   * Gaussian membership function
-   * params: [mean, stddev]
-   */
   static gaussian(x: number, params: number[]): MembershipDegree {
     const [mean, sigma] = params;
     return Math.exp(-Math.pow(x - mean, 2) / (2 * sigma * sigma));
   }
 
-  /**
-   * Sigmoid membership function
-   * params: [a, c] where a is slope, c is center
-   */
   static sigmoid(x: number, params: number[]): MembershipDegree {
     const [a, c] = params;
     return 1 / (1 + Math.exp(-a * (x - c)));
   }
 
-  /**
-   * Generalized bell membership function
-   * params: [a, b, c] where a, b, c are shape parameters
-   */
   static bell(x: number, params: number[]): MembershipDegree {
     const [a, b, c] = params;
     return 1 / (1 + Math.pow(Math.abs((x - c) / a), 2 * b));
@@ -209,9 +168,6 @@ export class MembershipFunction {
   }
 }
 
-/**
- * Fuzzy set operations
- */
 export class FuzzySet {
   private memberships: Map<string, MembershipDegree>;
 

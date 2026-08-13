@@ -1,7 +1,4 @@
-/**
- * Graph analytics for ontology visualization (OntoCode).
- * Pure functions — safe to call on filtered subgraphs.
- */
+
 
 import type { OntologyNode, OntologyEdge } from '../types';
 
@@ -103,7 +100,6 @@ function computeDegree(adjacency: Map<string, Set<string>>): Map<string, number>
   return degree;
 }
 
-/** Brandes algorithm — O(VE), suitable for medium graphs. */
 function brandesBetweenness(
   nodeIds: Set<string>,
   adjacency: Map<string, Set<string>>
@@ -155,7 +151,6 @@ function brandesBetweenness(
     }
   }
 
-  // Undirected graph normalization
   for (const v of nodeIds) {
     betweenness.set(v, (betweenness.get(v) ?? 0) / 2);
   }
@@ -171,7 +166,6 @@ function approximateBetweenness(degree: Map<string, number>): Map<string, number
   return result;
 }
 
-/** Lightweight community detection (label propagation). */
 function detectCommunitiesLabelPropagation(
   nodeIds: Set<string>,
   adjacency: Map<string, Set<string>>,
@@ -209,7 +203,6 @@ function detectCommunitiesLabelPropagation(
     if (!changed) break;
   }
 
-  // Renumber to 0..k-1 by size
   const sizeByLabel = new Map<number, number>();
   for (const label of labels.values()) {
     sizeByLabel.set(label, (sizeByLabel.get(label) ?? 0) + 1);
@@ -241,18 +234,19 @@ function findStructuralGaps(
   }
 
   const nodeById = new Map(nodes.map(n => [n.id, n]));
-  const topInCluster = (clusterId: number): string => {
-    let best = '';
-    let bestScore = -1;
-    for (const [id, c] of communities) {
-      if (c !== clusterId) continue;
-      const score = degree.get(id) ?? 0;
-      if (score > bestScore) {
-        bestScore = score;
-        best = nodeById.get(id)?.label || id.split(/[#/]/).pop() || id;
-      }
+
+  const bestInCluster = new Map<number, { id: string; score: number }>();
+  for (const [id, c] of communities) {
+    const score = degree.get(id) ?? 0;
+    const current = bestInCluster.get(c);
+    if (!current || score > current.score) {
+      bestInCluster.set(c, { id, score });
     }
-    return best;
+  }
+  const topInCluster = (clusterId: number): string => {
+    const best = bestInCluster.get(clusterId);
+    if (!best) return '';
+    return nodeById.get(best.id)?.label || best.id.split(/[#/]/).pop() || best.id;
   };
 
   const gaps: StructuralGap[] = [];

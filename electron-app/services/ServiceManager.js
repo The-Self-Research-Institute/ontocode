@@ -1,18 +1,4 @@
-/**
- * ServiceManager — OntoCode Desktop
- *
- * Manages backend processes required for the desktop app:
- *   1. MongoDB  (mongod)         — metadata storage
- *   2. Fuseki   (fuseki-server)  — RDF triple store
- *   3. Desktop  (desktop.jar)    — auth + OWL editor + plugin combined (one JVM)
- *   4. SWRL     (swrl.jar)       — SWRL reasoner (optional, separate JVM due to
- *                                   owlapi 4.x vs 5.x classpath conflict)
- *
- * All services are started sequentially (each waits for the previous to
- * pass a health check) then the Electron window is shown.
- *
- * On quit, services are stopped in reverse order.
- */
+
 
 const { app } = require('electron');
 const { spawn } = require('child_process');
@@ -21,19 +7,12 @@ const fs   = require('fs');
 const http = require('http');
 const os   = require('os');
 
-// Compute JVM heap sizes based on available system RAM.
-// Desktop jar (OWLAPI + Spring): 40% of RAM, 2g–12g
-// Fuseki (TDB2 triple store):    28% of RAM, 1500m–8g
-// A 1 GB OWL file expands to ~5-8x in OWLAPI heap, so machines with
-// less than 16 GB will warn in logs but still try with what they have.
 function jvmHeaps() {
     const totalGb = os.totalmem() / (1024 ** 3);
     const desktopGb = Math.min(Math.max(Math.floor(totalGb * 0.40), 2), 12);
     const fusekiGb  = Math.min(Math.max(Math.floor(totalGb * 0.28), 2), 8);
     return { desktopXmx: `${desktopGb}g`, fusekiXmx: `${fusekiGb}g`, totalGb: Math.round(totalGb) };
 }
-
-// ── Paths ────────────────────────────────────────────────────────────────────
 
 const RESOURCES_DIR = app.isPackaged
     ? path.join(process.resourcesPath, 'backend')
@@ -46,7 +25,6 @@ const OWL_DATA_DIR    = path.join(DATA_DIR, 'ontologies');
 const LOGS_DIR        = path.join(app.getPath('userData'), 'logs');
 const FUSEKI_BASE_DIR = path.join(app.getPath('userData'), 'fuseki-base');
 
-// ── Default ports ────────────────────────────────────────────────────────────
 const DEFAULT_PORTS = {
     mongo:   27117,
     fuseki:  13030,
@@ -55,24 +33,23 @@ const DEFAULT_PORTS = {
     proxy:   18085,
 };
 
-// ── Resolved ports (set during startAll, after auto-detection) ────────────────
 let MONGO_PORT   = DEFAULT_PORTS.mongo;
 let FUSEKI_PORT  = DEFAULT_PORTS.fuseki;
 let DESKTOP_PORT = DEFAULT_PORTS.desktop;
 let SWRL_PORT    = DEFAULT_PORTS.swrl;
 
-// ── State ────────────────────────────────────────────────────────────────────
 let mongoProcess   = null;
-// Lazy Fuseki: skip at startup (OWLAPI-first desktop). Started on demand for SPARQL/graph.
+
 const LAZY_FUSEKI = process.env.ONTOCODE_LAZY_FUSEKI !== '0';
 
 let fusekiProcess  = null;
 let fusekiStartPromise = null;
 let desktopProcess = null;
-let swrlProcess    = null;
-let _logCallback   = null;
 
-// ── Port auto-detection ───────────────────────────────────────────────────────
+const LAZY_SWRL = process.env.ONTOCODE_LAZY_SWRL !== '0';
+let swrlProcess    = null;
+let swrlStartPromise = null;
+let _logCallback   = null;
 
 function isPortFree(port) {
     return new Promise((resolve) => {
@@ -103,8 +80,6 @@ async function resolveAllPorts() {
     log('info', `Ports → MongoDB:${MONGO_PORT}  Fuseki:${FUSEKI_PORT}  Desktop:${DESKTOP_PORT}  SWRL:${SWRL_PORT}`);
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
-
 module.exports = {
     get MONGO_PORT()   { return MONGO_PORT; },
     get FUSEKI_PORT()  { return FUSEKI_PORT; },
@@ -125,12 +100,26 @@ module.exports = {
         } else {
             log('info', 'Fuseki deferred (OWLAPI-first desktop — starts when SPARQL/graph needs it)');
         }
-        await startDesktop();
-        await startSwrl();   // optional — skipped silently if swrl.jar absent
+        if (LAZY_SWRL) {
+            await startDesktop();
+            log('info', 'SWRL reasoner deferred — starts on the first /api/swrl/** request');
+        } else {
+
+            try {
+                await Promise.all([startDesktop(), startSwrl()]);   // SWRL optional — skipped silently if swrl.jar absent
+            } catch (err) {
+
+                await Promise.all([
+                    stopProcess(desktopProcess, 'Desktop', 4000),
+                    stopProcess(swrlProcess, 'SWRL', 4000),
+                ]);
+                throw err;
+            }
+        }
     },
 
     async ensureFuseki() {
-        // exitCode check: a crashed JVM is not `killed`, but it is not running either.
+
         if (fusekiProcess && !fusekiProcess.killed && fusekiProcess.exitCode === null) {
             return { running: true, port: FUSEKI_PORT };
         }
@@ -146,6 +135,25 @@ module.exports = {
         return fusekiStartPromise;
     },
 
+    async ensureSwrl() {
+
+        if (swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null) {
+            return { running: true, port: SWRL_PORT };
+        }
+        if (!swrlStartPromise) {
+            swrlStartPromise = startSwrl().then(() => {
+                swrlStartPromise = null;
+
+                const running = Boolean(swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null);
+                return { running, port: SWRL_PORT };
+            }).catch((err) => {
+                swrlStartPromise = null;
+                throw err;
+            });
+        }
+        return swrlStartPromise;
+    },
+
     async stopAll() {
         await stopProcess(swrlProcess,    'SWRL',    4000);
         await stopProcess(desktopProcess, 'Desktop', 10000);
@@ -158,8 +166,7 @@ module.exports = {
     },
 
     status() {
-        // Same liveness check as ensureFuseki(): a crashed JVM is not `killed`,
-        // but it is not running either.
+
         const isRunning = (p) => Boolean(p && !p.killed && p.exitCode === null);
         return {
             mongo:   isRunning(mongoProcess),
@@ -169,8 +176,6 @@ module.exports = {
         };
     },
 };
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function ensureDirs() {
     [MONGO_DATA_DIR, FUSEKI_DATA_DIR, OWL_DATA_DIR, LOGS_DIR, FUSEKI_BASE_DIR].forEach(d => {
@@ -202,6 +207,18 @@ function javaBin() {
     return 'java';
 }
 
+function swrlJavaBin() {
+    const exe = process.platform === 'win32' ? 'java.exe' : 'java';
+    const bundled17 = path.join(RESOURCES_DIR, 'jre17', 'bin', exe);
+    if (fs.existsSync(bundled17)) return bundled17;
+    if (process.env.JAVA17_HOME) {
+        const jh = path.join(process.env.JAVA17_HOME, 'bin', exe);
+        if (fs.existsSync(jh)) return jh;
+    }
+
+    return javaBin();
+}
+
 function requiredJarPath(name) {
     return path.join(RESOURCES_DIR, 'jars', name);
 }
@@ -224,12 +241,9 @@ function validateBackendBundles() {
     throw new Error(lines.join('\n'));
 }
 
-// ── Service starters ─────────────────────────────────────────────────────────
-
 async function startMongo() {
     log('info', 'Starting MongoDB…');
-    // Remove stale lock file left by a previous forced shutdown (SIGKILL).
-    // WiredTiger has its own crash-recovery; the lockfile is advisory only.
+
     const mongoLock = path.join(MONGO_DATA_DIR, 'mongod.lock');
     try {
         if (fs.existsSync(mongoLock) && fs.readFileSync(mongoLock, 'utf8').trim()) {
@@ -252,23 +266,38 @@ async function startMongo() {
 async function startFuseki() {
     log('info', 'Starting Apache Fuseki…');
 
-    // Remove stale TDB2 lock files that cause Fuseki to open datasets read-only
-    // after an unclean shutdown.
     const lockPaths = [
         path.join(FUSEKI_DATA_DIR, 'tdb.lock'),
         path.join(FUSEKI_DATA_DIR, 'Data-0001', 'tdb.lock'),
     ];
+    const databasesDir = path.join(FUSEKI_BASE_DIR, 'databases');
+    try {
+        if (fs.existsSync(databasesDir)) {
+            fs.readdirSync(databasesDir, { withFileTypes: true })
+                .filter(entry => entry.isDirectory())
+                .forEach(entry => {
+                    const projectDbDir = path.join(databasesDir, entry.name);
+                    lockPaths.push(
+                        path.join(projectDbDir, 'tdb.lock'),
+                        path.join(projectDbDir, 'Data-0001', 'tdb.lock'),
+                    );
+                });
+        }
+    } catch (e) {
+        log('warn', `Could not enumerate per-project Fuseki databases for lock cleanup: ${e.message}`);
+    }
+    let removedLocks = 0;
     lockPaths.forEach(p => {
-        try { if (fs.existsSync(p)) { fs.unlinkSync(p); log('info', `Removed stale lock: ${p}`); } }
+        try { if (fs.existsSync(p)) { fs.unlinkSync(p); removedLocks++; log('info', `Removed stale lock: ${p}`); } }
         catch (_) {}
     });
+    if (removedLocks > 0) {
+        log('info', `Cleared ${removedLocks} stale TDB2 lock file(s) before starting Fuseki`);
+    }
 
     const jar     = path.join(RESOURCES_DIR, 'jars', 'fuseki-server.jar');
     const logFile = path.join(LOGS_DIR, 'fuseki.log');
 
-    // Write a Fuseki config that explicitly enables the GSP read-write endpoint.
-    // Fuseki 6.x --loc only enables query/update; the /data GSP write endpoint
-    // must be declared explicitly or imports fail with 405 Read-only.
     const configFile = path.join(FUSEKI_BASE_DIR, 'ontocode-config.ttl');
     const dataPath = FUSEKI_DATA_DIR.replace(/\\/g, '/');
     const fusekiConfig = `
@@ -314,8 +343,6 @@ async function startFuseki() {
         FUSEKI_BASE: FUSEKI_BASE_DIR,
     }, logFile);
 
-    // Fail fast if the JVM dies before answering the health check (port conflict,
-    // missing jar, bad config) instead of burning the full 45s ping timeout.
     let onEarlyExit, onSpawnError;
     const earlyDeath = new Promise((_, reject) => {
         onEarlyExit = (code) => reject(new Error(`Fuseki exited with code ${code} before becoming ready`));
@@ -329,23 +356,104 @@ async function startFuseki() {
             earlyDeath,
         ]);
     } catch (err) {
-        // Detach first so the kill below can't reject the already-settled race.
+
         fusekiProcess.removeListener('exit', onEarlyExit);
         fusekiProcess.removeListener('error', onSpawnError);
-        // On ping timeout the JVM is still alive — kill it before dropping the
-        // reference, or it keeps the port and TDB2 lock (every retry then fails
-        // to bind) and stopAll() can no longer reach it.
+
         await stopProcess(fusekiProcess, 'Fuseki', 4000);
         fusekiProcess = null;
         throw err;
     } finally {
-        // Detach so a later shutdown doesn't reject the (already settled) race.
+
         if (fusekiProcess) {
             fusekiProcess.removeListener('exit', onEarlyExit);
             fusekiProcess.removeListener('error', onSpawnError);
         }
     }
     log('ok', `Fuseki ready on port ${FUSEKI_PORT}`);
+}
+
+async function ensureBaseCdsArchive(javaBinPath) {
+    const jreHome     = path.dirname(path.dirname(javaBinPath));
+
+    const baseArchive = path.join(jreHome, 'bin', 'server', 'classes.jsa');
+    if (fs.existsSync(baseArchive)) return;
+    log('info', '[CDS] Generating base archive for bundled JRE (one-time)…');
+    try {
+        await runToCompletion(javaBinPath, ['-Xshare:dump'], {});
+    } catch (err) {
+        log('warn', `[CDS] Failed to generate base archive: ${err.message}`);
+    }
+}
+
+async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPath) {
+    const extractedDir = path.join(cdsDir, 'extracted');
+    const extractedJar = path.join(extractedDir, path.basename(originalJar));
+    const archiveFile  = path.join(cdsDir, `${name.toLowerCase()}.jsa`);
+    const markerFile   = path.join(cdsDir, '.java-bin');
+    const noCds = { launchJar: originalJar, cdsFlags: [] };
+
+    const jarStat = fs.statSync(originalJar);
+    const jarFingerprint = `${jarStat.mtimeMs}:${jarStat.size}`;
+    let recorded = null;
+    if (fs.existsSync(markerFile)) {
+        try { recorded = JSON.parse(fs.readFileSync(markerFile, 'utf8')); } catch { /* treat as stale below */ }
+    }
+    const isFresh = recorded && recorded.javaBin === javaBinPath && recorded.jarFingerprint === jarFingerprint;
+    if (fs.existsSync(cdsDir) && !isFresh) {
+        log('info', `[${name}] CDS cache missing/stale (JVM or jar changed) — regenerating`);
+        fs.rmSync(cdsDir, { recursive: true, force: true });
+    }
+
+    await ensureBaseCdsArchive(javaBinPath);
+
+    if (fs.existsSync(archiveFile) && fs.existsSync(extractedJar)) {
+        return { launchJar: extractedJar, cdsFlags: [`-XX:SharedArchiveFile=${archiveFile}`] };
+    }
+
+    try {
+        fs.mkdirSync(cdsDir, { recursive: true });
+        fs.writeFileSync(markerFile, JSON.stringify({ javaBin: javaBinPath, jarFingerprint }), 'utf8');
+
+        if (!fs.existsSync(extractedJar)) {
+            log('info', `[${name}] Extracting jar for CDS (one-time)…`);
+            await runToCompletion(javaBinPath, [
+                '-Djarmode=tools', '-jar', originalJar, 'extract', '--destination', extractedDir,
+            ], env);
+        }
+
+        log('info', `[${name}] Training CDS archive (one-time — this launch only, adds ~15-25s)…`);
+        const trainingLog = path.join(cdsDir, 'training.log');
+        await runToCompletion(javaBinPath, [
+            `-XX:ArchiveClassesAtExit=${archiveFile}`,
+            '-Dspring.context.exit=onRefresh',
+            '-jar', extractedJar,
+            ...springArgs,
+        ], env, trainingLog);
+
+        if (fs.existsSync(archiveFile)) {
+            return { launchJar: extractedJar, cdsFlags: [`-XX:SharedArchiveFile=${archiveFile}`] };
+        }
+        log('warn', `[${name}] CDS training did not produce an archive — continuing without it`);
+    } catch (err) {
+        log('warn', `[${name}] CDS setup failed (${err.message}) — continuing without it`);
+    }
+    return noCds;
+}
+
+function runToCompletion(bin, args, extraEnv = {}, logFile = null) {
+    return new Promise((resolve, reject) => {
+        const env = { ...process.env, ...extraEnv };
+        const p = spawn(bin, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        if (logFile) {
+            const stream = fs.createWriteStream(logFile, { flags: 'w' });
+            p.stdout.pipe(stream);
+            p.stderr.pipe(stream);
+        }
+
+        p.on('exit', () => resolve());
+        p.on('error', reject);
+    });
 }
 
 async function startDesktop() {
@@ -364,37 +472,32 @@ async function startDesktop() {
     const heaps = jvmHeaps();
     log('info', `[Desktop] JVM heap: ${heaps.desktopXmx} (system RAM: ${heaps.totalGb} GB)`);
 
-    const args = [
-        `-Xmx${heaps.desktopXmx}`,
-        '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
-        `-DLOG_DIR=${LOGS_DIR}`,
-        '-jar', jar,
+    const springArgs = [
         `--server.port=${DESKTOP_PORT}`,
         '--spring.profiles.active=desktop',
         `--spring.data.mongodb.uri=${mongoUri}`,
-        // Fuseki / SPARQL
+
         `--ontocode.fuseki.queryEndpoint=${fusekiBase}/query`,
         `--ontocode.fuseki.updateEndpoint=${fusekiBase}/update`,
         `--ontocode.fuseki.gspEndpoint=${fusekiBase}/data`,
         `--sparql.endpointUrl=${fusekiBase}/query`,
         `--sparql.updateEndpointUrl=${fusekiBase}/update`,
         `--sparql.endpoint-url=${fusekiBase}/query`,
-        // Data directory
+
         `--ontocode.data.dir=${OWL_DATA_DIR}`,
-        // Auth service points to itself (auth is bundled in the same JAR)
+
         `--app.auth-service-url=http://127.0.0.1:${DESKTOP_PORT}`,
         `--auth.service.url=http://127.0.0.1:${DESKTOP_PORT}`,
-        // Plugin-service controllers (reasoner) are bundled too — their editor
-        // calls must loop back to this JAR, not the Docker hostname default.
+
         `--ontology.editor.url=http://127.0.0.1:${DESKTOP_PORT}`,
-        // JWT — shared secret used by all three bundled services
+
         '--jwt.secret=b250b2NvZGUtZGVza3RvcC1qd3Qtc2VjcmV0LWtleS12MQ==',
         `--app.base-url=http://127.0.0.1:${DESKTOP_PORT}`,
-        // Allow same-named beans from merged modules to coexist
+
         '--spring.main.allow-bean-definition-overriding=true',
-        // Allow circular references (sslBundleRegistry cycle in merged MongoDB auto-config)
+
         '--spring.main.allow-circular-references=true',
-        // Disable cloud-only features
+
         '--ontocode.desktop.mode=true',
         '--ontocode.desktop.owlapi-first=true',
         `--ontocode.desktop.plugins.bundled-dir=${path.join(RESOURCES_DIR, 'plugin-bundles')}`,
@@ -405,17 +508,42 @@ async function startDesktop() {
         '--jira.api.token=noop',
     ];
 
-    desktopProcess = spawnService('Desktop', java, args, {
+    const desktopEnv = {
         JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8',
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
-    }, logFile, { cwd: DATA_DIR });
+    };
 
-    await waitForHttp(
-        `http://127.0.0.1:${DESKTOP_PORT}/actuator/health`,
-        120000,
-        'Desktop',
+    const { launchJar, cdsFlags } = await prepareCds(
+        'Desktop', jar, path.join(DATA_DIR, 'cds', 'desktop'), springArgs, desktopEnv, java,
     );
+
+    const args = [
+        `-Xmx${heaps.desktopXmx}`,
+        '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
+        ...cdsFlags,
+        `-DLOG_DIR=${LOGS_DIR}`,
+        '-jar', launchJar,
+        ...springArgs,
+    ];
+
+    desktopProcess = spawnService('Desktop', java, args, desktopEnv, logFile, { cwd: DATA_DIR });
+
+    const startedAt = Date.now();
+    const heartbeat = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startedAt) / 1000);
+        log('info', `[Desktop] Still starting… (${elapsed}s)`);
+    }, 3000);
+
+    try {
+        await waitForHttp(
+            `http://127.0.0.1:${DESKTOP_PORT}/actuator/health`,
+            120000,
+            'Desktop',
+        );
+    } finally {
+        clearInterval(heartbeat);
+    }
     log('ok', `Desktop service ready on port ${DESKTOP_PORT}`);
 }
 
@@ -430,29 +558,43 @@ async function startSwrl() {
     const logFile  = path.join(LOGS_DIR, 'swrl.log');
     const mongoUri = `mongodb://127.0.0.1:${MONGO_PORT}/ontocode-desktop`;
 
-    swrlProcess = spawnService('SWRL', javaBin(), [
-        '-Xmx512m',
-        `-DLOG_DIR=${LOGS_DIR}`,
-        '-jar', jar,
+    const springArgs = [
         `--server.port=${SWRL_PORT}`,
         '--spring.profiles.active=desktop',
         `--spring.data.mongodb.uri=${mongoUri}`,
         `--app.auth-service-url=http://127.0.0.1:${DESKTOP_PORT}`,
+
+        `--ontology.editor.service.url=http://127.0.0.1:${DESKTOP_PORT}`,
         '--jwt.secret=b250b2NvZGUtZGVza3RvcC1qd3Qtc2VjcmV0LWtleS12MQ==',
         '--app.email.enabled=false',
         '--spring.mail.host=localhost',
         '--management.health.mail.enabled=false',
-    ], {
+    ];
+
+    const swrlEnv = {
         JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8',
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
-    }, logFile);
+    };
+
+    const swrlJava = swrlJavaBin();
+    log('info', `[SWRL] Java:   ${swrlJava}`);
+
+    const { launchJar, cdsFlags } = await prepareCds(
+        'SWRL', jar, path.join(DATA_DIR, 'cds', 'swrl'), springArgs, swrlEnv, swrlJava,
+    );
+
+    swrlProcess = spawnService('SWRL', swrlJava, [
+        '-Xmx512m',
+        ...cdsFlags,
+        `-DLOG_DIR=${LOGS_DIR}`,
+        '-jar', launchJar,
+        ...springArgs,
+    ], swrlEnv, logFile);
 
     await waitForHttp(`http://127.0.0.1:${SWRL_PORT}/actuator/health`, 120000, 'SWRL');
     log('ok', `SWRL reasoner ready on port ${SWRL_PORT}`);
 }
-
-// ── Process helpers ───────────────────────────────────────────────────────────
 
 function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptions = {}) {
     const env = { ...process.env, ...extraEnv };
@@ -473,6 +615,11 @@ function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptio
         catch (e) { log('warn', `[${name}] Cannot open log file: ${e.message}`); }
     }
 
+    const PROGRESS_MARKERS = [
+        'Started', 'ERROR', 'Exception',
+        'Bootstrapping Spring Data', 'Tomcat initialized', 'Tomcat started',
+        'Root WebApplicationContext', 'Exposing', 'endpoints beneath',
+    ];
     child.stdout.on('data', (data) => {
         if (logStream) logStream.write(data);
         data.toString().split('\n').forEach(line => {
@@ -480,7 +627,7 @@ function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptio
             if (!t) return;
             if (outputBuffer.length >= 50) outputBuffer.shift();
             outputBuffer.push('[out] ' + t);
-            if (t.includes('Started') || t.includes('ERROR') || t.includes('Exception')) {
+            if (PROGRESS_MARKERS.some(marker => t.includes(marker))) {
                 log('info', `[${name}] ${t}`);
             }
         });

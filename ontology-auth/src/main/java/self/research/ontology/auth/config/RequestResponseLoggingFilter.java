@@ -14,21 +14,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Set;
 
-/**
- * Per-request access log for the auth service.
- *
- * <p>Emits one structured line per HTTP request to {@code app.log}:
- * method, URI, redacted query, request {@code Content-Type}/length,
- * response status / Content-Type / length, elapsed ms.
- *
- * <p>Bodies and header values are NEVER logged. Sensitive query
- * parameters (token, password, email, …) have their values replaced
- * with {@code ***REDACTED***}; the parameter <em>name</em> is kept so
- * triage can still tell what was sent.
- *
- * <p>Order(2) so it runs after {@link MdcLoggingFilter} populates the
- * cascading {@code [%X{ctx}]} block.
- */
 @Component("authRequestResponseLoggingFilter")
 @Order(2)
 public class RequestResponseLoggingFilter extends OncePerRequestFilter {
@@ -124,10 +109,6 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         }
         return out.toString();
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Byte-counting response wrapper. Counts only — no body capture.
-    // ─────────────────────────────────────────────────────────────────
 
     private static final class ByteCountingResponseWrapper extends HttpServletResponseWrapper {
         private final CountingServletOutputStream stream;

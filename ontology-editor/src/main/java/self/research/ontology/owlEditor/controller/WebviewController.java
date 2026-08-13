@@ -20,30 +20,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-/**
- * Controller for serving the editor webview HTML and static assets.
- * Handles serving the React SPA for the ontology editor.
- */
 @Controller
 public class WebviewController {
 
     private static final Logger log = LoggerFactory.getLogger(WebviewController.class);
 
-    /**
-     * Serve webview static assets (CSS, JS files)
-     * GET /assets/index-Dr73Jqxh.js
-     * GET /assets/index-CSMnj1UI.css
-     */
     @GetMapping("/assets/{filename}")
     public ResponseEntity<Resource> serveAsset(@PathVariable String filename) {
         try {
-            // Try to load from the dist folder first (for local development)
+
             Path distPath = Paths.get("../ontology-vscode-extension/webview-src/dist/assets").normalize();
             File distFile = distPath.toFile();
-            
+
             Resource resource = null;
-            
-            // Try filesystem first (development)
+
             if (distFile.exists()) {
                 Path assetPath = distPath.resolve(filename);
                 if (Files.exists(assetPath)) {
@@ -51,78 +41,68 @@ public class WebviewController {
                     log.debug("Serving asset from filesystem: {}", assetPath);
                 }
             }
-            
-            // Fallback to classpath (production - if assets are packaged)
+
             if (resource == null || !resource.exists()) {
                 resource = new ClassPathResource("static/assets/" + filename);
                 log.debug("Serving asset from classpath: static/assets/{}", filename);
             }
-            
+
             if (!resource.exists()) {
                 log.warn("Asset not found: /assets/{}", filename);
                 return ResponseEntity.notFound().build();
             }
-            
-            // Determine content type
+
             String contentType = determineContentType(filename);
-            
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.parseMediaType(contentType));
-            headers.setCacheControl("public, max-age=3600"); // Cache for 1 hour
-            
+            headers.setCacheControl("public, max-age=3600");
+
             return new ResponseEntity<>(resource, headers, HttpStatus.OK);
-            
+
         } catch (Exception e) {
             log.error("Error serving asset: {}", filename, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
-    /**
-     * Serve the webview HTML for any /projects/** route
-     * This is needed for the SPA to work - all non-API routes should serve index.html
-     * GET /projects/data/files/test-merge-target.owl -> index.html
-     */
     @GetMapping("/projects/**")
     public ResponseEntity<Resource> serveWebview() {
         try {
-            // Try to load from the dist folder first (for local development)
+
             Path distPath = Paths.get("../ontology-vscode-extension/webview-src/dist/index.html").normalize();
             File distFile = distPath.toFile();
-            
+
             Resource resource;
             if (distFile.exists()) {
                 resource = new FileSystemResource(distFile);
                 log.debug("Serving webview from filesystem: {}", distPath);
             } else {
-                // Fallback to classpath (production)
+
                 resource = new ClassPathResource("static/index.html");
                 log.debug("Serving webview from classpath");
             }
-            
+
             if (!resource.exists()) {
                 log.error("Webview index.html not found!");
                 return ResponseEntity.notFound().build();
             }
-            
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.TEXT_HTML);
-            headers.setCacheControl("no-cache, no-store, must-revalidate"); // Don't cache HTML
-            
+            headers.setCacheControl("no-cache, no-store, must-revalidate");
+
             return new ResponseEntity<>(resource, headers, HttpStatus.OK);
-            
+
         } catch (Exception e) {
             log.error("Error serving webview", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
-    /**
-     * Helper method to determine content type from file extension
-     */
     private String determineContentType(String filename) {
         String lower = filename.toLowerCase();
-        
+
         if (lower.endsWith(".js")) {
             return "application/javascript";
         } else if (lower.endsWith(".css")) {
@@ -140,7 +120,7 @@ public class WebviewController {
         } else if (lower.endsWith(".ttf")) {
             return "font/ttf";
         }
-        
+
         return "application/octet-stream";
     }
 }

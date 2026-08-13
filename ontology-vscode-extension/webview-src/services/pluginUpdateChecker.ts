@@ -1,13 +1,4 @@
-/**
- * =============================================================================
- * PLUGIN UPDATE CHECKER
- * =============================================================================
- * Lightweight, event-driven check for plugin updates.
- *
- * Strategy: fire a single lookup against the installed plugins' latest versions
- * (once per 24h via localStorage TTL). No polling. Intended to be called on
- * natural trigger points such as file-open.
- */
+
 
 import { pluginLoader } from "./pluginLoader";
 import { getApiBaseUrl } from "../config/deploymentConfig";
@@ -60,13 +51,6 @@ function saveCache(updates: PluginUpdateInfo[]): void {
   }
 }
 
-/**
- * Check for plugin updates. Respects a 24h localStorage cache so repeated
- * calls in the same day do not hit the backend.
- *
- * @param force bypass cache and force a fresh check
- * @returns list of plugins that have a newer version available
- */
 export async function checkForPluginUpdates(force = false): Promise<PluginUpdateInfo[]> {
   if (!force) {
     const cached = loadCache();
@@ -114,7 +98,6 @@ export async function checkForPluginUpdates(force = false): Promise<PluginUpdate
   return updates;
 }
 
-/** Clear the cached check (e.g. after an install/update). */
 export function clearPluginUpdateCache(): void {
   try {
     localStorage.removeItem(CACHE_KEY);

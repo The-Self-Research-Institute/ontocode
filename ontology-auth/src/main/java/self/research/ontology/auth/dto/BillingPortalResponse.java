@@ -1,8 +1,5 @@
 package self.research.ontology.auth.dto;
 
-/**
- * Response DTO for billing portal session
- */
 public class BillingPortalResponse {
     private String url;
 

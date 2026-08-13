@@ -12,19 +12,16 @@ export class CitationPickerPanel {
   public static async createOrShow(extensionUri: vscode.Uri) {
     const column = vscode.ViewColumn.Beside;
 
-    // If panel already exists, reveal it
     if (CitationPickerPanel.currentPanel) {
       CitationPickerPanel.currentPanel._panel.reveal(column);
       return;
     }
 
-    // Initialize Sci2Code service
     const initialized = await sci2CodeService.initialize();
     if (!initialized) {
       return;
     }
 
-    // Create new panel
     const panel = vscode.window.createWebviewPanel(
       'citationPicker',
       'Select Citation',
@@ -45,17 +42,15 @@ export class CitationPickerPanel {
     this._panel = panel;
     this._extensionUri = extensionUri;
 
-    // Set HTML content
     this._panel.webview.html = this._getHtmlContent(this._panel.webview);
 
-    // Handle messages from webview
     this._panel.webview.onDidReceiveMessage(
       async message => {
         switch (message.type) {
           case 'requestCitations':
             await this.loadCitations();
             break;
-            
+
           case 'selectCitation':
             await this.handleCitationSelection(message.key, message.format);
             break;
@@ -73,10 +68,8 @@ export class CitationPickerPanel {
       this._disposables
     );
 
-    // Handle panel disposal
     this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
-    // Load citations when panel is created
     this.loadCitations();
   }
 
@@ -104,7 +97,7 @@ export class CitationPickerPanel {
           `${c.firstName} ${c.lastName}`.toLowerCase()
         ).join(' ') || '';
         const searchTerm = query.toLowerCase();
-        
+
         return title.includes(searchTerm) || creators.includes(searchTerm);
       });
 
@@ -133,21 +126,16 @@ export class CitationPickerPanel {
       return;
     }
 
-    // The fragment relies on the host document's root tag already declaring
-    // rdf/rdfs/owl/dc/foaf/prov — ensure that before inserting.
     await ensurePrefixes(editor.document, format);
 
-    // Insert at cursor position
     const position = editor.selection.active;
     await editor.edit(editBuilder => {
       editBuilder.insert(position, '\n' + formattedCitation + '\n');
     });
 
-    // Get metadata for success message
     const metadata = await sci2CodeService.getCitationMetadata(key);
     vscode.window.showInformationMessage(`Inserted: ${metadata?.title || 'Citation'}`);
 
-    // Close panel
     this._panel.dispose();
   }
 
@@ -229,7 +217,7 @@ export class CitationPickerPanel {
     </head>
     <body>
         <h2>Select Citation</h2>
-        
+
         <div class="format-selector">
             <label>Format:</label>
             <button class="format-button active" data-format="turtle">Turtle</button>
@@ -242,7 +230,7 @@ export class CitationPickerPanel {
             class="search-box" 
             placeholder="Search citations by title or author..."
         />
-        
+
         <div id="citationList" class="citation-list">
             <div class="loading">Loading citations...</div>
         </div>
@@ -287,7 +275,7 @@ export class CitationPickerPanel {
             // Handle messages from extension
             window.addEventListener('message', event => {
                 const message = event.data;
-                
+
                 switch (message.type) {
                     case 'citationsData':
                         allCitations = message.items;
@@ -303,7 +291,7 @@ export class CitationPickerPanel {
 
             function renderCitations(items) {
                 const listEl = document.getElementById('citationList');
-                
+
                 if (items.length === 0) {
                     listEl.innerHTML = '<div class="loading">No citations found</div>';
                     return;

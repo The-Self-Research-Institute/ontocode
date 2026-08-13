@@ -14,40 +14,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Set;
 
-/**
- * Per-request access log for the editor service.
- *
- * <p>Logs ONE line per HTTP request to the regular application log (app.log).
- * Captures the metadata operators need to trace a user's activity end-to-end:
- * <ul>
- *   <li>method &amp; URI</li>
- *   <li>query string with sensitive values redacted</li>
- *   <li>request {@code Content-Type} and {@code Content-Length}</li>
- *   <li>response status</li>
- *   <li>response {@code Content-Type} and {@code Content-Length}</li>
- *   <li>elapsed time in ms</li>
- * </ul>
- *
- * <p><b>What we deliberately do NOT log:</b>
- * <ul>
- *   <li>Request bodies — we don't wrap the request, so the body is streamed
- *       to the controller and never copied to a log buffer.</li>
- *   <li>Response bodies — same.</li>
- *   <li>{@code Authorization} / {@code Cookie} / any header values.</li>
- *   <li>Values of sensitive query params (token, password, email, …).</li>
- * </ul>
- *
- * <p>Order(2) so it runs <em>after</em> {@link MdcLoggingFilter} (Order=1)
- * — the log line is then automatically tagged with the cascading
- * {@code [%X{ctx}]} block populated by that filter.
- */
 @Component("owlEditorRequestResponseLoggingFilter")
 @Order(2)
 public class RequestResponseLoggingFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RequestResponseLoggingFilter.class);
 
-    /** Substring-matched against query parameter names (case-insensitive). */
     private static final Set<String> SENSITIVE_PARAM_NEEDLES = Set.of(
             "token", "password", "passwd", "secret", "apikey", "api_key",
             "key", "auth", "authorization", "code", "signature", "sig",
@@ -59,7 +31,7 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         long startNs = System.nanoTime();
-        // Wrap the response just enough to capture the bytes written.
+
         ByteCountingResponseWrapper wrapped = new ByteCountingResponseWrapper(response);
         Throwable failure = null;
         try {
@@ -89,8 +61,6 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         long resLen = response.getBytesWritten();
         String resLenStr = resLen >= 0 ? resLen + "B" : "-";
 
-        // Single structured line. Keys in the message map directly to the
-        // ones used in `[ctx]` (set by MdcLoggingFilter) for grep-friendliness.
         if (failure != null) {
             log.error("[REQ] {} {} req_ct={} req_len={} -> FAILED after {}ms ({}: {})",
                     method, fullPath, reqCt, reqLenStr, elapsedMs,
@@ -114,10 +84,6 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         return (s == null || s.isEmpty()) ? "-" : s;
     }
 
-    /**
-     * Redact values of sensitive query params. Names are kept so triage can
-     * still tell which params were sent without seeing their contents.
-     */
     static String redactQuery(String rawQuery) {
         if (rawQuery == null || rawQuery.isEmpty()) return null;
         String[] parts = rawQuery.split("&");
@@ -145,12 +111,6 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
         return out.toString();
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // Response wrapper that counts bytes without copying them.
-    // We deliberately do NOT cache the body — that would let us log
-    // response payloads, which is the thing we don't want to do.
-    // ─────────────────────────────────────────────────────────────────
-
     private static final class ByteCountingResponseWrapper extends HttpServletResponseWrapper {
         private final CountingServletOutputStream stream;
 
@@ -166,8 +126,7 @@ public class RequestResponseLoggingFilter extends OncePerRequestFilter {
 
         @Override
         public java.io.PrintWriter getWriter() throws IOException {
-            // Wrap the stream as a writer so writes from controllers using
-            // PrintWriter still pass through our counter.
+
             return new java.io.PrintWriter(new java.io.OutputStreamWriter(
                     stream, getCharacterEncoding() != null
                             ? getCharacterEncoding()

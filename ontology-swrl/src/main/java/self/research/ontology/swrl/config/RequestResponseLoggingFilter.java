@@ -14,12 +14,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Set;
 
-/**
- * Per-request access log for the SWRL service. Behaviour identical to
- * the editor / auth equivalents — see those classes for the full
- * rationale. One line per request to {@code app.log}, no bodies, no
- * headers, sensitive query values redacted.
- */
 @Component
 @Order(2)
 public class RequestResponseLoggingFilter extends OncePerRequestFilter {

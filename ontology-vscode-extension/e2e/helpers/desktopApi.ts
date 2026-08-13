@@ -61,7 +61,6 @@ export async function uploadOntologyFixture(
   return { uploadFileName };
 }
 
-/** Poll import status with a hard deadline — no unbounded loops. */
 export async function waitForImportComplete(
   request: APIRequestContext,
   projectId: string,
@@ -82,7 +81,7 @@ export async function waitForImportComplete(
     if (status === 'COMPLETED' || status === 'UPDATED' || status === 'ALREADY_LOADED') {
       return;
     }
-    // Desktop owlapi-first: Fuseki sync is deferred; OWLAPI ready is enough for editor tests.
+
     if (owlapiReady) {
       return;
     }
@@ -390,7 +389,6 @@ export async function openOntologyByFileRef(
   return { ontologyProjectId: ontologyId, status };
 }
 
-/** Project-library open flow: upload to library → server-side import by file ref. */
 export async function prepareFileRefDesktopProject(
   request: APIRequestContext,
   prefix = 'pw-owlapi-ref',

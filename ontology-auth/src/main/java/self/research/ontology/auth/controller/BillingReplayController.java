@@ -20,25 +20,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Admin endpoints to recover from missed Stripe webhook side-effects.
- *
- * <p>Two scenarios this fixes:
- * <ol>
- *   <li>Webhook events that succeeded on Stripe's side AND processed in
- *   our handler, but for which we lost the email (e.g. {@code findUserForInvoice}
- *   returned empty, or the email_logs invariant was bypassed).</li>
- *   <li>Webhook events that failed during the May 8 – May 12 deserialization
- *   regression and were recorded as {@code status: failed} in the
- *   {@code stripe_events} collection.</li>
- * </ol>
- *
- * <p>Disabled by default. Enable per environment with
- * {@code email.test-endpoints.enabled=true} (same flag as EmailTestController,
- * so dev/staging gets both at once).
- *
- * <p>All endpoints require {@code ROLE_ADMIN}.
- */
 @RestController
 @RequestMapping("/api/admin/billing")
 @ConditionalOnProperty(prefix = "email.test-endpoints", name = "enabled", havingValue = "true")
@@ -53,11 +34,6 @@ public class BillingReplayController {
     @Autowired
     private MongoTemplate mongoTemplate;
 
-    /**
-     * Replay a single invoice through the payment-succeeded handler.
-     * Idempotent — the existing {@code email_logs} dedup prevents a second
-     * email if one already fired.
-     */
     @PostMapping("/replay-invoice/{invoiceId}")
     public ResponseEntity<Map<String, Object>> replayInvoice(@PathVariable String invoiceId) {
         Map<String, Object> result = new LinkedHashMap<>();
@@ -76,7 +52,7 @@ public class BillingReplayController {
         try {
             stripeService.handleInvoicePaymentSucceeded(invoice);
             result.put("status", "replayed");
-            // The email_logs row tells us if a new email actually fired vs the dedup kicked in.
+
             Document logDoc = mongoTemplate.findOne(
                     new Query(Criteria.where("key").is("payment-succeeded:" + invoiceId)),
                     Document.class, "email_logs");
@@ -93,14 +69,6 @@ public class BillingReplayController {
         }
     }
 
-    /**
-     * Scan {@code stripe_events} for {@code invoice.payment_succeeded} events
-     * in the last N hours that have no corresponding successful entry in
-     * {@code email_logs}, and replay each one.
-     *
-     * <p>Default window: 168 hours (7 days), covering Stripe's webhook retention.
-     * Cap at 720 hours (30 days) — Stripe doesn't retain events beyond that.
-     */
     @PostMapping("/backfill-payment-emails")
     public ResponseEntity<Map<String, Object>> backfillPaymentEmails(
             @RequestParam(value = "sinceHours", defaultValue = "168") int sinceHours,
@@ -126,8 +94,6 @@ public class BillingReplayController {
         for (Document event : events) {
             String eventId = event.getString("stripeEventId");
 
-            // Resolve the underlying invoice ID. stripe_events doesn't store the
-            // raw payload, so we have to fetch the event from Stripe to find it.
             String invoiceId;
             try {
                 com.stripe.model.Event stripeEvent = com.stripe.model.Event.retrieve(eventId);
@@ -145,7 +111,6 @@ public class BillingReplayController {
                 continue;
             }
 
-            // Already emailed? Skip.
             Document existing = mongoTemplate.findOne(
                     new Query(Criteria.where("key").is("payment-succeeded:" + invoiceId)
                             .and("status").is("sent")),
@@ -183,11 +148,6 @@ public class BillingReplayController {
         return ResponseEntity.ok(summary);
     }
 
-    /**
-     * List unmatched invoices (the ones the new fallback in
-     * {@link StripeService#handleInvoicePaymentSucceeded} couldn't link to a
-     * user). Surfaces them so support can manually reconcile.
-     */
     @GetMapping("/unmatched-invoices")
     public ResponseEntity<Map<String, Object>> listUnmatchedInvoices(
             @RequestParam(value = "limit", defaultValue = "50") int limit) {

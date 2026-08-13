@@ -1,7 +1,4 @@
-/**
- * Inspect what triples are in GraphDB
- * Shows the first 20 triples to see what they are
- */
+
 
 const axios = require('axios');
 
@@ -14,7 +11,7 @@ async function inspectTriples() {
     console.log('╚════════════════════════════════════════╝\n');
 
     try {
-        // Get total count
+
         const countQuery = 'SELECT (COUNT(*) as ?count) WHERE { ?s ?p ?o }';
         const countResponse = await axios.post(
             `${GRAPHDB_URL}/repositories/${GRAPHDB_REPO}`,
@@ -35,7 +32,6 @@ async function inspectTriples() {
             return;
         }
 
-        // Get sample triples
         console.log('Sample triples (first 20):\n');
         const sampleQuery = 'SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 20';
         const sampleResponse = await axios.post(
@@ -60,7 +56,6 @@ async function inspectTriples() {
             console.log(`   Object: ${o}\n`);
         });
 
-        // Check for specific namespaces
         console.log('\n=== Namespace Analysis ===\n');
 
         const namespaceQuery = `

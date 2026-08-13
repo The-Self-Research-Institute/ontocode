@@ -8,26 +8,18 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
-/**
- * Controller to handle web-based invitation redirects
- * Provides an HTML landing page that redirects to VS Code
- */
 @Controller
 public class WebInvitationController {
 
     private static final Logger log = LoggerFactory.getLogger(WebInvitationController.class);
 
-    /**
-     * Handle web invitation links from emails
-     * Serves an HTML page that auto-redirects to vscode:// URI
-     */
     @GetMapping(value = "/invite", produces = MediaType.TEXT_HTML_VALUE)
     @ResponseBody
     public String handleInviteRedirect(@RequestParam("token") String token) {
         log.info("📧 Web invitation accessed for token: {}...", token.substring(0, Math.min(8, token.length())));
-        
+
         String vscodeLink = "vscode://self.ontocode-extension/invite?token=" + token;
-        
+
         return "<!DOCTYPE html>" +
             "<html lang=\"en\">" +
             "<head>" +

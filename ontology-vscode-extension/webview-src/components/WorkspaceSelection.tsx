@@ -8,8 +8,6 @@ import { SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "../utils/sessionCleanup";
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import { AppVersionBadge } from "./AppVersionBadge";
 
-// ─── Local storage helpers ───────────────────────────────────────────────────
-
 function safeGetStorage(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
@@ -56,12 +54,7 @@ interface WorkspaceSelectionProps {
   onWorkspaceSelected: (workspaceData: any) => void;
   onSkipWorkspace: () => void;
   onLogout: () => void;
-  /**
-   * Called when the user clicks the top-right "Manage Billing" pill on the
-   * workspace selection screen. Bug #44: the button used to open the legacy
-   * modal in-place; the host should now route to the new BillingManagement
-   * page in account-level mode (synthetic "Your Account" workspace).
-   */
+
   onManageAccountBilling?: () => void;
   onUpgradeAccountPlan?: () => void;
 }
@@ -89,7 +82,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
 
-  // Invitation accept/decline dialog state
   const [invitationDialog, setInvitationDialog] = useState<{
     workspaceId: string;
     workspaceName: string;
@@ -98,7 +90,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   } | null>(null);
   const [invitationAction, setInvitationAction] = useState<"accepting" | "declining" | null>(null);
 
-  // In-app confirm dialog state (replaces window.confirm)
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; confirmLabel: string } | null>(
     null,
   );
@@ -106,7 +97,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   const firstTimePlanShown = useRef(false);
   const suppressAutoOpenRef = useRef(safeGetStorage(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY) === "true");
 
-  // Account-level subscription state (Model B)
   const [accountSubscription, setAccountSubscription] = useState<{ planName: string; status: string; billingInterval: string } | null>(null);
 
   useEffect(() => {
@@ -115,7 +105,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     }
   }, []);
 
-  // Sync accountSubscription with user context (refreshed via JWT)
   useEffect(() => {
     if (user?.subscriptionPlan) {
       setAccountSubscription(prev => ({
@@ -125,7 +114,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       }));
     }
   }, [user?.subscriptionPlan]);
-  // Report Issue modal state — available in workspace selection screen
+
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
 
   const showConfirmDialog = useCallback((title: string, message: string, confirmLabel = "OK"): Promise<boolean> => {
@@ -152,20 +141,17 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       .then((res: any) => {
         const d = res?.data || res;
         setAccountSubscription({ planName: d.planName || "FREE", status: d.status || "", billingInterval: d.billingInterval || "monthly" });
-        // Refresh bypass flag in case it was added to the domain list after the user's last login
+
         if (d.enterpriseDomainBypass === true) {
           patchEnterpriseBypass(true);
         }
       })
       .catch(() => {
-        // Failed to fetch — treat as FREE/no subscription
+
         setAccountSubscription({ planName: "FREE", status: "", billingInterval: "monthly" });
       });
   }, []);
 
-  // First-time user: show plan selection automatically when login reveals no workspaces.
-  // Skip for enterprise domain bypass users — they have billing handled externally
-  // and should not see the plan modal.
   useEffect(() => {
     if (suppressAutoOpenRef.current) return;
     if (firstTimePlanShown.current) return;
@@ -188,7 +174,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       const response = await apiClient.get("/api/workspaces");
       console.log("[WorkspaceSelection] Raw response:", JSON.stringify(response, null, 2));
 
-      // Handle both direct response (VS Code proxy) and response.data (axios browser) formats
       const data = response?.data || response;
       console.log("[WorkspaceSelection] Parsed data:", JSON.stringify(data, null, 2));
 
@@ -207,7 +192,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       console.error("[WorkspaceSelection] Error loading workspaces:", err);
       console.error("[WorkspaceSelection] Error details:", JSON.stringify(err, null, 2));
       const errorMsg = err.response?.data?.error || err.message || "Failed to load workspaces";
-      // If backend is not reachable, show helpful errorl
+
       if (err.code === "ECONNREFUSED" || errorMsg.includes("Network Error")) {
         setError("Cannot connect to backend. Please ensure Docker services are running (docker-compose up -d)");
       } else {
@@ -228,13 +213,11 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       });
       console.log("[WorkspaceSelection] Create workspace response:", response);
 
-      // Handle both direct response (VS Code proxy) and response.data (axios browser) formats
       const data = response?.data || response;
       if (data?.workspace) {
         const newWorkspace = data.workspace;
         console.log("[WorkspaceSelection] Default workspace created:", newWorkspace.workspaceId);
 
-        // Automatically select the newly created workspace
         const selectResponse = await apiClient.post(`/api/workspaces/${newWorkspace.workspaceId}/select`);
         const selectData = selectResponse?.data || selectResponse;
 
@@ -260,7 +243,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       console.log("[WorkspaceSelection] Response type:", typeof response);
       console.log("[WorkspaceSelection] Response keys:", response ? Object.keys(response) : "null");
 
-      // Handle both direct response (VS Code proxy) and response.data (axios browser) formats
       const data = response?.data || response;
       console.log("[WorkspaceSelection] 📦 Extracted data:", data);
 
@@ -324,14 +306,12 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
   const handleCreateWorkspace = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate workspace name
     const nameValidation = validateWorkspaceName(newWorkspaceName);
     if (!nameValidation.isValid) {
       setCreateDialogError(nameValidation.error || "Invalid workspace name");
       return;
     }
 
-    // Validate description (optional)
     if (newWorkspaceDescription) {
       const descValidation = validateDescription(newWorkspaceDescription);
       if (!descValidation.isValid) {
@@ -344,7 +324,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       setCreating(true);
       setCreateDialogError("");
 
-      // Check if workspace name already exists
       const checkResponse = await apiClient.get(
         `/api/workspaces/check?name=${encodeURIComponent(newWorkspaceName.trim())}`,
       );
@@ -362,11 +341,9 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           return;
         }
 
-        // Generate unique name
         let copyNumber = 2;
         let uniqueName = `${newWorkspaceName.trim()} (${copyNumber})`;
 
-        // Keep checking until we find a unique name
         while (true) {
           const recheckResponse = await apiClient.get(`/api/workspaces/check?name=${encodeURIComponent(uniqueName)}`);
           const recheckData = recheckResponse?.data || recheckResponse;
@@ -379,7 +356,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           uniqueName = `${newWorkspaceName.trim()} (${copyNumber})`;
         }
 
-        // Show the new name to user
         const confirmNewName = await showConfirmDialog(
           "Confirm New Name",
           `New workspace name will be: "${uniqueName}"`,
@@ -398,7 +374,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       });
       console.log("[WorkspaceSelection] Create workspace response:", response);
 
-      // Handle both direct response (VS Code proxy) and response.data (axios browser) formats
       const data = response?.data || response;
       if (data?.workspace) {
         const createdWorkspace = data.workspace;
@@ -427,7 +402,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
       await apiClient.delete(`/api/workspaces/${workspaceToDelete.id}`);
 
-      // Refresh workspace list
       await loadWorkspaces();
 
       setShowDeleteConfirm(false);
@@ -437,8 +411,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       const errorMsg = err.response?.data?.error || err.message || "Failed to delete workspace";
       const requiresAction = err.response?.data?.requiresAction;
       const actions = err.response?.data?.actions;
-      
-      // Check if this is a billing-related deletion error
+
       if (err.response?.status === 402) {
         setError(`❌ ${errorMsg}\n\n📋 ${requiresAction}`);
       } else {
@@ -494,8 +467,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     accountSubscription.status !== "active" &&
     accountSubscription.status !== "trialing";
 
-  // Per-workspace: only block workspaces the current user OWNS when their plan expires.
-  // Member/viewer workspaces belong to another owner whose subscription may still be active.
   const isCurrentUserOwnerOf = (workspace: Workspace): boolean =>
     workspace.ownerId === user?.userId || workspace.ownerId === (user as any)?.id;
 
@@ -535,9 +506,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             accountSubscription && (accountSubscription.status === "active" || accountSubscription.status === "trialing") && accountSubscription.planName !== "FREE" ? (
               <button
                 type="button"
-                // Bug #44: route to the new full-page BillingManagement view in
-                // account-level mode when the host provided a navigator;
-                // otherwise fall back to the legacy in-place modal.
+
                 onClick={() => {
                   if (onManageAccountBilling) {
                     onManageAccountBilling();
@@ -570,7 +539,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             <Bug size={14} />
             Report Issue
           </button>
-          {/* Desktop download — always visible */}
+          {}
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('navigate-desktop-download'))}
@@ -609,11 +578,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             <div className="text-center py-12">
               <Building2 size={64} className="text-gray-400 mx-auto mb-4 opacity-50" />
               <p className="text-gray-300 mb-6">You don't have any workspaces yet.</p>
-              {/* Workspace creation is open to all signed-in users; the backend
-                  enforces the plan-based quota (WorkspaceController returns a
-                  "Workspace limit reached" 400 with an upgrade hint when the
-                  user is over their plan, and the Create dialog surfaces that
-                  message together with an "Upgrade Account" CTA). */}
+              {}
               <button
                 onClick={() => setShowCreateDialog(true)}
                 className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all shadow-lg hover:shadow-purple-500/50"
@@ -723,21 +688,13 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           </button>
         )}
 
-        {/* Continue without workspace button - available for all users */}
-        {/* <button
-          onClick={onSkipWorkspace}
-          className="w-full py-3 bg-transparent border-2 border-white/20 text-gray-300 font-medium rounded-lg hover:bg-white/5 hover:border-purple-400/50 hover:text-white transition-all flex items-center justify-center space-x-2 mt-3"
-        >
-          <span>Continue without workspace</span>
-        </button> */}
+        {}
+        {}
 
-        {/* Previous "No workspaces available — contact an administrator" fallback
-            was only reachable when the Create button was gated behind admin /
-            enterprise. With creation open to all users, the empty-state Create
-            button above covers the zero-workspace case. */}
+        {}
       </div>
 
-      {/* Create Workspace Dialog */}
+      {}
       {showCreateDialog && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
@@ -845,7 +802,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         </div>
       )}
 
-      {/* Selection Loading Overlay */}
+      {}
       {selecting && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="text-center">
@@ -858,7 +815,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         </div>
       )}
 
-      {/* In-App Confirm Dialog (replaces window.confirm) */}
+      {}
       {confirmDialog && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
@@ -889,7 +846,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         </div>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {}
       {showDeleteConfirm && workspaceToDelete && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
@@ -946,7 +903,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         </div>
       )}
 
-      {/* Invitation Accept / Decline Dialog */}
+      {}
       {invitationDialog && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-slate-800 border border-white/20 rounded-2xl shadow-2xl p-8 w-full max-w-md">
@@ -993,7 +950,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         </div>
       )}
 
-      {/* Report Issue Modal — available from workspace selection */}
+      {}
       {isReportIssueModalOpen && (
         <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
       )}

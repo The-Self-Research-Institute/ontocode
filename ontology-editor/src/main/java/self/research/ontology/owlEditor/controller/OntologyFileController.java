@@ -19,10 +19,6 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Controller to serve ontology files to other services (e.g., reasoner plugin).
- * This allows the reasoner to work with ontologies being edited, not just uploaded to GridFS.
- */
 @RestController
 @RequestMapping("/api/ontology-file")
 @CrossOrigin(originPatterns = "*")
@@ -36,18 +32,12 @@ public class OntologyFileController {
     @Autowired
     private ProjectMetadataService metadataService;
 
-    /**
-     * Get the current ontology file for a project
-     * GET /api/ontology-file/{projectId}
-     */
     @GetMapping("/{projectId}")
     public ResponseEntity<?> getOntologyFile(@PathVariable String projectId,
                                              @RequestParam(required = false, defaultValue = "false") boolean forceExport) {
         try {
             log.info("Serving ontology file for project: {} (forceExport={})", projectId, forceExport);
 
-            // Refuse to serve while an import is still in progress: returning a stale or
-            // half-written file causes the editor to hang on parse. Frontend should poll status.
             Optional<ProjectStatus> statusOpt = metadataService.readStatus(projectId);
             if (statusOpt.isPresent()) {
                 String state = statusOpt.get().status();
@@ -64,9 +54,8 @@ public class OntologyFileController {
                 }
             }
 
-            // If forceExport requested, skip disk files and export fresh from GraphDB
             if (!forceExport) {
-                // Try current file first
+
                 Path currentFile = storageManager.projectDir(projectId).resolve("ontology.current.owl");
                 if (Files.exists(currentFile) && Files.isReadable(currentFile)) {
                     log.info("Found current ontology file: {}", currentFile);
@@ -76,8 +65,7 @@ public class OntologyFileController {
                         .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + projectId + ".owl\"")
                         .body(resource);
                 }
-                
-                // Fallback to original file
+
                 Path originalFile = storageManager.projectDir(projectId).resolve("ontology.original.owl");
                 if (Files.exists(originalFile) && Files.isReadable(originalFile)) {
                     log.info("Found original ontology file: {}", originalFile);
@@ -88,8 +76,7 @@ public class OntologyFileController {
                         .body(resource);
                 }
             }
-            
-            // Last resort: try to export from GraphDB
+
             log.info("No ontology file on disk, attempting to export from GraphDB for project: {}", projectId);
             try {
                 Path exportedFile = storageManager.exportOntology(projectId, "rdfxml");
@@ -104,7 +91,7 @@ public class OntologyFileController {
             } catch (Exception exportException) {
                 log.warn("Failed to export ontology from GraphDB for project {}: {}", projectId, exportException.getMessage());
             }
-            
+
             log.warn("No ontology file found for project: {}", projectId);
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of(
@@ -113,7 +100,7 @@ public class OntologyFileController {
                     "projectId", projectId,
                     "message", "Neither ontology.current.owl nor ontology.original.owl exists for this project, and GraphDB export failed"
                 ));
-            
+
         } catch (Exception e) {
             log.error("Error serving ontology file for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -125,21 +112,16 @@ public class OntologyFileController {
         }
     }
 
-    /**
-     * Check if ontology file exists for a project
-     * HEAD /api/ontology-file/{projectId}
-     */
     @RequestMapping(value = "/{projectId}", method = RequestMethod.HEAD)
     public ResponseEntity<Void> checkOntologyFile(@PathVariable String projectId) {
         try {
             Path currentFile = storageManager.projectDir(projectId).resolve("ontology.current.owl");
             Path originalFile = storageManager.projectDir(projectId).resolve("ontology.original.owl");
-            
+
             if (Files.exists(currentFile) || Files.exists(originalFile)) {
                 return ResponseEntity.ok().build();
             }
-            
-            // Check if we can export from GraphDB as fallback
+
             try {
                 Path exportedFile = storageManager.exportOntology(projectId, "rdfxml");
                 if (Files.exists(exportedFile)) {
@@ -148,9 +130,9 @@ public class OntologyFileController {
             } catch (Exception e) {
                 log.debug("GraphDB export check failed for project {}: {}", projectId, e.getMessage());
             }
-            
+
             return ResponseEntity.notFound().build();
-            
+
         } catch (Exception e) {
             log.error("Error checking ontology file for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

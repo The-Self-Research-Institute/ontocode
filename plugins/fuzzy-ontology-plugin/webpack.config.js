@@ -24,7 +24,7 @@ module.exports = {
         use: {
           loader: 'ts-loader',
           options: {
-            // Only transpile, don't check types to avoid old extension.ts errors
+
             transpileOnly: true
           }
         },

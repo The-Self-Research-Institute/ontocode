@@ -40,7 +40,6 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
     onClose();
   };
 
-  // Extract namespace and local name from IRI
   const getIRIParts = (iriValue: string) => {
     const hashIndex = iriValue.lastIndexOf('#');
     const slashIndex = iriValue.lastIndexOf('/');
@@ -53,7 +52,6 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
       };
     }
 
-    // Try colon separator for prefix notation
     const colonIndex = iriValue.indexOf(':');
     if (colonIndex > 0) {
       return {
@@ -76,7 +74,7 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
       }}
     >
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
+        {}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-semibold text-black">Edit Label</h3>
@@ -93,9 +91,9 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
           </button>
         </div>
 
-        {/* Content */}
+        {}
         <div className="p-4 space-y-4">
-          {/* Label */}
+          {}
           <div>
             <label className="text-sm font-semibold text-gray-800 block mb-2">
               Display Label (rdfs:label)
@@ -112,7 +110,7 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
             </p>
           </div>
 
-          {/* IRI — read-only, renaming not yet supported */}
+          {}
           <div>
             <label className="text-sm font-semibold text-gray-800 block mb-2">
               Full IRI <span className="text-xs font-normal text-gray-400">(read-only)</span>
@@ -130,7 +128,7 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
+        {}
         <div className="p-4 border-t border-gray-200 flex justify-between items-center">
           <div className="text-xs text-gray-600">
             {hasChanged && (

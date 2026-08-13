@@ -1,5 +1,4 @@
-// Simple API Client for Plugin
-// Handles communication with backend, proxying through VS Code if necessary
+
 
 declare global {
   interface Window {
@@ -43,7 +42,7 @@ class ApiClient {
     return new Promise((resolve, reject) => {
       const reqId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       this.pending.set(reqId, { resolve, reject });
-      
+
       window.vscode?.postMessage({
         type: 'proxyRequest',
         config: {
@@ -55,7 +54,6 @@ class ApiClient {
         reqId
       });
 
-      // Timeout after 30s
       setTimeout(() => {
         if (this.pending.has(reqId)) {
           this.pending.delete(reqId);
@@ -91,7 +89,6 @@ class ApiClient {
       throw new Error(detail || `Request failed (${response.status})`);
     }
 
-    // Handle empty responses (e.g., DELETE operations)
     const text = await response.text();
     if (!text || text.trim() === '') {
       return {} as T;

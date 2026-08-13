@@ -16,10 +16,6 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.util.*;
 
-/**
- * GraphDB storage implementation using RDF4J API.
- * Handles large ontologies (millions of triples) with SPARQL support.
- */
 public class SparqlStorage implements OntologyStorage {
 
     private static final Logger log = LoggerFactory.getLogger(SparqlStorage.class);
@@ -46,7 +42,7 @@ public class SparqlStorage implements OntologyStorage {
 
     @Override
     public boolean canHandle(long tripleCount) {
-        // Can handle from 100K to 100M triples
+
         return tripleCount >= 100_000 && tripleCount <= maxTripleCount;
     }
 
@@ -57,26 +53,21 @@ public class SparqlStorage implements OntologyStorage {
             log.info("Storing ontology {} in GraphDB ({} axioms)",
                 ontologyId, ontology.getAxiomCount());
 
-            // Convert OWL to RDF
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             OWLOntologyManager manager = ontology.getOWLOntologyManager();
             manager.saveOntology(ontology, baos);
 
-            // Create named graph URI
             String graphUri = getGraphUri(ontologyId);
 
-            // Store in GraphDB
             try (RepositoryConnection conn = repository.getConnection()) {
-                // Clear existing data for this graph
+
                 conn.clear(conn.getValueFactory().createIRI(graphUri));
 
-                // Load new data into named graph
                 try (InputStream inputStream = new ByteArrayInputStream(baos.toByteArray())) {
                     conn.add(inputStream, graphUri, RDFFormat.RDFXML,
                             conn.getValueFactory().createIRI(graphUri));
                 }
 
-                // Store metadata
                 storeMetadata(conn, ontologyId, metadata, ontology.getAxiomCount());
             }
 
@@ -96,7 +87,6 @@ public class SparqlStorage implements OntologyStorage {
 
             String graphUri = getGraphUri(ontologyId);
 
-            // Fetch RDF data from GraphDB
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
             try (RepositoryConnection conn = repository.getConnection()) {
@@ -108,7 +98,6 @@ public class SparqlStorage implements OntologyStorage {
                 throw new StorageException("Ontology not found: " + ontologyId);
             }
 
-            // Convert RDF to OWL ontology
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
                 new ByteArrayInputStream(baos.toByteArray()));
@@ -147,10 +136,9 @@ public class SparqlStorage implements OntologyStorage {
             String graphUri = getGraphUri(ontologyId);
 
             try (RepositoryConnection conn = repository.getConnection()) {
-                // Delete the named graph
+
                 conn.clear(conn.getValueFactory().createIRI(graphUri));
 
-                // Delete metadata
                 deleteMetadata(conn, ontologyId);
             }
 
@@ -245,7 +233,6 @@ public class SparqlStorage implements OntologyStorage {
         try {
             String graphUri = getGraphUri(ontologyId);
 
-            // Inject FROM clause if not present
             if (!query.toUpperCase().contains("FROM")) {
                 query = query.replaceFirst("(?i)WHERE", "FROM <" + graphUri + "> WHERE");
             }
@@ -302,7 +289,6 @@ public class SparqlStorage implements OntologyStorage {
             OWLOntology ontology = load(ontologyId);
             OWLOntologyManager manager = ontology.getOWLOntologyManager();
 
-            // Determine format
             OWLDocumentFormat documentFormat = getOWLFormat(format);
             manager.saveOntology(ontology, documentFormat, outputStream);
 
@@ -315,11 +301,10 @@ public class SparqlStorage implements OntologyStorage {
     public String importOntology(InputStream inputStream, String ontologyId, Map<String, Object> metadata)
             throws StorageException {
         try {
-            // Load ontology from stream
+
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
 
-            // Store in GraphDB
             return store(ontology, ontologyId, metadata);
 
         } catch (Exception e) {
@@ -335,7 +320,7 @@ public class SparqlStorage implements OntologyStorage {
             String versionGraphUri = getGraphUri(versionId);
 
             try (RepositoryConnection conn = repository.getConnection()) {
-                // Copy graph to version
+
                 String update = "ADD <" + sourceGraphUri + "> TO <" + versionGraphUri + ">";
                 Update updateQuery = conn.prepareUpdate(update);
                 updateQuery.execute();
@@ -383,7 +368,7 @@ public class SparqlStorage implements OntologyStorage {
             StorageStatistics stats = new StorageStatistics();
 
             try (RepositoryConnection conn = repository.getConnection()) {
-                // Count total graphs (ontologies)
+
                 String graphQuery = "SELECT (COUNT(DISTINCT ?g) as ?count) WHERE { GRAPH ?g { ?s ?p ?o } }";
                 TupleQuery tupleQuery = conn.prepareTupleQuery(graphQuery);
                 try (TupleQueryResult result = tupleQuery.evaluate()) {
@@ -393,7 +378,6 @@ public class SparqlStorage implements OntologyStorage {
                     }
                 }
 
-                // Count total triples
                 String tripleQuery = "SELECT (COUNT(*) as ?count) WHERE { ?s ?p ?o }";
                 tupleQuery = conn.prepareTupleQuery(tripleQuery);
                 try (TupleQueryResult result = tupleQuery.evaluate()) {
@@ -411,8 +395,6 @@ public class SparqlStorage implements OntologyStorage {
         }
     }
 
-    // ==================== Helper Methods ====================
-
     private String getGraphUri(String ontologyId) {
         return "http://ontocode.org/" + ontologyId;
     }
@@ -422,19 +404,17 @@ public class SparqlStorage implements OntologyStorage {
     }
 
     private void storeMetadata(RepositoryConnection conn, String ontologyId, Map<String, Object> metadata, int axiomCount) {
-        // Store metadata as RDF triples
+
         String metadataUri = "http://ontocode.org/metadata/" + ontologyId;
 
         StringBuilder update = new StringBuilder("INSERT DATA { ");
         update.append("<").append(metadataUri).append("> ");
 
-        // Add provided metadata
         for (Map.Entry<String, Object> entry : metadata.entrySet()) {
             update.append("<http://ontocode.org/meta/").append(entry.getKey()).append("> ");
             update.append("\"").append(entry.getValue().toString()).append("\" ; ");
         }
 
-        // Add axiom count
         update.append("<http://ontocode.org/meta/axiomCount> ").append(axiomCount).append(" . ");
         update.append("}");
 
@@ -458,9 +438,6 @@ public class SparqlStorage implements OntologyStorage {
         };
     }
 
-    /**
-     * Close repository connection
-     */
     public void shutdown() {
         if (repository != null && repository.isInitialized()) {
             repository.shutDown();

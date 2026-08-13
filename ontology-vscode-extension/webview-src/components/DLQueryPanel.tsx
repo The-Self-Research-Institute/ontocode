@@ -1,15 +1,4 @@
-/**
- * DL Query Panel - Enhanced Description Logic Query Interface
- * 
- * DL Query panel:
- * - Manchester OWL Syntax for class expressions
- * - Query for subclasses, superclasses, equivalent classes, instances
- * - Syntax highlighting and auto-completion hints
- * - Example queries for common patterns
- * 
- * References:
-  * - https://oboacademy.github.io/obook/tutorial/basic-dl-query/
- */
+
 
 import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { 
@@ -20,7 +9,6 @@ import {
 } from 'lucide-react';
 import type { TreeNode } from '../types';
 
-// Types
 interface DLQueryResult {
   type: 'class' | 'individual';
   iri: string;
@@ -196,26 +184,23 @@ interface DLQueryPanelProps {
   showNotification?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-// Manchester OWL Syntax Keywords
 const MANCHESTER_KEYWORDS = [
   'and', 'or', 'not', 'some', 'only', 'value', 'Self',
   'min', 'max', 'exactly', 'that', 'inverse'
 ];
 
-// Generate example queries dynamically based on available entities
 const generateExampleQueries = (
   classes: { id: string; label: string }[],
   objectProperties: { id: string; label: string }[],
   dataProperties: { id: string; label: string }[]
 ) => {
-  // Filter to only use names without spaces (to avoid parsing issues)
-  // Names with spaces require special handling that may not work across all backends
+
   const safeClasses = classes
     .filter(c => !c.id.includes('owl#Thing') && !/[\s]/.test(c.label));
-  
+
   const safeObjProps = objectProperties
     .filter(p => !p.id.includes('owl#top') && !/[\s]/.test(p.label));
-  
+
   const safeDataProps = dataProperties
     .filter(p => !p.id.includes('owl#top') && !/[\s]/.test(p.label));
 
@@ -229,7 +214,6 @@ const generateExampleQueries = (
   const objProp = objPropNames[0];
   const dataProp = dataPropNames[0];
 
-  // Build queries, only including property-based queries if we have safe properties
   const basicQueries = [
     { name: 'Simple class', expression: cls1, description: `Find all subclasses/instances of ${cls1}` },
     { name: 'Union (or)', expression: `${cls1} or ${cls2}`, description: `Either ${cls1} or ${cls2}` },
@@ -239,7 +223,7 @@ const generateExampleQueries = (
   const existentialQueries = objProp ? [
     { name: 'Has some relation', expression: `${objProp} some ${cls2}`, description: `Things with ${objProp} to some ${cls2}` },
   ] : [];
-  
+
   if (dataProp) {
     existentialQueries.push(
       { name: 'Has some data', expression: `${dataProp} some xsd:integer`, description: `Things with some ${dataProp} value` }
@@ -261,7 +245,7 @@ const generateExampleQueries = (
   const complexQueries = [
     { name: 'Intersection (and)', expression: `${cls1} and ${cls2}`, description: `Things that are both ${cls1} and ${cls2}` },
   ];
-  
+
   if (objProp) {
     complexQueries.push(
       { name: 'Nested restriction', expression: `${cls1} and ${objProp} some ${cls2}`, description: `${cls1} with ${objProp} to some ${cls2}` },
@@ -287,7 +271,6 @@ const generateExampleQueries = (
   return result;
 };
 
-// Query type options
 const QUERY_TYPES = [
   { id: 'directSuperclasses', label: 'Direct superclasses', icon: ArrowUp, description: 'Immediate parent classes' },
   { id: 'superclasses', label: 'Superclasses', icon: ArrowUp, description: 'All ancestor classes' },
@@ -312,19 +295,17 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   onAddToOntology,
   showNotification
 }) => {
-  // Generate dynamic example queries based on actual ontology entities
+
   const exampleQueries = useMemo(
     () => generateExampleQueries(classes, objectProperties, dataProperties),
     [classes, objectProperties, dataProperties]
   );
-  
-  // Set initial query based on first available class
+
   const initialQuery = useMemo(() => {
     const firstClass = classes.find(c => !c.id.includes('owl#Thing'));
     return firstClass?.label || 'Thing';
   }, [classes]);
-  
-  // State
+
   const [query, setQuery] = useState(initialQuery);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
@@ -339,65 +320,57 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [classTreeSearch, setClassTreeSearch] = useState('');
   const [expandedClassNodes, setExpandedClassNodes] = useState<string[]>(['http://www.w3.org/2002/07/owl#Thing']);
-  // Suggestions are otherwise purely derived from `query` (see useMemo below), so with no
-  // notion of "closed" they'd stay visible — as an absolutely-positioned overlay — even once
-  // the user has clicked away to Execute and is looking at Results underneath. Gating on
-  // focus closes them the moment the textarea isn't the active element.
+
   const [isQueryInputFocused, setIsQueryInputFocused] = useState(false);
 
-  // Autocomplete suggestions based on current input
   const suggestions = useMemo(() => {
     const words = query.split(/\s+/);
     const lastWord = words[words.length - 1]?.toLowerCase() || '';
-    
+
     if (lastWord.length < 2) return [];
-    
+
     const allSuggestions: { type: string; value: string; label: string }[] = [];
-    
-    // Add class suggestions
+
     classes.forEach(c => {
       if (c.label.toLowerCase().includes(lastWord)) {
         allSuggestions.push({ type: 'class', value: c.label, label: `${c.label} (Class)` });
       }
     });
-    
-    // Add property suggestions
+
     objectProperties.forEach(p => {
       if (p.label.toLowerCase().includes(lastWord)) {
         allSuggestions.push({ type: 'property', value: p.label, label: `${p.label} (Object Property)` });
       }
     });
-    
+
     dataProperties.forEach(p => {
       if (p.label.toLowerCase().includes(lastWord)) {
         allSuggestions.push({ type: 'property', value: p.label, label: `${p.label} (Data Property)` });
       }
     });
-    
-    // Add keyword suggestions
+
     MANCHESTER_KEYWORDS.forEach(kw => {
       if (kw.toLowerCase().startsWith(lastWord)) {
         allSuggestions.push({ type: 'keyword', value: kw, label: `${kw} (keyword)` });
       }
     });
-    
+
     return allSuggestions.slice(0, 10);
   }, [query, classes, objectProperties, dataProperties]);
 
   const pendingJobListenerRef = useRef<((event: Event) => void) | null>(null);
 
-  // Execute query
   const handleExecuteQuery = useCallback(async () => {
     if (!query.trim()) {
       setError('Please enter a class expression');
       return;
     }
-    
+
     if (selectedTypes.length === 0) {
       setError('Please select at least one query type');
       return;
     }
-    
+
     setIsLoading(true);
     setLoadingMessage(null);
     setError(null);
@@ -407,7 +380,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
       window.removeEventListener('dlQueryJobUpdate', pendingJobListenerRef.current);
       pendingJobListenerRef.current = null;
     }
-    
+
     try {
       const submit = await apiClient.post<DLQueryResponse>(
         `/api/ontology/${projectId}/dl-query`,
@@ -462,7 +435,6 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     }
   }, [query, selectedTypes, projectId, apiClient]);
 
-  // Toggle query type selection
   const toggleQueryType = (typeId: string) => {
     setSelectedTypes(prev => 
       prev.includes(typeId) 
@@ -471,7 +443,6 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     );
   };
 
-  // Load example query
   const loadExample = (expression: string) => {
     setQuery(expression);
     setResults(null);
@@ -575,10 +546,9 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     );
   };
 
-  // Copy results to clipboard
   const copyResults = () => {
     if (!results) return;
-    
+
     const text = Object.entries(results.results)
       .map(([type, items]) => {
         if (!items || items.length === 0) return '';
@@ -586,13 +556,12 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
       })
       .filter(Boolean)
       .join('\n\n');
-    
+
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Add query as defined class to ontology
   const handleAddToOntology = () => {
     if (!newClassName.trim()) {
       showNotification?.('Please enter a class name', 'error');
@@ -604,7 +573,6 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     showNotification?.(`Created class "${newClassName}" with definition: ${query}`, 'success');
   };
 
-  // Filter results by name
   const filterResults = (items: DLQueryResult[] | undefined) => {
     if (!items) return [];
     if (!nameFilter.trim()) return items;
@@ -613,7 +581,6 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     );
   };
 
-  // Count total results
   const totalResults = useMemo(() => {
     if (!results?.results) return 0;
     return Object.values(results.results).reduce((sum, items) => sum + (items?.length || 0), 0);
@@ -621,7 +588,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
 
   return (
     <div className="flex h-full bg-gray-50">
-      {/* Left Sidebar - Class Hierarchy */}
+      {}
       <aside className="w-72 bg-white border-r border-gray-200 flex flex-col overflow-hidden">
         <div className="p-3 border-b border-gray-100">
           <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Class Hierarchy</h3>
@@ -645,9 +612,9 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
         </div>
       </aside>
 
-      {/* Main Query Area */}
+      {}
       <main className="flex-1 flex flex-col p-3 overflow-hidden">
-        {/* Query Input Section */}
+        {}
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm mb-3">
           <div className="p-3 border-b border-gray-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -663,8 +630,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
               Syntax Help
             </button>
           </div>
-          
-          {/* Syntax Help Panel */}
+
+          {}
           {showSyntaxHelp && (
             <div className="p-3 bg-purple-50 border-b border-purple-100 text-xs">
               <h4 className="font-semibold text-purple-800 mb-2">Manchester OWL Syntax Quick Reference</h4>
@@ -703,8 +670,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
               </div>
             </div>
           )}
-          
-          {/* Query Textarea */}
+
+          {}
           <div className="p-3 relative">
             <textarea
               value={query}
@@ -721,9 +688,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
               }}
             />
 
-            {/* Auto-completion Suggestions — only while the input is actually focused, so this
-                overlay never lingers over the Action Buttons / Results once the user clicks
-                away (e.g. to Execute and read the results it produced). */}
+            {}
             {isQueryInputFocused && suggestions.length > 0 && (
               <div className="absolute top-full left-3 right-3 mt-1 bg-white border border-purple-200 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
                 <div className="p-2 border-b border-gray-100 bg-purple-50">
@@ -736,13 +701,10 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                   {suggestions.map((suggestion, idx) => (
                     <button
                       key={idx}
-                      // Selecting a suggestion via click blurs the textarea before the click
-                      // handler below would run — preventDefault on mousedown keeps focus on
-                      // the textarea so the click actually lands instead of the dropdown
-                      // closing itself out from under the cursor.
+
                       onMouseDown={e => e.preventDefault()}
                       onClick={() => {
-                        // Replace last word with suggestion
+
                         const words = query.split(/\s+/);
                         words[words.length - 1] = suggestion.value;
                         setQuery(words.join(' ') + ' ');
@@ -764,8 +726,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                 </div>
               </div>
             )}
-            
-            {/* Action Buttons */}
+
+            {}
             <div className="flex items-center gap-2 mt-2">
               <button
                 onClick={handleExecuteQuery}
@@ -779,7 +741,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                 )}
                 Execute (Ctrl+Enter)
               </button>
-              
+
               <button
                 onClick={() => setShowAddDialog(true)}
                 disabled={!query.trim()}
@@ -788,7 +750,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                 <Plus size={16} />
                 Add to Ontology
               </button>
-              
+
               {results && (
                 <button
                   onClick={copyResults}
@@ -801,8 +763,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
             </div>
           </div>
         </div>
-        
-        {/* Error Message */}
+
+        {}
         {error && (
           <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
             <AlertCircle size={18} className="text-red-600 mt-0.5 flex-shrink-0" />
@@ -812,8 +774,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
             </div>
           </div>
         )}
-        
-        {/* Results Section */}
+
+        {}
         <div className="flex-1 bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden flex flex-col">
           <div className="p-3 border-b border-gray-100 flex items-center justify-between bg-gray-50">
             <div className="flex items-center gap-2">
@@ -824,8 +786,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                 </span>
               )}
             </div>
-            
-            {/* Results filter */}
+
+            {}
             <div className="flex items-center gap-2">
               <Search size={14} className="text-gray-400" />
               <input
@@ -837,7 +799,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
               />
             </div>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto p-3">
             {isLoading ? (
               <div className="flex items-center justify-center h-full text-gray-600">
@@ -849,10 +811,10 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                 {Object.entries(results.results || {}).map(([type, items]) => {
                   const filteredItems = filterResults(items);
                   if (!filteredItems || filteredItems.length === 0) return null;
-                  
+
                   const typeConfig = QUERY_TYPES.find(t => t.id === type);
                   const Icon = typeConfig?.icon || Layers;
-                  
+
                   return (
                     <div key={type} className="border border-gray-100 rounded-lg overflow-hidden">
                       <div className="px-3 py-2 bg-gray-50 flex items-center gap-2 border-b border-gray-100">
@@ -881,7 +843,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
                     </div>
                   );
                 })}
-                
+
                 {totalResults === 0 && (
                   <div className="text-center py-8 text-gray-600">
                     <Info size={32} className="mx-auto mb-2 opacity-50" />
@@ -900,10 +862,10 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           </div>
         </div>
       </main>
-      
-      {/* Right Sidebar - Query Options & Examples */}
+
+      {}
       <aside className="w-72 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
-        {/* Query Type Selection */}
+        {}
         <div className="p-3 border-b border-gray-100">
           <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Query For</h3>
           <div className="space-y-1">
@@ -925,8 +887,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
             ))}
           </div>
         </div>
-        
-        {/* Example Queries */}
+
+        {}
         <div className="flex-1 overflow-y-auto">
           <div 
             className="p-3 border-b border-gray-100 flex items-center justify-between cursor-pointer hover-overlay"
@@ -938,7 +900,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
             </div>
             {showExamples ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </div>
-          
+
           {showExamples && (
             <div className="p-2">
               {exampleQueries.map(category => (
@@ -960,8 +922,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
             </div>
           )}
         </div>
-        
-        {/* Ontology Statistics */}
+
+        {}
         <div className="p-3 border-t border-gray-100 bg-gray-50">
           <h3 className="text-xs font-semibold text-gray-600 mb-2">Available Entities</h3>
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -984,8 +946,8 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           </div>
         </div>
       </aside>
-      
-      {/* Add to Ontology Dialog */}
+
+      {}
       {showAddDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-xl w-96 overflow-hidden">

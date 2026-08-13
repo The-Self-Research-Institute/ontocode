@@ -65,7 +65,6 @@ public class DLQueryQueueProcessor {
         });
     }
 
-    /** Retry when jobs were deferred due to heap pressure or import overlap. */
     @Scheduled(fixedDelayString = "${ontocode.dlquery.retry-delay-ms:15000}")
     public void retryDeferredJobs() {
         if (queueManager.hasQueuedJobs() && queueManager.canProcess()) {

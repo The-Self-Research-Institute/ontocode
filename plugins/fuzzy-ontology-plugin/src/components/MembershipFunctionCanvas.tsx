@@ -14,10 +14,6 @@ interface MembershipFunctionCanvasProps {
   domain?: [number, number]; // [min, max] for x-axis
 }
 
-/**
- * Canvas-based membership function visualizer 
- * Draws curve preview for triangular, trapezoidal, Gaussian, sigmoid functions
- */
 const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({
   membershipFunction,
   width = 400,
@@ -33,20 +29,15 @@ const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Clear canvas
     ctx.fillStyle = '#1e1e1e';
     ctx.fillRect(0, 0, width, height);
 
-    // Draw grid
     drawGrid(ctx, width, height, domain);
 
-    // Draw axes
     drawAxes(ctx, width, height);
 
-    // Draw membership function curve
     drawMembershipFunction(ctx, membershipFunction, width, height, domain);
 
-    // Draw parameters as vertical lines
     drawParameterMarkers(ctx, membershipFunction, width, height, domain);
 
   }, [membershipFunction, width, height, domain]);
@@ -55,7 +46,6 @@ const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({
     ctx.strokeStyle = '#2d2d2d';
     ctx.lineWidth = 1;
 
-    // Vertical grid lines
     const xStep = (max - min) / 10;
     for (let i = 0; i <= 10; i++) {
       const x = (i / 10) * (w - 60) + 40;
@@ -65,7 +55,6 @@ const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({
       ctx.stroke();
     }
 
-    // Horizontal grid lines
     for (let i = 0; i <= 10; i++) {
       const y = (i / 10) * (h - 50) + 20;
       ctx.beginPath();
@@ -81,24 +70,20 @@ const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({
     ctx.font = '11px monospace';
     ctx.fillStyle = '#9ca3af';
 
-    // Y-axis
     ctx.beginPath();
     ctx.moveTo(40, 20);
     ctx.lineTo(40, h - 30);
     ctx.stroke();
 
-    // X-axis
     ctx.beginPath();
     ctx.moveTo(40, h - 30);
     ctx.lineTo(w - 20, h - 30);
     ctx.stroke();
 
-    // Y-axis labels
     ctx.fillText('1.0', 10, 25);
     ctx.fillText('0.5', 10, h / 2);
     ctx.fillText('0.0', 10, h - 25);
 
-    // X-axis labels
     const [min, max] = domain;
     ctx.fillText(String(min), 35, h - 10);
     ctx.fillText(String(Math.round((min + max) / 2)), w / 2 - 10, h - 10);
@@ -116,13 +101,11 @@ const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({
     const graphWidth = w - padding.left - padding.right;
     const graphHeight = h - padding.top - padding.bottom;
 
-    // Map domain value to canvas x coordinate
     const xToCanvas = (x: number): number => {
       const normalized = (x - domainMin) / (domainMax - domainMin);
       return padding.left + normalized * graphWidth;
     };
 
-    // Map membership degree [0,1] to canvas y coordinate
     const yToCanvas = (y: number): number => {
       return padding.top + (1 - y) * graphHeight;
     };
@@ -135,7 +118,7 @@ const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({
     for (let i = 0; i <= steps; i++) {
       const x = domainMin + (i / steps) * (domainMax - domainMin);
       const y = evaluateMembershipFunction(func, x, domainMin, domainMax);
-      
+
       const canvasX = xToCanvas(x);
       const canvasY = yToCanvas(y);
 
@@ -148,7 +131,6 @@ const MembershipFunctionCanvas: React.FC<MembershipFunctionCanvasProps> = ({
 
     ctx.stroke();
 
-    // Fill area under curve
     ctx.lineTo(xToCanvas(domainMax), yToCanvas(0));
     ctx.lineTo(xToCanvas(domainMin), yToCanvas(0));
     ctx.closePath();

@@ -1,18 +1,4 @@
-/**
- * build-desktop.js
- *
- * Unified desktop build with CLI flags (cross-platform).
- *
- * Usage:
- *   node scripts/build-desktop.js --help
- *   node scripts/build-desktop.js --full --win
- *   node scripts/build-desktop.js --java --web --portable
- *   node scripts/build-desktop.js --web --portable --portable-dir=E:\tmp\ontocode-portable
- *
- * npm:
- *   npm run build:desktop -- --full --win
- *   npm run dist:win
- */
+
 
 const fs = require('fs');
 const path = require('path');
@@ -172,7 +158,6 @@ function copyDir(src, dest) {
     }
 }
 
-/** Overlay-copy without deleting dest root (avoids EPERM when portable app holds backend/JRE open). */
 function syncDirOverlay(src, dest) {
     ensureDir(dest);
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -241,7 +226,6 @@ function buildJava(quick) {
     console.log(`  ✓  desktop.jar → ${DESKTOP_JAR_DEST}`);
 }
 
-/** Incremental Maven — only editor + desktop fat jar (~60–90s vs 4+ min full chain). */
 function buildJavaPatch() {
     run(
         'mvn install -pl ontology-editor -DskipTests -q',
@@ -304,7 +288,7 @@ function buildPlugins() {
 }
 
 function buildWeb() {
-    // Vite must resolve deps from webview-src/node_modules, not repo root.
+
     const vitePluginReact = path.join(WEBVIEW, 'node_modules', '@vitejs', 'plugin-react');
     if (!fs.existsSync(vitePluginReact)) {
         run('npm ci', WEBVIEW, 'Frontend: npm ci in webview-src (installs @vitejs/plugin-react, vite, …)');
@@ -328,7 +312,7 @@ function runPrepareResources(opts) {
     const args = ['node', path.join(__dirname, 'prepare-resources.js')];
     if (opts.buildJavaInResources) args.push('--build-java');
     if (opts.skipJre) args.push('--skip-jre');
-    // Do not rebuild Java here when buildJava() already ran — only copy jars + JRE.
+
     console.log(`\n→ prepare-resources`);
     const env = { ...process.env };
     if (opts.platform === 'win' || process.env.TARGET_PLATFORM === 'win32') {
@@ -337,7 +321,6 @@ function runPrepareResources(opts) {
     execSync(args.join(' '), { cwd: ELECTRON_APP, stdio: 'inherit', env });
 }
 
-/** Production deps for app.asar — always refresh so new packages (e.g. electron-updater) are included. */
 function installStagingDeps(staging) {
     const lockSrc = path.join(ELECTRON_APP, 'package-lock.json');
     if (fs.existsSync(lockSrc)) {
@@ -347,7 +330,7 @@ function installStagingDeps(staging) {
     if (fs.existsSync(nm)) {
         fs.rmSync(nm, { recursive: true, force: true });
     }
-    // Ensure electron-app itself has deps before staging install
+
     if (!fs.existsSync(path.join(ELECTRON_APP, 'node_modules', 'electron-updater'))) {
         run('npm install --omit=dev --no-audit --no-fund', ELECTRON_APP, 'electron-app: npm install --omit=dev');
     }
@@ -422,7 +405,6 @@ function packPortable(opts) {
     const resourcesDir = path.join(portable, 'resources');
     ensureDir(resourcesDir);
 
-    // Pack outside portable/resources so a locked sibling backend/ folder cannot block asar.
     const asarTmp = path.join(path.dirname(staging), 'ontocode-app.asar.tmp');
     try {
         unlinkWithRetry(asarTmp);

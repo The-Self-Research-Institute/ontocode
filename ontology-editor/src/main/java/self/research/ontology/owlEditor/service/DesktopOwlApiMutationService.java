@@ -12,10 +12,6 @@ import self.research.ontology.owlEditor.config.FastOpenCondition;
 import java.io.IOException;
 import java.util.List;
 
-/**
- * Desktop OWLAPI-first mutation path: direct axiom patch when possible, otherwise
- * in-memory SPARQL UPDATE — never requires Fuseki for structured editor mutations.
- */
 @Service
 @Conditional(FastOpenCondition.class)
 public class DesktopOwlApiMutationService {
@@ -25,6 +21,7 @@ public class DesktopOwlApiMutationService {
     private final ProjectOntologyCache ontologyCache;
     private final OwlApiMutationPatcher patcher;
     private final InMemorySparqlOntologyMutator sparqlMutator;
+    private final StorageManager storageManager;
     @Nullable
     private final DesktopOntologyLoader desktopOntologyLoader;
     @Nullable
@@ -39,20 +36,19 @@ public class DesktopOwlApiMutationService {
     public DesktopOwlApiMutationService(ProjectOntologyCache ontologyCache,
                                         OwlApiMutationPatcher patcher,
                                         InMemorySparqlOntologyMutator sparqlMutator,
+                                        StorageManager storageManager,
                                         @Nullable DesktopOntologyLoader desktopOntologyLoader,
                                         @Nullable ProjectImportService projectImportService,
                                         @Nullable DesktopFusekiSyncScheduler fusekiSyncScheduler) {
         this.ontologyCache = ontologyCache;
         this.patcher = patcher;
         this.sparqlMutator = sparqlMutator;
+        this.storageManager = storageManager;
         this.desktopOntologyLoader = desktopOntologyLoader;
         this.projectImportService = projectImportService;
         this.fusekiSyncScheduler = fusekiSyncScheduler;
     }
 
-    /**
-     * @return true when the mutation was applied entirely in OWLAPI (no Fuseki).
-     */
     public boolean tryApply(String projectId, List<OntologyMutationService.MutationOp> ops, String sparqlUpdate) {
         if (!owlApiFirst || ops == null || ops.isEmpty() || !ontologyCache.has(projectId)) {
             return false;
@@ -76,6 +72,8 @@ public class DesktopOwlApiMutationService {
             if (fusekiSyncScheduler != null) {
                 fusekiSyncScheduler.scheduleAfterMutation(projectId);
             }
+
+            storageManager.clearCodeViewCache(projectId);
         } catch (IOException e) {
             log.warn("[OwlApiDesktop] Persist after mutation failed for {}: {}", projectId, e.getMessage());
             return false;

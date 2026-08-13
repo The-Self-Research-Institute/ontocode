@@ -34,7 +34,7 @@ final class EphemeralReasonerFactory {
                 case PELLET, OPENLLET -> OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
                 case FACTPLUSPLUS -> new JFactFactory().createReasoner(ontology, config);
                 case ELK -> {
-                    // ELK OWL EL reasoner (io.github.liveontologies:elk-owlapi:0.6.0, OWLAPI 5-compatible).
+
                     try {
                         yield new ElkReasonerFactory().createReasoner(ontology, config);
                     } catch (Throwable e) {

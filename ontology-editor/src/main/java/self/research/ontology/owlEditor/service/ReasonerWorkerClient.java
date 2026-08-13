@@ -63,8 +63,7 @@ public class ReasonerWorkerClient {
                     new HttpEntity<>(body, internalHeaders()),
                     Map.class);
             Map<String, Object> result = response.getBody() != null ? response.getBody() : Map.of("success", false);
-            // TEMP DIAGNOSTIC — investigating a reported job-id mixup between concurrent
-            // reasoner operations submitted from editor vs plugin-service. Remove once root-caused.
+
             log.info("[DIAG] submitJob: sentJobType={} projectId={} receivedJobId={} receivedJobType={} atMs={}",
                     jobType, projectId, result.get("jobId"), result.get("jobType"), System.currentTimeMillis());
             return result;
@@ -85,7 +84,7 @@ public class ReasonerWorkerClient {
                     new HttpEntity<>(internalHeaders()),
                     Map.class);
             Map<String, Object> result = response.getBody();
-            // TEMP DIAGNOSTIC — see submitJob() above. Remove once root-caused.
+
             log.info("[DIAG] getJob: requestedJobId={} receivedJobType={} receivedStatus={} atMs={}",
                     jobId, result != null ? result.get("jobType") : "NULL_BODY",
                     result != null ? result.get("status") : "NULL_BODY", System.currentTimeMillis());

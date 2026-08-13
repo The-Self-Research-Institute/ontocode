@@ -10,11 +10,6 @@ import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
 import java.util.Collection;
 
-/**
- * Computes how many DL Query jobs may run in parallel at this moment.
- * The configured max is a ceiling; heap pressure, ontology size weights, and
- * active imports can reduce the effective limit dynamically.
- */
 @Slf4j
 @Service
 public class DLQueryConcurrencyPolicy {
@@ -27,15 +22,12 @@ public class DLQueryConcurrencyPolicy {
     @Value("${ontocode.dlquery.memory-aware:true}")
     private boolean memoryAware;
 
-    /** Do not start another job when free heap falls below this ratio (0–1). */
     @Value("${ontocode.dlquery.min-free-heap-ratio:0.20}")
     private double minFreeHeapRatio;
 
-    /** Triples at or above this threshold consume a full slot budget alone. */
     @Value("${ontocode.dlquery.large-triple-threshold:500000}")
     private long largeTripleThreshold;
 
-    /** Sum of active job slot weights cannot exceed this budget. */
     @Value("${ontocode.dlquery.slot-budget:${ontocode.dlquery.max-concurrent:1}}")
     private int slotBudget;
 
@@ -120,10 +112,6 @@ public class DLQueryConcurrencyPolicy {
         return usedSlots(activeJobs) + candidate.getSlotWeight() <= snap.slotBudget();
     }
 
-    /**
-     * Always allow at least one job when the queue is backing up and nothing is running,
-     * otherwise a memory spike during idle could deadlock the queue forever.
-     */
     private int maxJobsFromHeap(Collection<DLQueryJob> activeJobs, double freeRatio) {
         if (!memoryAware) {
             return configuredMax;

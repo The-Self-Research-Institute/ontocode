@@ -1,7 +1,4 @@
-/**
- * Graph Mutation Service
- * Handles all graph modifications with optimistic updates
- */
+
 
 import type { OntologyNode, OntologyEdge } from '../types';
 
@@ -10,9 +7,6 @@ export class GraphMutationService {
 
   constructor(private baseUrl: string = `${(window as any).API_BASE_URL || 'http://localhost:8082'}/api/ontology`) {}
 
-  /**
-   * Create a new node
-   */
   async createNode(projectId: string, node: Partial<OntologyNode>): Promise<OntologyNode> {
     const operationId = `create-node-${Date.now()}`;
     this.pendingOperations.add(operationId);
@@ -37,9 +31,6 @@ export class GraphMutationService {
     }
   }
 
-  /**
-   * Update an existing node
-   */
   async updateNode(
     projectId: string,
     nodeId: string,
@@ -71,9 +62,6 @@ export class GraphMutationService {
     }
   }
 
-  /**
-   * Delete a node
-   */
   async deleteNode(projectId: string, nodeId: string, cascade: boolean = false): Promise<void> {
     const operationId = `delete-node-${nodeId}-${Date.now()}`;
     this.pendingOperations.add(operationId);
@@ -98,9 +86,6 @@ export class GraphMutationService {
     }
   }
 
-  /**
-   * Create a new edge
-   */
   async createEdge(projectId: string, edge: Partial<OntologyEdge>): Promise<OntologyEdge> {
     const operationId = `create-edge-${Date.now()}`;
     this.pendingOperations.add(operationId);
@@ -125,9 +110,6 @@ export class GraphMutationService {
     }
   }
 
-  /**
-   * Update an existing edge
-   */
   async updateEdge(
     projectId: string,
     edgeId: string,
@@ -159,9 +141,6 @@ export class GraphMutationService {
     }
   }
 
-  /**
-   * Delete an edge
-   */
   async deleteEdge(projectId: string, edgeId: string): Promise<void> {
     const operationId = `delete-edge-${edgeId}-${Date.now()}`;
     this.pendingOperations.add(operationId);
@@ -186,9 +165,6 @@ export class GraphMutationService {
     }
   }
 
-  /**
-   * Batch operations for better performance
-   */
   async batchCreate(
     projectId: string,
     operations: Array<{
@@ -222,9 +198,6 @@ export class GraphMutationService {
     }
   }
 
-  /**
-   * Move nodes (update positions)
-   */
   async updateNodePositions(
     projectId: string,
     positions: Array<{ nodeId: string; x: number; y: number }>
@@ -243,9 +216,6 @@ export class GraphMutationService {
     }
   }
 
-  /**
-   * Check if operations are pending
-   */
   hasPendingOperations(): boolean {
     return this.pendingOperations.size > 0;
   }

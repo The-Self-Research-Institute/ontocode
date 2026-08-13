@@ -13,11 +13,15 @@ import {
   Image,
   File,
   FileVideo,
+  Mail,
 } from "lucide-react";
 import { useAuth } from "../custom-hook/useAuth";
 import { getCloudGatewayUrl } from "../config/deploymentConfig";
 import { isAppOnline, subscribeOnlineStatus } from "../utils/connectivity";
 import { isDesktop } from "../utils/desktop";
+import { validateEmail } from "../utils/validation";
+
+const DESKTOP_PLACEHOLDER_EMAIL = "local@ontocode.desktop";
 
 interface ReportIssueModalProps {
   projectName?: string;
@@ -26,7 +30,6 @@ interface ReportIssueModalProps {
   onClose: () => void;
 }
 
-// Get API base URL based on deployment type
 const getApiBaseUrl = () => {
   return getCloudGatewayUrl();
 };
@@ -38,6 +41,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   onClose,
 }) => {
   const { user } = useAuth();
+  const desktop = isDesktop();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [stepsToReproduce, setStepsToReproduce] = useState("");
@@ -55,23 +59,45 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     jiraFailureReason?: string;
   } | null>(null);
 
+  const [email, setEmail] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [localProfile, setLocalProfile] = useState<Record<string, unknown> | null>(null);
+
   useEffect(() => {
     setOnline(isAppOnline());
     return subscribeOnlineStatus(setOnline);
   }, []);
 
-  // Get system info
+  useEffect(() => {
+    if (!desktop) return;
+    (window as any).electronAPI
+      ?.getProfile()
+      .then((profile: Record<string, unknown> | null) => {
+        setLocalProfile(profile);
+        const savedEmail = typeof profile?.email === "string" ? profile.email : "";
+        if (savedEmail) {
+          setEmail(savedEmail);
+        } else if (user?.email && user.email !== DESKTOP_PLACEHOLDER_EMAIL) {
+          setEmail(user.email);
+        }
+      })
+      .catch(() => {
+        /* no saved profile yet — leave email blank */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktop]);
+
+  const emailValidation = desktop ? validateEmail(email) : { isValid: true };
+
   const getSystemInfo = () => {
-    // Extract OS info from user agent
+
     const ua = navigator.userAgent;
     let osInfo = navigator.platform;
 
-    // Try to get more readable OS name
     if (ua.indexOf("Win") !== -1) osInfo = "Windows";
     else if (ua.indexOf("Mac") !== -1) osInfo = "macOS";
     else if (ua.indexOf("Linux") !== -1) osInfo = "Linux";
 
-    // Extract VS Code version from user agent if available
     const vscodeMatch = ua.match(/Code\/([\d.]+)/);
     const chromeMatch = ua.match(/Chrome\/([\d.]+)/);
     const electronMatch = ua.match(/Electron\/([\d.]+)/);
@@ -91,7 +117,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   };
 
   const processFiles = (files: File[]) => {
-    // Define allowed file types
+
     const allowedExtensions = [
       ".jpg",
       ".jpeg",
@@ -125,7 +151,6 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       "application/x-turtle",
     ];
 
-    // Validate file types
     const invalidTypeFiles = files.filter((f: File) => {
       const fileName = f.name.toLowerCase();
       const fileType = f.type.toLowerCase();
@@ -143,11 +168,9 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       return;
     }
 
-    // Add all valid files
     const newAttachments = [...attachments, ...files];
     setAttachments(newAttachments);
 
-    // Generate previews for image and text-based files
     files.forEach((file) => {
       const fileName = file.name.toLowerCase();
       const isTextFile =
@@ -164,7 +187,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         [".mp4", ".webm", ".ogg", ".mov", ".m4v"].some((ext) => fileName.endsWith(ext));
 
       if (file.type.startsWith("image/")) {
-        // Image preview - read as data URL
+
         const reader = new FileReader();
         reader.onload = (e) => {
           if (e.target?.result) {
@@ -173,11 +196,11 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         };
         reader.readAsDataURL(file);
       } else if (isVideo) {
-        // Video preview - use an object URL (avoids loading large files into memory)
+
         const objectUrl = URL.createObjectURL(file);
         setFilePreviews((prev) => new Map(prev).set(file.name, `video:${objectUrl}`));
       } else if (isTextFile) {
-        // Text file preview - read first 500 characters
+
         const reader = new FileReader();
         reader.onload = (e) => {
           if (e.target?.result) {
@@ -188,10 +211,10 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         };
         reader.readAsText(file);
       } else if (isPDF) {
-        // PDF preview - mark as PDF type
+
         setFilePreviews((prev) => new Map(prev).set(file.name, "pdf:preview"));
       } else if (isWordDoc) {
-        // Word document preview - mark as Word type
+
         setFilePreviews((prev) => new Map(prev).set(file.name, "word:preview"));
       }
     });
@@ -211,7 +234,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only set to false if leaving the drop zone entirely
+
     if (e.currentTarget === e.target) {
       setIsDragging(false);
     }
@@ -230,10 +253,9 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     const fileToRemove = attachments[index];
     setAttachments(attachments.filter((_, i) => i !== index));
 
-    // Remove preview if exists
     if (filePreviews.has(fileToRemove.name)) {
       const existingPreview = filePreviews.get(fileToRemove.name);
-      // Release video object URLs to avoid leaking memory
+
       if (existingPreview?.startsWith("video:")) {
         URL.revokeObjectURL(existingPreview.substring(6));
       }
@@ -243,7 +265,6 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     }
   };
 
-  // Release any outstanding video object URLs when the modal unmounts
   useEffect(() => {
     return () => {
       filePreviews.forEach((preview) => {
@@ -275,6 +296,12 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       return;
     }
 
+    if (desktop && !emailValidation.isValid) {
+      setEmailTouched(true);
+      alert(emailValidation.error || "Please enter a valid email address");
+      return;
+    }
+
     setSubmitting(true);
     setSubmitResult(null);
 
@@ -291,6 +318,10 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
 
       formData.append("priority", priority);
 
+      if (desktop && email.trim()) {
+        formData.append("userEmail", email.trim());
+      }
+
       if (projectId) {
         formData.append("projectId", projectId);
       }
@@ -303,31 +334,36 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         formData.append("ontologyFilePath", ontologyFilePath);
       }
 
-      // Add system info
       const systemInfo = getSystemInfo();
       formData.append("osName", systemInfo.osName);
       formData.append("osVersion", systemInfo.osVersion);
       formData.append("vsCodeVersion", systemInfo.vsCodeVersion);
       formData.append("extensionVersion", systemInfo.extensionVersion);
 
-      // Add attachments
       attachments.forEach((file) => {
         formData.append("attachments", file);
       });
 
-      // Submit to backend - Get token from auth context
       const token = user?.token;
       const apiBaseUrl = getApiBaseUrl();
       const response = await fetch(`${apiBaseUrl}/api/v1/issues/report`, {
         method: "POST",
         body: formData,
-        // credentials: 'include', // Removed - we use JWT in Authorization header, not cookies
+
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
       const result = await response.json();
 
       if (result.success) {
+        if (desktop && email.trim()) {
+          (window as any).electronAPI
+            ?.saveProfile({ ...localProfile, email: email.trim() })
+            .catch(() => {
+              /* non-critical — worst case the email isn't pre-filled next time */
+            });
+        }
+
         const jiraFailureReason = result.jiraFailureReason || undefined;
         setSubmitResult({
           success: true,
@@ -337,7 +373,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         });
 
         if (!jiraFailureReason) {
-          // Close modal after 3 seconds only when Jira creation succeeded.
+
           setTimeout(() => {
             onClose();
           }, 3000);
@@ -359,7 +395,6 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     }
   };
 
-  // Get file icon and color based on file type
   const getFileIconAndColor = (file: File) => {
     const fileName = file.name.toLowerCase();
     const fileType = file.type.toLowerCase();
@@ -383,7 +418,6 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     return { icon: FileText, color: "bg-blue-100", iconColor: "text-blue-600" };
   };
 
-  // Get priority color
   const getPriorityColor = (p: string) => {
     switch (p) {
       case "Highest":
@@ -401,7 +435,6 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     }
   };
 
-  // Get issue type icon and color
   const getIssueTypeStyle = (type: string) => {
     switch (type) {
       case "Bug":
@@ -418,7 +451,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col">
-        {/* Header */}
+        {}
         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="bg-white bg-opacity-20 p-2 rounded-lg">
@@ -448,7 +481,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
           </div>
         )}
 
-        {/* Success/Error Message */}
+        {}
         {submitResult && (
           <div
             className={`mx-6 mt-6 p-5 rounded-lg flex items-start gap-4 shadow-md ${
@@ -505,11 +538,11 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
           </div>
         )}
 
-        {/* Content */}
+        {}
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
-          {/* Issue Type & Priority Row */}
+          {}
           <div className="grid grid-cols-2 gap-4">
-            {/* Issue Type */}
+            {}
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
                 <Tag size={16} className="text-purple-600" />
@@ -540,7 +573,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               </div>
             </div>
 
-            {/* Priority */}
+            {}
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
                 <Flag size={16} className="text-purple-600" />
@@ -568,7 +601,33 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             </div>
           </div>
 
-          {/* Title */}
+          {}
+          {desktop && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                <Mail size={16} className="text-purple-600" />
+                Your Email <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onBlur={() => setEmailTouched(true)}
+                placeholder="you@example.com"
+                className={`w-full px-4 py-3 border-2 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400 transition-all ${
+                  emailTouched && !emailValidation.isValid ? "border-red-400" : "border-gray-300"
+                }`}
+                disabled={submitting}
+              />
+              <p className={`text-xs ${emailTouched && !emailValidation.isValid ? "text-red-500 font-medium" : "text-gray-500"}`}>
+                {emailTouched && !emailValidation.isValid
+                  ? emailValidation.error
+                  : "So we can follow up with you about this report"}
+              </p>
+            </div>
+          )}
+
+          {}
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
               <FileText size={16} className="text-purple-600" />
@@ -591,7 +650,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             </div>
           </div>
 
-          {/* Description */}
+          {}
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
               <FileCode size={16} className="text-purple-600" />
@@ -607,7 +666,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             />
           </div>
 
-          {/* Steps to Reproduce */}
+          {}
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
               <ListOrdered size={16} className="text-purple-600" />
@@ -624,7 +683,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             />
           </div>
 
-          {/* File Attachments */}
+          {}
           <div className="space-y-3">
             <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
               <Upload size={16} className="text-purple-600" />
@@ -640,7 +699,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              {/* Upload Button - Vertical centered layout with dynamic sizing */}
+              {}
               <label
                 className={`flex flex-col items-center justify-center cursor-pointer transition-all ${
                   attachments.length > 0 ? "py-3" : "py-8"
@@ -669,7 +728,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                   {isDragging ? "Release to upload" : "or drag and drop"}
                 </span>
 
-                {/* Supported file types */}
+                {}
                 <span className={`text-gray-500 transition-all ${attachments.length > 0 ? "text-[10px]" : "text-xs"}`}>
                   JPG, PNG, MP4, WEBM, MOV, PDF, DOC, DOCX, TXT, .log, .owl, .ttl, .rdf
                 </span>
@@ -684,7 +743,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                 />
               </label>
 
-              {/* File List */}
+              {}
               {attachments.length > 0 && (
                 <div className="border-t border-gray-200 pt-4 px-4 pb-2">
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -698,7 +757,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                           key={index}
                           className="relative group bg-white rounded-lg border-2 border-gray-200 hover:border-purple-400 shadow-sm hover:shadow-md transition-all overflow-hidden"
                         >
-                          {/* Remove button */}
+                          {}
                           <button
                             onClick={() => removeAttachment(index)}
                             className="absolute top-2 right-2 p-1.5 bg-white rounded-full border border-gray-300 text-gray-400 hover:text-red-600 hover:bg-red-50 hover:border-red-300 transition-colors opacity-0 group-hover:opacity-100 z-10 shadow-md"
@@ -708,7 +767,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                             <X size={14} />
                           </button>
 
-                          {/* File thumbnail/icon */}
+                          {}
                           <div className="w-full aspect-[4/3] flex items-center justify-center p-2 bg-gray-50">
                             {isImage &&
                             preview &&
@@ -749,9 +808,9 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                             )}
                           </div>
 
-                          {/* File info */}
+                          {}
                           <div className="p-2 border-t border-gray-100">
-                            {/* File name */}
+                            {}
                             <p
                               className="text-xs font-medium text-gray-800 text-center truncate w-full"
                               title={file.name}
@@ -769,7 +828,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
+        {}
         <div className="border-t-2 border-gray-200 bg-gray-50 px-6 py-5 flex justify-between items-center">
           <p className="text-xs text-gray-600">
             <span className="text-red-500">*</span> Required fields
@@ -784,8 +843,24 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             </button>
             <button
               onClick={handleSubmit}
-              disabled={submitting || !online || !title.trim() || !description.trim()}
-              title={!online ? "Connect to the internet to submit a report" : undefined}
+              disabled={
+                submitting ||
+                !online ||
+                !title.trim() ||
+                !description.trim() ||
+                (desktop && !emailValidation.isValid)
+              }
+              title={
+                !online
+                  ? "Connect to the internet to submit a report"
+                  : desktop && !emailValidation.isValid
+                    ? emailValidation.error || "Enter a valid email address"
+                    : !title.trim()
+                      ? "Enter a title"
+                      : !description.trim()
+                        ? "Enter a description"
+                        : undefined
+              }
               className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg hover:shadow-xl transition-all"
             >
               {submitting ? (

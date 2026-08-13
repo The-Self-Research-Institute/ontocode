@@ -1,7 +1,4 @@
-/**
- * Graph Data Service
- * Handles all data fetching, caching, and synchronization
- */
+
 
 import type { OntologyNode, OntologyEdge, GraphFilters, GraphQuery, ReasoningResult } from '../types';
 import { authHeaders } from '../utils/authHeaders';
@@ -16,10 +13,6 @@ export class GraphDataService {
     this.baseUrlOverride = baseUrl;
   }
 
-  // Resolved per request, never captured at construction: the singleton is
-  // created at module evaluation, before the desktop shell injects
-  // __DESKTOP_API_URL__ (did-finish-load) — and the desktop proxy may bind a
-  // non-default port, so the localhost fallback is only a last resort.
   private get apiRoot(): string {
     return (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL || 'http://localhost:18085';
   }
@@ -28,22 +21,14 @@ export class GraphDataService {
     return this.baseUrlOverride ?? `${this.apiRoot}/api/ontology`;
   }
 
-  /**
-   * Clear all caches
-   */
-
-  /**
-   * Clear cache for specific project and force backend cache clear
-   */
   async clearProjectCache(projectId: string): Promise<void> {
-    // Clear local cache
+
     for (const key of Array.from(this.cache.keys())) {
       if (key.includes(projectId)) {
         this.cache.delete(key);
       }
     }
 
-    // Clear backend cache
     try {
       const response = await fetch(`${this.apiRoot}/api/collab-graph/${projectId}/clear-cache`, {
         method: 'POST',
@@ -62,16 +47,12 @@ export class GraphDataService {
     }
   }
 
-  /**
-   * Fetch graph data with caching and performance optimization
-   */
   async fetchGraphData(projectId: string, filters?: GraphFilters, forceReload: boolean = false): Promise<{
     nodes: OntologyNode[];
     edges: OntologyEdge[];
   }> {
     const cacheKey = `graph-${projectId}-${JSON.stringify(filters || {})}`;
-    
-    // Skip cache if forceReload
+
     if (!forceReload) {
       const cached = this.getFromCache(cacheKey);
       if (cached) {
@@ -80,18 +61,16 @@ export class GraphDataService {
       }
     } else {
       console.log('[GraphDataService] Force reload - bypassing cache');
-      // Clear cache for this project
+
       await this.clearProjectCache(projectId);
     }
 
-    // Cancel previous request if still pending
     this.abortController?.abort();
     this.abortController = new AbortController();
 
     try {
       const url = new URL(`${this.baseUrl}/${projectId}/graph`, window.location.origin);
-      
-      // Add filter parameters
+
       if (filters) {
         if (filters.nodeTypes && filters.nodeTypes.size > 0) {
           url.searchParams.append('nodeTypes', Array.from(filters.nodeTypes).join(','));
@@ -121,7 +100,7 @@ export class GraphDataService {
 
       const data = await response.json();
       this.saveToCache(cacheKey, data);
-      
+
       return {
         nodes: data.nodes || [],
         edges: data.edges || []
@@ -136,9 +115,6 @@ export class GraphDataService {
     }
   }
 
-  /**
-   * Execute graph query (pattern matching, path finding, etc.)
-   */
   async executeQuery(projectId: string, query: GraphQuery): Promise<{
     nodes: OntologyNode[];
     edges: OntologyEdge[];
@@ -164,9 +140,6 @@ export class GraphDataService {
     }
   }
 
-  /**
-   * Perform reasoning and inference
-   */
   async performReasoning(projectId: string, options?: {
     type?: 'consistency' | 'classification' | 'realization' | 'all';
     includeExplanations?: boolean;
@@ -191,9 +164,6 @@ export class GraphDataService {
     }
   }
 
-  /**
-   * Get node neighbors (1-hop connections)
-   */
   async getNodeNeighbors(projectId: string, nodeId: string, depth: number = 1): Promise<{
     nodes: OntologyNode[];
     edges: OntologyEdge[];
@@ -220,9 +190,6 @@ export class GraphDataService {
     }
   }
 
-  /**
-   * Find shortest path between two nodes
-   */
   async findPath(
     projectId: string,
     fromNodeId: string,
@@ -257,9 +224,6 @@ export class GraphDataService {
     }
   }
 
-  /**
-   * Get semantic suggestions (AI-powered)
-   */
   async getSuggestions(projectId: string, context: {
     nodeId?: string;
     query?: string;
@@ -290,9 +254,6 @@ export class GraphDataService {
     }
   }
 
-  /**
-   * Detect conflicts and duplicates
-   */
   async detectConflicts(projectId: string): Promise<Array<{
     type: 'duplicate' | 'inconsistency' | 'redundancy';
     nodes: string[];
@@ -319,9 +280,6 @@ export class GraphDataService {
     }
   }
 
-  /**
-   * Cache management
-   */
   private getFromCache(key: string): any | null {
     const cached = this.cache.get(key);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
@@ -338,9 +296,6 @@ export class GraphDataService {
     this.cache.clear();
   }
 
-  /**
-   * Cancel ongoing requests
-   */
   cancelRequests(): void {
     this.abortController?.abort();
     this.abortController = null;

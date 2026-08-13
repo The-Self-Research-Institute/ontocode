@@ -5,49 +5,41 @@ import org.hibernate.validator.constraints.Length;
 
 import java.util.List;
 
-/**
- * Request DTOs for Project operations with comprehensive validation
- */
 public class ProjectRequests {
 
-    /**
-     * Create Project Request
-     * Validates project creation data including path traversal prevention
-     */
     public static class CreateProjectRequest {
-        
+
         @NotBlank(message = "Workspace ID is required")
         @Pattern(
-            regexp = "^[a-zA-Z0-9_-]+$", 
+            regexp = "^[a-zA-Z0-9_-]+$",
             message = "Invalid workspace ID format"
         )
         private String workspaceId;
-        
+
         @NotBlank(message = "Project name is required")
         @Length(min = 1, max = 255, message = "Project name must be between 1 and 255 characters")
         @Pattern(
-            regexp = "^[^<>/\\\\:*?\"'|]*$", 
+            regexp = "^[^<>/\\\\:*?\"'|]*$",
             message = "Project name cannot contain special characters: < > / \\ : * ? \" ' |"
         )
         private String name;
-        
+
         @Length(max = 1000, message = "Description cannot exceed 1000 characters")
         @Pattern(
-            regexp = "^[^<>]*$", 
+            regexp = "^[^<>]*$",
             message = "Description cannot contain < or > characters"
         )
         private String description;
-        
+
         @Pattern(
-            regexp = "^(all|specific)$", 
+            regexp = "^(all|specific)$",
             message = "shareWith must be 'all' or 'specific'"
         )
         private String shareWith;
-        
+
         @Size(max = 100, message = "Cannot share with more than 100 members at once")
         private List<@Email(message = "Invalid email format") String> memberEmails;
 
-        // Getters and Setters
         public String getWorkspaceId() {
             return workspaceId != null ? workspaceId.trim() : null;
         }
@@ -61,7 +53,7 @@ public class ProjectRequests {
         }
 
         public void setName(String name) {
-            // Prevent path traversal attacks
+
             if (name != null && (name.contains("..") || name.contains("/") || name.contains("\\"))) {
                 throw new IllegalArgumentException("Project name cannot contain path traversal characters");
             }
@@ -93,21 +85,18 @@ public class ProjectRequests {
         }
     }
 
-    /**
-     * Update Project Request
-     */
     public static class UpdateProjectRequest {
-        
+
         @Length(min = 1, max = 255, message = "Project name must be between 1 and 255 characters")
         @Pattern(
-            regexp = "^[^<>/\\\\:*?\"'|]*$", 
+            regexp = "^[^<>/\\\\:*?\"'|]*$",
             message = "Project name cannot contain special characters"
         )
         private String name;
-        
+
         @Length(max = 1000, message = "Description cannot exceed 1000 characters")
         @Pattern(
-            regexp = "^[^<>]*$", 
+            regexp = "^[^<>]*$",
             message = "Description cannot contain < or > characters"
         )
         private String description;
@@ -132,14 +121,11 @@ public class ProjectRequests {
         }
     }
 
-    /**
-     * Add Member to Project Request
-     */
     public static class AddMemberRequest {
-        
+
         @NotBlank(message = "Email is required")
         private String email;
-        
+
         @NotBlank(message = "Role is required")
         @Pattern(
             regexp = "^(ADMIN|EDITOR|DRAFT_EDITOR|VIEWER)$",
@@ -164,24 +150,21 @@ public class ProjectRequests {
         }
     }
 
-    /**
-     * Upload File Request
-     */
     public static class UploadFileRequest {
-        
+
         @NotBlank(message = "File name is required")
         @Pattern(
-            regexp = "^[^<>/\\\\:*?\"'|]+\\.(owl|rdf|ttl|n3|nt|jsonld)$", 
+            regexp = "^[^<>/\\\\:*?\"'|]+\\.(owl|rdf|ttl|n3|nt|jsonld)$",
             message = "Invalid file name or extension. Allowed: .owl, .rdf, .ttl, .n3, .nt, .jsonld"
         )
         private String fileName;
-        
+
         @NotNull(message = "File content is required")
         @Size(min = 1, max = 10485760, message = "File size must be between 1 byte and 10MB")
         private byte[] fileContent;
 
         public String getFileName() {
-            // Prevent path traversal
+
             if (fileName != null && (fileName.contains("..") || fileName.contains("/") || fileName.contains("\\"))) {
                 throw new IllegalArgumentException("File name cannot contain path traversal characters");
             }

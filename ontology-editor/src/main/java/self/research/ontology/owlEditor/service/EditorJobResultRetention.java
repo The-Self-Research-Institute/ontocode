@@ -16,9 +16,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Heap-aware LRU for worker job results relayed through the editor (DL Query / async reasoner).
- */
 @Slf4j
 @Service
 @ConditionalOnProperty(name = "ontocode.reasoner-worker.enabled", havingValue = "true")

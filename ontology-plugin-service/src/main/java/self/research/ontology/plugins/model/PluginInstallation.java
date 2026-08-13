@@ -21,12 +21,12 @@ public class PluginInstallation {
     @Id
     private String id;
 
-    private String userId;  // User who installed the plugin
-    private String pluginId;  // Plugin identifier
-    private String installedVersion;  // Currently installed version
+    private String userId;
+    private String pluginId;
+    private String installedVersion;
 
-    private Boolean autoUpdate;  // Auto-update enabled
-    private Boolean enabled;  // Plugin is enabled/disabled
+    private Boolean autoUpdate;
+    private Boolean enabled;
 
     private LocalDateTime installedAt;
     private LocalDateTime updatedAt;

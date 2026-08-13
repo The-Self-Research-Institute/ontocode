@@ -1,33 +1,7 @@
-/**
- * Electron preload script – OntoCode Desktop
- *
- * Runs in a sandboxed renderer context (contextIsolation: true).
- * Exposes a window.vscode-compatible postMessage API so the React app
- * works without any code changes.
- *
- * Also injects __ONTOCODE_CONFIG__ with IS_WEB_EXTENSION: true so that
- * apiClient.ts uses the direct axios path (no VS Code extension proxy needed).
- *
- * Message types handled:
- *   webviewReady             → no-op (app is already loaded)
- *   requestAuthToken         → read from electron-store, reply as 'storedAuthToken'
- *   saveAuthToken            → persist to electron-store
- *   logout                   → clear from electron-store
- *   showNotification         → native OS notification via main process
- *   requestCollaborationStatus → no-op (collaboration uses direct WebSocket)
- *   setApiBaseUrl            → update localStorage (apiClient reads it)
- *   uploadOntology /
- *   uploadFileToProject      → handled by React app in browser mode (apiClient axios)
- *
- * Note: because IS_WEB_EXTENSION is true, apiClient.ts uses axios directly
- * for all API calls.  Only auth and file-open need IPC.
- */
+
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-// ── Inject runtime config ────────────────────────────────────────────────────
-// Use synchronous IPC to get the proxy port BEFORE React initializes.
-// This ensures WebSocket connects to the correct URL on first render.
 let _cfg;
 try { _cfg = ipcRenderer.sendSync('config:get-sync'); } catch (_) {}
 const PROXY_API = (_cfg && _cfg.apiBaseUrl) || 'http://127.0.0.1:18085';
@@ -43,29 +17,20 @@ window.__ONTOCODE_CONFIG__ = {
 window.__DESKTOP_API_URL__ = DESKTOP_API;
 window.__DESKTOP_MODE__ = true;
 
-// Ensure the React app skips DeploymentSelector on first launch.
 try {
     if (!localStorage.getItem('deploymentType')) {
         localStorage.setItem('deploymentType', 'self-hosted');
     }
 } catch { /* sandboxed context — ignore */ }
 
-// ── Import status poller ──────────────────────────────────────────────────────
-// WebSocket STOMP may not connect in all Electron contexts. Poll the backend
-// queue status endpoint and dispatch importStatusUpdate events so the spinner
-// clears when an import finishes.
 const _importPollers = new Map(); // projectId → intervalId
 
 async function getAuthToken() {
-    // Try IPC first (electron-store, encrypted), fallback to localStorage
+
     try { const t = await ipcRenderer.invoke('auth:get'); if (t) return t; } catch (_) {}
     try { return localStorage.getItem('authToken'); } catch (_) { return null; }
 }
 
-// ── Ontology export (submit job → poll → download) ──────────────────────────
-// Mirrors webview-src/services/exportService.ts. Duplicated here (rather than
-// imported) because this file runs as a plain preload script, not through the
-// Vite/webpack build the React app uses.
 const EXPORT_POLL_INTERVAL_MS = 3000;
 const EXPORT_MAX_POLL_MS = 60 * 60 * 1000;
 
@@ -110,18 +75,6 @@ function triggerBlobDownload(blob, filename) {
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-// Save location is asked once, here, when the file is actually ready — not upfront.
-// showSaveFilePicker()'s handle looked tempting (stream straight to disk instead of
-// holding the whole export in memory as a Blob), but writing to that handle later
-// requires user activation just as fresh as showing the picker did in the first
-// place, and a large export's submit-then-poll job can run for minutes — long
-// enough that activation expires. Confirmed directly: the write threw
-// "The request is not allowed by the user agent or the platform in the current
-// context", and handle.requestPermission() came back "denied" — the platform will
-// not silently re-grant it, so retrying in code can't fix this. That upfront
-// picker call then left a second, unwanted "choose a file" prompt at the end when
-// the write failed and it fell back to Blob anyway. The Blob download below is the
-// one path proven to work reliably after a long wait — use it as the only path.
 async function exportOntologyViaJob(projectId, format, filename) {
     const safeName = filename || `ontology-export.${format === 'turtle' ? 'ttl' : format === 'ntriples' ? 'nt' : 'owl'}`;
 
@@ -150,14 +103,6 @@ async function checkImportStatus(projectId) {
     const t = await getAuthToken();
     if (t) headers['Authorization'] = `Bearer ${t}`;
 
-    // Check 1: import queue status. This is the authoritative signal while an import
-    // is actively PROCESSING — the backend deliberately writes PROCESSING synchronously
-    // before enqueueing so pollers see it instead of a stale COMPLETED from a prior
-    // import (see ProjectImportService.submitImport). Checks 2-4 below are best-effort
-    // fallbacks for when this endpoint is unreachable/unknown — they must NOT override
-    // an explicit PROCESSING here, since they can see partial state on large ontologies
-    // (e.g. the first batch of classes already queryable mid-import) and falsely report
-    // 'done' before the import actually finishes.
     try {
         const res = await fetch(`${DESKTOP_API}/api/import-queue/status/${encodeURIComponent(projectId)}`, { headers });
         if (res.ok) {
@@ -165,12 +110,11 @@ async function checkImportStatus(projectId) {
             const status = data.status || 'NOT_IN_QUEUE';
             if (status === 'COMPLETED' || status === 'NOT_IN_QUEUE') return 'done';
             if (status === 'FAILED') return 'failed';
-            // Return progress data so the loading dialog can show it
+
             return { state: 'progress', progress: data.progress, message: data.statusMessage };
         }
     } catch (_) {}
 
-    // Check 2: OWLAPI cache — primary signal on desktop (Protégé-style fast path)
     try {
         const res2 = await fetch(`${DESKTOP_API}/api/ontology/cache-status/${encodeURIComponent(projectId)}`, { headers });
         if (res2.ok) {
@@ -179,7 +123,6 @@ async function checkImportStatus(projectId) {
         }
     } catch (_) {}
 
-    // Check 3: import/ontology status ERROR
     try {
         const resStatus = await fetch(`${DESKTOP_API}/api/ontology/status/${encodeURIComponent(projectId)}`, { headers });
         if (resStatus.ok) {
@@ -190,7 +133,6 @@ async function checkImportStatus(projectId) {
         }
     } catch (_) {}
 
-    // Check 4: hierarchy data available (SPARQL fallback path)
     try {
         const res3 = await fetch(
             `${DESKTOP_API}/api/ontology/classes/top-level/${encodeURIComponent(projectId)}?limit=5`,
@@ -198,7 +140,7 @@ async function checkImportStatus(projectId) {
         );
         if (res3.ok) {
             const data3 = await res3.json();
-            // If we got any classes back, import is done
+
             const classes = data3.classes || data3;
             if (Array.isArray(classes) && classes.length > 0) return 'done';
         }
@@ -210,7 +152,6 @@ async function checkImportStatus(projectId) {
 function startImportPoller(projectId) {
     if (_importPollers.has(projectId)) return;
 
-    // Immediate first check — no delay
     checkImportStatus(projectId).then(result => {
         if (result === 'done') { dispatchImportCompleted(projectId); return; }
         if (result === 'failed') {
@@ -219,7 +160,7 @@ function startImportPoller(projectId) {
             }));
             return;
         }
-        // Still in progress — start polling
+
         schedulePoller(projectId);
     });
 }
@@ -244,7 +185,7 @@ function schedulePoller(projectId) {
                 clearInterval(poll);
                 _importPollers.delete(projectId);
             } else if (result && typeof result === 'object' && result.state === 'progress') {
-                // Forward real progress data to the loading dialog
+
                 window.dispatchEvent(new CustomEvent('importStatusUpdate', {
                     detail: {
                         type: 'IMPORT_PROGRESS', status: 'PROCESSING', projectId,
@@ -253,7 +194,7 @@ function schedulePoller(projectId) {
                     }
                 }));
             } else if (ticks > 400) {
-                // 400 × 1.5s = 10 min — mark failed instead of faking success
+
                 window.dispatchEvent(new CustomEvent('importStatusUpdate', {
                     detail: {
                         type: 'IMPORT_FAILED',
@@ -271,15 +212,10 @@ function schedulePoller(projectId) {
     _importPollers.set(projectId, poll);
 }
 
-// ── Global import watcher ─────────────────────────────────────────────────────
-// The Dashboard sets "Pending import" state after upload-by-file-ref but never
-// sends getQueueStatus to the preload, so the poller never starts.
-// This watcher checks the import queue every 5 seconds and auto-starts pollers
-// for any active imports — no message from Dashboard needed.
 (function startGlobalImportWatcher() {
     setInterval(async () => {
         try {
-            // Only run if page is visible
+
             if (document.hidden) return;
             const headers = { 'Content-Type': 'application/json' };
             const t = await getAuthToken();
@@ -288,33 +224,25 @@ function schedulePoller(projectId) {
             const res = await fetch(`${DESKTOP_API}/api/import-queue/stats`, { headers });
             if (!res.ok) return;
             const data = await res.json();
-            // Start pollers for actively importing projects
+
             const active = data.activeProjectIds || [];
             active.forEach(pid => { if (pid) startImportPoller(pid); });
-            // Also start pollers for queued projects
+
             const queued = data.queue || [];
             queued.forEach(item => { if (item.projectId) startImportPoller(item.projectId); });
         } catch (_) {}
     }, 5000);
 })();
 
-// Prevent the browser bridge (vscodeBridge.ts) from overwriting our IPC-based
-// window.vscode — the Electron preload's version uses native dialogs and
-// encrypted token storage which are superior to the browser fallbacks.
 window.__ONTOCODE_BROWSER_BRIDGE__ = true;
 
-// ── Zotero paging state ───────────────────────────────────────────────────────
-// Mirrors extension.ts _zoteroPaging — tracks pagination across requestZoteroLibrary
-// and requestZoteroLibraryMore calls.
 let _zoteroPaging = null;
 let _zoteroLibrarySessionSeq = 0;
 
 async function _fetchZoteroPage(start, pageSize, searchQuery) {
     const apiKey = localStorage.getItem('zoteroApiKey');
     const userId = localStorage.getItem('zoteroUserId');
-    // Sentinel string the React CitationPickerDialog checks for to show a "Configure
-    // Zotero" button instead of a generic "Retry" (which would just repeat this same
-    // failure) — see CitationPickerDialog.tsx's ZOTERO_NOT_CONFIGURED check.
+
     if (!apiKey || !userId) throw new Error('ZOTERO_NOT_CONFIGURED');
 
     const libraryType = localStorage.getItem('zoteroLibraryType') || 'user';
@@ -340,21 +268,17 @@ async function _fetchZoteroPage(start, pageSize, searchQuery) {
         throw new Error(`Zotero API error: ${resp.status}`);
     }
     const totalResults = parseInt(resp.headers.get('Total-Results') || '0', 10);
-    // Zotero's `include=data` response already nests each item's fields under `.data`
-    // (item.key, item.version, item.data.itemType, item.data.title, ...) — the React
-    // CitationPickerDialog (CitationItem type) reads citation.data.itemType etc.
-    // directly, so pass the API response through unchanged instead of re-flattening it.
+
     const items = await resp.json();
     return { items, totalResults };
 }
 
-// ── window.vscode bridge ─────────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('vscode', {
     postMessage: async (message) => {
         switch (message.type) {
 
             case 'webviewReady':
-                // App is open; send back any stored token so AuthContext initialises
+
                 try {
                     const token = await ipcRenderer.invoke('auth:get');
                     window.dispatchEvent(new MessageEvent('message', {
@@ -418,12 +342,12 @@ contextBridge.exposeInMainWorld('vscode', {
                 break;
 
             case 'fileLoaded':
-                // Extension initialises collaboration WebSocket; no-op in Electron.
+
                 break;
 
             case 'openLocalFile':
             case 'importLocalFile':
-                // Use native file dialog via main process
+
                 (async () => {
                     try {
                         const result = await ipcRenderer.invoke('file:open');
@@ -446,7 +370,7 @@ contextBridge.exposeInMainWorld('vscode', {
                 break;
 
             case 'downloadFile': {
-                // Trigger browser blob download
+
                 const blob = new Blob([message.content], { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -461,11 +385,7 @@ contextBridge.exposeInMainWorld('vscode', {
 
             case 'downloadOntology':
             case 'downloadCurrentOntology': {
-                // Submit-then-poll, same as the web browser bridge (exportService.ts) — a
-                // single blocking GET against the old synchronous /export endpoint used to
-                // time out / hang with no feedback on large ontologies. Reports back
-                // "downloadOntologyComplete"/"downloadOntologyFailed" so Dashboard's export
-                // button spinner reflects how long this actually took.
+
                 (async () => {
                     const requestId = message.requestId;
                     try {
@@ -487,14 +407,14 @@ contextBridge.exposeInMainWorld('vscode', {
             case 'uploadOntology':
             case 'uploadFileToProject':
             case 'uploadOntologyContent':
-                // Start import poller so spinner clears when backend finishes
+
                 if (message.projectId) startImportPoller(message.projectId);
                 console.log('[Preload] Upload message – handled by React browser-mode:', message.type);
                 break;
 
             case 'cursorMoved':
             case 'broadcastCursor':
-                // Collaboration cursor — no-op in standalone desktop
+
                 break;
 
             case 'requestZoteroLibrary': {
@@ -576,7 +496,7 @@ contextBridge.exposeInMainWorld('vscode', {
             case 'insertManualCitation':
             case 'insertCitationToGraphDB':
             case 'removeCitationFromGraphDB':
-                // Handled by React app via apiClient
+
                 console.log('[Preload] Citation message – handled by React browser-mode:', message.type);
                 break;
 
@@ -592,7 +512,7 @@ contextBridge.exposeInMainWorld('vscode', {
                 break;
 
             case 'getQueueStatus':
-                // Start polling the real backend; fallback response while poll runs
+
                 if (message.projectId) startImportPoller(message.projectId);
                 window.dispatchEvent(new MessageEvent('message', {
                     data: {
@@ -608,7 +528,7 @@ contextBridge.exposeInMainWorld('vscode', {
             case 'apiPatch':
             case 'apiDelete':
             case 'proxyRequest':
-                // apiClient uses direct axios in IS_WEB_EXTENSION mode
+
                 break;
 
             default:
@@ -617,27 +537,22 @@ contextBridge.exposeInMainWorld('vscode', {
     }
 });
 
-// ── Desktop-specific API bridge ───────────────────────────────────────────────
 contextBridge.exposeInMainWorld('electronAPI', {
-    // File operations
+
     openFile:  ()                    => ipcRenderer.invoke('file:open'),
     saveAs:    (content, name)       => ipcRenderer.invoke('file:saveAs', { content, defaultName: name }),
 
-    // Local profile (name only — no account required)
     getProfile: ()                   => ipcRenderer.invoke('profile:get'),
     saveProfile: (profile)           => ipcRenderer.invoke('profile:save', profile),
 
-    // Runtime config (API base URL, etc.)
     getConfig:  ()                   => ipcRenderer.invoke('config:get'),
 
-    // Service health
     getServiceStatus: ()             => ipcRenderer.invoke('services:status'),
     ensureFuseki: ()                 => ipcRenderer.invoke('services:ensureFuseki'),
+    ensureSwrl:   ()                 => ipcRenderer.invoke('services:ensureSwrl'),
 
-    // Open log folder in file manager
     openLogs: ()                     => ipcRenderer.invoke('logs:open'),
 
-    // App version & updates (electron-updater)
     getAppVersion: ()                => ipcRenderer.invoke('config:get').then((c) => c?.appVersion || '0.0.0'),
     updateGetStatus: ()              => ipcRenderer.invoke('update:getStatus'),
     updateCheck: ()                  => ipcRenderer.invoke('update:check'),
@@ -649,7 +564,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return () => ipcRenderer.removeListener('update:status', handler);
     },
 
-    // Listen for file-open from the native menu (File → Open Ontology File…)
     onMenuOpenFile: (callback)       => ipcRenderer.on('menu:open-file', (_evt, data) => callback(data)),
     onFocusExistingFile: (callback) => ipcRenderer.on('desktop:focus-file', (_evt, data) => callback(data)),
 
@@ -657,12 +571,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setActiveFilePath: (filePath)    => ipcRenderer.invoke('file:setActivePath', filePath),
     clearActiveFilePath: ()          => ipcRenderer.invoke('file:clearActivePath'),
 
-    // License management
     getLicense:      ()              => ipcRenderer.invoke('license:get'),
     importLicense:   (json)          => ipcRenderer.invoke('license:import', json),
     openPurchase:    (plan)          => ipcRenderer.invoke('license:openPurchase', plan),
 
-    // Sync / Syncthing
     syncStatus:      ()              => ipcRenderer.invoke('sync:status'),
     syncDeviceId:    ()              => ipcRenderer.invoke('sync:deviceId'),
     syncFolders:     ()              => ipcRenderer.invoke('sync:folders'),
@@ -672,6 +584,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     syncAddPeer:        (opts)       => ipcRenderer.invoke('sync:addPeer', opts),
     syncCompletion:     (opts)       => ipcRenderer.invoke('sync:completion', opts),
 
-    // Start polling import status (used by Dashboard when WebSocket is unavailable)
     pollImportStatus: (projectId)    => startImportPoller(projectId),
 });

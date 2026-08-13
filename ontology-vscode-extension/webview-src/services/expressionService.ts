@@ -5,11 +5,6 @@ import { isDesktop } from '../utils/desktop';
 export type ClassAxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 export type PropertyRelationType = 'Domain' | 'Range';
 
-/**
- * Appends draft=true when the WEBAPP is in private/draft mode so the backend routes the
- * write to the user's draft graph instead of the shared public graph. Desktop is excluded:
- * it's single-user with no public/draft split, so it keeps its prior direct-write behavior.
- */
 function withDraftParams(params: URLSearchParams, userId?: string): URLSearchParams {
   if (!isDesktop() && ontologyMutationService.isPrivateEditMode()) {
     params.set('draft', 'true');

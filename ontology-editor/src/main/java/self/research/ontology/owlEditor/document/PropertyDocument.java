@@ -23,7 +23,6 @@ public class PropertyDocument {
     private Date createdAt;
     private String searchText;
 
-    // Getters and Setters
     public String getId() {
         return id;
     }

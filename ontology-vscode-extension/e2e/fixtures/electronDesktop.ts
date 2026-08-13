@@ -14,7 +14,6 @@ import { STATE_PATH } from '../electron-global-setup';
 const DESKTOP_USER = process.env.DESKTOP_E2E_USER || 'admin@ontocode.local';
 const DESKTOP_PASS = process.env.DESKTOP_E2E_PASSWORD || 'ontocode-desktop';
 
-/** Login and return JWT for editor API calls (desktop seeds admin@ontocode.local). */
 async function loginDesktopApi(apiBase: string): Promise<string> {
   const res = await fetch(`${apiBase}/api/auth/login`, {
     method: 'POST',
@@ -32,7 +31,7 @@ async function loginDesktopApi(apiBase: string): Promise<string> {
       return token;
     }
   }
-  // Desktop permit-all: omit Bearer on API calls (matches Electron shell).
+
   return '';
 }
 

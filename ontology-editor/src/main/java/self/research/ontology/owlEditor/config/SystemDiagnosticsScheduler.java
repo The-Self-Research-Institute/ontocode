@@ -15,18 +15,6 @@ import java.lang.management.*;
 import java.util.List;
 import java.util.concurrent.Executor;
 
-/**
- * Periodically logs JVM memory, GC, thread pool, and connection pool diagnostics.
- * <p>
- * Writes to the PERFORMANCE log so you can correlate slow requests
- * with heap pressure, GC pauses, thread pool exhaustion, or connection starvation.
- * <p>
- * Output example:
- *   [MEMORY] [OK] heap=1024/2048MB (50%) | non-heap=120MB | direct=45MB
- *   [GC] G1 Young: count=142 time=1230ms | G1 Old: count=2 time=890ms
- *   [THREADS] live=85 peak=102 daemon=78 | metadata-pool: active=3/16 queue=0
- *   [CONN-POOL] leased=5 available=15 pending=0 max=100
- */
 @Component
 public class SystemDiagnosticsScheduler {
 
@@ -55,9 +43,6 @@ public class SystemDiagnosticsScheduler {
                 System.getProperty("java.version"));
     }
 
-    /**
-     * Runs every 60 seconds — logs memory, GC, and thread pool stats.
-     */
     @Scheduled(fixedRate = 60_000, initialDelay = 30_000)
     public void logSystemDiagnostics() {
         logMemory();
@@ -76,7 +61,6 @@ public class SystemDiagnosticsScheduler {
         int heapPercent = heapMaxMB > 0 ? (int) ((heapUsedMB * 100) / heapMaxMB) : 0;
         long nonHeapUsedMB = nonHeap.getUsed() / (1024 * 1024);
 
-        // Direct (off-heap) buffer memory
         long directMB = 0;
         try {
             List<BufferPoolMXBean> pools = ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class);
@@ -104,7 +88,7 @@ public class SystemDiagnosticsScheduler {
             sb.append(String.format(" %s: count=%d time=%dms |",
                     gc.getName(), gc.getCollectionCount(), gc.getCollectionTime()));
         }
-        // Remove trailing |
+
         if (sb.charAt(sb.length() - 1) == '|') {
             sb.setLength(sb.length() - 1);
         }
@@ -117,13 +101,11 @@ public class SystemDiagnosticsScheduler {
         sb.append(String.format("[THREADS] live=%d peak=%d daemon=%d",
                 threads.getThreadCount(), threads.getPeakThreadCount(), threads.getDaemonThreadCount()));
 
-        // Log named executor pools if they are ThreadPoolTaskExecutor
         appendPoolStats(sb, "metadata-pool", metadataExecutor);
         appendPoolStats(sb, "sparql-pool", sparqlExecutor);
 
         perfLog.info(sb.toString());
 
-        // Warn if any pool is near exhaustion
         warnIfPoolExhausted("metadata-pool", metadataExecutor);
         warnIfPoolExhausted("sparql-pool", sparqlExecutor);
     }

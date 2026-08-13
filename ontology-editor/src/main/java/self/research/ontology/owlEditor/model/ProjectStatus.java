@@ -5,9 +5,6 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import java.time.Instant;
 import java.util.Objects;
 
-/**
- * Lightweight status descriptor persisted to {@code status.json} for each project.
- */
 public record ProjectStatus(
         String status,
         String statusMessage,

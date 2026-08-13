@@ -1,7 +1,4 @@
-/**
- * Online/offline helpers for features that require network (e.g. Report Issue → Jira).
- * Desktop is mostly local, but issue reporting still needs connectivity.
- */
+
 
 export function isAppOnline(): boolean {
   if (typeof navigator === 'undefined') return true;

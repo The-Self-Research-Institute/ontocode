@@ -1,17 +1,8 @@
-/**
- * ProxyServer — OntoCode Desktop
- *
- * A minimal Node.js HTTP/WebSocket proxy behind a single port (18085) so the
- * React frontend uses one base URL regardless of whether SWRL is running.
- *
- * Routing:
- *   /api/swrl/**    →  http://127.0.0.1:18084  (SWRL reasoner, optional)
- *   everything else →  http://127.0.0.1:18083  (desktop.jar — auth + editor + plugin)
- *   WebSocket       →  ws://127.0.0.1:18083    (collaboration)
- */
 
-const http = require('http');
-const net  = require('net');
+
+const http   = require('http');
+const net    = require('net');
+const svcMgr = require('./ServiceManager');
 
 const DEFAULT_PROXY_PORT = 18085;
 let PROXY_PORT   = DEFAULT_PROXY_PORT;
@@ -41,9 +32,6 @@ function targetPort(url) {
     return DESKTOP_PORT;
 }
 
-// Mirror the cloud gateway's route 14: the reasoner plugin calls
-// /plugin-service/api/reasoner/** but desktop.jar serves the bundled
-// plugin-service controllers at their bare /api/reasoner/** paths.
 function rewritePath(url) {
     if (url && url.startsWith('/plugin-service/api/reasoner/')) {
         return url.substring('/plugin-service'.length);
@@ -51,22 +39,31 @@ function rewritePath(url) {
     return url;
 }
 
-function proxyHttp(req, res) {
+async function proxyHttp(req, res) {
     req.url = rewritePath(req.url);
     const port = targetPort(req.url);
 
     res.setHeader('Access-Control-Allow-Origin',  '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-    // Suppress [Violation] Permissions policy violation: unload
-    // Axios attaches unload listeners for XHR cleanup; this policy header
-    // explicitly permits them so Chromium stops flagging it.
+
     res.setHeader('Permissions-Policy', 'unload=(self)');
 
     if (req.method === 'OPTIONS') {
         res.writeHead(204);
         res.end();
         return;
+    }
+
+    if (port === SWRL_PORT) {
+        try {
+            await svcMgr.ensureSwrl();
+        } catch (err) {
+            console.error(`[Proxy] Failed to start SWRL on demand: ${err.message}`);
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `SWRL reasoner unavailable: ${err.message}` }));
+            return;
+        }
     }
 
     const options = {
@@ -114,7 +111,7 @@ function proxyWs(req, socket, head) {
 }
 
 async function start(desktopPort, swrlPort) {
-    // Accept resolved ports from ServiceManager, then find a free proxy port
+
     if (desktopPort) DESKTOP_PORT = desktopPort;
     if (swrlPort)    SWRL_PORT    = swrlPort;
     await findFreeProxyPort();

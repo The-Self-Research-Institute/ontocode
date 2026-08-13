@@ -1,4 +1,4 @@
-/** User-facing labels for import pipeline stages (internal stage keys stay unchanged). */
+
 export const IMPORT_STAGE_LABELS: Record<string, string> = {
   parsing: "Parsing ontology file…",
   "graphdb-loading": "Loading ontology data…",
@@ -10,7 +10,6 @@ export const IMPORT_STAGE_LABELS: Record<string, string> = {
   "format-conversion": "Converting format…",
 };
 
-/** Remove internal stack names (GraphDB, Fuseki, etc.) from user-visible import text. */
 export function sanitizeImportMessage(message: string | undefined | null): string {
   if (!message) return "";
 
@@ -43,7 +42,6 @@ export function sanitizeImportMessage(message: string | undefined | null): strin
     .trim();
 }
 
-/** Human-friendly queue wait — caps absurd backend estimates. */
 export function formatQueueWait(ms: number | undefined | null): string | null {
   if (ms == null || ms <= 0) return null;
   const minutes = Math.ceil(ms / 60000);

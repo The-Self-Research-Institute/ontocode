@@ -1,7 +1,4 @@
-/**
- * Local IndexedDB persistence for Zotero citation snippets (webview-only).
- * Lets the citation picker reopen with the full library without re-downloading immediately.
- */
+
 
 const DB_NAME = "ontocodeCitationStore";
 const DB_VERSION = 1;

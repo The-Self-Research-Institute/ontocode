@@ -20,9 +20,6 @@ import java.nio.file.Path;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * Shared Manchester OWL Syntax parse + persist for class expressions and GCAs.
- */
 @Service
 @Slf4j
 public class ManchesterExpressionService {
@@ -31,13 +28,9 @@ public class ManchesterExpressionService {
     private final SparqlDatasetService datasetService;
     private final OntologyMutationService mutationService;
 
-    /** Optional: present when fast-open is enabled. Used to skip the slow export+parse. */
     @Autowired(required = false)
     private ProjectOntologyCache ontologyCache;
 
-    // @Lazy breaks the cycle: OntologyMutationService -> OntologyIndexService ->
-    // OntologyMetadataService -> GeneralClassAxiomService -> ManchesterExpressionService.
-    // Same pattern already used by OntologyMetadataService for the same bean.
     public ManchesterExpressionService(StorageManager storageManager, SparqlDatasetService datasetService,
                                        @Lazy OntologyMutationService mutationService) {
         this.storageManager = storageManager;
@@ -54,10 +47,6 @@ public class ManchesterExpressionService {
         addGeneralClassAxiom(projectId, subClassExpr, superClassExpr, false, null);
     }
 
-    /**
-     * Draft-aware variant: when {@code draft} is true, the axiom is written to the user's
-     * private draft graph instead of the shared/public ontology.
-     */
     public void addGeneralClassAxiom(String projectId, String subClassExpr, String superClassExpr,
                                      boolean draft, String userId) throws Exception {
         OWLOntology ontology = loadOntology(projectId, draft, userId);
@@ -249,27 +238,19 @@ public class ManchesterExpressionService {
         return loadOntology(projectId, false, null);
     }
 
-    /**
-     * Draft-aware model load. In draft mode the copy-on-switch draft graph is a FULL snapshot
-     * (baseline main + the user's edits), so exporting it yields a complete model in which the
-     * Manchester parser can resolve draft-only entities — parsing against the public model would
-     * fail to find them. Public mode keeps the fast cache / main-export path.
-     */
     private OWLOntology loadOntology(String projectId, boolean draft, String userId) throws Exception {
         if (draft && userId != null && !userId.isBlank()) {
             String draftGraph = datasetService.getDraftGraphUri(projectId, userId);
             String rdf = datasetService.exportNamedGraph(
                     projectId, draftGraph, org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-            // Tolerate unresolvable owl:imports — the ontology may import IRIs that aren't
-            // network-resolvable (common), and we only need the local axioms for name resolution.
+
             OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                     .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
             return manager.loadOntologyFromOntologyDocument(
                     new org.semanticweb.owlapi.io.StringDocumentSource(rdf), config);
         }
-        // Fast path: use the in-memory OWLAPI model when it is already warm.
-        // This avoids a full Fuseki export + re-parse which can take 1-2 minutes for large ontologies.
+
         if (ontologyCache != null) {
             Optional<ProjectOntologyCache.CachedOntology> cached = ontologyCache.get(projectId);
             if (cached.isPresent()) {
@@ -277,18 +258,13 @@ public class ManchesterExpressionService {
                 return cached.get().ontology();
             }
         }
-        // Slow fallback: export from Fuseki and parse (cold cache or fast-open disabled).
+
         log.info("[Manchester] OWLAPI cache miss for project {} — exporting from Fuseki (slow path)", projectId);
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
     }
 
-    // Matches a bare http(s)/urn IRI that isn't already wrapped in <...> — same rule already
-    // applied for SPARQL class expressions in OntologyMutationService.buildClassExpressionSparql.
-    // Manchester syntax requires either a resolvable short name or an angle-bracketed full IRI;
-    // callers that resolve a picked class/property to its full IRI (e.g. the GCA dialog) send a
-    // bare IRI, which the parser otherwise rejects.
     private static final java.util.regex.Pattern BARE_IRI =
             java.util.regex.Pattern.compile("(?<!<)\\b(https?://[^\\s()<>]+|urn:[^\\s()<>]+)");
 

@@ -63,10 +63,6 @@ public class AuthController {
     @Value("${ontocode.desktop.user.email:local@ontocode.desktop}")
     private String desktopUserEmail;
 
-    /**
-     * Comma-separated list of allowed email domains for login/signup during restricted testing.
-     * Empty = allow all. Example: "coretopia.com,example.com"
-     */
     @Value("${app.allowed.email.domains:}")
     private String allowedEmailDomains;
 
@@ -96,7 +92,7 @@ public class AuthController {
 
     private boolean isDomainAllowed(String email) {
         if (allowedEmailDomains == null || allowedEmailDomains.isBlank()) {
-            return true; // no restriction
+            return true;
         }
         String lower = email.toLowerCase(Locale.ROOT);
         for (String domain : allowedEmailDomains.split(",")) {
@@ -107,13 +103,9 @@ public class AuthController {
         return false;
     }
 
-    /**
-     * Create default admin user if it doesn't exist
-     * Admin password MUST be set via environment variable in production
-     */
     @PostConstruct
     public void createDefaultUsers() {
-        // Ensure the designated admin account has ROLE_ADMIN
+
         userRepository.findByEmailIgnoreCase(adminEmail).ifPresentOrElse(admin -> {
             boolean needsSave = false;
             if (admin.getRoles() == null || !admin.getRoles().contains("ROLE_ADMIN")) {
@@ -142,9 +134,7 @@ public class AuthController {
             log.warn("✓ Default admin user created (email={})", adminEmail);
         });
 
-        // Desktop mode: strip ROLE_ADMIN from any user who is NOT the designated admin email.
-        // This corrects accounts that were incorrectly promoted before this fix.
-        if (emailEnabled) return; // cloud mode — don't touch roles
+        if (emailEnabled) return;
         userRepository.findAll().forEach(user -> {
             if (!user.getEmail().equalsIgnoreCase(adminEmail)
                     && user.getRoles() != null
@@ -156,10 +146,6 @@ public class AuthController {
         });
     }
 
-    /**
-     * Login endpoint
-     * Features: Rate limiting, account lockout, audit logging
-     */
     @PostMapping("/login")
     public ResponseEntity<?> login(
             @Valid @RequestBody LoginRequest request,
@@ -168,7 +154,6 @@ public class AuthController {
         String clientIp = getClientIP(httpRequest);
         String loginIdentifier = request.getUsername() == null ? "" : request.getUsername().trim();
 
-        // Rate limiting (5 requests per minute)
         Bucket bucket = rateLimitService.resolveBucket(clientIp);
         if (!bucket.tryConsume(1)) {
             auditService.logRateLimitHit(loginIdentifier, clientIp);
@@ -177,13 +162,12 @@ public class AuthController {
             ));
         }
 
-        // Check if user exists (support login with username or email)
         Optional<User> userOpt = userRepository.findByUsername(loginIdentifier);
         if (userOpt.isEmpty()) {
-            // Try finding by email if username not found
+
             userOpt = userRepository.findByEmailIgnoreCase(loginIdentifier);
         }
-        
+
         if (userOpt.isEmpty()) {
             auditService.logLoginFailure(loginIdentifier, clientIp, "User not found");
             return ResponseEntity.badRequest().body(Map.of(
@@ -193,8 +177,6 @@ public class AuthController {
 
         User user = userOpt.get();
 
-        // Maintenance mode — checked first, before any account-state errors.
-        // Bypass list is the DB-managed maintenanceAllowedDomains (admin UI).
         if (systemSettingsService.isBlockedByMaintenance(user.getEmail())) {
             log.warn("Login blocked — maintenance mode active for: {}", user.getEmail());
             return ResponseEntity.status(503).body(Map.of(
@@ -204,7 +186,6 @@ public class AuthController {
             ));
         }
 
-        // Check if account is locked
         if (user.isAccountLocked()) {
             auditService.logAccountLocked(loginIdentifier, clientIp);
             return ResponseEntity.status(423).body(Map.of(
@@ -212,10 +193,9 @@ public class AuthController {
             ));
         }
 
-        // Check if account is verified before password auth. Skip in desktop mode (email disabled).
         if (!user.isEnabled()) {
             if (!emailEnabled) {
-                // Desktop mode: auto-verify the account silently
+
                 user.setEnabled(true);
                 user.setVerificationToken(null);
                 user.setVerificationTokenExpiry(null);
@@ -228,14 +208,12 @@ public class AuthController {
             }
         }
 
-        // Authenticate directly against the selected user's stored BCrypt hash.
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            // Increment failed attempts
+
             user.incrementFailedAttempts();
-            
-            // Lock account after 5 failed attempts
+
             if (user.getFailedLoginAttempts() >= 5) {
-                user.lockAccount(15); // 15 minutes lockout
+                user.lockAccount(15);
                 userRepository.save(user);
                 auditService.logAccountLocked(loginIdentifier, clientIp);
                 return ResponseEntity.status(423).body(Map.of(
@@ -245,26 +223,22 @@ public class AuthController {
 
             userRepository.save(user);
             auditService.logLoginFailure(loginIdentifier, clientIp, "Bad credentials");
-            
+
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Invalid username or password"
             ));
         }
 
-        // Reset failed attempts on successful authentication
         user.resetFailedAttempts();
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
 
-        // Enterprise bypass (domain or email allowlist): grant or revoke on each login
         enterpriseBypassService.applyBypassIfEligible(user);
         enterpriseBypassService.revokeBypassIfNeeded(user);
 
-        // Generate JWT token
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
 
-        // Clear rate limit on successful login
         rateLimitService.clearLimit(clientIp);
 
         auditService.logLoginSuccess(loginIdentifier, clientIp);
@@ -282,10 +256,6 @@ public class AuthController {
         return ResponseEntity.ok(loginResp);
     }
 
-    /**
-     * Refresh JWT token endpoint
-     * Generates a fresh token with current roles and subscription status
-     */
     @GetMapping("/refresh")
     public ResponseEntity<?> refreshToken(HttpServletRequest request) {
         try {
@@ -295,10 +265,9 @@ public class AuthController {
             }
 
             String token = authHeader.substring(7);
-            // Allow slightly-expired tokens: race condition between the 15s subscription poll
-            // and the 60s client-side expiry check means the token may have just expired.
+
             String email = jwtUtil.extractEmailAllowExpired(token);
-            
+
             Optional<User> userOpt = userRepository.findByEmailIgnoreCase(email);
             if (userOpt.isEmpty()) {
                 log.warn("Token refresh: no user for email from token (subject={})", email);
@@ -307,8 +276,6 @@ public class AuthController {
 
             User user = userOpt.get();
 
-            // Maintenance mode: block token refresh.
-            // Bypass list is the DB-managed maintenanceAllowedDomains (admin UI).
             if (systemSettingsService.isBlockedByMaintenance(user.getEmail())) {
                 log.warn("Token refresh blocked — maintenance mode active for: {}", user.getEmail());
                 return ResponseEntity.status(503).body(Map.of(
@@ -328,7 +295,6 @@ public class AuthController {
             String planName = user.getSubscriptionPlanName() != null ? user.getSubscriptionPlanName() : "FREE";
             boolean isAdmin = roles.contains("ROLE_ADMIN");
 
-            // Generate fresh token with current subscription plan
             String newJwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), planName);
 
             Map<String, Object> resp = new HashMap<>();
@@ -347,30 +313,23 @@ public class AuthController {
         }
     }
 
-    /**
-     * Signup endpoint
-     * Features: Email verification, password validation, audit logging
-     */
     @PostMapping("/signup")
     public ResponseEntity<?> signup(@Valid @RequestBody SignupRequest request) {
         String username = request.getUsername() == null ? "" : request.getUsername().trim();
         String email = request.getEmail() == null ? "" : request.getEmail().trim().toLowerCase(Locale.ROOT);
 
-        // Check if username already exists
         if (userRepository.findByUsername(username).isPresent()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Username already exists"
             ));
         }
 
-        // Check if email already exists
         if (userRepository.findByEmailIgnoreCase(email).isPresent()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Email already registered"
             ));
         }
 
-        // Maintenance mode check — bypass list is the DB-managed maintenanceAllowedDomains (admin UI).
         if (systemSettingsService.isBlockedByMaintenance(email)) {
             log.warn("Signup blocked — maintenance mode active for: {}", email);
             return ResponseEntity.status(503).body(Map.of(
@@ -380,17 +339,15 @@ public class AuthController {
             ));
         }
 
-        // Create new user
         User user = new User();
         user.setUsername(username);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setEmail(email);
-        
-        // Don't set role on signup - will be set after deployment selection
+
         user.setRoles(new HashSet<>());
-        
+
         if (emailEnabled) {
-            user.setEnabled(false); // Require email verification
+            user.setEnabled(false);
             String verificationToken = UUID.randomUUID().toString();
             user.setVerificationToken(verificationToken);
             user.setVerificationTokenExpiry(LocalDateTime.now().plusHours(24));
@@ -401,7 +358,7 @@ public class AuthController {
                 log.error("Failed to send verification email", e);
             }
         } else {
-            // Desktop mode: auto-verify, no email needed
+
             user.setEnabled(true);
             userRepository.save(user);
         }
@@ -415,11 +372,6 @@ public class AuthController {
         ));
     }
 
-    /**
-     * Email verification endpoint.
-     * Mapped to both /verify and /verify-email so the gateway public allowlist
-     * and older deployments stay compatible.
-     */
     @GetMapping({"/verify", "/verify-email"})
     public ResponseEntity<?> verify(@RequestParam("token") String token) {
         Optional<User> userOpt = userRepository.findByVerificationToken(token);
@@ -432,7 +384,6 @@ public class AuthController {
 
         User user = userOpt.get();
 
-        // Check if token is expired
         if (user.isVerificationTokenExpired()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Verification token has expired. Please request a new verification link.",
@@ -440,7 +391,6 @@ public class AuthController {
             ));
         }
 
-        // Enable account
         user.setEnabled(true);
         user.clearVerificationToken();
         user.setLastLoginAt(LocalDateTime.now());
@@ -451,7 +401,6 @@ public class AuthController {
 
         auditService.logEmailVerified(user.getEmail());
 
-        // Generate JWT for auto-login
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
 
@@ -468,9 +417,6 @@ public class AuthController {
         return ResponseEntity.ok(verifyResp);
     }
 
-    /**
-     * Resend verification email
-     */
     @PostMapping("/resend-verification")
     public ResponseEntity<?> resendVerification(@RequestBody Map<String, String> request) {
         String identifier = request.get("email") == null ? "" : request.get("email").trim();
@@ -482,7 +428,7 @@ public class AuthController {
                 .or(() -> userRepository.findByUsername(identifier));
 
         if (userOpt.isEmpty()) {
-            // Generic message to prevent email enumeration
+
             return ResponseEntity.ok(Map.of("message", "If the email exists and is not yet verified, a new verification link has been sent."));
         }
 
@@ -509,10 +455,6 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("message", "Verification email sent. Please check your inbox."));
     }
 
-    /**
-     * Forgot password endpoint
-     * Sends password reset email
-     */
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(
             @Valid @RequestBody ForgotPasswordRequest request,
@@ -530,13 +472,11 @@ public class AuthController {
 
         User user = userOpt.get();
 
-        // Generate reset token (expires in 1 hour)
         String resetToken = UUID.randomUUID().toString();
         user.setPasswordResetToken(resetToken);
         user.setPasswordResetTokenExpiry(LocalDateTime.now().plusHours(1));
         userRepository.save(user);
 
-        // Send reset email
         try {
             emailService.sendPasswordResetEmail(user.getEmail(), resetToken);
         } catch (Exception e) {
@@ -553,9 +493,6 @@ public class AuthController {
         ));
     }
 
-    /**
-     * Reset password endpoint
-     */
     @PostMapping("/reset-password")
     public ResponseEntity<?> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
         Optional<User> userOpt = userRepository.findByPasswordResetToken(request.getToken());
@@ -568,18 +505,16 @@ public class AuthController {
 
         User user = userOpt.get();
 
-        // Check if token is expired
         if (user.isPasswordResetTokenExpired()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Password reset token has expired. Please request a new one."
             ));
         }
 
-        // Update password
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.clearPasswordResetToken();
-        user.resetFailedAttempts(); // Clear any lockouts
-        // Also enable account in case it was never verified — user proved email ownership by receiving the reset link
+        user.resetFailedAttempts();
+
         user.setEnabled(true);
         userRepository.save(user);
 
@@ -590,20 +525,15 @@ public class AuthController {
         ));
     }
 
-    /**
-     * Change password (authenticated endpoint)
-     * Requires current password verification
-     * Sends email notification and returns success response
-     */
     @PostMapping("/change-password")
     public ResponseEntity<?> changePassword(
             @Valid @RequestBody ChangePasswordRequest request,
             @RequestHeader("Authorization") String authHeader) {
         try {
-            // Extract email from JWT token (subject is now email)
+
             String token = authHeader.replace("Bearer ", "");
             String email = jwtUtil.extractEmail(token);
-            
+
             log.info("Change password request for user email: {}", email);
 
             Optional<User> userOpt = userRepository.findByEmail(email);
@@ -615,7 +545,6 @@ public class AuthController {
 
             User user = userOpt.get();
 
-            // Verify current password
             if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPassword())) {
                 log.warn("Invalid current password for user: {}", user.getUsername());
                 return ResponseEntity.badRequest().body(Map.of(
@@ -623,25 +552,22 @@ public class AuthController {
                 ));
             }
 
-            // Ensure new password is different from current
             if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "New password must be different from current password"
                 ));
             }
 
-            // Update password
             user.setPassword(passwordEncoder.encode(request.getNewPassword()));
-            user.resetFailedAttempts(); // Clear any lockouts
+            user.resetFailedAttempts();
             userRepository.save(user);
 
-            // Send email notification
             try {
                 emailService.sendPasswordChangeEmail(user.getEmail(), user.getUsername());
                 log.info("Password change notification email sent to: {}", user.getEmail());
             } catch (Exception e) {
                 log.error("Failed to send password change email", e);
-                // Don't fail the password change if email fails
+
             }
 
             auditService.logPasswordChange(user.getUsername());
@@ -658,10 +584,6 @@ public class AuthController {
         }
     }
 
-    /**
-     * Get user email by username
-     * Used by other services to lookup user email
-     */
     @GetMapping("/user/email")
     public ResponseEntity<?> getUserEmail(@RequestParam String username) {
         try {
@@ -669,7 +591,7 @@ public class AuthController {
             if (userOpt.isEmpty()) {
                 return ResponseEntity.notFound().build();
             }
-            
+
             User user = userOpt.get();
             return ResponseEntity.ok(Map.of(
                 "username", user.getUsername(),
@@ -683,33 +605,30 @@ public class AuthController {
         }
     }
 
-    /**
-     * Update user role based on deployment type
-     */
     @PutMapping("/update-role")
     public ResponseEntity<?> updateRole(@RequestBody Map<String, String> request) {
         try {
             String username = request.get("username");
             String deploymentType = request.get("deploymentType");
-            
+
             log.info("Update role request - username: {}, deploymentType: {}", username, deploymentType);
-            
+
             if (username == null || deploymentType == null) {
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "Username and deploymentType are required"
                 ));
             }
-            
+
             Optional<User> userOpt = userRepository.findByUsername(username)
                     .or(() -> userRepository.findByEmail(username));
             if (userOpt.isEmpty()) {
                 log.error("User not found by username or email: {}", username);
                 return ResponseEntity.notFound().build();
             }
-            
+
             User user = userOpt.get();
             log.info("Current user roles: {}", user.getRoles());
-            
+
             Set<String> currentRoles = user.getRoles() != null ? user.getRoles() : new HashSet<>();
             boolean isDesignatedAdmin = user.getEmail().equalsIgnoreCase(adminEmail);
             if (isDesignatedAdmin && currentRoles.contains("ROLE_ADMIN")) {
@@ -721,17 +640,16 @@ public class AuthController {
                 user.setRoles(Set.of("ROLE_USER"));
                 log.info("Setting cloud roles (ROLE_USER) for user: {}", username);
             }
-            
+
             userRepository.save(user);
             log.info("User roles saved. New roles: {}", user.getRoles());
-            
-            // Generate new JWT token with updated roles
+
             try {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
                 String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
-                
+
                 boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
-                
+
                 Map<String, Object> response = new HashMap<>();
                 response.put("jwt", jwt);
                 response.put("username", user.getUsername());
@@ -739,9 +657,9 @@ public class AuthController {
                 response.put("roles", user.getRoles());
                 response.put("isAdmin", isAdmin);
                 response.put("message", "Role updated successfully");
-                
+
                 log.info("Successfully updated role for user: {} to deployment type: {}", username, deploymentType);
-                
+
                 return ResponseEntity.ok(response);
             } catch (Exception tokenError) {
                 log.error("Failed to generate JWT token for user: {}", username, tokenError);
@@ -755,9 +673,6 @@ public class AuthController {
         }
     }
 
-    /**
-     * Get client IP address (handles proxy headers)
-     */
     private String getClientIP(HttpServletRequest request) {
         String xfHeader = request.getHeader("X-Forwarded-For");
         if (xfHeader == null) {
@@ -766,9 +681,6 @@ public class AuthController {
         return xfHeader.split(",")[0];
     }
 
-    /**
-     * Get last opened project/file context for the authenticated user
-     */
     @GetMapping("/last-opened")
     public ResponseEntity<?> getLastOpened(HttpServletRequest request) {
         try {
@@ -797,9 +709,6 @@ public class AuthController {
         }
     }
 
-    /**
-     * Save last opened project/file context for the authenticated user
-     */
     @PutMapping("/last-opened")
     public ResponseEntity<?> saveLastOpened(@RequestBody Map<String, String> body, HttpServletRequest request) {
         try {

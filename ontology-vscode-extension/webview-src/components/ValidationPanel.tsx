@@ -48,13 +48,12 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
         `/api/ontology/${projectId}/validate`
       );
       setResult(response);
-      
-      // Auto-expand errors
+
       if (response.errors && response.errors.length > 0) {
         const errorIds = response.errors.map((_, idx) => `error-${idx}`);
         setExpandedIssues(new Set(errorIds));
       }
-      
+
     } catch (error: any) {
       setResult({
         success: false,
@@ -116,7 +115,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
             </div>
           )}
         </button>
-        
+
         {isExpanded && hasDetails && (
           <div className="px-4 pb-4 pt-0 bg-white bg-opacity-50">
             <div className="space-y-1 max-h-60 overflow-y-auto">
@@ -134,7 +133,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
 
   return (
     <div className="h-full flex flex-col bg-white">
-      {/* Header */}
+      {}
       <header className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-cyan-50">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -146,7 +145,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
               Check structure, naming conventions, and best practices
             </p>
           </div>
-          
+
           <button
             onClick={runValidation}
             disabled={isValidating}
@@ -166,7 +165,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
           </button>
         </div>
 
-        {/* Summary Cards */}
+        {}
         {result && (
           <div className="grid grid-cols-3 gap-4">
             <div className={`p-4 rounded-lg ${result.errorCount > 0 ? 'bg-red-50 border border-red-200' : 'bg-gray-50'}`}>
@@ -176,7 +175,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
               </div>
               <p className="text-2xl font-bold text-black">{result.errorCount}</p>
             </div>
-            
+
             <div className={`p-4 rounded-lg ${result.warningCount > 0 ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'}`}>
               <div className="flex items-center gap-2 text-yellow-600 mb-1">
                 <AlertTriangle size={20} />
@@ -184,7 +183,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
               </div>
               <p className="text-2xl font-bold text-black">{result.warningCount}</p>
             </div>
-            
+
             <div className={`p-4 rounded-lg ${result.infoCount > 0 ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}`}>
               <div className="flex items-center gap-2 text-blue-600 mb-1">
                 <Info size={20} />
@@ -196,11 +195,11 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
         )}
       </header>
 
-      {/* Results */}
+      {}
       <div className="flex-1 overflow-y-auto p-6">
         {result && (
           <div className="space-y-6">
-            {/* Overall Status */}
+            {}
             <div className={`p-4 rounded-lg border-2 ${
               result.hasErrors 
                 ? 'bg-red-50 border-red-300' 
@@ -221,7 +220,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
               </div>
             </div>
 
-            {/* Errors */}
+            {}
             {result.errors && result.errors.length > 0 && (
               <div>
                 <h2 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
@@ -242,7 +241,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
               </div>
             )}
 
-            {/* Warnings */}
+            {}
             {result.warnings && result.warnings.length > 0 && (
               <div>
                 <h2 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
@@ -263,7 +262,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
               </div>
             )}
 
-            {/* Info */}
+            {}
             {result.info && result.info.length > 0 && (
               <div>
                 <h2 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
@@ -286,7 +285,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
           </div>
         )}
 
-        {/* Loading State */}
+        {}
         {isValidating && !result && (
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
@@ -296,7 +295,7 @@ const ValidationPanel: React.FC<ValidationPanelProps> = ({ projectId }) => {
           </div>
         )}
 
-        {/* Empty State */}
+        {}
         {!result && !isValidating && (
           <div className="flex items-center justify-center h-64 text-gray-600">
             <div className="text-center">

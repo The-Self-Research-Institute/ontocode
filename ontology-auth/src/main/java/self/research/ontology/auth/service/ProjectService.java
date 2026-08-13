@@ -33,36 +33,30 @@ public class ProjectService {
         this.systemSettingsService = systemSettingsService;
     }
 
-    /**
-     * Create a new project within a workspace
-     */
     public Project createProject(String workspaceId, String userId, String username, String email, String name, String description) {
-        // Validate inputs
+
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("Project name is required");
         }
-        
+
         name = name.trim();
-        
+
         if (name.length() > 255) {
             throw new IllegalArgumentException("Project name cannot exceed 255 characters");
         }
-        
-        // XSS Prevention
+
         if (name.contains("<") || name.contains(">")) {
             throw new IllegalArgumentException("Project name cannot contain < or > characters");
         }
-        
-        // Path traversal prevention
+
         if (name.contains("..") || name.contains("/") || name.contains("\\")) {
             throw new IllegalArgumentException("Project name cannot contain path traversal characters");
         }
-        
-        // Validate special characters that are filesystem-unsafe
+
         if (name.matches(".*[<>/\\\\:*?\"'|].*")) {
             throw new IllegalArgumentException("Project name contains invalid characters");
         }
-        
+
         if (description != null) {
             description = description.trim();
             if (description.length() > 1000) {
@@ -72,33 +66,26 @@ public class ProjectService {
                 throw new IllegalArgumentException("Description cannot contain < or > characters");
             }
         }
-        
+
         Workspace workspace = getWorkspaceForUsage(workspaceId);
-        
-        // Check if user has access to workspace
+
         if (!workspace.isMember(userId)) {
             throw new SecurityException("User does not have access to this workspace");
         }
 
-        // Create project
         Project project = new Project();
         project.setProjectId(generateProjectId());
         project.setName(name);
         project.setDescription(description);
         project.setWorkspaceId(workspaceId);
         project.setOwnerId(userId);
-        project.setStatus("ACTIVE"); // Set initial status
-        
-        // Add creator as owner
+        project.setStatus("ACTIVE");
+
         project.addMember(userId, username, email, "OWNER");
-        
+
         return projectRepository.save(project);
     }
 
-    /**
-     * Non-private (shared) projects: ensure the workspace billing owner and every active workspace admin
-     * have at least editor access, tagged for removal/role rules.
-     */
     public boolean applyImplicitWorkspaceLeadershipEditors(Project project, Workspace workspace) {
         if (project == null || workspace == null) {
             return false;
@@ -175,17 +162,11 @@ public class ProjectService {
         return dirty;
     }
 
-    /**
-     * Get all projects in a workspace
-     */
     public List<Project> getWorkspaceProjects(String workspaceId) {
         getWorkspaceForUsage(workspaceId);
         return projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE");
     }
 
-    /**
-     * Get all projects for a user (across all workspaces)
-     */
     public List<Project> getUserProjects(String userId) {
         return projectRepository.findByMembers_UserId(userId)
             .stream()
@@ -194,9 +175,6 @@ public class ProjectService {
             .collect(Collectors.toList());
     }
 
-    /**
-     * Get all projects for a user in a specific workspace
-     */
     public List<Project> getUserProjectsInWorkspace(String userId, String workspaceId) {
         getWorkspaceForUsage(workspaceId);
         return projectRepository.findByMembers_UserId(userId)
@@ -206,9 +184,6 @@ public class ProjectService {
             .collect(Collectors.toList());
     }
 
-    /**
-     * Get a specific project
-     */
     public Optional<Project> getProject(String projectId) {
         List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
         Project project;
@@ -218,11 +193,7 @@ public class ProjectService {
             }
             project = projects.get(0);
         } else {
-            // Desktop-created projects are written by ontology-editor's ProjectMetadataService
-            // keyed only by Mongo _id (via upsert-by-_id), never populating the separate
-            // `projectId`/`workspaceId` fields this repository query filters on — so the query
-            // above never finds them. Fall back to a direct _id lookup and self-heal the missing
-            // fields so subsequent lookups succeed via the normal path without this fallback.
+
             Optional<Project> byId = projectRepository.findById(projectId);
             if (byId.isEmpty() || Boolean.TRUE.equals(byId.get().getIsDeleted())) {
                 return Optional.empty();
@@ -250,85 +221,72 @@ public class ProjectService {
         return Optional.of(project);
     }
 
-    /**
-     * Get a workspace by ID
-     */
     public Optional<Workspace> getWorkspace(String workspaceId) {
         return workspaceRepository.findByWorkspaceId(workspaceId);
     }
 
-    /**
-     * Update project details
-     */
     public Project updateProject(String projectId, String userId, String name, String description) {
         Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
-        
+
         Project project = projectOpt.get();
-        
-        // Check permissions
+
         if (!hasEditPermission(project, userId)) {
             throw new SecurityException("User does not have permission to edit this project");
         }
-        
-        // Validate name if provided
+
         if (name != null && !name.isBlank()) {
             name = name.trim();
-            
+
             if (name.length() > 255) {
                 throw new IllegalArgumentException("Project name cannot exceed 255 characters");
             }
-            
+
             if (name.contains("<") || name.contains(">")) {
                 throw new IllegalArgumentException("Project name cannot contain < or > characters");
             }
-            
+
             if (name.contains("..") || name.contains("/") || name.contains("\\")) {
                 throw new IllegalArgumentException("Project name cannot contain path traversal characters");
             }
-            
+
             if (name.matches(".*[<>/\\\\:*?\"'|].*")) {
                 throw new IllegalArgumentException("Project name contains invalid characters");
             }
-            
+
             project.setName(name);
         }
-        
-        // Validate description if provided
+
         if (description != null) {
             description = description.trim();
-            
+
             if (description.length() > 1000) {
                 throw new IllegalArgumentException("Description cannot exceed 1000 characters");
             }
-            
+
             if (description.contains("<") || description.contains(">")) {
                 throw new IllegalArgumentException("Description cannot contain < or > characters");
             }
-            
+
             project.setDescription(description);
         }
-        
+
         if (name != null) project.setName(name);
         if (description != null) project.setDescription(description);
-        
+
         return projectRepository.save(project);
     }
 
-    /**
-     * Add a member to a project
-     */
     public Project addMember(String projectId, String userId, String targetUserId, String targetUsername, String targetEmail, String role) {
         Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
-        
+
         Project project = projectOpt.get();
-        
-        // Check permissions: project owner, or workspace owner / workspace admin
+
         if (!canManageProject(project, userId)) {
             throw new SecurityException("Only project owner or a workspace owner/admin can add members");
         }
@@ -337,18 +295,15 @@ public class ProjectService {
         if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
             throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
         }
-        
+
         if (project.hasMember(targetUserId)) {
             throw new IllegalArgumentException("User is already a member");
         }
-        
+
         project.addMember(targetUserId, targetUsername, targetEmail, normalizedRole);
         return projectRepository.save(project);
     }
 
-    /**
-     * Update a member's role in a project
-     */
     public Project updateMemberRole(String projectId, String userId, String targetUserId, String newRole) {
         Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
@@ -357,17 +312,14 @@ public class ProjectService {
 
         Project project = projectOpt.get();
 
-        // Only project owner or workspace owner/admin can update roles
         if (!canManageProject(project, userId)) {
             throw new SecurityException("Only project owner or a workspace owner/admin can update member roles");
         }
 
-        // Cannot change the owner's role
         if (project.getOwnerId().equals(targetUserId)) {
             throw new IllegalArgumentException("Cannot change the project owner's role");
         }
 
-        // Validate role
         String normalizedRole = newRole == null ? "" : newRole.toUpperCase();
         if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
             throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
@@ -393,23 +345,18 @@ public class ProjectService {
         return projectRepository.save(project);
     }
 
-    /**
-     * Remove a member from a project
-     */
     public Project removeMember(String projectId, String userId, String targetUserId) {
         Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
-        
+
         Project project = projectOpt.get();
-        
-        // Check permissions
+
         if (!canManageProject(project, userId)) {
             throw new SecurityException("Only project owner or a workspace owner/admin can remove members");
         }
-        
-        // Cannot remove owner
+
         if (project.getOwnerId().equals(targetUserId)) {
             throw new IllegalArgumentException("Cannot remove project owner");
         }
@@ -433,50 +380,40 @@ public class ProjectService {
         return projectRepository.save(project);
     }
 
-    /**
-     * Archive a project
-     */
     public void archiveProject(String projectId, String userId) {
         Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
-        
+
         Project project = projectOpt.get();
-        
-        // Check permissions
+
         if (!canManageProject(project, userId)) {
             throw new SecurityException("Only project owner or a workspace owner/admin can archive the project");
         }
-        
+
         project.setStatus("ARCHIVED");
         projectRepository.save(project);
     }
 
-    /**
-     * Soft delete a project and cascade to all related files
-     */
     public void deleteProject(String projectId, String userId) {
         Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
-        
+
         Project project = projectOpt.get();
-        
-        // Check permissions
+
         if (!canManageProject(project, userId)) {
             throw new SecurityException("Only project owner or a workspace owner/admin can delete the project");
         }
-        
-        // Soft delete the project
+
         project.setIsDeleted(true);
         project.setDeletedAt(LocalDateTime.now());
         project.setDeletedBy(userId);
         project.setStatus("DELETED");
         projectRepository.save(project);
-        
-        // Cascade soft delete to all files in this project
+
         for (Project.FileMetadataInfo fileInfo : project.getFiles()) {
             if (!"DELETED".equals(fileInfo.getStatus())) {
                 fileInfo.setStatus("DELETED");
@@ -484,48 +421,40 @@ public class ProjectService {
         }
         projectRepository.save(project);
     }
-    
-    /**
-     * Restore a soft deleted project and optionally restore files
-     */
+
     public void restoreProject(String projectId, String userId, boolean restoreFiles) {
         Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
         if (projectOpt.isEmpty()) {
             throw new IllegalArgumentException("Project not found");
         }
-        
+
         Project project = projectOpt.get();
-        
-        // Check permissions
+
         if (!canManageProject(project, userId)) {
             throw new SecurityException("Only project owner or a workspace owner/admin can restore the project");
         }
-        
+
         if (!Boolean.TRUE.equals(project.getIsDeleted())) {
             throw new IllegalStateException("Project is not deleted");
         }
-        
-        // Restore the project
+
         project.setIsDeleted(false);
         project.setDeletedAt(null);
         project.setDeletedBy(null);
         project.setStatus("ACTIVE");
-        
+
         if (restoreFiles) {
-            // Restore all files in this project
+
             for (Project.FileMetadataInfo fileInfo : project.getFiles()) {
                 if ("DELETED".equals(fileInfo.getStatus())) {
                     fileInfo.setStatus("ACTIVE");
                 }
             }
         }
-        
+
         projectRepository.save(project);
     }
 
-    /**
-     * Check if user has access to a project
-     */
     public boolean hasAccess(String projectId, String userId) {
         List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
         if (projects.isEmpty()) {
@@ -535,12 +464,11 @@ public class ProjectService {
             log.warn("Duplicate active project documents for projectId={} (count={}) in hasAccess, using first", projectId, projects.size());
         }
         Project project = projects.get(0);
-        // Check direct project membership first
+
         if (project.hasMember(userId)) {
             return true;
         }
-        // Workspace OWNER or ADMIN can access any non-private (shared) project.
-        // A project is considered private when it has only 1 member (the creator).
+
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
             Workspace workspace = workspaceOpt.get();
@@ -551,31 +479,27 @@ public class ProjectService {
             if (wsMember != null) {
                 boolean isOwnerOrAdmin = wsMember.getRole() == Workspace.WorkspaceRole.OWNER
                         || wsMember.getRole() == Workspace.WorkspaceRole.ADMIN;
-                // Grant access only to shared (non-private) projects
+
                 return isOwnerOrAdmin && project.getMembers().size() > 1;
             }
         }
         return false;
     }
 
-    /**
-     * Check if user has edit permission
-     */
     private boolean hasEditPermission(Project project, String userId) {
         if (project.getOwnerId().equals(userId)) {
             return true;
         }
-        
+
         Project.ProjectMember member = project.getMember(userId);
         if (member != null) {
             String role = member.getRole();
             if ("OWNER".equals(role) || "ADMIN".equals(role) || "EDITOR".equals(role)) {
                 return true;
             }
-            // VIEWER: fall through to workspace admin check — ws OWNER/ADMIN may still write
+
         }
 
-        // Workspace OWNER/ADMIN always have edit permission, even when their project role is VIEWER
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(project.getWorkspaceId());
         if (workspaceOpt.isPresent()) {
             if (!canUseWorkspace(workspaceOpt.get())) {
@@ -590,16 +514,10 @@ public class ProjectService {
         return false;
     }
 
-    /**
-     * Check if user is owner
-     */
     private boolean isOwner(Project project, String userId) {
         return project.getOwnerId().equals(userId);
     }
 
-    /**
-     * Workspace owner or workspace admin may administer any project in the workspace.
-     */
     private boolean isWorkspaceOwnerOrAdmin(String workspaceId, String userId) {
         Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(workspaceId);
         if (workspaceOpt.isEmpty()) {
@@ -620,9 +538,6 @@ public class ProjectService {
         return wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN;
     }
 
-    /**
-     * Project OWNER/ADMIN, or workspace OWNER/ADMIN (cross-project administration).
-     */
     private boolean canManageProject(Project project, String userId) {
         if (isOwner(project, userId)) {
             return true;
@@ -643,9 +558,6 @@ public class ProjectService {
         return Optional.of(projects.get(0));
     }
 
-    /**
-     * Generate unique project ID
-     */
     private String generateProjectId() {
         String projectId;
         do {
@@ -654,9 +566,6 @@ public class ProjectService {
         return projectId;
     }
 
-    /**
-     * Get project by ID and verify user access
-     */
     private Project getProjectById(String projectId, String userId) {
         List<Project> projects = projectRepository.findAllActiveByProjectId(projectId);
         if (projects.isEmpty()) {
@@ -669,26 +578,18 @@ public class ProjectService {
         if (!isWorkspaceAccessibleForUsage(project.getWorkspaceId())) {
             throw new SecurityException("Workspace payment is pending. Complete payment to continue.");
         }
-        
-        // Check if user has access to this project.
-        // Workspace OWNER/ADMIN can access any project in their workspace without being a member.
+
         if (!project.hasMember(userId) && !isWorkspaceOwnerOrAdmin(project.getWorkspaceId(), userId)) {
             throw new SecurityException("User does not have access to this project");
         }
-        
+
         return project;
     }
 
-    /**
-     * Get all projects owned by a user
-     */
     public List<Project> getProjectsByOwnerId(String userId) {
         return projectRepository.findByOwnerIdAndStatus(userId, "ACTIVE");
     }
 
-    /**
-     * Get all projects shared with a user (where user is a member but not owner)
-     */
     public List<Project> getProjectsSharedWithUser(String userId) {
         return projectRepository.findByMembers_UserId(userId)
             .stream()
@@ -717,22 +618,19 @@ public class ProjectService {
     }
 
     private boolean canUseWorkspace(Workspace workspace) {
-        // Model B: Single source of truth is the OWNER'S account status
-        User owner = userRepository.findById(workspace.getOwnerId()).orElse(null);
-        if (owner == null) return true; // Safety fallback for legacy data
 
-        // Enterprise domain bypass owners always have accessible workspaces
+        User owner = userRepository.findById(workspace.getOwnerId()).orElse(null);
+        if (owner == null) return true;
+
         if (systemSettingsService.isEnterpriseBypass(owner.getEmail())) return true;
 
         String subStatus = owner.getSubscriptionStatus();
         String subPlan = owner.getSubscriptionPlanName();
 
-        // FREE is always usable
         if (subPlan == null || "FREE".equalsIgnoreCase(subPlan)) {
             return true;
         }
 
-        // Paid plans must be active or trialing
         boolean accessible = "active".equalsIgnoreCase(subStatus) || "trialing".equalsIgnoreCase(subStatus);
         if (!accessible) {
             log.warn("[ProjectService] canUseWorkspace=false workspaceId={} ownerEmail={} plan={} status={} (enterprise domains configured: {})",
@@ -742,62 +640,44 @@ public class ProjectService {
         return accessible;
     }
 
-    /**
-     * Update a project (save changes)
-     */
     public Project updateProject(Project project) {
         return projectRepository.save(project);
     }
 
-    /**
-     * Add a file to a project
-     */
     public Project addFile(String projectId, String userId, String fileId) {
         Project project = getProjectById(projectId, userId);
-        
-        // Check if user has edit permission
+
         if (!hasEditPermission(project, userId)) {
             throw new SecurityException("You don't have permission to add files to this project");
         }
-        
-        // Add file to project (backward compatibility)
+
         if (!project.getFileIds().contains(fileId)) {
             project.getFileIds().add(fileId);
             project.setUpdatedAt(LocalDateTime.now());
             return projectRepository.save(project);
         }
-        
+
         return project;
     }
 
-    /**
-     * Add file metadata to a project
-     */
     public Project addFileMetadata(String projectId, String userId, Project.FileMetadataInfo fileMetadata) {
         Project project = getProjectById(projectId, userId);
-        
-        // Check if user has edit permission
+
         if (!hasEditPermission(project, userId)) {
             throw new SecurityException("You don't have permission to add files to this project");
         }
-        
-        // Add file metadata to project
+
         project.addFileMetadata(fileMetadata);
         return projectRepository.save(project);
     }
 
-    /**
-     * Soft delete a file from a project
-     */
     public Project removeFile(String projectId, String userId, String fileId) {
         Project project = getProjectById(projectId, userId);
-        
-        // Check if user has edit permission
+
         if (!hasEditPermission(project, userId)) {
             throw new SecurityException("You don't have permission to remove files from this project");
         }
-        
-        // Editors can only delete their own files
+
         Project.ProjectMember member = project.getMember(userId);
         if (member != null && "EDITOR".equals(member.getRole()) && !project.getOwnerId().equals(userId)) {
             Project.FileMetadataInfo fileInfo = project.getFile(fileId);
@@ -805,24 +685,17 @@ public class ProjectService {
                 throw new SecurityException("Editors can only delete files they uploaded");
             }
         }
-        
-        // Mark file as deleted in project metadata
+
         Project.FileMetadataInfo fileInfo = project.getFile(fileId);
         if (fileInfo != null) {
             fileInfo.setStatus("DELETED");
         }
-        
-        // Remove file from project (backward compatibility)
+
         project.getFileIds().remove(fileId);
         project.setUpdatedAt(LocalDateTime.now());
         return projectRepository.save(project);
     }
 
-    /**
-     * Rename a file in a project. Keeps the original extension regardless of what's
-     * submitted — the extension drives format detection elsewhere (content-type,
-     * parsing), so only the base name is actually renamable.
-     */
     public Project renameFile(String projectId, String userId, String fileId, String newFileName) {
         Project project = getProjectById(projectId, userId);
 
@@ -864,18 +737,13 @@ public class ProjectService {
         return projectRepository.save(project);
     }
 
-    /**
-     * Restore a soft deleted file in a project
-     */
     public Project restoreFile(String projectId, String userId, String fileId) {
         Project project = getProjectById(projectId, userId);
-        
-        // Check if user has edit permission
+
         if (!hasEditPermission(project, userId)) {
             throw new SecurityException("You don't have permission to restore files in this project");
         }
-        
-        // Restore file in project metadata
+
         Project.FileMetadataInfo fileInfo = project.getFile(fileId);
         if (fileInfo != null) {
             if (!"DELETED".equals(fileInfo.getStatus())) {
@@ -885,19 +753,15 @@ public class ProjectService {
         } else {
             throw new IllegalArgumentException("File not found in project");
         }
-        
-        // Add file back to fileIds (backward compatibility)
+
         if (!project.getFileIds().contains(fileId)) {
             project.getFileIds().add(fileId);
         }
-        
+
         project.setUpdatedAt(LocalDateTime.now());
         return projectRepository.save(project);
     }
-    
-    /**
-     * Get file metadata from project
-     */
+
     public Project.FileMetadataInfo getFileMetadata(String projectId, String userId, String fileId) {
         Project project = getProjectById(projectId, userId);
         return project.getFile(fileId);

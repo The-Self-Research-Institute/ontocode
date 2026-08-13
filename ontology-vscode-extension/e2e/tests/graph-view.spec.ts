@@ -1,11 +1,9 @@
-/**
- * Graph view — tree layout, node visibility, Network/Tree presets.
- */
+
 import { test, expect } from '@playwright/test';
 import { EditorPage } from '../helpers/EditorPage';
 
 test.beforeEach(async ({ page }) => {
-  // Deterministic rendering: disables the entrance bloom and camera transitions
+
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const editor = new EditorPage(page);
   await editor.login();
@@ -13,7 +11,6 @@ test.beforeEach(async ({ page }) => {
   await editor.openFirstFile();
 });
 
-/** Remove per-user graph view memory so tests exercise the first-open path. */
 async function clearGraphViewMemory(page: import('@playwright/test').Page) {
   await page.evaluate(() => {
     Object.keys(localStorage)
@@ -42,7 +39,7 @@ test.describe('Graph view', () => {
     await clearGraphViewMemory(page);
     await editor.openGraphTab();
     await expect(page.locator('[data-testid="graph-view"]')).toHaveAttribute('data-graph-mode', 'force');
-    // Entrance lifecycle attribute settles to 'done' (instantly under reduced motion)
+
     await expect(page.locator('[data-testid="graph-view"]')).toHaveAttribute('data-graph-entrance', 'done', { timeout: 10_000 });
   });
 

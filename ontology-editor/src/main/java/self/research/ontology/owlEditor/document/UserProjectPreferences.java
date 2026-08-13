@@ -23,7 +23,6 @@ public class UserProjectPreferences {
     private String userEmail;
     private String projectId;
 
-    /** "public" or "private" */
     private String syncMode;
 
     private Instant updatedAt;

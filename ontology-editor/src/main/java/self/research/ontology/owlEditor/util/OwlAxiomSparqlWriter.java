@@ -15,9 +15,6 @@ import java.io.ByteArrayOutputStream;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Serializes OWLAPI axioms to SPARQL INSERT DATA for GraphDB mutation.
- */
 public final class OwlAxiomSparqlWriter {
 
     private static final String PREFIXES = """
@@ -104,7 +101,6 @@ public final class OwlAxiomSparqlWriter {
                 && st.getObject().stringValue().equals("http://www.w3.org/2002/07/owl#Ontology");
     }
 
-    /** Renders a single RDF4J term as SPARQL syntax suitable for an INSERT/DELETE DATA block. */
     public static String toSparqlTerm(Value value) {
         if (value instanceof org.eclipse.rdf4j.model.IRI iri) {
             return "<" + iri.stringValue() + ">";

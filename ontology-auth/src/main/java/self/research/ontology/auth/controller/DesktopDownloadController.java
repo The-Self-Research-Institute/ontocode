@@ -7,11 +7,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpRange;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -32,25 +34,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Serves OntoCode Desktop installer files stored in GridFS.
- *
- * Upload (admin only):
- *   POST /api/downloads/upload?platform=windows-x64&version=1.0.1&releaseNotes=...
- *
- * Download (public — no auth required):
- *   GET  /api/downloads/windows-x64
- *
- * Version / update feed (public):
- *   GET  /api/downloads/info
- *   GET  /api/downloads/updates/win/latest.yml   (electron-updater generic provider)
- *
- * Analytics (public, privacy-friendly — IP stored as SHA-256 hash only):
- *   POST /api/downloads/track?platform=windows-x64&event=page_view&clientOs=macos
- *
- * List available (public):
- *   GET  /api/downloads
- */
 @RestController
 @RequestMapping("/api/downloads")
 @CrossOrigin(originPatterns = "*")
@@ -129,12 +112,38 @@ public class DesktopDownloadController {
             GridFsResource resource = gridFsTemplate.getResource(file);
             String filename = file.getFilename();
             String contentType = detectContentType(filename);
+            long contentLength = file.getLength();
 
-            return ResponseEntity.ok()
+            String rangeHeader = request.getHeader(HttpHeaders.RANGE);
+            if (rangeHeader == null) {
+                return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                    .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                    .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(contentLength))
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .body(new InputStreamResource(resource.getInputStream()));
+            }
+
+            List<HttpRange> ranges;
+            try {
+                ranges = HttpRange.parseRanges(rangeHeader);
+            } catch (IllegalArgumentException ex) {
+                return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    .header(HttpHeaders.CONTENT_RANGE, "bytes */" + contentLength)
+                    .build();
+            }
+            if (ranges.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    .header(HttpHeaders.CONTENT_RANGE, "bytes */" + contentLength)
+                    .build();
+            }
+
+            ResourceRegion region = ranges.get(0).toResourceRegion(resource);
+            return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(file.getLength()))
+                .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                 .contentType(MediaType.parseMediaType(contentType))
-                .body(new InputStreamResource(resource.getInputStream()));
+                .body(region);
 
         } catch (Exception e) {
             log.error("Download failed for platform {}: {}", platform, e.getMessage());

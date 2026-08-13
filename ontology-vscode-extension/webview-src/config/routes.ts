@@ -1,20 +1,11 @@
 import { RouteState } from '../hooks/useRouter';
 
-/**
- * Application route configuration
- * Defines all navigable routes in the application
- */
-
 export interface RouteConfig {
     path: string;
     view: RouteState['view'];
     params?: string[];
 }
 
-/**
- * Route definitions for the application
- * Maps view types to URL patterns
- */
 export const routes: Record<string, RouteConfig> = {
     deployment: {
         path: '/deployment',
@@ -71,22 +62,15 @@ export const routes: Record<string, RouteConfig> = {
 
 const shouldUseHashRouting = (): boolean => {
     const protocol = window.location.protocol;
-    // file:// (Electron desktop) and vscode-webview both need hash routing.
-    // Path-based routing breaks under file:// because Ctrl+R tries to load
-    // e.g. file:///login as an actual file path instead of serving index.html.
+
     return protocol === 'file:' ||
         protocol.startsWith('vscode-webview') ||
         protocol.startsWith('vscode-webview-resource');
 };
 
-/**
- * Generate URL path from route state
- */
 export const generateUrlPath = (state: RouteState): string => {
     const useHashRouting = shouldUseHashRouting();
 
-    // window.location.origin is the opaque string "null" for file:// URLs.
-    // Use the file path portion of href instead so hashes anchor to index.html.
     const baseUrl = (useHashRouting && window.location.protocol === 'file:')
         ? window.location.href.split('#')[0].split('?')[0]
         : window.location.origin;
@@ -132,7 +116,7 @@ export const generateUrlPath = (state: RouteState): string => {
             } else if (state.projectName) {
                 return withRoute(routes.projectEditor.path.replace(':projectName', encodeURIComponent(state.projectName)));
             }
-            // Non-workspace editor (continue without workspace)
+
             return withRoute(routes.editor.path);
 
         case 'billing':
@@ -143,9 +127,6 @@ export const generateUrlPath = (state: RouteState): string => {
     }
 };
 
-/**
- * Parse URL path to route state
- */
 export const parseUrlPath = (): Partial<RouteState> | null => {
     const hash = window.location.hash.substring(1);
     const useHashRouting = shouldUseHashRouting();
@@ -153,7 +134,6 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
     let sourcePath = '';
     let sourceQuery = '';
 
-    // Keep backward compatibility with existing hash links while preferring pathname routing.
     if (hash && hash.startsWith('/')) {
         const [path, queryString] = hash.split('?');
         sourcePath = path;
@@ -171,7 +151,6 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
         if (!sourcePath || sourcePath === '/') return null;
     }
 
-    // Split path and query string
     const params = new URLSearchParams(sourceQuery || '');
     const pathParts = sourcePath.split('/').filter(p => p);
 
@@ -179,7 +158,6 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
 
     const route = pathParts[0];
 
-    // Match against route patterns
     switch (route) {
         case 'deployment':
             return { view: 'deployment' };
@@ -199,9 +177,6 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
         case 'subscription':
             return { view: 'subscription', showSubscriptionPlan: true };
 
-        // Landing target for the desktop app's "Renew/Buy on the web" links
-        // (electronAPI.openPurchase → /desktop-pricing?plan=&device=). Lands the
-        // user on plan selection; after checkout they download a license file.
         case 'desktop-pricing':
             return { view: 'subscription', showSubscriptionPlan: true };
 
@@ -223,7 +198,7 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
             };
 
         case 'projects':
-            // /projects
+
             if (pathParts.length === 1) {
                 return { view: 'projectDashboard' };
             }
@@ -256,16 +231,12 @@ export const parseUrlPath = (): Partial<RouteState> | null => {
     }
 };
 
-/**
- * Get route path for a specific view
- */
 export const getRoutePath = (view: RouteState['view'], params?: Record<string, string>): string => {
     const routeKey = Object.keys(routes).find(key => routes[key].view === view);
     if (!routeKey) return '/';
 
     let path = routes[routeKey].path;
 
-    // Replace path parameters if provided
     if (params) {
         Object.entries(params).forEach(([key, value]) => {
             path = path.replace(`:${key}`, encodeURIComponent(value));
@@ -275,9 +246,6 @@ export const getRoutePath = (view: RouteState['view'], params?: Record<string, s
     return path;
 };
 
-/**
- * Check if a route matches a given path pattern
- */
 export const matchRoute = (path: string, pattern: string): { matches: boolean; params: Record<string, string> } => {
     const pathParts = path.split('/').filter(p => p);
     const patternParts = pattern.split('/').filter(p => p);
@@ -293,11 +261,11 @@ export const matchRoute = (path: string, pattern: string): { matches: boolean; p
         const pathPart = pathParts[i];
 
         if (patternPart.startsWith(':')) {
-            // This is a parameter
+
             const paramName = patternPart.substring(1);
             params[paramName] = decodeURIComponent(pathPart);
         } else if (patternPart !== pathPart) {
-            // Static part doesn't match
+
             return { matches: false, params: {} };
         }
     }

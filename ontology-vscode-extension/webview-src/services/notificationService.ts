@@ -1,5 +1,4 @@
-// services/notificationService.ts
-// Notification service for both web and VS Code extension environments
+
 
 declare global {
   interface Window {
@@ -31,10 +30,6 @@ class NotificationService {
     return this.instance;
   }
 
-  /**
-   * Register a callback for web-based toast notifications.
-   * Returns an unsubscribe function — call it in useEffect cleanup to avoid duplicates.
-   */
   onToast(callback: (options: NotificationOptions) => void): () => void {
     this.toastCallbacks.push(callback);
     return () => {
@@ -42,25 +37,16 @@ class NotificationService {
     };
   }
 
-  /**
-   * Show a notification (system notification for VS Code, toast for web)
-   */
   notify(options: NotificationOptions): void {
     if (this.isVSCode) {
       this.showVSCodeNotification(options);
-      // Also fire in-app toast so the message is visible inside the UI.
-      // OS notifications from Electron are easy to miss (they appear in the
-      // system tray and auto-dismiss). The toastCallbacks path adds the message
-      // to the collaboration notification panel, which is always on-screen.
+
       this.toastCallbacks.forEach(cb => cb(options));
     } else {
       this.showWebNotification(options);
     }
   }
 
-  /**
-   * Show a system notification in VS Code
-   */
   private showVSCodeNotification(options: NotificationOptions): void {
     window.vscode?.postMessage({
       type: 'showNotification',
@@ -73,11 +59,8 @@ class NotificationService {
     });
   }
 
-  /**
-   * Show a web notification (browser notification API or toast)
-   */
   private showWebNotification(options: NotificationOptions): void {
-    // Try browser Notification API first (requires permission)
+
     if ('Notification' in window && Notification.permission === 'granted') {
       const notification = new Notification(options.title, {
         body: options.message,
@@ -90,7 +73,6 @@ class NotificationService {
         notification.close();
       };
 
-      // Auto-close after duration
       if (options.duration) {
         setTimeout(() => notification.close(), options.duration);
       }
@@ -101,9 +83,6 @@ class NotificationService {
     }
   }
 
-  /**
-   * Request browser notification permission (web only)
-   */
   async requestPermission(): Promise<NotificationPermission> {
     if (!this.isVSCode && 'Notification' in window) {
       return await Notification.requestPermission();
@@ -111,15 +90,12 @@ class NotificationService {
     return 'denied';
   }
 
-  /**
-   * Check if browser notifications are supported and permitted
-   */
   isWebNotificationAvailable(): boolean {
     return !this.isVSCode && 'Notification' in window && Notification.permission === 'granted';
   }
 
   private getIconForType(type: NotificationType): string {
-    // Return data URIs or paths to icons based on notification type
+
     const icons = {
       info: '/info-icon.png',
       success: '/success-icon.png',
@@ -129,30 +105,18 @@ class NotificationService {
     return icons[type] || icons.info;
   }
 
-  /**
-   * Show success notification
-   */
   success(title: string, message: string): void {
     this.notify({ title, message, type: 'success', duration: 5000 });
   }
 
-  /**
-   * Show error notification
-   */
   error(title: string, message: string): void {
     this.notify({ title, message, type: 'error', duration: 8000 });
   }
 
-  /**
-   * Show info notification
-   */
   info(title: string, message: string): void {
     this.notify({ title, message, type: 'info', duration: 5000 });
   }
 
-  /**
-   * Show warning notification
-   */
   warning(title: string, message: string): void {
     this.notify({ title, message, type: 'warning', duration: 6000 });
   }

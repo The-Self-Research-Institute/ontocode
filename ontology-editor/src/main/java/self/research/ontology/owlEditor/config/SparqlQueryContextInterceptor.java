@@ -7,9 +7,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 import self.research.ontology.owlEditor.service.SparqlQueryContext;
 
-/**
- * Resolves the current user for SPARQL read scope (draft named graph inclusion).
- */
 @Component
 public class SparqlQueryContextInterceptor implements HandlerInterceptor {
 

@@ -1,7 +1,4 @@
-/**
- * Verifies the desktop backend is up before any browser tests run.
- * Does not start Mongo/Fuseki/desktop.jar — avoids duplicate stacks and startup loops.
- */
+
 
 import fs from 'fs';
 import path from 'path';

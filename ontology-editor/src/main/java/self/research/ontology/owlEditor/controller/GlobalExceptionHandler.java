@@ -17,18 +17,12 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    /**
-     * Silently discard client-abort exceptions (browser cancelled the request while
-     * the server was still writing the response).  These are benign — the connection
-     * is already closed, so no response can be sent.
-     */
     @ExceptionHandler(AsyncRequestNotUsableException.class)
     public void handleClientAbort(AsyncRequestNotUsableException ex) {
         log.debug("Client disconnected before response was fully sent (ignored): {}", ex.getMessage());
-        // Do NOT attempt to write a response – the socket is already closed.
+
     }
 
-    // 409 when the copy-on-switch draft graph isn't ready yet — all mutation paths hit this
     @ExceptionHandler(DraftNotReadyException.class)
     public ResponseEntity<Map<String, Object>> handleDraftNotReady(DraftNotReadyException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
@@ -40,7 +34,6 @@ public class GlobalExceptionHandler {
                 ));
     }
 
-    // 400 for explicit bad-input rejections (e.g. ontology too large for reasoning)
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
         log.warn("Bad request: {}", ex.getMessage());

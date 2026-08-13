@@ -37,7 +37,6 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
   const [showLimitExceeded, setShowLimitExceeded] = useState(false);
   const [sent, setSent] = useState(false);
 
-  // Reset all state when modal opens/closes
   React.useEffect(() => {
     if (isOpen) {
       setEmail("");
@@ -46,7 +45,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
       setInvitationLinks(null);
       setErrorMessage("");
       setSent(false);
-      // Check limit only once when modal opens
+
       setShowLimitExceeded(!!(maxMembers && currentMemberCount >= maxMembers));
     }
   }, [isOpen]);
@@ -56,27 +55,23 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate email format
     const emailValidation = validateEmail(email);
     if (!emailValidation.isValid) {
       setErrorMessage(emailValidation.error || "Invalid email format");
       return;
     }
 
-    // Validate role
     const roleValidation = validateRole(role);
     if (!roleValidation.isValid) {
       setErrorMessage(roleValidation.error || "Invalid role selected");
       return;
     }
 
-    // Check for duplicate member
     if (existingMemberEmails.some((existingEmail) => existingEmail.toLowerCase() === email.trim().toLowerCase())) {
       setErrorMessage("This user is already a member of the workspace");
       return;
     }
 
-    // Check member limit if maxMembers is provided
     if (maxMembers && currentMemberCount >= maxMembers) {
       setErrorMessage(
         `Maximum member limit reached (${maxMembers} for ${subscriptionPlan} plan). Please upgrade your subscription or remove existing members.`,
@@ -92,11 +87,11 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
       setInvitationLinks({ webLink: "", vscodeLink: "" });
       setSent(true);
       setInviting(false);
-      // Auto-close after showing success message
+
       setTimeout(() => onClose(), 1500);
     } catch (error: any) {
       console.error("Error inviting member:", error);
-      // Extract error message from various possible error structures
+
       const errorMsg =
         error?.message || error?.response?.error || error?.error || "Failed to send invitation. Please try again.";
       setErrorMessage(errorMsg);
@@ -107,7 +102,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-md w-full text-slate-100">
-        {/* Header */}
+        {}
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-purple-500/15 border border-purple-400/30 rounded-full flex items-center justify-center">
@@ -123,10 +118,10 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
           </button>
         </div>
 
-        {/* Body */}
+        {}
         {showLimitExceeded ? (
           <div className="p-6 space-y-4">
-            {/* Member Limit Exceeded Message */}
+            {}
             <div className="bg-amber-50 border-2 border-amber-200 rounded-lg p-6">
               <div className="flex items-start gap-3">
                 <div className="p-2 bg-amber-100 rounded-lg">
@@ -161,7 +156,7 @@ const InviteMemberModal: React.FC<InviteMemberModalProps> = ({
               </button>
             )}
 
-            {/* Info message if not owner */}
+            {}
             {!isWorkspaceOwner && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <div className="flex items-start gap-2">

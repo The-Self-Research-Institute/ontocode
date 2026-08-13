@@ -43,7 +43,7 @@ public class ReasoningQueueProcessor {
             }
 
             long start = System.currentTimeMillis();
-            // Run the actual job on its own thread so we can enforce a hard timeout
+
             ExecutorService jobThread = Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "reasoning-job-" + job.getJobId());
                 t.setDaemon(true);

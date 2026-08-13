@@ -19,9 +19,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 
-/**
- * Loads OWL from disk, builds hierarchy snapshot + metrics (bounded heap, not on API hot path).
- */
 @Service
 public class HierarchySnapshotBuildService {
 
@@ -89,9 +86,7 @@ public class HierarchySnapshotBuildService {
                     new OWLOntologyLoaderConfiguration()
                             .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                             .setLoadAnnotationAxioms(true));
-            // Block remote owl:imports from triggering network calls. SILENT mode still tries to
-            // fetch each import URL — and waits for a TCP timeout (~30–60 s per URL) before skipping.
-            // Mapping HTTP/HTTPS IRIs to a nonexistent local path makes the failure instant.
+
             manager.addIRIMapper(iri -> {
                 String s = iri.toString();
                 if (s.startsWith("http://") || s.startsWith("https://")) {
@@ -179,9 +174,6 @@ public class HierarchySnapshotBuildService {
     private Optional<Path> findFastestParseSource(String projectId) {
         Path dir = storageManager.projectDir(projectId);
 
-        // Mutations since the last import live only in Fuseki — the on-disk artifacts are
-        // stale. Export fresh before parsing, or the snapshot would silently keep serving
-        // pre-mutation data forever (same staleness DesktopOntologyLoader guards against).
         Path dirtyMarker = dir.resolve("ontology.dirty");
         if (Files.exists(dirtyMarker)) {
             try {

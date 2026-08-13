@@ -37,12 +37,7 @@ interface BillingManagementProps {
     onCancelled: () => void;
     onCompletePayment?: () => void;
     onUpgradePlan?: () => void;
-    /**
-     * True only for the workspace owner / account holder. Drives the
-     * visibility of destructive billing actions (cancel, update card).
-     * Members and admins should never see Cancel — the backend also
-     * enforces this so a forged request is still rejected.
-     */
+
     isOwner?: boolean;
 }
 
@@ -111,8 +106,6 @@ function formatBillingDate(iso?: string, fallback = 'Not available') {
     });
 }
 
-// ─── Payment method display row ─────────────────────────────────────────────
-
 const PaymentMethodRow: React.FC<{ pm: { last4?: string; brand?: string; expMonth?: number; expYear?: number; type?: string } }> = ({ pm }) => {
     const isLink = pm.type === 'link' || pm.brand?.toLowerCase() === 'link';
     if (isLink) {
@@ -134,8 +127,6 @@ const PaymentMethodRow: React.FC<{ pm: { last4?: string; brand?: string; expMont
         </div>
     );
 };
-
-// ─── Card update inner form ──────────────────────────────────────────────────
 
 const UpdateCardForm: React.FC<{
     workspaceId: string;
@@ -212,8 +203,6 @@ const UpdateCardForm: React.FC<{
     );
 };
 
-// ─── Main Page ──────────────────────────────────────────────────────────────
-
 type View = 'info' | 'update-card' | 'cancel-confirm' | 'cancelling' | 'done';
 
 const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack, onCancelled, onCompletePayment, onUpgradePlan, isOwner = false }) => {
@@ -241,8 +230,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         setLicenseError(null);
         setDownloadingLicense(true);
         try {
-            // Blob download — cannot go through the apiClient postMessage proxy
-            // (JSON-only); raw fetch against the resolved gateway URL instead.
+
             const headers = { Authorization: `Bearer ${safeGetStorage('authToken') ?? ''}` };
             let res = await fetchWithTimeout(`${getGatewayUrl()}/api/billing/license/download`, { method: 'GET', headers });
             const fallbackOrigin = billingOriginFallback();
@@ -342,11 +330,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         setView('cancelling');
         setError(null);
         try {
-            // Bug #50: cancellation is ALWAYS account-level (Model B). The
-            // backend treats an empty workspaceId as "cancel my account
-            // subscription" and propagates the change to every workspace
-            // owned by the user. We never pass the workspace id even when
-            // navigated from a workspace context.
+
             await billingPost('/api/billing/cancel-workspace', { workspaceId: '' });
             setView('done');
         } catch (err: any) {
@@ -368,10 +352,9 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
         }
     };
 
-
     const previewAndConfirmIntervalSwitch = async (newInterval: 'monthly' | 'annual') => {
         if (newInterval !== 'annual') {
-            // Downgrade — no charge, no confirmation needed
+
             await switchBillingInterval(newInterval);
             return;
         }
@@ -447,12 +430,9 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
     const autoRenewEnabled = billingSummary?.autoRenewEnabled !== false && billingSummary?.cancelAtPeriodEnd !== true;
 
     return (
-        // Fill the viewport exactly, then split into a fixed header and a
-        // scrollable content area. `min-h-screen` + `overflow-y-auto` on
-        // the same node is a known anti-pattern: the node grows past the
-        // viewport so its own scrollbar never engages.
+
         <div className="dark h-screen flex flex-col bg-[#0f172a] text-slate-200">
-            {/* Header (does not scroll) */}
+            {}
             <div className="flex-shrink-0 z-50 bg-[#0f172a]/80 backdrop-blur-xl border-b border-white/10 px-6 py-4 flex items-center justify-between shadow-lg">
                 <div className="flex items-center gap-4">
                     <button onClick={onBack}
@@ -471,12 +451,11 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                 </div>
             </div>
 
-            {/* Scrollable body. `overscroll-contain` keeps wheel events
-                from bubbling past this view to whatever rendered us. */}
+            {}
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain w-full">
                 <div className="w-full max-w-4xl mx-auto p-6 md:p-10 space-y-10 pb-24">
-                
-                {/* Error Banner */}
+
+                {}
                 {detailsError && (
                     <div className="bg-amber-500/10 border border-amber-400/30 text-amber-300 px-6 py-4 rounded-2xl text-sm flex items-start gap-3 shadow-lg animate-in fade-in slide-in-from-top-2">
                         <AlertTriangle size={20} className="flex-shrink-0" />
@@ -487,16 +466,16 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                     </div>
                 )}
 
-                {/* ── Main View ── */}
+                {}
                 {view === 'info' && (
                     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                        
-                        {/* Current Plan Card */}
+
+                        {}
                         <div className="relative overflow-hidden bg-gradient-to-br from-slate-900 to-indigo-950 border border-white/15 rounded-3xl p-8 shadow-2xl">
                             <div className="absolute top-0 right-0 p-8 opacity-5">
                                 <Crown size={120} />
                             </div>
-                            
+
                             <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
                                 <div className="space-y-2">
                                     <div className="flex items-center gap-3">
@@ -578,9 +557,9 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                             </div>
                         </div>
 
-                        {/* Quick Actions Grid */}
+                        {}
                         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
-                             {/* Complete Payment - Only if pending */}
+                             {}
                              {(workspace.billingStatus === 'PENDING' || workspace.billingStatus === 'PAYMENT_FAILED') && onCompletePayment && (
                                 <button onClick={onCompletePayment}
                                     className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white transition-all shadow-lg shadow-purple-900/20 group">
@@ -594,8 +573,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 </button>
                             )}
 
-                            {/* Update Card — owner only (only the account
-                                holder has a Stripe customer record on file) */}
+                            {}
                             {isOwner && (
                                 <button onClick={startCardUpdate}
                                     className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-purple-500/50 hover:bg-white/10 text-white transition-all group">
@@ -609,7 +587,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 </button>
                             )}
 
-                            {/* Upgrade Plan — owner only; members can't change billing */}
+                            {}
                             {isOwner && (
                                 <button onClick={onUpgradePlan}
                                     className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-indigo-500/50 hover:bg-white/10 text-white transition-all group">
@@ -623,14 +601,14 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 </button>
                             )}
 
-                            {/* Switch billing interval — owner only, paid active/trialing plans */}
+                            {}
                             {isOwner && plan !== 'FREE' && (summaryStatus?.toLowerCase() === 'active' || summaryStatus?.toLowerCase() === 'trialing') && (() => {
                                 const pendingMonthly = billingSummary?.pendingBillingInterval === 'monthly';
                                 const pendingDate = billingSummary?.pendingBillingIntervalDate
                                     ? formatBillingDate(billingSummary.pendingBillingIntervalDate) : '';
 
                                 if (pendingMonthly) {
-                                    // State: annual with pending monthly downgrade
+
                                     return (
                                         <div className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-amber-500/30 text-white">
                                             <div className="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-400">
@@ -659,9 +637,8 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                     );
                                 }
 
-                                // State: monthly (upgrade to annual) or annual without pending (schedule downgrade)
                                 if (intervalSwitchPreview && interval === 'monthly') {
-                                    // Show confirmation card with exact charge
+
                                     return (
                                         <div className="h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-purple-500/40 text-white">
                                             <div className="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-400">
@@ -726,7 +703,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 );
                             })()}
 
-                            {/* Cancel/restore auto-renewal — owner only; backend re-checks. Bug #42. */}
+                            {}
                             {isOwner && (
                                 <button
                                     onClick={autoRenewEnabled ? () => setView('cancel-confirm') : enableAutoRenew}
@@ -755,7 +732,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 </button>
                             )}
 
-                            {/* Desktop License — hidden from billing page, preserved for future use */}
+                            {}
                             {!isDesktop() && (
                                 <button onClick={downloadLicense} disabled={downloadingLicense}
                                     className="hidden h-full min-h-[180px] flex flex-col items-start gap-4 p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-500/50 hover:bg-white/10 text-white transition-all group disabled:opacity-60 disabled:cursor-not-allowed">
@@ -776,17 +753,10 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                 </button>
                             )}
 
-                            {/* Bug #50: billing is account-level (Model B).
-                                Members of someone else's workspace shouldn't
-                                land here at all — the host gates navigation
-                                so only the account holder reaches this page.
-                                The previous "Read-only billing view" notice
-                                conflated workspace ownership with account
-                                ownership and was misleading; it has been
-                                removed. */}
+                            {}
                         </div>
 
-                        {/* Payment History Section */}
+                        {}
                         <div className="space-y-6">
                             <div className="flex items-center justify-between">
                                 <h3 className="text-xl font-bold text-white flex items-center gap-3">
@@ -804,7 +774,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                     <p className="text-slate-400 font-medium">Fetching your invoices...</p>
                                 </div>
                             ) : detailsError ? (
-                                // A failed fetch is not "no invoices" — say so and offer a retry.
+
                                 <div className="text-center py-16 bg-white/5 border border-dashed border-red-400/20 rounded-3xl">
                                     <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 text-red-400/70">
                                         <AlertTriangle size={32} />
@@ -875,7 +845,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                     </div>
                 )}
 
-                {/* ── Update Card View ── */}
+                {}
                 {view === 'update-card' && (
                     <div className="max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
                         {stripePromise && elementsOptions ? (
@@ -895,7 +865,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                     </div>
                 )}
 
-                {/* ── Cancel Confirmation View ── */}
+                {}
                 {view === 'cancel-confirm' && (
                     <div className="max-w-xl mx-auto space-y-8 animate-in fade-in zoom-in-95 duration-300">
                         <div className="text-center space-y-4">
@@ -946,7 +916,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                     </div>
                 )}
 
-                {/* ── Progress Indicators ── */}
+                {}
                 {view === 'cancelling' && (
                     <div className="flex flex-col items-center py-32 gap-6 animate-pulse">
                         <div className="relative">
@@ -960,7 +930,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                     </div>
                 )}
 
-                {/* ── Success View ── */}
+                {}
                 {view === 'done' && (
                     <div className="max-w-md mx-auto py-12 text-center space-y-8 animate-in fade-in zoom-in-95 duration-500">
                         <div className="relative">
@@ -982,7 +952,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                 </div>
             </div>
 
-            {/* Success Toast for Card Update */}
+            {}
             {cardUpdated && view === 'info' && (
                 <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-green-600 text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-bottom-8 duration-500 z-[60]">
                     <CheckCircle size={20} />

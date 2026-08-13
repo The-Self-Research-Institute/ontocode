@@ -33,15 +33,13 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
     }
   }, [isOpen, initialValue]);
 
-  // Simple validation (placeholder for real parser)
   const validateExpression = (expr: string) => {
     if (!expr.trim()) {
       setIsValid(false);
       setErrorMsg("Expression cannot be empty");
       return false;
     }
-    
-    // Basic syntax check - balanced parentheses
+
     let balance = 0;
     for (const char of expr) {
       if (char === '(') balance++;
@@ -75,9 +73,7 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
     setExpression(val);
     setCursorPos(e.target.selectionStart);
     validateExpression(val);
-    
-    // Simple autocomplete logic could go here
-    // For now, just clear suggestions
+
     setSuggestions([]);
   };
 
@@ -86,7 +82,7 @@ const ManchesterSyntaxEditor: React.FC<ManchesterSyntaxEditorProps> = ({
     const after = expression.substring(cursorPos);
     const newExpr = `${before} ${keyword} ${after}`;
     setExpression(newExpr);
-    // Move cursor after inserted keyword
+
     const newPos = cursorPos + keyword.length + 2;
     // We'd need a ref to the textarea to set selection range properly
   };

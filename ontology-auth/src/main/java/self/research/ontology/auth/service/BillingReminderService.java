@@ -25,12 +25,6 @@ import java.util.List;
 import java.util.Map;
 import self.research.ontology.auth.model.PlanFeatureConfig;
 
-/**
- * Sends scheduled billing reminder emails for trial endings and subscription renewals.
- *
- * Runs daily at 09:00 server time. Each configured reminder day uses a 24-hour
- * window around that mark so each reminder fires once per subscription period.
- */
 @Slf4j
 @Service
 public class BillingReminderService {
@@ -61,10 +55,7 @@ public class BillingReminderService {
 
     @PostConstruct
     public void ensureEmailLogIndexes() {
-        // ensureIndex() does NOT upgrade an existing non-unique index to unique.
-        // If the collection was created earlier with a non-unique key index,
-        // the dedup invariant silently fails and reminders fire every cron tick.
-        // Detect that case and rebuild.
+
         boolean keyIndexIsUnique = mongoTemplate.indexOps("email_logs").getIndexInfo().stream()
                 .filter(info -> info.getIndexFields().stream().anyMatch(f -> "key".equals(f.getKey())))
                 .findFirst()
@@ -77,7 +68,7 @@ public class BillingReminderService {
             try {
                 mongoTemplate.indexOps("email_logs").dropIndex("key_1");
             } catch (Exception ignored) {
-                // No prior index — fall through to create.
+
             }
             mongoTemplate.indexOps("email_logs")
                     .ensureIndex(new Index().on("key", Sort.Direction.ASC).unique());
@@ -100,9 +91,7 @@ public class BillingReminderService {
         int renewalReminders = 0;
 
         for (int daysBefore : reminderDays) {
-            // Cover the entire target UTC calendar day so a trial/subscription ending
-            // at any hour is caught regardless of when the cron fires.
-            // The dedup key (dailyReminderKey) ensures at most one email per user per day.
+
             LocalDate targetDate = LocalDate.now(ZoneOffset.UTC).plusDays(daysBefore);
             LocalDateTime windowStart = targetDate.atStartOfDay();
             LocalDateTime windowEnd   = targetDate.plusDays(1).atStartOfDay();
@@ -122,8 +111,6 @@ public class BillingReminderService {
                 if (reminderKind == null) continue;
                 String reminderKey = dailyReminderKey(user, now.toLocalDate());
 
-                // Defence in depth: even if the unique index is somehow bypassed,
-                // a prior "sent" record for this key means the reminder already went out.
                 Query priorQuery = new Query(Criteria.where("key").is(reminderKey)
                         .and("status").in("sent", "sending"));
                 if (mongoTemplate.exists(priorQuery, "email_logs")) {
@@ -133,7 +120,7 @@ public class BillingReminderService {
                 }
 
                 if (!reserveReminder(user, reminderKind, daysBefore, periodEnd, reminderKey)) {
-                    // Promoted from debug → info so the skip is visible in production logs.
+
                     log.info("[BillingReminder] Skipping duplicate reminder key={} email={}",
                             reminderKey, user.getEmail());
                     continue;

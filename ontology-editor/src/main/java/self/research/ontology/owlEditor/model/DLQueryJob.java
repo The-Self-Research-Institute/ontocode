@@ -29,9 +29,9 @@ public class DLQueryJob {
     private Map<String, Object> result;
     private String error;
     private String ownerEmail;
-    /** Fuseki triple count at enqueue time — drives dynamic slot weight. */
+
     private long tripleCount;
-    /** Heap budget units consumed by this job (1=small, 2=medium, budget=large). */
+
     private int slotWeight;
 
     public long getWaitTimeMs() {

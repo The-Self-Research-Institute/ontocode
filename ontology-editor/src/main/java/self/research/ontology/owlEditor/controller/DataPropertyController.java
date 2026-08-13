@@ -36,7 +36,7 @@ public class DataPropertyController {
     public ResponseEntity<?> dataProperties(@PathVariable String projectId,
                                             @RequestParam(defaultValue = "100") int limit,
                                             @RequestParam(defaultValue = "0") int offset) {
-        // Same desktop deferred-Fuseki-sync staleness as ObjectPropertyController — see there.
+
         Optional<ResponseEntity<?>> owl = fastPath.owlApiOnlyOrWarming(projectId, () -> {
             if (owlApiPropertyQueryService == null) {
                 throw new IllegalStateException("OWLAPI property service unavailable");

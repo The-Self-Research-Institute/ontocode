@@ -14,29 +14,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Base64;
 
-/**
- * Mirror of the editor's MdcLoggingFilter, scoped to the auth service.
- *
- * <p>The auth service rarely has project / file context, but it always has
- * a user (after login) and usually has a workspace (after selection). The
- * cascade still applies so a single grep for an email correlates billing,
- * workspace-management, and Stripe-webhook log lines for that user.
- *
- * <p>MDC fields written:
- * <ul>
- *   <li>{@code userEmail}   — JWT {@code email} claim, fall back to {@code sub}.</li>
- *   <li>{@code userId}      — JWT {@code userId} claim (Mongo id).</li>
- *   <li>{@code workspaceId} — JWT claim or {@code ?workspaceId=} query param.</li>
- *   <li>{@code projectId}   — when the auth service handles project endpoints.</li>
- *   <li>{@code ctx}         — cascading single-string identifier:
- *       <pre>
- *       email + project   most specific (project endpoints)
- *       email + workspace common case
- *       email             pre-workspace selection
- *       (anon)            unauthenticated paths (login, signup, webhook)
- *       </pre></li>
- * </ul>
- */
 @Component("authMdcLoggingFilter")
 @Order(1)
 public class MdcLoggingFilter extends OncePerRequestFilter {
@@ -76,7 +53,7 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             String wsId = textClaim(claims, "workspaceId");
             if (wsId != null) MDC.put("workspaceId", wsId);
         } catch (Exception ignored) {
-            // Malformed token — leave MDC blank.
+
         }
     }
 
@@ -87,7 +64,7 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             MDC.put("workspaceId", fromQuery);
             return;
         }
-        // Path: /api/workspaces/{workspaceId}/...
+
         String uri = request.getRequestURI();
         if (uri == null) return;
         String[] segments = uri.split("/");
@@ -125,7 +102,6 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             sb.append("(anon)");
         }
 
-        // Auth service rarely sees fileId, so the cascade is project > workspace.
         if (projectId != null && !projectId.isBlank()) {
             sb.append(" proj=").append(projectId);
         } else if (workspaceId != null && !workspaceId.isBlank()) {

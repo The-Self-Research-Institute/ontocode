@@ -1,9 +1,5 @@
 import { ICollaborationManager, EditOperation, OperationType, PresenceType } from './types';
 
-/**
- * Captures local ontology edits and broadcasts them to other users.
- * Provides debouncing to avoid flooding the server with rapid edits.
- */
 export class EditCapture {
     private collaborationManager: ICollaborationManager | null = null;
     private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -12,23 +8,14 @@ export class EditCapture {
 
     constructor() {}
 
-    /**
-     * Set the collaboration manager instance.
-     */
     setCollaborationManager(manager: ICollaborationManager): void {
         this.collaborationManager = manager;
     }
 
-    /**
-     * Temporarily disable broadcasting (when applying remote edits).
-     */
     setApplyingRemoteEdit(applying: boolean): void {
         this.isApplyingRemoteEdit = applying;
     }
 
-    /**
-     * Capture and broadcast a class addition.
-     */
     captureClassAdded(projectId: string, classUri: string, className: string, metadata?: Record<string, any>): void {
         if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
 
@@ -44,9 +31,6 @@ export class EditCapture {
         this.broadcastWithDebounce(`class_add_${classUri}`, operation);
     }
 
-    /**
-     * Capture and broadcast a class modification.
-     */
     captureClassModified(
         projectId: string,
         classUri: string,
@@ -70,9 +54,6 @@ export class EditCapture {
         this.broadcastWithDebounce(`class_mod_${classUri}_${property}`, operation);
     }
 
-    /**
-     * Capture and broadcast a class deletion.
-     */
     captureClassDeleted(projectId: string, classUri: string, metadata?: Record<string, any>): void {
         if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
 
@@ -83,13 +64,9 @@ export class EditCapture {
             metadata
         };
 
-        // No debounce for deletions - immediate
         this.collaborationManager.sendEdit(operation);
     }
 
-    /**
-     * Capture and broadcast a property addition.
-     */
     capturePropertyAdded(
         projectId: string,
         propertyUri: string,
@@ -110,9 +87,6 @@ export class EditCapture {
         this.broadcastWithDebounce(`prop_add_${propertyUri}`, operation);
     }
 
-    /**
-     * Capture and broadcast a property modification.
-     */
     capturePropertyModified(
         projectId: string,
         propertyUri: string,
@@ -136,9 +110,6 @@ export class EditCapture {
         this.broadcastWithDebounce(`prop_mod_${propertyUri}_${property}`, operation);
     }
 
-    /**
-     * Capture and broadcast a property deletion.
-     */
     capturePropertyDeleted(projectId: string, propertyUri: string, metadata?: Record<string, any>): void {
         if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
 
@@ -149,13 +120,9 @@ export class EditCapture {
             metadata
         };
 
-        // No debounce for deletions - immediate
         this.collaborationManager.sendEdit(operation);
     }
 
-    /**
-     * Capture and broadcast an annotation addition/modification.
-     */
     captureAnnotationChanged(
         projectId: string,
         nodeUri: string,
@@ -179,9 +146,6 @@ export class EditCapture {
         this.broadcastWithDebounce(`annot_${nodeUri}_${annotationType}`, operation);
     }
 
-    /**
-     * Capture and broadcast a subclass relationship addition.
-     */
     captureSubclassAdded(projectId: string, childUri: string, parentUri: string, metadata?: Record<string, any>): void {
         if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
 
@@ -197,9 +161,6 @@ export class EditCapture {
         this.broadcastWithDebounce(`subclass_add_${childUri}_${parentUri}`, operation);
     }
 
-    /**
-     * Capture and broadcast a subclass relationship removal.
-     */
     captureSubclassRemoved(projectId: string, childUri: string, parentUri: string, metadata?: Record<string, any>): void {
         if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
 
@@ -215,9 +176,6 @@ export class EditCapture {
         this.collaborationManager.sendEdit(operation);
     }
 
-    /**
-     * Capture and broadcast cursor/selection changes.
-     */
     captureCursorMoved(projectId: string, nodeUri?: string, selectedNodes?: string[]): void {
         if (!this.collaborationManager) return;
 
@@ -227,20 +185,16 @@ export class EditCapture {
         });
     }
 
-    /**
-     * Broadcast with debouncing to avoid flooding the server.
-     */
     private broadcastWithDebounce(
         key: string,
         operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'>
     ): void {
-        // Clear existing timer for this operation
+
         const existingTimer = this.debounceTimers.get(key);
         if (existingTimer) {
             clearTimeout(existingTimer);
         }
 
-        // Set new timer
         const timer = setTimeout(() => {
             if (this.collaborationManager) {
                 this.collaborationManager.sendEdit(operation);
@@ -251,9 +205,6 @@ export class EditCapture {
         this.debounceTimers.set(key, timer);
     }
 
-    /**
-     * Flush all pending debounced operations immediately.
-     */
     flush(): void {
         this.debounceTimers.forEach((timer, key) => {
             clearTimeout(timer);
@@ -261,9 +212,6 @@ export class EditCapture {
         });
     }
 
-    /**
-     * Clean up resources.
-     */
     dispose(): void {
         this.flush();
         this.collaborationManager = null;

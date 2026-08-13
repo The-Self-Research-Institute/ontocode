@@ -1,7 +1,4 @@
-/**
- * Fuzzy Reasoning Engine
- * Implements fuzzy inference, subsumption checking, and consistency verification
- */
+
 
 import {
   FuzzyOntology,
@@ -26,17 +23,10 @@ export interface ReasoningStep {
   degree: MembershipDegree;
 }
 
-/**
- * Fuzzy subsumption reasoning
- */
 export class FuzzySubsumptionReasoner {
 
   constructor(private ontology: FuzzyOntology) {}
 
-  /**
-   * Check if concept C1 is subsumed by C2 with degree d
-   * C1 ⊑_d C2 means for all individuals x: μ_C1(x) ≤ μ_C2(x) with degree d
-   */
   checkSubsumption(c1URI: string, c2URI: string): ReasoningResult {
     const concept1 = this.ontology.getConcept(c1URI);
     const concept2 = this.ontology.getConcept(c2URI);
@@ -51,11 +41,9 @@ export class FuzzySubsumptionReasoner {
     let minSubsumptionDegree = 1;
     const trace: ReasoningStep[] = [];
 
-    // Check all instances of C1
     for (const [individualURI, degree1] of concept1.instances) {
       const degree2 = this.ontology.getMembershipDegree(individualURI, c2URI);
 
-      // Subsumption degree: how much C1 membership implies C2 membership
       const subsumptionDegree = degree1 <= degree2 ? 1 : degree2 / degree1;
       minSubsumptionDegree = Math.min(minSubsumptionDegree, subsumptionDegree);
 
@@ -75,9 +63,6 @@ export class FuzzySubsumptionReasoner {
     };
   }
 
-  /**
-   * Check equivalence between concepts
-   */
   checkEquivalence(c1URI: string, c2URI: string): ReasoningResult {
     const sub1 = this.checkSubsumption(c1URI, c2URI);
     const sub2 = this.checkSubsumption(c2URI, c1URI);
@@ -95,23 +80,18 @@ export class FuzzySubsumptionReasoner {
     };
   }
 
-  /**
-   * Find most specific concepts for an individual
-   */
   findMostSpecificConcepts(individualURI: string, threshold: number = 0.5): FuzzyConcept[] {
     const individual = this.ontology.getIndividual(individualURI);
     if (!individual) return [];
 
     const candidateConcepts = new Map<string, MembershipDegree>();
 
-    // Collect all concepts with membership >= threshold
     for (const [conceptURI, degree] of individual.memberships) {
       if (degree >= threshold) {
         candidateConcepts.set(conceptURI, degree);
       }
     }
 
-    // Filter out concepts that have more specific subconcepts
     const mostSpecific: FuzzyConcept[] = [];
 
     for (const [conceptURI, degree] of candidateConcepts) {
@@ -120,7 +100,6 @@ export class FuzzySubsumptionReasoner {
 
       let isSpecific = true;
 
-      // Check if there's a more specific subconcept
       const subConcepts = this.ontology.getSubConcepts(conceptURI);
       for (const subConcept of subConcepts) {
         const subDegree = individual.memberships.get(subConcept.uri);
@@ -139,16 +118,10 @@ export class FuzzySubsumptionReasoner {
   }
 }
 
-/**
- * Fuzzy consistency checker
- */
 export class FuzzyConsistencyChecker {
 
   constructor(private ontology: FuzzyOntology) {}
 
-  /**
-   * Check if an individual satisfies disjoint constraints
-   */
   checkDisjointness(individualURI: string): ReasoningResult {
     const individual = this.ontology.getIndividual(individualURI);
     if (!individual) {
@@ -168,7 +141,7 @@ export class FuzzyConsistencyChecker {
         const degree2 = this.ontology.getMembershipDegree(individualURI, disjointURI);
 
         if (degree2 > 0) {
-          // Violation degree: how much the disjointness is violated
+
           const violationDegree = Math.min(degree1, degree2);
           const consistencyDegree = 1 - violationDegree;
           minConsistencyDegree = Math.min(minConsistencyDegree, consistencyDegree);
@@ -189,9 +162,6 @@ export class FuzzyConsistencyChecker {
     };
   }
 
-  /**
-   * Check functional property constraints
-   */
   checkFunctionalProperties(): ReasoningResult {
     let minConsistencyDegree = 1;
     const violations: string[] = [];
@@ -201,7 +171,7 @@ export class FuzzyConsistencyChecker {
 
       for (const [subject, objectMap] of property.relations) {
         if (objectMap.size > 1) {
-          // Multiple objects for functional property - compute violation degree
+
           const degrees = Array.from(objectMap.values());
           const maxDegree = Math.max(...degrees);
           const otherDegrees = degrees.filter(d => d !== maxDegree);
@@ -228,18 +198,13 @@ export class FuzzyConsistencyChecker {
     };
   }
 
-  /**
-   * Overall consistency check
-   */
   checkConsistency(): ReasoningResult {
     const results: ReasoningResult[] = [];
 
-    // Check disjointness for all individuals
     for (const individual of this.ontology.getAllIndividuals()) {
       results.push(this.checkDisjointness(individual.uri));
     }
 
-    // Check functional properties
     results.push(this.checkFunctionalProperties());
 
     const minDegree = Math.min(...results.map(r => r.degree || 1));
@@ -261,16 +226,10 @@ export class FuzzyConsistencyChecker {
   }
 }
 
-/**
- * Fuzzy query engine
- */
 export class FuzzyQueryEngine {
 
   constructor(private ontology: FuzzyOntology) {}
 
-  /**
-   * Query individuals by concept with threshold
-   */
   queryByConcept(
     conceptURI: string,
     minDegree: number = 0,
@@ -286,15 +245,11 @@ export class FuzzyQueryEngine {
       }
     }
 
-    // Sort by degree descending
     results.sort((a, b) => b.degree - a.degree);
 
     return results.slice(0, maxResults);
   }
 
-  /**
-   * Query by fuzzy concept expression
-   */
   queryByExpression(
     expression: FuzzyConceptExpression,
     minDegree: number = 0,
@@ -314,16 +269,10 @@ export class FuzzyQueryEngine {
     return results.slice(0, maxResults);
   }
 
-  /**
-   * Top-k query: find k individuals with highest membership
-   */
   topKQuery(conceptURI: string, k: number): Array<{ uri: string; degree: MembershipDegree }> {
     return this.queryByConcept(conceptURI, 0, k).map(r => ({ uri: r.uri, degree: r.degree }));
   }
 
-  /**
-   * Threshold query: find all individuals above threshold
-   */
   thresholdQuery(
     conceptURI: string,
     threshold: number
@@ -334,9 +283,6 @@ export class FuzzyQueryEngine {
     }));
   }
 
-  /**
-   * Range query: find individuals with membership in range
-   */
   rangeQuery(
     conceptURI: string,
     minDegree: number,
@@ -349,16 +295,10 @@ export class FuzzyQueryEngine {
   }
 }
 
-/**
- * Alpha-cut based hierarchical reasoner
- */
 export class AlphaCutReasoner {
 
   constructor(private ontology: FuzzyOntology, private alphaDecay: number = 0.8) {}
 
-  /**
-   * Compute alpha-embeddings for hierarchical concepts
-   */
   computeAlphaEmbeddings(rootConceptURI: string, dimensions: number = 128): Map<string, AlphaEmbedding> {
     const embeddings = new Map<string, AlphaEmbedding>();
     const visited = new Set<string>();
@@ -370,10 +310,8 @@ export class AlphaCutReasoner {
       const concept = this.ontology.getConcept(conceptURI);
       if (!concept) return;
 
-      // Initialize embedding
       const embedding = new Array(dimensions).fill(0);
 
-      // Get instances and compute embedding from membership degrees
       for (const [individualURI, degree] of concept.instances) {
         const hash = this.hashString(individualURI);
         for (let i = 0; i < dimensions; i++) {
@@ -381,10 +319,8 @@ export class AlphaCutReasoner {
         }
       }
 
-      // Apply alpha decay based on depth
       const alpha = Math.pow(this.alphaDecay, depth);
 
-      // Normalize
       const norm = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
       if (norm > 0) {
         for (let i = 0; i < dimensions; i++) {
@@ -394,7 +330,6 @@ export class AlphaCutReasoner {
 
       embeddings.set(conceptURI, { conceptURI, embedding, alpha });
 
-      // Recurse to subconcepts
       const subConcepts = this.ontology.getSubConcepts(conceptURI);
       for (const subConcept of subConcepts) {
         computeRecursive(subConcept.uri, depth + 1);
@@ -415,17 +350,11 @@ export class AlphaCutReasoner {
     return hash;
   }
 
-  /**
-   * Query using alpha-cuts
-   */
   getAlphaCut(conceptURI: string, alpha: number): Set<string> {
     const instances = this.ontology.getInstances(conceptURI, alpha);
     return new Set(instances.keys());
   }
 
-  /**
-   * Get strong alpha-cut (membership > alpha)
-   */
   getStrongAlphaCut(conceptURI: string, alpha: number): Set<string> {
     const instances = this.ontology.getInstances(conceptURI, 0);
     const result = new Set<string>();

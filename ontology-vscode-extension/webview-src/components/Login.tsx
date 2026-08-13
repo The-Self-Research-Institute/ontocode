@@ -88,7 +88,6 @@ const Login: React.FC = () => {
 
             await login(payload.username, password);
 
-            // If there's an invite token, accept it after login
             if (inviteToken) {
                 navigate(`/invite?token=${inviteToken}`);
             } else {
@@ -112,7 +111,7 @@ const Login: React.FC = () => {
     return (
         <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50 p-6">
             <div className="max-w-md w-full">
-                {/* Header */}
+                {}
                 <div className="text-center mb-8">
                     <div className="inline-flex items-center justify-center mb-4">
                         <OntoCodeLogo size={64} rounded className="shadow-lg" />
@@ -130,7 +129,7 @@ const Login: React.FC = () => {
                     </p>
                 </div>
 
-                {/* Login/Signup Form */}
+                {}
                 <div className="bg-white rounded-2xl shadow-xl p-8">
                     {error && (
                         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -230,7 +229,7 @@ const Login: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Footer */}
+                {}
                 <p className="text-center text-xs text-gray-500 mt-6">
                     {appVersion ? `OntoCode v${appVersion}` : 'OntoCode'}
                     <span className="mx-2">·</span>

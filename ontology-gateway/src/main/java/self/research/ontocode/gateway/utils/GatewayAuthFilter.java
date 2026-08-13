@@ -20,9 +20,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.List;
 
-/**
- * Validates JWT on /api/** at the gateway edge. Public auth endpoints are exempt.
- */
 @Component
 public class GatewayAuthFilter implements GlobalFilter, Ordered {
 

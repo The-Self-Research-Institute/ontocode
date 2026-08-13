@@ -6,9 +6,6 @@ import lombok.Data;
 import java.nio.file.Path;
 import java.time.Instant;
 
-/**
- * Represents an import job in the queue
- */
 @Data
 @Builder
 public class ImportQueueItem {

@@ -6,10 +6,6 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 
-/**
- * Persisted record of processed Stripe webhook events.
- * Used for idempotency — ensures each event is processed exactly once.
- */
 @Document(collection = "stripe_events")
 public class StripeEvent {
 
@@ -20,7 +16,7 @@ public class StripeEvent {
     private String stripeEventId;
 
     private String eventType;
-    private String status; // processed, failed
+    private String status;
     private String errorMessage;
 
     private LocalDateTime receivedAt;

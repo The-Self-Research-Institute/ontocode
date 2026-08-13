@@ -72,9 +72,6 @@ public class DraftPublishMergeService {
         });
     }
 
-    /**
-     * Publish via OWLAPI three-way merge (baseline / ours / theirs) and write result to main graph.
-     */
     public void publishWithThreeWayMerge(String projectId,
                                          String userId,
                                          DraftPublishAnalysis analysis,
@@ -119,9 +116,6 @@ public class DraftPublishMergeService {
                 projectId, userId, conflictIris.size());
     }
 
-    /**
-     * Enrich publish-preview conflicts with axiom summaries from three-way comparison.
-     */
     public List<Map<String, Object>> enrichConflictsWithAxiomDetail(String projectId,
                                                                     String userId,
                                                                     List<Map<String, Object>> conflicts) {
@@ -133,7 +127,6 @@ public class DraftPublishMergeService {
                     projectId, datasetService.getGraphUri(projectId), RDFFormat.RDFXML);
             OWLOntology theirs = mergeService.loadOntologyFromRdf(mainRdf);
 
-            // Build ours ontology: use baseline+draft when snapshot exists, fall back to draft graph only.
             Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
             String baselineSnapshotPath = sessionOpt.map(DraftSession::getBaselineSnapshotPath).orElse(null);
             Path baselinePath = baselineSnapshotPath != null
@@ -144,7 +137,7 @@ public class DraftPublishMergeService {
                 String baselineRdf = Files.readString(baselinePath);
                 ours = buildOursOntology(projectId, userId, baselineRdf);
             } else {
-                // No baseline snapshot (copy-on-switch session): load draft graph directly.
+
                 String draftGraph = datasetService.getDraftGraphUri(projectId, userId);
                 String draftRdf = datasetService.exportNamedGraph(projectId, draftGraph, RDFFormat.RDFXML);
                 ours = mergeService.loadOntologyFromRdf(draftRdf != null ? draftRdf : mainRdf);
@@ -168,11 +161,6 @@ public class DraftPublishMergeService {
         }
     }
 
-    /**
-     * Analyse what pulling public changes into the draft would do: which entities changed
-     * only in main since the draft's baseline (safe to merge automatically) and which were
-     * also touched in the draft itself (need per-entity resolution). Read-only.
-     */
     public Map<String, Object> analyzePull(String projectId, String userId) throws Exception {
         Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
         if (sessionOpt.isEmpty()) {
@@ -182,7 +170,7 @@ public class DraftPublishMergeService {
         DraftSession session = sessionOpt.get();
         String baselineRdf = readOrEstablishBaseline(projectId, userId, session);
         if (baselineRdf == null) {
-            // Freshly established baseline == current main, so there is nothing to pull yet.
+
             return noChangesResult(false);
         }
 
@@ -221,12 +209,6 @@ public class DraftPublishMergeService {
         return result;
     }
 
-    /**
-     * Merge public changes into the user's draft graph via an OWLAPI three-way merge
-     * (baseline / draft / main), applying the caller's per-entity resolutions to conflicts.
-     * Entities changed only in main are copied into the draft automatically. The draft's
-     * baseline is advanced to the current main state afterwards.
-     */
     public Map<String, Object> applyPull(String projectId, String userId,
                                          Map<String, ConflictResolution> resolutions) throws Exception {
         Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
@@ -250,10 +232,6 @@ public class DraftPublishMergeService {
         Set<String> conflictIris = new LinkedHashSet<>(mainTouched);
         conflictIris.retainAll(draftTouched);
 
-        // NOTE the swapped roles versus publishWithThreeWayMerge: here "ours" (the source of
-        // changes being applied) is main/theirs, and "theirs" (the ontology mutated in place)
-        // is the draft. So ResolutionAction.KEEP_SOURCE means "take public" and KEEP_TARGET
-        // means "keep draft" — the inverse of their meaning on the publish path.
         OWLOntology mergedDraft = mergeService.mergeDraftPublishThreeWay(
                 baseline, theirs, ours, conflictIris, resolutions);
 
@@ -276,18 +254,13 @@ public class DraftPublishMergeService {
         return result;
     }
 
-    /**
-     * Returns the baseline RDF to diff against, or null if no baseline existed and one was
-     * just established (in which case baseline == current main, so nothing has "changed" yet).
-     */
     private String readOrEstablishBaseline(String projectId, String userId, DraftSession session) throws Exception {
         String snapshotPath = session.getBaselineSnapshotPath();
         Path baselinePath = snapshotPath != null ? storageManager.projectDir(projectId).resolve(snapshotPath) : null;
         if (baselinePath != null && Files.exists(baselinePath)) {
             return Files.readString(baselinePath);
         }
-        // Legacy session predating baseline snapshots, or the file went missing — self-heal by
-        // capturing the current main state as the new baseline.
+
         log.warn("[DRAFT-MERGE] No baseline snapshot for project {} user {} — establishing one now",
                 projectId, userId);
         advanceBaseline(projectId, userId, session);

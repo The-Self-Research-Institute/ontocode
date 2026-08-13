@@ -1,18 +1,9 @@
 
-/**
- * =============================================================================
- * UPLOAD PLUGIN BUNDLES TO GRIDFS
- * =============================================================================
- * 
- * This script uploads the built plugin bundles directly to MongoDB GridFS,
- * bypassing authentication. Use after running insert-default-plugins.js.
- */
 
 const { MongoClient, GridFSBucket } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 
-// Load environment variables from root .env if present
 try {
   const dotenvPath = path.resolve(__dirname, '..', '.env');
   if (fs.existsSync(dotenvPath)) {
@@ -24,7 +15,6 @@ try {
   console.warn('⚠ Could not load .env file:', error.message);
 }
 
-// Configuration
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017';
 const MONGO_USERNAME = process.env.MONGO_USERNAME || process.env.MONGO_USER || "admin";
 const MONGO_PASSWORD = process.env.MONGO_PASSWORD || process.env.MONGO_PASS || "changeme123";
@@ -35,7 +25,6 @@ const PLUGIN_VERSIONS_COLLECTION = 'plugin_versions';
 
 const PLUGINS_DIR = path.join(__dirname, '..', 'plugins');
 
-// Plugin bundles to upload
 const PLUGIN_BUNDLES = [
   {
     pluginId: 'fuzzy-ontology-plugin',
@@ -69,9 +58,6 @@ const PLUGIN_BUNDLES = [
   }
 ];
 
-/**
- * Upload bundle to GridFS
- */
 async function uploadBundle(bucket, plugin) {
   console.log(`\n📦 Uploading ${plugin.pluginId} v${plugin.version}...`);
 
@@ -81,8 +67,7 @@ async function uploadBundle(bucket, plugin) {
   }
 
   const fileName = `${plugin.pluginId}-${plugin.version}.js`;
-  
-  // Check if file already exists
+
   const existingFiles = await bucket.find({ filename: fileName }).toArray();
   if (existingFiles.length > 0) {
     console.log(`   ⚠️  File already exists in GridFS, deleting old version...`);
@@ -113,13 +98,10 @@ async function uploadBundle(bucket, plugin) {
   });
 }
 
-/**
- * Update plugin document with file reference and create version document
- */
 async function updatePluginAndVersion(db, pluginId, version, fileId, bundlePath) {
-  // Update main plugin document
+
   const pluginsCollection = db.collection(PLUGINS_COLLECTION);
-  
+
   await pluginsCollection.updateOne(
     { pluginId },
     { 
@@ -132,11 +114,10 @@ async function updatePluginAndVersion(db, pluginId, version, fileId, bundlePath)
   );
   console.log(`   ✅ Updated plugin document`);
 
-  // Create or update plugin version document
   const versionsCollection = db.collection(PLUGIN_VERSIONS_COLLECTION);
-  
+
   const fileStats = fs.statSync(bundlePath);
-  
+
   const versionDoc = {
     pluginId,
     version,
@@ -149,7 +130,7 @@ async function updatePluginAndVersion(db, pluginId, version, fileId, bundlePath)
   };
 
   const existingVersion = await versionsCollection.findOne({ pluginId, version });
-  
+
   if (existingVersion) {
     await versionsCollection.updateOne(
       { pluginId, version },
@@ -162,9 +143,6 @@ async function updatePluginAndVersion(db, pluginId, version, fileId, bundlePath)
   }
 }
 
-/**
- * Main execution
- */
 async function main() {
   console.log('=============================================================================');
   console.log('UPLOAD PLUGIN BUNDLES TO GRIDFS');
@@ -181,7 +159,7 @@ async function main() {
   }
 
   let client = new MongoClient(MONGO_URL, mongoOptions);
-  
+
   try {
     await client.connect();
     console.log('✅ Connected to MongoDB');
@@ -191,7 +169,7 @@ async function main() {
       console.log('   • No MongoDB credentials provided (running unauthenticated connection)');
     }
   } catch (error) {
-    // If authentication fails, try without credentials
+
     if (error.message.includes('Authentication failed') && MONGO_USERNAME) {
       console.log('⚠️  Authentication failed, trying without credentials...');
       client = new MongoClient(MONGO_URL, {});
@@ -201,7 +179,7 @@ async function main() {
       throw error;
     }
   }
-  
+
   try {
 
     const db = client.db(DB_NAME);
@@ -230,7 +208,7 @@ async function main() {
     console.log('=============================================================================');
     console.log(`✅ Success: ${successCount}/${PLUGIN_BUNDLES.length}`);
     console.log(`❌ Failed: ${failCount}/${PLUGIN_BUNDLES.length}`);
-    
+
     if (successCount > 0) {
       console.log('\n🎉 Plugin bundles are now available for download!');
       console.log('   Test by installing plugins from the marketplace');
@@ -238,7 +216,7 @@ async function main() {
 
   } catch (error) {
     console.error('\n❌ Error:', error.message);
-    
+
     if (error.message.includes('ECONNREFUSED')) {
       console.error('\n⚠️  MongoDB is not running!');
       console.error('   Please start MongoDB first');
@@ -246,7 +224,7 @@ async function main() {
       console.error('\n⚠️  Authentication required. Set MONGO_USERNAME and MONGO_PASSWORD environment variables.');
       console.error('   Optional: MONGO_AUTH_SOURCE (defaults to "admin"), MONGO_DB_NAME, MONGO_URL');
     }
-    
+
     process.exit(1);
   } finally {
     await client.close();
@@ -254,7 +232,6 @@ async function main() {
   }
 }
 
-// Run the script
 main().catch(error => {
   console.error('Fatal error:', error);
   process.exit(1);

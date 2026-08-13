@@ -59,14 +59,6 @@ interface CollaborativeUser {
   cursorPosition?: { x: number; y: number };
 }
 
-/**
- * Collaborative Graph View with Real-time Updates
- * Features:
- * - WebSocket-based real-time synchronization
- * - Lazy loading for large ontologies
- * - Multi-user collaborative features (cursors, selections)
- * - Incremental delta updates (not full reload)
- */
 export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
   projectId,
   userId = `user_${Date.now()}`,
@@ -76,7 +68,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
   const networkRef = useRef<Network | null>(null);
   const stompClientRef = useRef<Client | null>(null);
 
-  // Use DataSet for efficient updates
   const nodesDataSetRef = useRef<DataSet<Node>>(new DataSet());
   const edgesDataSetRef = useRef<DataSet<Edge>>(new DataSet());
 
@@ -106,7 +97,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     datatypeProperty: true
   });
 
-  // Type colors
   const typeColors = {
     class: '#4A90E2',
     individual: '#7ED321',
@@ -114,8 +104,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     datatypeProperty: '#BD10E0',
     objectProperty: '#50E3C2'
   };
-
-  // ===================== WebSocket Connection =====================
 
   const connectWebSocket = useCallback(() => {
     const socket = new SockJS('http://localhost:8080/ws');
@@ -125,12 +113,10 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
       console.log('Connected to WebSocket');
       setConnected(true);
 
-      // Subscribe to graph updates
       stompClient.subscribe(`/topic/graph/${projectId}`, (message: IMessage) => {
         handleGraphUpdate(JSON.parse(message.body));
       });
 
-      // Subscribe to general ontology updates
       stompClient.subscribe(`/topic/ontology/${projectId}`, (message: IMessage) => {
         handleEditOperation(JSON.parse(message.body));
       });
@@ -140,7 +126,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
       console.error('WebSocket connection error:', error);
       setConnected(false);
 
-      // Retry connection after 5 seconds
       setTimeout(connectWebSocket, 5000);
     });
 
@@ -156,8 +141,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
       }
     };
   }, [connectWebSocket]);
-
-  // ===================== Graph Data Loading =====================
 
   const fetchInitialGraph = useCallback(async (forceReload: boolean = false) => {
     setLoading(true);
@@ -179,7 +162,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
         const nodes = data.nodes || [];
         const edges = data.edges || [];
 
-        // Update DataSets
         nodesDataSetRef.current.clear();
         edgesDataSetRef.current.clear();
         nodesDataSetRef.current.add(nodes.map(convertToVisNode));
@@ -198,8 +180,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     fetchInitialGraph();
   }, [fetchInitialGraph]);
 
-  // ===================== Data Conversion =====================
-
   const convertToVisNode = (node: GraphNode): Node => ({
     id: node.id,
     label: settings.showLabels ? node.label : '',
@@ -210,7 +190,7 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     title: `${node.label}\n(${node.type})${node.hasChildren ? '\n[Click to expand]' : ''}`,
     borderWidth: node.hasChildren ? 3 : 2,
     borderWidthSelected: 4,
-    // Store metadata
+
     ...node
   });
 
@@ -225,8 +205,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     dashes: edge.type === 'subClassOf',
     ...edge
   });
-
-  // ===================== Graph Update Handlers =====================
 
   const handleGraphUpdate = useCallback((update: any) => {
     console.log('Graph update received:', update.type);
@@ -277,7 +255,7 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
         break;
 
       case 'DELTA_UPDATE':
-        // Incremental update - most efficient
+
         if (update.addedNodes?.length > 0) {
           nodesDataSetRef.current.add(update.addedNodes.map(convertToVisNode));
         }
@@ -318,7 +296,7 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
         break;
 
       case 'NODE_EXPANDED':
-        // Another user expanded a node - add their children
+
         if (update.addedNodes?.length > 0) {
           nodesDataSetRef.current.add(update.addedNodes.map(convertToVisNode));
         }
@@ -330,8 +308,7 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
   }, [userId, settings]);
 
   const handleEditOperation = useCallback((operation: any) => {
-    // Handle general ontology edit operations
-    // These are automatically converted to graph updates by the backend
+
     console.log('Edit operation received:', operation.type);
   }, []);
 
@@ -342,8 +319,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
       return updated;
     });
   };
-
-  // ===================== Network Initialization =====================
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -393,7 +368,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     const network = new Network(containerRef.current, data, options);
     networkRef.current = network;
 
-    // Event handlers
     network.on('selectNode', handleNodeSelect);
     network.on('deselectNode', handleNodeDeselect);
     network.on('doubleClick', handleNodeDoubleClick);
@@ -404,8 +378,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     };
   }, [settings.layout, settings.physics, settings.showLabels, settings.showArrows, settings.nodeSize]);
 
-  // ===================== Event Handlers =====================
-
   const handleNodeSelect = useCallback((params: any) => {
     const nodeId = params.nodes[0] as string;
     const node = nodesDataSetRef.current.get(nodeId) as any;
@@ -413,7 +385,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     if (node) {
       setSelectedNode(node as GraphNode);
 
-      // Broadcast selection to other users
       if (stompClientRef.current?.connected) {
         stompClientRef.current.send(
           `/app/graph/${projectId}/select`,
@@ -443,8 +414,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     // Could send cursor position here (debounced)
   }, []);
 
-  // ===================== Lazy Loading =====================
-
   const expandNode = useCallback(async (nodeId: string) => {
     try {
       console.log(`Expanding node: ${nodeId}`);
@@ -459,14 +428,11 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
         const newNodes = data.nodes || [];
         const newEdges = data.edges || [];
 
-        // Add new nodes and edges
         nodesDataSetRef.current.add(newNodes.map(convertToVisNode));
         edgesDataSetRef.current.add(newEdges.map(convertToVisEdge));
 
-        // Mark node as expanded
         nodesDataSetRef.current.update({ id: nodeId, expanded: true });
 
-        // Broadcast expansion to other users
         if (stompClientRef.current?.connected) {
           stompClientRef.current.send(
             `/app/graph/${projectId}/expand`,
@@ -483,8 +449,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
       setLoading(false);
     }
   }, [projectId, userId, username]);
-
-  // ===================== UI Actions =====================
 
   const handleZoomIn = () => {
     if (networkRef.current) {
@@ -521,7 +485,6 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
   const toggleTypeVisibility = (type: keyof typeof visibleTypes) => {
     setVisibleTypes(prev => ({ ...prev, [type]: !prev[type] }));
 
-    // Filter nodes by visibility
     const allNodes = nodesDataSetRef.current.get();
     allNodes.forEach((node: any) => {
       const visible = visibleTypes[node.type as keyof typeof visibleTypes];
@@ -531,18 +494,16 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
     });
   };
 
-  // ===================== Render =====================
-
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', backgroundColor: '#f5f5f5' }}>
-      {/* Toolbar */}
+      {}
       <div style={{ padding: '10px', backgroundColor: '#fff', borderBottom: '1px solid #ddd', display: 'flex', gap: '10px', alignItems: 'center' }}>
         <button onClick={() => fetchInitialGraph(true)} disabled={loading} style={{ padding: '6px 12px', backgroundColor: '#4A90E2', color: 'white', border: 'none', borderRadius: '4px', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
           <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
           Refresh
         </button>
 
-        {/* Connection Status */}
+        {}
         <div style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '12px', backgroundColor: connected ? '#d4edda' : '#f8d7da', color: connected ? '#155724' : '#721c24' }}>
           {connected ? '● Connected' : '○ Disconnected'}
         </div>
@@ -583,14 +544,14 @@ export const CollaborativeGraphView: React.FC<GraphViewProps> = ({
         </button>
       </div>
 
-      {/* Main Content */}
+      {}
       <div style={{ flex: 1, display: 'flex', position: 'relative', overflow: 'hidden' }}>
         <div ref={containerRef} style={{ flex: 1, backgroundColor: '#fff' }} />
 
-        {/* Panels - Filters, Settings, Users, etc. */}
-        {/* (Same as before - omitted for brevity) */}
+        {}
+        {}
 
-        {/* Selected Node Info */}
+        {}
         {selectedNode && (
           <div style={{ position: 'absolute', bottom: '10px', left: '10px', backgroundColor: 'white', border: '1px solid #ddd', borderRadius: '6px', padding: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', maxWidth: '300px', zIndex: 10 }}>
             <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', fontWeight: 600 }}>{selectedNode.label}</h4>

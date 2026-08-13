@@ -1,6 +1,4 @@
-/**
- * Upload Optimizer - Handles chunked uploads, compression, and retry logic
- */
+
 
 export interface UploadConfig {
     chunkSize: number; // Size of each chunk in bytes (default: 5MB)
@@ -22,9 +20,6 @@ const DEFAULT_CONFIG: UploadConfig = {
     enableCompression: true
 };
 
-/**
- * Simple hash function for chunk verification
- */
 function simpleHash(data: Uint8Array): string {
     let hash = 0;
     for (let i = 0; i < data.length; i++) {
@@ -34,12 +29,9 @@ function simpleHash(data: Uint8Array): string {
     return Math.abs(hash).toString(36);
 }
 
-/**
- * Compress data using gzip (if available in browser/node environment)
- */
 async function compressData(data: Uint8Array): Promise<Uint8Array> {
     try {
-        // Check if CompressionStream is available (modern browsers)
+
         if (typeof (globalThis as any).CompressionStream !== 'undefined') {
             const blob = new Blob([data]);
             const stream = blob.stream().pipeThrough(new (globalThis as any).CompressionStream('gzip'));
@@ -47,7 +39,6 @@ async function compressData(data: Uint8Array): Promise<Uint8Array> {
             return new Uint8Array(await compressedBlob.arrayBuffer());
         }
 
-        // Fallback: return original data if compression not available
         console.warn('[UploadOptimizer] Compression not available, uploading uncompressed');
         return data;
     } catch (error) {
@@ -56,9 +47,6 @@ async function compressData(data: Uint8Array): Promise<Uint8Array> {
     }
 }
 
-/**
- * Split file into chunks
- */
 export function splitIntoChunks(data: Uint8Array, chunkSize: number): Uint8Array[] {
     const chunks: Uint8Array[] = [];
     let offset = 0;
@@ -72,9 +60,6 @@ export function splitIntoChunks(data: Uint8Array, chunkSize: number): Uint8Array
     return chunks;
 }
 
-/**
- * Upload a single chunk with retry logic
- */
 async function uploadChunkWithRetry(
     uploadFn: (chunk: Uint8Array, metadata: ChunkMetadata) => Promise<any>,
     chunk: Uint8Array,
@@ -86,7 +71,7 @@ async function uploadChunkWithRetry(
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
             if (attempt > 0) {
-                // Exponential backoff: 1s, 2s, 4s...
+
                 const delay = Math.pow(2, attempt) * 1000;
                 console.log(`[UploadOptimizer] Retrying chunk ${metadata.chunkIndex + 1}/${metadata.totalChunks} after ${delay}ms delay`);
                 await new Promise(resolve => setTimeout(resolve, delay));
@@ -97,7 +82,6 @@ async function uploadChunkWithRetry(
             lastError = error as Error;
             console.error(`[UploadOptimizer] Chunk upload attempt ${attempt + 1} failed:`, error);
 
-            // Don't retry on certain errors (e.g., 401, 403)
             if (error && typeof error === 'object' && 'status' in error) {
                 const status = (error as any).status;
                 if (status === 401 || status === 403) {
@@ -110,9 +94,6 @@ async function uploadChunkWithRetry(
     throw new Error(`Failed to upload chunk after ${maxRetries} attempts: ${lastError?.message}`);
 }
 
-/**
- * Optimized upload with chunking, compression, and retry logic
- */
 export async function optimizedUpload(
     fileData: Uint8Array,
     fileName: string,
@@ -125,7 +106,6 @@ export async function optimizedUpload(
     console.log(`[UploadOptimizer] Original size: ${fileData.length} bytes`);
     console.log(`[UploadOptimizer] Compression: ${finalConfig.enableCompression ? 'enabled' : 'disabled'}`);
 
-    // Step 1: Compress if enabled
     let processedData = fileData;
     if (finalConfig.enableCompression) {
         const startTime = Date.now();
@@ -135,7 +115,6 @@ export async function optimizedUpload(
         console.log(`[UploadOptimizer] Compressed to ${processedData.length} bytes (${compressionRatio}% reduction) in ${compressionTime}ms`);
     }
 
-    // Step 2: Check if we need chunking
     const shouldChunk = processedData.length > finalConfig.chunkSize;
 
     if (!shouldChunk) {
@@ -151,11 +130,9 @@ export async function optimizedUpload(
         return;
     }
 
-    // Step 3: Split into chunks
     const chunks = splitIntoChunks(processedData, finalConfig.chunkSize);
     console.log(`[UploadOptimizer] Split into ${chunks.length} chunks of ~${finalConfig.chunkSize / (1024 * 1024)}MB each`);
 
-    // Step 4: Upload chunks with progress tracking
     let uploadedBytes = 0;
     const totalBytes = processedData.length;
 
@@ -182,10 +159,6 @@ export async function optimizedUpload(
     console.log(`[UploadOptimizer] All chunks uploaded successfully`);
 }
 
-/**
- * Check if file should be compressed based on extension
- * (Some formats like .owl, .rdf, .ttl compress well, while .zip, .png don't)
- */
 export function shouldCompressFile(fileName: string): boolean {
     const compressibleExtensions = ['.owl', '.rdf', '.ttl', '.n3', '.nt', '.jsonld', '.xml', '.txt'];
     const extension = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));

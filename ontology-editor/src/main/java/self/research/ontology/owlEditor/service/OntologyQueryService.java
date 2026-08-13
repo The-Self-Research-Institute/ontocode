@@ -32,34 +32,15 @@ import java.util.concurrent.Executors;
 public class OntologyQueryService {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyQueryService.class);
-    
-    /**
-     * Thread pool for parallel SPARQL queries in classDetails.
-     *
-     * Sized for multi-user concurrency: each classDetails call dispatches
-     * ~20 parallel futures. With 64 threads we can handle ~3 simultaneous
-     * classDetails flights before queueing, which combined with @Cacheable
-     * sync=true (see classDetails / classAnnotations) gives us headroom for
-     * 100+ concurrent users clicking classes.
-     *
-     * Note: real ceiling is GraphDB, not threads — threads just feed it.
-     */
+
     private static final ExecutorService QUERY_POOL = Executors.newFixedThreadPool(64);
 
-    /** Fewer concurrent SPARQL calls for GO-scale graphs — avoids 45s+ query pile-ups. */
     private static final ExecutorService LARGE_QUERY_POOL = Executors.newFixedThreadPool(4);
 
     private Executor queryExecutorFor(String projectId) {
         return datasetService.isKnownLargeProject(projectId) ? LARGE_QUERY_POOL : QUERY_POOL;
     }
 
-    /**
-     * Like {@link CompletableFuture#supplyAsync(java.util.function.Supplier, Executor)}, but
-     * propagates the calling thread's {@link SparqlQueryContext} (userId/wantsDraft) onto the
-     * pool thread. Without this, every parallel sub-query here would silently scope to the
-     * main graph regardless of the request's draft=true — SparqlQueryContext is a plain
-     * ThreadLocal set by an HTTP interceptor on the request thread, not the pool thread.
-     */
     private static <T> CompletableFuture<T> queryAsync(java.util.function.Supplier<T> supplier, Executor executor) {
         return CompletableFuture.supplyAsync(SparqlQueryContext.wrap(supplier), executor);
     }
@@ -70,12 +51,6 @@ public class OntologyQueryService {
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         """;
 
-    /**
-     * Reject IRIs containing characters that would allow SPARQL injection when
-     * interpolated bare inside angle-brackets (e.g. {@code <%s>}).
-     * Per the SPARQL 1.1 grammar, IRIREF forbids: &lt; &gt; " { } | ^ ` \ and
-     * any control character (U+0000–U+0020).
-     */
     private static String safeIri(String iri) {
         if (iri == null || iri.isBlank()) {
             throw new IllegalArgumentException("IRI must not be blank");
@@ -103,37 +78,6 @@ public class OntologyQueryService {
         return "";
     }
 
-    /**
-     * Get top-level classes (direct children of owl:Thing or implicit root classes).
-     *
-     * Three-layer read path — fastest to slowest:
-     *   L1: Caffeine in-memory cache (@Cacheable) — microseconds, same JVM session.
-     *   L2: MongoDB persistent cache (TopLevelClassCacheService) — milliseconds, survives restarts.
-     *   L3: Fuseki SPARQL computation — seconds/minutes, used only on true cache miss.
-     *
-     * SPARQL computation uses a two-stage strategy:
-     *   Phase 1a — IRI-only scan: pure POS index lookup, no per-row OPTIONALs or EXISTS.
-     *              ORDER BY ?c (IRI) is free from the index — avoids loading all labels before LIMIT.
-     *   Phase 1b — VALUES-anchored hydration: labels/descriptions/hasChildren fetched only for
-     *              the N IRIs returned by Phase 1a via direct index lookups (O(N), not O(all classes)).
-     *   Phase 2  — orphan supplement: classes declared owl:Class but with no named parent.
-     *              Skipped for known-large or cold-TDB2 projects (p1Duration > 5s).
-     *
-     * Results stored in MongoDB after computation so subsequent restarts skip Fuseki entirely.
-     */
-
-    /**
-     * Fast top-level count for status polling — avoids hydrating labels during long imports.
-     *
-     * Must agree with {@link #topLevelClasses}: top-level = explicit owl:Thing children
-     * PLUS implicit roots (owl:Class with no named parent). Most real ontologies never
-     * assert {@code rdfs:subClassOf owl:Thing}, so counting only explicit children made
-     * the status endpoint report hierarchyReady=false forever and the UI hung on
-     * "loading class tree" even though the import was complete.
-     *
-     * Cached in the "topLevelClasses" cache so the 2s status poll costs one query, not one
-     * per poll; the cache is evicted on every mutation and import.
-     */
     @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()", sync = true)
     public int topLevelClassCount(String projectId) {
         String countQuery = PREFIXES + """
@@ -158,9 +102,6 @@ public class OntologyQueryService {
             log.debug("[Status] topLevelClassCount failed for {}: {}", projectId, e.getMessage());
         }
 
-        // No explicit owl:Thing children — implicit-root ontologies (GO, MONDO, most OBO).
-        // A single ASK index probe; callers only test > 0, and the full MINUS-based orphan
-        // scan (7-40s on large TDB2 graphs) has no place on a 2-second status poll.
         String anyClassAsk = PREFIXES + """
             ASK {
               ?c a owl:Class .
@@ -182,17 +123,10 @@ public class OntologyQueryService {
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
 
-        // This cache is shared project-wide (keyed only on projectId+limit, no user dimension)
-        // and only ever holds the public-graph result — reading it for a drafter would silently
-        // hide their own draft-only classes; writing to it from a drafter's request would leak
-        // their draft content to every other reader. Skip both ends of it entirely for drafters.
         String qsCtxUserId = SparqlQueryContext.getUserId();
         boolean hasDraft = qsCtxUserId != null
                 && datasetService.hasActiveDraftOverlay(projectId, qsCtxUserId);
 
-        // === L2: MongoDB persistent cache ===
-        // Treat a cached empty list as a miss — empty was likely stored during a cold-Fuseki
-        // first call (orphan scan skipped) and would block retries from ever seeing results.
         List<OntologyDto.TreeNode> mongoHit = hasDraft ? null : topLevelCacheService.get(projectId, limit);
         if (mongoHit != null && !mongoHit.isEmpty()) {
             log.info("[PERF] Top-level classes served from MongoDB cache for project={} in {}ms",
@@ -200,12 +134,6 @@ public class OntologyQueryService {
             return mongoHit;
         }
 
-        // === L3: Compute from Fuseki — two-stage Phase 1 ===
-        //
-        // Phase 1a: pure POS index scan — returns only IRIs, no label/description/EXISTS loading.
-        // ORDER BY ?c (IRI string) is satisfied by the SPO index iteration order — zero extra
-        // disk reads. The old single-query approach used ORDER BY LCASE(?label) which forced
-        // TDB2 to load every label from disk before LIMIT could trim anything.
         log.info("[PERF] Top-level classes (phase 1a - IRI scan) for project={}", projectId);
         String phase1aQuery = PREFIXES + """
             SELECT ?c WHERE {
@@ -226,13 +154,6 @@ public class OntologyQueryService {
         long p1aDuration = System.currentTimeMillis() - startTime;
         log.info("[PERF] Phase 1a: {} IRIs in {}ms", p1Iris.size(), p1aDuration);
 
-        // Phase 1b: VALUES-anchored hydration — bounded by p1Iris.size(), NOT by total class count.
-        // Jena resolves VALUES via direct hash/index lookup per IRI, so OPTIONALs and EXISTS
-        // are O(N) where N = p1Iris.size() (≤ limit), not O(all owl:Class declarations).
-        // hasChildren: simple rdfs:subClassOf for large graphs (avoids rdf:rest* traversal on
-        // 1M+ triple datasets); full OWL-DL expression check for small ontologies (<500K triples).
-        // -1 means COUNT timed out (cold TDB2 on 1M+ datasets) — treat as large to avoid
-        // the expensive rdf:rest*/rdf:first path traversal.
         long tripleCount = datasetService.getGraphTripleCount(projectId);
         boolean largeGraph = tripleCount < 0 || tripleCount >= 500_000L;
         List<OntologyDto.TreeNode> phase1;
@@ -268,19 +189,10 @@ public class OntologyQueryService {
         long p1Duration = System.currentTimeMillis() - startTime;
         log.info("[PERF] Top-level classes phase 1 complete: {} results in {}ms", phase1.size(), p1Duration);
 
-        // Phase 2: supplement with orphan classes (owl:Class declarations with no named parent).
-        // Uses Java-side subtraction (two cheap SPARQL scans) instead of SPARQL MINUS chains,
-        // which were O(n²) on large ontologies and caused 504 timeouts.
         Set<String> phase1Iris = phase1.stream()
                 .map(OntologyDto.TreeNode::getId)
                 .collect(java.util.stream.Collectors.toSet());
 
-        // Skip orphan scan only when Fuseki is cold AND phase1 already has results to return.
-        // Using p1aDuration (Phase 1a scan only) rather than p1Duration so that the cold-TDB2
-        // COUNT inside getGraphTripleCount() doesn't artificially inflate the threshold check.
-        // Critically: if phase1 is empty (ontologies like Mondo/GO with no explicit
-        // rdfs:subClassOf owl:Thing children), we MUST run the orphan scan — skipping it
-        // returns an empty tree, which is always wrong.
         boolean knownLarge = datasetService.isKnownLargeProject(projectId);
         if (p1aDuration > 10000 && !phase1.isEmpty()) {
             log.info("[PERF] Skipping orphan scan for project={} (p1aDuration={}ms — cold Fuseki, phase1={})",
@@ -289,8 +201,7 @@ public class OntologyQueryService {
             merged.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
             List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
             enrichWithEquivalentClasses(projectId, result);
-            // Persist to MongoDB — but never persist an empty result: cold Fuseki skipped the
-            // orphan scan so "empty" just means "not ready yet", not "ontology is empty".
+
             final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
             final int finalLimit = limit;
             if (!toStore.isEmpty() && !hasDraft) {
@@ -299,23 +210,6 @@ public class OntologyQueryService {
             return result;
         }
 
-        // Java-side orphan detection with VALUES-bounded complex-expression verification.
-        //
-        // Query A: all named owl:Class IRIs (POS index scan on rdf:type — very fast).
-        // Query B (simple): classes with a named rdfs:subClassOf parent — fast PSO scan.
-        // Candidates = A − B − phase1.
-        // Step 2b: run intersectionOf/equivalentClass/unionOf path expressions ONLY on
-        //          the candidates via VALUES binding. GraphDB resolves VALUES via direct index
-        //          lookup — O(candidates), not O(all_classes). For GO-scale ontologies the
-        //          candidates after step 2 are typically 3-10 (the root namespaces), so the
-        //          complex check runs in milliseconds regardless of total triple count.
-        // True orphans = candidates − hasComplexParent.
-        // Queries A and B are independent — run them in parallel so total wall-clock time is
-        // max(A, B) not A + B. On cold TDB2 each takes ~20-30s; sequential = 504 risk;
-        // parallel = ~30s, within Nginx's 60s proxy_read_timeout.
-        // Exclude owl:deprecated classes from Query A — they have no rdfs:subClassOf and look
-        // like orphans but are not real top-level roots. GO has ~22K deprecated terms out of
-        // ~51K total which was inflating orphan candidates from ~3 (true roots) to ~13K.
         String allClassesQueryStr = PREFIXES + """
             SELECT DISTINCT ?c WHERE {
               ?c a owl:Class .
@@ -363,19 +257,12 @@ public class OntologyQueryService {
         log.info("[PERF] Parallel A+B scan: allClasses={} hasParent={} in {}ms (parallel wall-clock)",
                 allClassIris.size(), hasParentIris.size(), afterHasParent - p1Duration);
 
-        // Subtract in Java: candidates = all classes − has-named-parent − already in phase1
         allClassIris.removeAll(hasParentIris);
         allClassIris.removeAll(phase1Iris);
         List<String> orphanIris = new java.util.ArrayList<>(allClassIris);
         orphanIris.sort(java.util.Comparator.naturalOrder());
         log.info("[PERF] Java-subtraction orphan candidates: {}", orphanIris.size());
 
-        // Step 2b: VALUES-bounded complex OWL expression parent check.
-        // The complex patterns (intersectionOf/equivalentClass/unionOf) run only on the N
-        // candidates, not all classes. GraphDB uses direct index lookup per VALUES entry.
-        // For GO-scale ontologies N ≈ 3 (the 3 root GO namespaces) — this runs in < 50ms.
-        // Safety: skip if candidates > 5000 (pathological disconnected ontology where the
-        // complex check is also unlikely to remove anything meaningful).
         if (!orphanIris.isEmpty() && orphanIris.size() <= 5000) {
             String complexCheckValues = orphanIris.stream()
                     .map(iri -> "<" + iri + ">")
@@ -449,7 +336,6 @@ public class OntologyQueryService {
         long totalDuration = System.currentTimeMillis() - startTime;
         log.info("[PERF] Top-level classes phase 2 (orphans): {} new results, total {}ms", orphans.size(), totalDuration);
 
-        // Merge, sort by label, trim to limit, enrich with equivalent classes
         List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
         merged.addAll(orphans);
         merged.sort(java.util.Comparator.comparing(n ->
@@ -457,9 +343,6 @@ public class OntologyQueryService {
         List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
         enrichWithEquivalentClasses(projectId, result);
 
-        // Persist fully-enriched result to MongoDB (L2 cache) asynchronously — never blocks response.
-        // Skip write if empty: an empty result means the orphan scan is still running or timed out;
-        // persisting it would cause every future call to return empty until server restart.
         final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
         final int finalLimit = limit;
         if (!toStore.isEmpty() && !hasDraft) {
@@ -469,11 +352,6 @@ public class OntologyQueryService {
         return result;
     }
 
-
-    /**
-     * Get ALL classes (including children) in a single SPARQL query.
-     * Used by the graph visualization to render the full class hierarchy.
-     */
     @Cacheable(value = "allClasses", key = "#projectId + '_' + #limit + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<OntologyDto.TreeNode> allClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
@@ -565,12 +443,7 @@ public class OntologyQueryService {
         attachClassExpressions(projectId, nodeMap);
 
         List<OntologyDto.TreeNode> result = new ArrayList<>(nodeMap.values());
-        // Unlike topLevelClasses()/children(), this method previously never queried plain
-        // owl:equivalentClass axioms at all (only equivalentClass-as-intersectionOf, above) —
-        // so two classes joined by a simple equivalentClass axiom rendered as fully disconnected
-        // nodes in any view backed by this method (e.g. the graph view's bulk fetch), unlike the
-        // hierarchy views which do show the relationship. One extra batched query, consistent
-        // with the other two entry points.
+
         enrichWithEquivalentClasses(projectId, result);
         long duration = System.currentTimeMillis() - startTime;
         log.info("✅ [PERF] Loaded {} total classes in {}ms for project {}", result.size(), duration, projectId);
@@ -578,28 +451,15 @@ public class OntologyQueryService {
         return result;
     }
 
-    /**
-     * Bulk-attach anonymous set-operator expressions (owl:unionOf / intersectionOf /
-     * complementOf / oneOf) to the given classes in ONE query, so the graph view can
-     * render VOWL operator nodes. Mirrors the per-class anonymous query used by
-     * classDetails, generalized over all classes to avoid an N+1 fan-out.
-     */
     private void attachClassExpressions(String projectId, Map<String, OntologyDto.TreeNode> nodeMap) {
         if (nodeMap.isEmpty()) return;
-        // Same large-graph threshold as children(): GO/Mondo-scale datasets stay on the
-        // fast path — set-operator decoration is a visualization nicety, never worth
-        // multi-second path-expression traversals there.
+
         if (datasetService.getGraphTripleCount(projectId) >= 500_000L) {
             log.info("⏭️ [PERF] attachClassExpressions skipped for large graph (>=500k triples), project {}", projectId);
             return;
         }
         long start = System.currentTimeMillis();
 
-        // ORDER MATTERS: bind ?bnode from the rare set-operator predicates FIRST.
-        // Starting from `?c rdfs:subClassOf ?bnode` would scan every subclass axiom
-        // in the ontology — including every restriction (all blank-node superclasses) —
-        // which is catastrophically slow on large ontologies. Operator-first keeps the
-        // scan proportional to the number of actual set-operator expressions.
         String query = PREFIXES + """
             SELECT ?c ?rel ?bnode ?member ?memberLabel ?exprType WHERE {
               {
@@ -634,7 +494,7 @@ public class OntologyQueryService {
 
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, query);
-            // Group rows by (class, blank node) — blank node ids are stable within one result set
+
             Map<String, OntologyDto.ClassExpressionDto> byKey = new LinkedHashMap<>();
             Map<String, List<String>> operandLabelsByKey = new LinkedHashMap<>();
 
@@ -684,7 +544,6 @@ public class OntologyQueryService {
                 }
             }
 
-            // Human-readable Manchester-ish definition for tooltips
             for (Map.Entry<String, OntologyDto.ClassExpressionDto> entry : byKey.entrySet()) {
                 OntologyDto.ClassExpressionDto expr = entry.getValue();
                 List<String> labels = operandLabelsByKey.get(entry.getKey());
@@ -699,29 +558,12 @@ public class OntologyQueryService {
             log.info("⏱️ [PERF] attachClassExpressions: {} expressions in {}ms for project {}",
                     byKey.size(), System.currentTimeMillis() - start, projectId);
         } catch (Exception e) {
-            // Set-operator decoration is best-effort — the class hierarchy must never fail because of it
+
             log.warn("Could not attach class expressions for project {} after {}ms: {}",
                     projectId, System.currentTimeMillis() - start, e.getMessage());
         }
     }
 
-    /**
-     * Get children of a specific class.
-     *
-     * Two-phase approach for large ontologies (≥500K triples) to avoid 252s+ queries
-     * on GO/Mondo-scale datasets. Small ontologies use the full OWL-DL query.
-     *
-     * Large (≥500K triples):
-     *   Phase 1 — PSO index scan for rdfs:subClassOf children only. No path expressions,
-     *   no DISTINCT across UNION, Fuseki can stream-stop at LIMIT.
-     *   Phase 2 — VALUES-bounded hydration with simple rdfs:subClassOf hasChildren.
-     *   GO/Mondo/OBO use only rdfs:subClassOf for hierarchy, so no correctness loss.
-     *
-     * Small (<500K triples):
-     *   Full OWL-DL query with equivalentClass/intersectionOf branches and complex
-     *   hasChildren — correct for defined-class hierarchies. Fast enough
-     *   at this scale (path traversals complete in <5s).
-     */
     @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         safeIri(parentIri);
@@ -730,7 +572,7 @@ public class OntologyQueryService {
         boolean largeGraph = datasetService.getGraphTripleCount(projectId) >= 500_000L;
 
         if (largeGraph) {
-            // Phase 1: fast PSO index scan — no path expressions, Fuseki stream-stops at LIMIT.
+
             String fetchQuery = PREFIXES + """
                 SELECT DISTINCT ?child WHERE {
                   ?child rdfs:subClassOf <%s> .
@@ -757,7 +599,6 @@ public class OntologyQueryService {
                 return java.util.Collections.emptyList();
             }
 
-            // Phase 2: VALUES-bounded hydration — labels + hasChildren (rdfs:subClassOf only).
             String valuesBlock = childIris.stream()
                     .map(iri -> "<" + iri + ">")
                     .collect(java.util.stream.Collectors.joining(" "));
@@ -785,7 +626,6 @@ public class OntologyQueryService {
             return result;
         }
 
-        // Small ontology (<500K triples): full OWL-DL query with intersection/equivalentClass.
         String query = PREFIXES + """
             SELECT DISTINCT ?child ?label ?description ?hasChildren
             WHERE {
@@ -834,10 +674,6 @@ public class OntologyQueryService {
         return result;
     }
 
-    /**
-     * Get all properties for a project.
-     * OPTIMIZED: Cached + simplified query (details loaded on-demand per property).
-     */
     @Cacheable(value = "ontologyProperties", key = "#projectId + '_' + #type + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<PropertyDto> properties(String projectId, String type, int limit, int offset) {
         long startTime = System.currentTimeMillis();
@@ -847,8 +683,6 @@ public class OntologyQueryService {
             default -> "";
         };
 
-        // OPTIMIZED: Simplified query - load only essential fields for the tree view
-        // Detailed property info (domain, range, characteristics) is loaded on-demand when selected
         String query = PREFIXES + """
             SELECT ?prop (SAMPLE(?lbl) AS ?label) (SAMPLE(?cmt) AS ?description) ?kind
                    (GROUP_CONCAT(DISTINCT STR(?super); SEPARATOR="|") AS ?superProperties)
@@ -892,16 +726,6 @@ public class OntologyQueryService {
         return results;
     }
 
-    /**
-     * Batched version of the domain/range/inverseOf/disjoint/equivalent/characteristics
-     * portion of propertyDetail() — one query for the whole page instead of one per property.
-     * The graph view's main data fetch uses the bulk properties() list above, which — before
-     * this — never populated any of these fields (only the per-property on-demand detail did),
-     * so the graph view could never draw domain/range edges or characteristic badges for object/
-     * data properties. Intentionally skips the restriction-based domain/range encoding and
-     * property chains that propertyDetail() also computes — those are per-property-detail-panel
-     * concerns, not needed for the graph view's edges/badges.
-     */
     private void enrichProperties(String projectId, List<PropertyDto> props) {
         if (props.isEmpty()) return;
 
@@ -965,11 +789,6 @@ public class OntologyQueryService {
         enrichPropertyChains(projectId, byIri);
     }
 
-    /**
-     * Batched owl:propertyChainAxiom lookup (up to 5 properties per chain), mirroring
-     * propertyDetail()'s per-property chainQuery but bound to every property in the page via
-     * VALUES. Property chains only apply to object properties, same as the per-property version.
-     */
     private void enrichPropertyChains(String projectId, Map<String, PropertyDto> byIri) {
         if (byIri.isEmpty()) return;
 
@@ -1014,10 +833,6 @@ public class OntologyQueryService {
         });
     }
 
-    /**
-     * Get detailed info for a single property (domains, ranges, characteristics, etc.).
-     * Called on-demand when a property is selected in the UI.
-     */
     public PropertyDto propertyDetail(String projectId, String propertyIri) {
         safeIri(propertyIri);
         long startTime = System.currentTimeMillis();
@@ -1073,9 +888,6 @@ public class OntologyQueryService {
             dto.setDomains(splitPipe(literal(sol, "domains")));
             dto.setRanges(splitPipe(literal(sol, "ranges")));
 
-            // Fetch restriction blank nodes for range/domain and append as encoded Manchester strings.
-            // Format: "display|||restrictionType|||onPropertyIri|||fillerIri|||cardinality"
-            // The FILTER(isIRI(?range)) in the main query already excludes blank nodes, so we fetch them here.
             String restrQuery = PREFIXES + """
                 SELECT ?axiomPred ?onProp ?onPropLabel ?filler ?fillerLabel ?restrictionType ?cardinality WHERE {
                   {
@@ -1138,7 +950,7 @@ public class OntologyQueryService {
                     .map(charIri -> localName(charIri).replace("Property", ""))
                     .toList());
             }
-            // Fetch all annotation values for this property
+
             String annQuery = PREFIXES + """
                 SELECT DISTINCT ?prop ?value WHERE {
                   <%s> ?prop ?value .
@@ -1164,7 +976,6 @@ public class OntologyQueryService {
             }
             dto.setAnnotations(annotations);
 
-            // Fetch property chains (owl:propertyChainAxiom) - up to 5 properties per chain
             String chainQuery = PREFIXES + """
                 SELECT ?chainHead ?p0 ?p1 ?p2 ?p3 ?p4 WHERE {
                   <%s> owl:propertyChainAxiom ?chainHead .
@@ -1201,10 +1012,6 @@ public class OntologyQueryService {
         return new PropertyDto();
     }
 
-    /**
-     * Get individuals for a project.
-     * OPTIMIZED: Cached for repeated access.
-     */
     @Cacheable(value = "ontologyIndividuals", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<IndividualDto> individuals(String projectId, int limit, int offset) {
         long startTime = System.currentTimeMillis();
@@ -1439,7 +1246,6 @@ public class OntologyQueryService {
         safeIri(datatypeIri);
         List<Map<String, String>> usages = new ArrayList<>();
 
-        // 1. Find data properties with this range
         String rangeQuery = PREFIXES + """
             SELECT DISTINCT ?prop ?label WHERE {
               ?prop rdfs:range <%s> .
@@ -1459,8 +1265,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 2. Find restrictions using this datatype
+
         String restrictionQuery = PREFIXES + """
             SELECT DISTINCT ?class ?label WHERE {
               ?class rdfs:subClassOf|owl:equivalentClass ?restriction .
@@ -1490,7 +1295,6 @@ public class OntologyQueryService {
         safeIri(individualIri);
         List<Map<String, String>> usages = new ArrayList<>();
 
-        // 1. Find object property assertions where this is the object
         String assertionQuery = PREFIXES + """
             SELECT DISTINCT ?subject ?prop ?label WHERE {
               ?subject ?prop <%s> .
@@ -1513,8 +1317,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 2. Find SameIndividual/DifferentIndividuals
+
         String sameDiffQuery = PREFIXES + """
             SELECT DISTINCT ?other ?type ?label WHERE {
               {
@@ -1552,7 +1355,7 @@ public class OntologyQueryService {
     }
 
     public List<DatatypeDto> datatypes(String projectId, int limit, int offset) {
-        // First get datatypes declared in the ontology
+
         String query = PREFIXES + """
             SELECT DISTINCT ?dt
             WHERE {
@@ -1572,19 +1375,15 @@ public class OntologyQueryService {
             }
         }
 
-        // Add standard OWL 2 datatypes
         datatypes.add("http://www.w3.org/2002/07/owl#rational");
         datatypes.add("http://www.w3.org/2002/07/owl#real");
-        
-        // Add standard RDF datatypes
+
         datatypes.add("http://www.w3.org/1999/02/22-rdf-syntax-ns#langString");
         datatypes.add("http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral");
         datatypes.add("http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral");
-        
-        // Add standard RDFS datatypes
+
         datatypes.add("http://www.w3.org/2000/01/rdf-schema#Literal");
-        
-        // Add comprehensive XSD datatypes
+
         String[] xsdTypes = {
             "anyURI", "base64Binary", "boolean", "byte", "date", "dateTime", "dateTimeStamp",
             "decimal", "double", "float", "hexBinary", "int", "integer", "language",
@@ -1596,7 +1395,6 @@ public class OntologyQueryService {
             datatypes.add("http://www.w3.org/2001/XMLSchema#" + type);
         }
 
-        // Convert to DTOs with pagination
         List<DatatypeDto> result = new ArrayList<>();
         int index = 0;
         for (String iri : datatypes) {
@@ -1610,15 +1408,13 @@ public class OntologyQueryService {
             index++;
             if (result.size() >= limit) break;
         }
-        
+
         return result;
     }
 
     private List<OntologyDto.TreeNode> mapTreeNodes(String projectId, String query, String parentIri) {
         TupleQueryResult rs = datasetService.execSelect(projectId, query);
-        // Use LinkedHashMap to deduplicate by IRI while preserving query order.
-        // Multiple rows for the same IRI arise when a class has several rdfs:label annotations;
-        // we keep the first (non-blank) label encountered and merge hasChildren truthfully.
+
         Map<String, OntologyDto.TreeNode> seen = new java.util.LinkedHashMap<>();
         while (rs.hasNext()) {
             BindingSet sol = rs.next();
@@ -1628,7 +1424,7 @@ public class OntologyQueryService {
             }
 
             if (seen.containsKey(iri)) {
-                // Duplicate row (extra label/description) — merge hasChildren only
+
                 if (sol.hasBinding("hasChildren")) {
                     Value hcv = sol.getValue("hasChildren");
                     if (hcv != null && hcv.isLiteral() && Boolean.parseBoolean(hcv.stringValue())) {
@@ -1656,23 +1452,12 @@ public class OntologyQueryService {
         return new ArrayList<>(seen.values());
     }
 
-    /**
-     * Enrich a list of tree nodes with their owl:equivalentClass AND owl:disjointWith
-     * partners AND property restrictions — every existing call site wants all three, so this
-     * stays a single entry point rather than requiring each of the 6 call sites to remember to
-     * call three methods.
-     */
     private void enrichWithEquivalentClasses(String projectId, List<OntologyDto.TreeNode> nodes) {
         enrichWithEquivalentClassAxiom(projectId, nodes);
         enrichWithDisjointClasses(projectId, nodes);
         enrichWithRestrictions(projectId, nodes);
     }
 
-    /**
-     * Enrich a list of tree nodes with their owl:equivalentClass partners.
-     * Runs one SPARQL query for the entire batch using a VALUES clause.
-     * Nodes with no equivalences are left unchanged.
-     */
     private void enrichWithEquivalentClassAxiom(String projectId, List<OntologyDto.TreeNode> nodes) {
         if (nodes.isEmpty()) return;
 
@@ -1715,7 +1500,7 @@ public class OntologyQueryService {
             """.formatted(values);
 
         TupleQueryResult rs = datasetService.execSelect(projectId, q);
-        // Group results by class IRI
+
         Map<String, List<Map<String, String>>> byClass = new java.util.LinkedHashMap<>();
         while (rs.hasNext()) {
             BindingSet sol = rs.next();
@@ -1732,7 +1517,6 @@ public class OntologyQueryService {
             byClass.computeIfAbsent(cls, k -> new ArrayList<>()).add(entry);
         }
 
-        // Attach results back to nodes
         Map<String, OntologyDto.TreeNode> nodeMap = nodes.stream()
                 .collect(java.util.stream.Collectors.toMap(OntologyDto.TreeNode::getId, n -> n, (a, b) -> a));
         byClass.forEach((cls, equivList) -> {
@@ -1741,12 +1525,6 @@ public class OntologyQueryService {
         });
     }
 
-    /**
-     * Enrich a list of tree nodes with their pairwise owl:disjointWith partners.
-     * Runs one SPARQL query for the entire batch using a VALUES clause, mirroring
-     * enrichWithEquivalentClasses(). Does not cover n-ary owl:AllDisjointClasses axioms —
-     * those are handled separately for the per-class detail/usage views.
-     */
     private void enrichWithDisjointClasses(String projectId, List<OntologyDto.TreeNode> nodes) {
         if (nodes.isEmpty()) return;
 
@@ -1790,15 +1568,6 @@ public class OntologyQueryService {
         });
     }
 
-    /**
-     * Enrich a list of tree nodes with the property restrictions they participate in via
-     * subClassOf/equivalentClass (someValuesFrom/allValuesFrom/hasValue/cardinality). One
-     * batched query for the whole page, reusing buildRestrictionSparqlBody (the same query
-     * body classDetails() uses per-class) with the owning class bound via VALUES instead of
-     * a single literal IRI. Before this, restrictions were never surfaced by allClasses()/
-     * topLevelClasses()/children() at all — only the per-class detail panel computed them —
-     * so the graph view could never draw a restriction edge.
-     */
     private void enrichWithRestrictions(String projectId, List<OntologyDto.TreeNode> nodes) {
         if (nodes.isEmpty()) return;
 
@@ -1850,10 +1619,6 @@ public class OntologyQueryService {
         });
     }
 
-    /**
-     * SPARQL for restriction axioms on a class. Uses top-level UNION branches instead of
-     * OPTIONAL { UNION ... BIND } + FILTER(BOUND), which GraphDB often evaluates as empty.
-     */
     private String buildClassRestrictionSparql(String classIri, String axiomProperty) {
         return buildClassRestrictionSparql(classIri, axiomProperty, false);
     }
@@ -1863,11 +1628,6 @@ public class OntologyQueryService {
         return buildRestrictionSparqlBody(distinct ? "SELECT DISTINCT" : "SELECT", "", "", link);
     }
 
-    /**
-     * Restrictions reachable via rdfs:subClassOf AND owl:equivalentClass in ONE
-     * query; {@code ?rel} ("sub"/"equiv") tells the parser which axis a row
-     * belongs to. Halves the round trips classDetails spends on restrictions.
-     */
     private String buildClassRestrictionSparqlBothAxes(String classIri) {
         String link = "<%s> ?axProp ?restriction .\n?restriction owl:onProperty ?prop .".formatted(classIri);
         String values = "VALUES (?axProp ?rel) { (rdfs:subClassOf \"sub\") (owl:equivalentClass \"equiv\") }";
@@ -1971,11 +1731,6 @@ public class OntologyQueryService {
         return propLabel + " " + restrictionType + " " + fillerLabel;
     }
 
-    /**
-     * Render a Manchester-style class expression for a blank node (restriction, and/or/not, etc.).
-     * Uses class-anchored SPARQL and matches blank nodes by RDF4J internal ID in Java — GraphDB
-     * does not reliably support STR(?bnode) = "bN" filters.
-     */
     private String describeBlankNodeManchester(String projectId, String classIri, String blankNodeId) {
         if (blankNodeId == null || blankNodeId.isBlank()) return null;
         if (blankNodeId.startsWith("http://") || blankNodeId.startsWith("https://") || blankNodeId.startsWith("urn:")) {
@@ -2139,30 +1894,27 @@ public class OntologyQueryService {
         return idx >= 0 && idx < iri.length() - 1 ? iri.substring(idx + 1) : iri;
     }
 
-    /**
-     * Format an IRI with proper prefix for display (e.g., owl:topObjectProperty instead of topObjectProperty)
-     */
     private String formatIriWithPrefix(String iri) {
         if (iri == null || iri.isBlank()) {
             return "";
         }
-        // Handle OWL namespace
+
         if (iri.startsWith("http://www.w3.org/2002/07/owl#")) {
             return "owl:" + iri.substring("http://www.w3.org/2002/07/owl#".length());
         }
-        // Handle RDF namespace
+
         if (iri.startsWith("http://www.w3.org/1999/02/22-rdf-syntax-ns#")) {
             return "rdf:" + iri.substring("http://www.w3.org/1999/02/22-rdf-syntax-ns#".length());
         }
-        // Handle RDFS namespace
+
         if (iri.startsWith("http://www.w3.org/2000/01/rdf-schema#")) {
             return "rdfs:" + iri.substring("http://www.w3.org/2000/01/rdf-schema#".length());
         }
-        // Handle XSD namespace
+
         if (iri.startsWith("http://www.w3.org/2001/XMLSchema#")) {
             return "xsd:" + iri.substring("http://www.w3.org/2001/XMLSchema#".length());
         }
-        // Default to local name for custom ontology entities
+
         return localName(iri);
     }
 
@@ -2193,7 +1945,7 @@ public class OntologyQueryService {
     @Cacheable(value = "debugInfo", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public Map<String, Object> debugInfo(String projectId) {
         long startTime = System.currentTimeMillis();
-        // Count all triples
+
         String countQuery = "SELECT (COUNT(*) AS ?count) WHERE { ?s ?p ?o }";
         TupleQueryResult rs1 = datasetService.execSelect(projectId, countQuery);
         long totalTriples = 0;
@@ -2207,7 +1959,6 @@ public class OntologyQueryService {
             }
         }
 
-        // Count OWL classes (explicit or implicit)
         String classQuery = PREFIXES + """
             SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
               { ?c a owl:Class }
@@ -2227,7 +1978,6 @@ public class OntologyQueryService {
             }
         }
 
-        // Count annotation properties
         String annQuery = PREFIXES + "SELECT (COUNT(DISTINCT ?p) AS ?count) WHERE { ?p a owl:AnnotationProperty }";
         TupleQueryResult rs3 = datasetService.execSelect(projectId, annQuery);
         long annCount = 0;
@@ -2241,7 +1991,6 @@ public class OntologyQueryService {
             }
         }
 
-        // Sample some triples
         String sampleQuery = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10";
         TupleQueryResult rs4 = datasetService.execSelect(projectId, sampleQuery);
         List<String> sampleTriples = new ArrayList<>();
@@ -2264,7 +2013,6 @@ public class OntologyQueryService {
         safeIri(classIri);
         List<Map<String, String>> usages = new ArrayList<>();
 
-        // 1. Find subclasses
         String subclassQuery = PREFIXES + """
             SELECT DISTINCT ?subclass ?label WHERE {
               ?subclass rdfs:subClassOf <%s> .
@@ -2284,8 +2032,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 2. Find individuals of this class
+
         String instanceQuery = PREFIXES + """
             SELECT DISTINCT ?individual ?label WHERE {
               ?individual a <%s> .
@@ -2305,8 +2052,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 3. Find disjoint classes
+
         String disjointQuery = PREFIXES + """
             SELECT DISTINCT ?disjoint ?label WHERE {
               {
@@ -2330,8 +2076,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 4. Find named superclasses
+
         String superclassQuery = PREFIXES + """
             SELECT DISTINCT ?superclass ?label WHERE {
               <%s> rdfs:subClassOf ?superclass .
@@ -2352,8 +2097,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 5. Find properties with this class as domain
+
         String domainQuery = PREFIXES + """
             SELECT DISTINCT ?prop ?label WHERE {
               ?prop rdfs:domain <%s> .
@@ -2373,8 +2117,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 6. Find properties with this class as range
+
         String rangeQuery = PREFIXES + """
             SELECT DISTINCT ?prop ?label WHERE {
               ?prop rdfs:range <%s> .
@@ -2394,12 +2137,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 7. Find restrictions using this class as filler or qualified class.
-        // Covers: someValuesFrom (existential), allValuesFrom (universal),
-        //         onClass (qualified cardinality), hasValue (nominals).
-        // Also traverses the blank-node restriction up to its owning named class
-        // via SubClassOf or EquivalentClass — that Usage should show.
+
         String restrictionQuery = PREFIXES + """
             SELECT DISTINCT ?ownerClass ?ownerLabel ?onProp ?propLabel ?restrictionType WHERE {
               {
@@ -2454,8 +2192,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 8. Find equivalent classes
+
         String equivQuery = PREFIXES + """
             SELECT DISTINCT ?equiv ?label WHERE {
               {
@@ -2480,8 +2217,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 9. Find union/intersection members
+
         String unionIntersectionQuery = PREFIXES + """
             SELECT DISTINCT ?owner ?label ?type WHERE {
               {
@@ -2510,8 +2246,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 10. Find all annotation property assertions pointing to this class
+
         String annotationUsageQuery = PREFIXES + """
             SELECT DISTINCT ?subject ?prop ?propLabel ?subjectLabel WHERE {
               ?subject ?prop <%s> .
@@ -2540,8 +2275,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 11. Find all annotation properties ON this class (annotations declared on the class itself)
+
         String classAnnotationsQuery = PREFIXES + """
             SELECT DISTINCT ?prop ?value ?propLabel WHERE {
               <%s> ?prop ?value .
@@ -2561,27 +2295,26 @@ public class OntologyQueryService {
             usage.put("type", "annotation_on_class");
             String propIri = resource(sol, "prop");
             if (propIri != null) {
-                // Skip rdf:type as it's shown elsewhere
+
                 if (propIri.equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")) {
                     continue;
                 }
-                
+
                 usage.put("subject", classIri);
                 String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : localName(propIri);
                 String value = sol.hasBinding("value") ? sol.getValue("value").stringValue() : "";
-                
-                // Truncate long values for display
+
                 if (value.length() > 100) {
                     value = value.substring(0, 97) + "...";
                 }
-                
+
                 usage.put("subjectLabel", propLabel);
                 usage.put("context", value);
                 usage.put("annotationProperty", propIri);
                 usages.add(usage);
             }
         }
-        
+
         return usages;
     }
 
@@ -2589,7 +2322,6 @@ public class OntologyQueryService {
         safeIri(propertyIri);
         List<Map<String, String>> usages = new ArrayList<>();
 
-        // 1. Find domains
         String domainQuery = PREFIXES + """
             SELECT DISTINCT ?domain ?label WHERE {
               <%s> rdfs:domain ?domain .
@@ -2610,8 +2342,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 2. Find ranges
+
         String rangeQuery = PREFIXES + """
             SELECT DISTINCT ?range ?label WHERE {
               <%s> rdfs:range ?range .
@@ -2632,8 +2363,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 3. Find subproperties
+
         String subPropQuery = PREFIXES + """
             SELECT DISTINCT ?sub ?label WHERE {
               ?sub rdfs:subPropertyOf <%s> .
@@ -2655,7 +2385,6 @@ public class OntologyQueryService {
             }
         }
 
-        // 4. Find superproperties
         String superPropQuery = PREFIXES + """
             SELECT DISTINCT ?super ?label WHERE {
               <%s> rdfs:subPropertyOf ?super .
@@ -2676,8 +2405,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 5. Find property assertions in individuals
+
         String assertionQuery = PREFIXES + """
             SELECT DISTINCT ?subject ?label WHERE {
               ?subject <%s> ?any .
@@ -2698,8 +2426,7 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
-        // 6. Find restrictions using this property
+
         String restrictionQuery = PREFIXES + """
             SELECT DISTINCT ?class ?label WHERE {
               ?class rdfs:subClassOf ?restriction .
@@ -2722,21 +2449,10 @@ public class OntologyQueryService {
                 usages.add(usage);
             }
         }
-        
+
         return usages;
     }
 
-    /**
-     * Fast-path: returns ONLY the annotations + label for a class. Runs a
-     * single SPARQL query (typically <100ms). Used by the UI to render the
-     * Annotations panel immediately on class click, while the full
-     * {@link #classDetails} call completes in the background to hydrate the
-     * rest of the panels (SubClassOf, EquivalentTo, DisjointWith, restrictions,
-     * inferred axioms, GCI, etc.).
-     *
-     * Response shape is a strict subset of {@link #classDetails} so the
-     * frontend can merge results without schema translation.
-     */
     public Map<String, Object> classAnnotations(String projectId, String classIri) {
         safeIri(classIri);
         Map<String, Object> result = new LinkedHashMap<>();
@@ -2775,7 +2491,7 @@ public class OntologyQueryService {
                 }
             }
         } catch (Exception e) {
-            // Fail soft — UI will fall back to the full classDetails call.
+
             result.put("label", localName(classIri));
             result.put("annotations", annotations);
             return result;
@@ -2785,11 +2501,6 @@ public class OntologyQueryService {
         return result;
     }
 
-    /**
-     * Batch annotation lookup: given a list of entity IRIs and a single annotation property IRI,
-     * returns a map of entityIri → first literal value. Uses a SPARQL VALUES clause for efficiency.
-     * Used by the "Render by annotation property" feature in the class hierarchy.
-     */
     public Map<String, String> batchAnnotations(String projectId, List<String> iris, String propertyIri) {
         if (iris == null || iris.isEmpty()) return Collections.emptyMap();
         iris.forEach(OntologyQueryService::safeIri);
@@ -2831,12 +2542,7 @@ public class OntologyQueryService {
         if (datasetService.isKnownLargeProject(projectId)) {
             log.info("[PERF] classDetails using reduced SPARQL parallelism for large project {}", projectId);
         }
-        
-        // ===== PARALLEL EXECUTION: Run all independent SPARQL queries concurrently =====
-        // Each query is independent (read-only), so they can all run in parallel.
-        // This reduces total time from sum(all queries) to max(slowest query).
-        
-        // --- Annotations query ---
+
         CompletableFuture<TupleQueryResult> annFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String annQuery = PREFIXES + """
                 SELECT DISTINCT ?prop ?value WHERE {
@@ -2855,10 +2561,7 @@ public class OntologyQueryService {
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, annQuery);
         }), queryPool);
-        
-        // --- Named targets: subClassOf + equivalentClass + disjointWith in ONE query ---
-        // ?kind ("sub"/"equiv"/"disjoint") tells the parser which axiom list a row
-        // feeds. Presentation ordering (previously ORDER BY ?label) is done in Java.
+
         CompletableFuture<TupleQueryResult> namedAxiomsFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?kind ?target ?label WHERE {
@@ -2899,13 +2602,10 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }), queryPool);
 
-        // --- Restrictions via subClassOf AND equivalentClass in ONE query (?rel discriminates) ---
         CompletableFuture<TupleQueryResult> restrictionsFuture = queryAsync(SparqlQueryContext.wrap(() ->
             datasetService.execSelect(projectId, buildClassRestrictionSparqlBothAxes(classIri))),
             queryPool);
 
-        // --- Anonymous expressions via subClassOf AND equivalentClass in ONE query ---
-        // (?rel discriminates; intersection/union/complement/oneOf merged as before)
         CompletableFuture<TupleQueryResult> anonymousFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String q = PREFIXES + """
                 SELECT ?rel ?bnode ?member ?memberLabel ?exprType WHERE {
@@ -2938,8 +2638,7 @@ public class OntologyQueryService {
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
         }), queryPool);
-        
-        // --- DisjointUnionOf + HasKey merged ---
+
         CompletableFuture<TupleQueryResult> listAxiomsFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT ?axType ?list ?prop WHERE {
@@ -2957,10 +2656,7 @@ public class OntologyQueryService {
                 """.formatted(classIri, classIri);
             return datasetService.execSelect(projectId, q);
         }, queryPool);
-        
-        // --- Inferred axioms (equivalent + superclass + disjoint) in ONE query ---
-        // GraphDB-only graphs: on Fuseki/TDB2 these graphs don't exist, so this
-        // returns empty — one cheap round trip instead of the previous three.
+
         CompletableFuture<TupleQueryResult> inferredFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?kind ?target ?label WHERE {
@@ -3007,18 +2703,7 @@ public class OntologyQueryService {
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
         }, queryPool);
-        
-        // --- GCI axioms ---
-        // OPTIMIZED: The previous query did a `?subExpr ?p ?o` cross-product with
-        // `rdfs:subClassOf` + FILTER(isBlank), which forced a full scan over every
-        // triple whose subject is a blank node. On ontologies with many anonymous
-        // class expressions this was the dominant cost of classDetails (observed
-        // 60s+). Rewritten to index-driven form: directly look up blank-node
-        // subClassOf axioms and only then test whether this class appears
-        // somewhere inside the sub-expression.
-        // Member traversal is done inline in the same query to avoid blank node ID
-        // instability across separate SPARQL queries (blank node IDs from query 1
-        // are not guaranteed to match in a second query against RDF4J/Fuseki).
+
         CompletableFuture<TupleQueryResult> gciFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT ?subExpr ?superClass ?superClassLabel ?exprType ?member ?memberLabel WHERE {
@@ -3051,32 +2736,6 @@ public class OntologyQueryService {
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
-        // --- Anonymous ancestor superclasses ---
-        // OPTIMIZED: Added explicit LIMIT to prevent runaway transitive path
-        // expansion in deeply nested hierarchies. 500 is well above any realistic
-        // ancestor count for a single class.
-        //
-        // Restriction structural details (onProperty/restrictionType/filler/cardinality) are
-        // resolved for ?super INLINE, in this same query, rather than via a second, separately
-        // executed query joined afterward by blank-node label. Blank node labels are only
-        // guaranteed consistent WITHIN one query's own result set — not across two separate
-        // SPARQL requests, even against the same unchanged data — exactly the same reasoning
-        // already documented on the GCI query above (its own comment: "Member traversal is done
-        // inline in the same query to avoid blank node ID instability across separate SPARQL
-        // queries"). Getting this in one pass is what lets a later delete of one of these match
-        // by content instead of by blank-node identity, even when it's inherited from an ancestor.
-        //
-        // Deliberately does NOT cover unqualified owl:minCardinality/maxCardinality/cardinality
-        // (the legacy pre-OWL2-qualified-cardinality form — rare in practice; a real 2.8M-triple
-        // GO ontology used to load-test this exact query has zero of them). Verified empirically
-        // against that same ontology: adding a FILTER NOT EXISTS-bearing UNION branch for these
-        // inside this OPTIONAL — even with owl:onProperty repeated per-branch, matching the
-        // proven pattern used elsewhere in this file — made this query regress from ~30-100ms to
-        // a 30+ second timeout. The query planner appears to badly pessimize FILTER NOT EXISTS as
-        // a UNION sibling here, independent of how the shared triple is structured. An inherited
-        // unqualified-cardinality restriction still displays and deletes correctly — it just
-        // falls back to the older blank-node-identity path below instead of the structural-match
-        // path, exactly like every restriction shape did before this fix existed.
         CompletableFuture<TupleQueryResult> ancestorFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?ancestor ?super ?label
@@ -3119,23 +2778,15 @@ public class OntologyQueryService {
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
         }, queryPool);
-        
-        // ===== Wait for all queries to complete =====
-        // 8 queries total: named sub/equiv/disjoint targets merged (3→1),
-        // sub+equiv restrictions merged (2→1), sub+equiv anonymous merged (2→1),
-        // inferred equiv/super/disjoint merged (3→1). Matters most on large
-        // projects where the throttled pool runs queries in waves of 4.
+
         CompletableFuture.allOf(
             annFuture, namedAxiomsFuture, restrictionsFuture, anonymousFuture,
             listAxiomsFuture, inferredFuture, gciFuture, ancestorFuture
         ).join();
-        
+
         long queryTime = System.currentTimeMillis() - startTime;
         log.info("[PERF] classDetails all parallel queries completed in {}ms for {}", queryTime, localName(classIri));
-        
-        // ===== Process results (all in-memory, very fast) =====
-        
-        // --- Process annotations ---
+
         TupleQueryResult annRs = annFuture.join();
         Map<String, List<String>> annotations = AnnotationValueCollector.newMap();
         String label = null;
@@ -3153,10 +2804,7 @@ public class OntologyQueryService {
         }
         details.put("label", label != null ? label : localName(classIri));
         details.put("annotations", annotations);
-        
-        // --- Process named targets (sub / equiv / disjoint from the merged query) ---
-        // Sub and disjoint lists were previously ORDER BY ?label in SPARQL; sort in
-        // Java instead so the merged query stays cheap. Equiv keeps store order (as before).
+
         List<Map<String, String>> subClassAxioms = new ArrayList<>();
         List<Map<String, String>> equivAxioms = new ArrayList<>();
         List<Map<String, String>> disjointAxioms = new ArrayList<>();
@@ -3190,7 +2838,6 @@ public class OntologyQueryService {
         subClassAxioms.sort(byDefinition);
         disjointAxioms.sort(byDefinition);
 
-        // --- Process restrictions (sub + equiv axes from the merged query) ---
         TupleQueryResult restrictionsRs = restrictionsFuture.join();
         Set<String> seenRestrictions = new LinkedHashSet<>();
         Set<String> seenEquivRestrictions = new LinkedHashSet<>();
@@ -3229,7 +2876,6 @@ public class OntologyQueryService {
             (isEquiv ? equivAxioms : subClassAxioms).add(axiom);
         }
 
-        // --- Process anonymous expressions (sub + equiv axes from the merged query) ---
         TupleQueryResult anonRs = anonymousFuture.join();
         Map<String, List<String>> anonMemberLabels = new LinkedHashMap<>();
         Map<String, String> anonExprType = new LinkedHashMap<>();
@@ -3271,11 +2917,10 @@ public class OntologyQueryService {
         }
 
         details.put("subClassOfAxioms", subClassAxioms);
-        
+
         details.put("equivalentClassesAxioms", equivAxioms);
         details.put("disjointClassesAxioms", disjointAxioms);
-        
-        // --- Process DisjointUnionOf + HasKey (merged) ---
+
         TupleQueryResult listAxiomsRs = listAxiomsFuture.join();
         Map<String, List<String>> disjointUnionGroups = new LinkedHashMap<>();
         Map<String, List<String>> hasKeyGroups = new LinkedHashMap<>();
@@ -3309,7 +2954,7 @@ public class OntologyQueryService {
             }
         }
         details.put("disjointUnionAxioms", disjointUnionAxioms);
-        
+
         List<Map<String, Object>> hasKeyAxioms = new ArrayList<>();
         for (Map.Entry<String, List<String>> entry : hasKeyGroups.entrySet()) {
             String listNode = entry.getKey();
@@ -3329,8 +2974,7 @@ public class OntologyQueryService {
             }
         }
         details.put("hasKeyAxioms", hasKeyAxioms);
-        
-        // --- Process inferred axioms (equiv / super / disjoint from the merged query) ---
+
         TupleQueryResult inferredRs = inferredFuture.join();
         List<Map<String, String>> inferredEquivAxioms = new ArrayList<>();
         List<Map<String, String>> inferredSubClassAxioms = new ArrayList<>();
@@ -3363,9 +3007,7 @@ public class OntologyQueryService {
         details.put("inferredEquivalentClassesAxioms", inferredEquivAxioms);
         details.put("inferredSubClassOfAxioms", inferredSubClassAxioms);
         details.put("inferredDisjointClassesAxioms", inferredDisjointAxioms);
-        
-        // --- Process GCI axioms ---
-        // Group rows by subExpr; inline member data avoids second-query blank-node instability.
+
         TupleQueryResult gciRs = gciFuture.join();
         Map<String, Map<String, Object>> gciGroups = new LinkedHashMap<>();
         while (gciRs.hasNext()) {
@@ -3425,12 +3067,10 @@ public class OntologyQueryService {
         }
         details.put("generalClassAxioms", generalClassAxioms);
 
-        // --- Process ancestor axioms ---
         TupleQueryResult ancestorRs = ancestorFuture.join();
         List<Map<String, String>> anonymousAncestorAxioms = new ArrayList<>();
         Set<String> seenAncestors = new LinkedHashSet<>();
-        // Reuse restriction/complex definitions already resolved in this request — avoids
-        // follow-up SPARQL that matches blank nodes by STR(?bnode) (unreliable in GraphDB).
+
         Map<String, String> knownBlankDefinitions = new LinkedHashMap<>();
         for (Map<String, String> ax : subClassAxioms) {
             if (ax.get("id") != null && ax.get("definition") != null) {
@@ -3459,10 +3099,7 @@ public class OntologyQueryService {
                 boolean navigable = superIri.startsWith("http://") || superIri.startsWith("https://") || superIri.startsWith("urn:");
                 axiom.put("navigable", String.valueOf(navigable));
                 if (!navigable) {
-                    // Restriction structural fields (?onProp/?restrictionType/?filler/?card) were
-                    // resolved INLINE in the same query/solution row as ?super above — no separate
-                    // query, no blank-node-label join needed. Unbound here means ?super genuinely
-                    // isn't a restriction (e.g. a plain intersection/union), not a failed lookup.
+
                     String onProp = resource(sol, "onProp");
                     if (onProp != null) {
                         String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : formatIriWithPrefix(onProp);
@@ -3503,10 +3140,7 @@ public class OntologyQueryService {
                 anonymousAncestorAxioms.add(axiom);
             }
         }
-        // Direct anonymous restrictions on this class also belong in "SubClass Of (Anonymous Ancestor)"
-        // to match desktop OWLAPI behavior (BFS starts at the current class and includes its own
-        // anonymous supers). Without this, owl:hasValue / someValuesFrom restrictions declared
-        // directly on a class are invisible in the Anonymous Ancestor section for the webapp path.
+
         for (Map<String, String> subAxiom : subClassAxioms) {
             if (!"true".equals(subAxiom.get("isRestriction"))) continue;
             String restrictionId = subAxiom.get("id");
@@ -3520,9 +3154,7 @@ public class OntologyQueryService {
             entry.put("ancestorIri", classIri);
             entry.put("navigable", "false");
             entry.put("definition", subAxiom.get("definition") != null ? subAxiom.get("definition") : "Anonymous restriction");
-            // Carry the same structural fields subClassOfAxioms already has for this restriction,
-            // so deleting it from this mirrored section can match by content (property/filler/
-            // cardinality) instead of blank-node identity, same as the inherited-ancestor case above.
+
             entry.put("isRestriction", "true");
             if (subAxiom.get("propertyIri") != null) entry.put("propertyIri", subAxiom.get("propertyIri"));
             if (subAxiom.get("restrictionType") != null) entry.put("restrictionType", subAxiom.get("restrictionType"));
@@ -3537,12 +3169,6 @@ public class OntologyQueryService {
         return details;
     }
 
-    /**
-     * Merge SPARQL-only class-detail sections into an OWLAPI fast-path response.
-     * Keeps asserted axioms from the in-memory model (~5ms) and supplements fields
-     * the OWLAPI builder does not yet produce (GCIs, anonymous ancestors, inferred
-     * axioms, hasKey, disjointUnion, multi-valued annotations).
-     */
     public void enrichOwlApiClassDetails(String projectId, String classIri, Map<String, Object> details) {
         safeIri(classIri);
         if (details == null || details.isEmpty()) {
@@ -3960,20 +3586,13 @@ public class OntologyQueryService {
                 localName(classIri), System.currentTimeMillis() - startTime, projectId);
     }
 
-    /**
-     * Get all instances (individuals) of a given class.
-     * Returns both asserted and inferred instances.
-     * OPTIMIZED: Cached + combined into single SPARQL query with BIND for isInferred flag.
-     */
     @Cacheable(value = "classInstances", key = "#projectId + '_' + #classIri + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public List<Map<String, Object>> getClassInstances(String projectId, String classIri) {
         safeIri(classIri);
         long startTime = System.currentTimeMillis();
         List<Map<String, Object>> instances = new ArrayList<>();
         Set<String> seenIndividuals = new LinkedHashSet<>();
-        
-        // Asserted class assertions only (Fuseki/Jena). Inferred instances come from OWLAPI
-        // reasoner path (desktop / fast-open cache) or after classify via reasoner endpoints.
+
         String combinedQuery = PREFIXES + """
             SELECT DISTINCT ?individual ?label WHERE {
               ?individual a <%s> .
@@ -3982,9 +3601,9 @@ public class OntologyQueryService {
             }
             ORDER BY ?label
             """.formatted(classIri);
-        
+
         TupleQueryResult rs = datasetService.execSelect(projectId, combinedQuery);
-        
+
         while (rs.hasNext()) {
             BindingSet sol = rs.next();
             String individualIri = resource(sol, "individual");
@@ -3994,34 +3613,25 @@ public class OntologyQueryService {
                 individual.put("id", individualIri);
                 individual.put("label", sol.hasBinding("label") ? literal(sol, "label") : localName(individualIri));
                 individual.put("isInferred", false);
-                
+
                 List<String> types = new ArrayList<>();
                 types.add(classIri);
                 individual.put("types", types);
-                
+
                 instances.add(individual);
             }
         }
-        
+
         long duration = System.currentTimeMillis() - startTime;
         log.info("[PERF] getClassInstances for {} loaded {} instances in {}ms project={}", localName(classIri), instances.size(), duration, projectId);
         return instances;
     }
 
-    /**
-     * Get per-class instance counts (asserted and inferred).
-     */
-    /**
-     * Get per-class instance counts.
-     * OPTIMIZED: Cached + simplified query (skip inferred graph for speed).
-     */
     @Cacheable(value = "classInstanceCounts", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
     public Map<String, Map<String, Integer>> getClassInstanceCounts(String projectId) {
         long startTime = System.currentTimeMillis();
         Map<String, Map<String, Integer>> counts = new LinkedHashMap<>();
 
-        // OPTIMIZED: Single simple query instead of querying explicit/inferred graphs separately
-        // The explicit/inferred graph split is a GraphDB-specific feature that's very slow on large ontologies
         String query = PREFIXES + """
             SELECT ?class (COUNT(DISTINCT ?individual) AS ?count) WHERE {
               ?individual a ?class .
@@ -4050,21 +3660,17 @@ public class OntologyQueryService {
         } catch (Exception e) {
             log.warn("[PERF] Instance counts query failed (non-critical): {}", e.getMessage());
         }
-        
+
         long duration = System.currentTimeMillis() - startTime;
         log.info("✅ [PERF] Loaded instance counts for {} classes in {}ms", counts.size(), duration);
         return counts;
     }
 
-    /**
-     * Get detailed information about an individual
-     */
     public Map<String, Object> getIndividualDetails(String projectId, String individualIri) {
         safeIri(individualIri);
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("id", individualIri);
-        
-        // Get label
+
         String labelQuery = PREFIXES + """
             SELECT ?label WHERE {
               <%s> rdfs:label ?label
@@ -4077,8 +3683,7 @@ public class OntologyQueryService {
         } else {
             details.put("label", localName(individualIri));
         }
-        
-        // Get types
+
         String typesQuery = PREFIXES + """
             SELECT DISTINCT ?type ?typeLabel WHERE {
               <%s> a ?type .
@@ -4096,8 +3701,7 @@ public class OntologyQueryService {
             }
         }
         details.put("types", types);
-        
-        // Get annotations
+
         String annQuery = PREFIXES + """
             SELECT DISTINCT ?prop ?value WHERE {
               <%s> ?prop ?value .
@@ -4124,8 +3728,7 @@ public class OntologyQueryService {
             }
         }
         details.put("annotations", annotations);
-        
-        // Get property assertions
+
         String propsQuery = PREFIXES + """
             SELECT ?prop ?obj ?objLabel WHERE {
               <%s> ?prop ?obj .
@@ -4146,7 +3749,7 @@ public class OntologyQueryService {
                 assertion.put("id", "assertion-" + propertyAssertions.size());
                 assertion.put("propertyIri", propIri);
                 assertion.put("propertyLabel", localName(propIri));
-                
+
                 Value objValue = sol.getValue("obj");
                 if (objValue.isIRI()) {
                     assertion.put("targetIri", objValue.stringValue());
@@ -4156,12 +3759,11 @@ public class OntologyQueryService {
                     assertion.put("targetLiteral", objValue.stringValue());
                     assertion.put("isObjectProperty", false);
                 }
-                
+
                 propertyAssertions.add(assertion);
             }
         }
 
-        // Get negative property assertions (OWL2 NegativePropertyAssertion)
         String negativePropsQuery = PREFIXES + """
             SELECT ?prop ?targetInd ?targetIndLabel ?targetValue WHERE {
               ?npa a owl:NegativePropertyAssertion ;
@@ -4196,15 +3798,14 @@ public class OntologyQueryService {
                 assertion.put("targetLiteral", targetValue.stringValue());
                 assertion.put("isObjectProperty", false);
             } else {
-                // Skip malformed NPA without a target
+
                 continue;
             }
 
             propertyAssertions.add(assertion);
         }
         details.put("propertyAssertions", propertyAssertions);
-        
-        // Get sameAs
+
         String sameAsQuery = PREFIXES + """
             SELECT ?same WHERE {
               <%s> owl:sameAs ?same .
@@ -4220,8 +3821,7 @@ public class OntologyQueryService {
             }
         }
         details.put("sameIndividualAs", sameAs);
-        
-        // Get differentFrom
+
         String diffQuery = PREFIXES + """
             SELECT ?diff WHERE {
               <%s> owl:differentFrom ?diff .
@@ -4237,14 +3837,13 @@ public class OntologyQueryService {
             }
         }
         details.put("differentIndividualFrom", differentFrom);
-        
+
         return details;
     }
 
     public Map<String, Object> getOntologySchema(String projectId) {
         Map<String, Object> schema = new LinkedHashMap<>();
-        
-        // Get all classes
+
         String classesQuery = PREFIXES + """
             SELECT DISTINCT ?class WHERE {
               ?class a owl:Class .
@@ -4264,8 +3863,7 @@ public class OntologyQueryService {
             }
         }
         schema.put("classes", classes);
-        
-        // Get all object properties
+
         String objectPropsQuery = PREFIXES + """
             SELECT DISTINCT ?prop WHERE {
               ?prop a owl:ObjectProperty .
@@ -4284,8 +3882,7 @@ public class OntologyQueryService {
             }
         }
         schema.put("objectProperties", objectProperties);
-        
-        // Get all data properties
+
         String dataPropsQuery = PREFIXES + """
             SELECT DISTINCT ?prop WHERE {
               ?prop a owl:DatatypeProperty .
@@ -4304,9 +3901,8 @@ public class OntologyQueryService {
             }
         }
         schema.put("dataProperties", dataProperties);
-        
+
         return schema;
     }
 }
-
 

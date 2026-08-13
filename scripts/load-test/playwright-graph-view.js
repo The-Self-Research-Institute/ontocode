@@ -1,11 +1,5 @@
 #!/usr/bin/env node
-/**
- * Graph view Playwright tests — Protégé OntoGraf parity checks.
- *
- *   node playwright-graph-view.js
- *   node playwright-graph-view.js --project-name "My Project" --file-name class-hierarchy-test.owl
- *   HEADLESS=true node playwright-graph-view.js
- */
+
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');

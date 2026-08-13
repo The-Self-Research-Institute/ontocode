@@ -1,12 +1,22 @@
 import React, { useEffect, useState } from "react";
-import { Download, Monitor, CheckCircle, ArrowLeft, Cpu, HardDrive, MemoryStick } from "lucide-react";
+import { Download, Monitor, Terminal, CheckCircle, ArrowLeft, Cpu, HardDrive, MemoryStick } from "lucide-react";
 import { getGatewayUrl } from "../config/deploymentConfig";
 import { isRealVSCode } from "../utils/desktop";
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import { AppVersionBadge } from "./AppVersionBadge";
 
 const RELEASE_BASE = `${getGatewayUrl()}/api/downloads`;
-const PLATFORM = "windows-x64";
+
+type PlatformKey = "windows-x64" | "linux-x64";
+
+const PLATFORM_META: Record<PlatformKey, { label: string; icon: typeof Monitor; os: string }> = {
+  "windows-x64": { label: "Windows", icon: Monitor, os: "Windows 10 or later (64-bit x64 or ARM64)" },
+  "linux-x64": { label: "Linux", icon: Terminal, os: "Ubuntu 20.04+ or equivalent (AppImage — runs on most distros)" },
+};
+
+function defaultPlatform(): PlatformKey {
+  return detectClientOs() === "linux" ? "linux-x64" : "windows-x64";
+}
 
 type ReleaseInfo = {
   version: string;
@@ -49,7 +59,6 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-/** Visitor OS for download analytics (separate from installer platform). */
 function detectClientOs(): string {
   const ua = navigator.userAgent.toLowerCase();
   const platform = (
@@ -71,7 +80,12 @@ interface Props {
 }
 
 export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
-  const [release, setRelease] = useState<ReleaseInfo | null>(null);
+  const [platform, setPlatform] = useState<PlatformKey>(defaultPlatform);
+  const [availablePlatforms, setAvailablePlatforms] = useState<PlatformKey[]>(["windows-x64"]);
+  const [releases, setReleases] = useState<Partial<Record<PlatformKey, ReleaseInfo>>>({});
+  const [linuxDeb, setLinuxDeb] = useState<ReleaseInfo | null>(null);
+  const [linuxArm64, setLinuxArm64] = useState<ReleaseInfo | null>(null);
+  const [linuxFlatpak, setLinuxFlatpak] = useState<ReleaseInfo | null>(null);
   const [requirements, setRequirements] = useState<SystemRequirements | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -82,7 +96,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
     (async () => {
       try {
         await fetch(
-          `${RELEASE_BASE}/track?platform=${PLATFORM}&event=page_view&clientOs=${encodeURIComponent(clientOs)}`,
+          `${RELEASE_BASE}/track?platform=${platform}&event=page_view&clientOs=${encodeURIComponent(clientOs)}`,
           { method: "POST" },
         );
       } catch {
@@ -93,18 +107,30 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
         if (!res.ok) throw new Error("Failed to load release info");
         const data = await res.json();
         if (cancelled) return;
-        const win = data?.latest?.[PLATFORM];
-        if (win) setRelease(win);
+        const found = (Object.keys(PLATFORM_META) as PlatformKey[]).filter((p) => data?.latest?.[p]);
+        if (found.length) {
+          setAvailablePlatforms(found);
+          const byPlatform: Partial<Record<PlatformKey, ReleaseInfo>> = {};
+          found.forEach((p) => { byPlatform[p] = data.latest[p]; });
+          setReleases(byPlatform);
+          if (!found.includes(platform)) setPlatform(found[0]);
+        }
+        if (data?.latest?.["linux-deb"]) setLinuxDeb(data.latest["linux-deb"]);
+
+        if (data?.latest?.["linux-arm64"]) setLinuxArm64(data.latest["linux-arm64"]);
+        if (data?.latest?.["linux-flatpak"]) setLinuxFlatpak(data.latest["linux-flatpak"]);
         if (data?.systemRequirements) setRequirements(data.systemRequirements);
       } catch {
         if (!cancelled) {
-          setRelease({
-            version: "1.1.0",
-            filename: "OntoCode-Setup.exe",
-            size: 0,
-            releaseNotes: "",
-            publishedAt: "",
-            downloadUrl: `${RELEASE_BASE}/${PLATFORM}`,
+          setReleases({
+            "windows-x64": {
+              version: "1.1.0",
+              filename: "OntoCode-Setup.exe",
+              size: 0,
+              releaseNotes: "",
+              publishedAt: "",
+              downloadUrl: `${RELEASE_BASE}/windows-x64`,
+            },
           });
         }
       } finally {
@@ -112,39 +138,45 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleDownload = () => {
-    setDownloading(true);
-    const clientOs = detectClientOs();
-    const url = `${RELEASE_BASE}/${PLATFORM}?clientOs=${encodeURIComponent(clientOs)}`;
-    // VS Code webviews are sandboxed iframes — a programmatic window.location.href
-    // navigation to an external URL is silently blocked (unlike a real <a> click,
-    // which the webview host intercepts). Route through the extension host instead.
-    // Note: window.vscode alone isn't enough to detect this — the plain-browser
-    // bridge (vscodeBridge.ts) installs a same-named shim so browser code keeps
-    // working, so isRealVSCode() is needed to tell the two apart.
+  const release = releases[platform] ?? null;
+
+  const openExternal = (url: string) => {
+
     if (isRealVSCode()) {
       window.vscode!.postMessage({ type: "openExternalUrl", url });
     } else {
       window.location.href = url;
     }
+  };
+
+  const handleDownload = () => {
+    setDownloading(true);
+    const clientOs = detectClientOs();
+    openExternal(`${RELEASE_BASE}/${platform}?clientOs=${encodeURIComponent(clientOs)}`);
     setTimeout(() => setDownloading(false), 3000);
   };
 
+  const handleDebDownload = () => {
+    openExternal(`${RELEASE_BASE}/linux-deb?clientOs=${encodeURIComponent(detectClientOs())}`);
+  };
+
+  const handleArm64Download = () => {
+    openExternal(`${RELEASE_BASE}/linux-arm64?clientOs=${encodeURIComponent(detectClientOs())}`);
+  };
+
+  const handleFlatpakDownload = () => {
+    openExternal(`${RELEASE_BASE}/linux-flatpak?clientOs=${encodeURIComponent(detectClientOs())}`);
+  };
+
   const versionLabel = release?.version || "…";
+  const PlatformIcon = PLATFORM_META[platform].icon;
 
   return (
     <div className="relative min-h-screen text-white">
-      {/* Fixed, viewport-pinned background layer — NOT the box-height-dependent
-          background this div used to carry directly. This page must always render
-          dark/violet regardless of the app's light/dark theme (it's a marketing/
-          download page, not themed app chrome), and a background tied to this div's
-          own content height can be outrun by taller content inside html/body/#root's
-          independently-scrolling containers (see index.css), letting the theme's
-          light body background show through past wherever this div's box ended —
-          exactly what made the feature checklist unreadable in light mode. A fixed
-          layer covers the full viewport unconditionally, at any scroll position. */}
+      {}
       <div className="fixed inset-0 -z-10 bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900" />
       <div className="border-b border-white/10 bg-white/5 backdrop-blur-sm">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -176,7 +208,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             <OntoCodeLogo size={80} rounded className="shadow-2xl shadow-purple-500/20" />
           </div>
           <div className="inline-flex items-center gap-2 bg-purple-500/20 border border-purple-500/30 rounded-full px-4 py-1.5 text-sm text-purple-300 mb-6">
-            <Cpu size={14} /> Desktop Edition — Free Download (Windows)
+            <Cpu size={14} /> Desktop Edition — Free Download ({PLATFORM_META[platform].label})
           </div>
           <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
             OntoCode Desktop
@@ -186,22 +218,40 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             Import, edit, reason and query ontologies up to millions of triples.
           </p>
           <p className="text-sm text-white/40 mt-3">
-            macOS and Linux builds are coming soon. Windows 10/11 is available now.
+            macOS builds are coming soon. Windows and Linux are available now.
           </p>
+
+          {availablePlatforms.length > 1 && (
+            <div className="inline-flex mt-6 bg-white/5 border border-white/10 rounded-full p-1">
+              {availablePlatforms.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPlatform(p)}
+                  className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${
+                    platform === p ? "bg-purple-600 text-white" : "text-white/50 hover:text-white/80"
+                  }`}
+                >
+                  {PLATFORM_META[p].icon === Monitor ? <Monitor size={14} /> : <Terminal size={14} />}
+                  {PLATFORM_META[p].label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white/5 border border-white/10 rounded-2xl p-8 mb-8 backdrop-blur-sm">
           <div className="flex items-start justify-between mb-6">
             <div>
               <h2 className="text-xl font-semibold mb-1 flex items-center gap-2">
-                <Monitor size={22} className="text-blue-400" />
-                Windows
+                <PlatformIcon size={22} className="text-blue-400" />
+                {PLATFORM_META[platform].label}
               </h2>
               <p className="text-sm text-white/50">
-                {requirements?.os || "Windows 10 or later (64-bit x64 or ARM64)"}
+                {PLATFORM_META[platform].os}
               </p>
             </div>
-            <Monitor size={32} className="text-white/30" />
+            <PlatformIcon size={32} className="text-white/30" />
           </div>
 
           <button
@@ -214,7 +264,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
               <Download size={18} className="text-white" />
               <div className="text-left">
                 <div className="text-sm font-medium text-white">
-                  {loading ? "Loading…" : `Download for Windows (v${versionLabel})`}
+                  {loading ? "Loading…" : `Download for ${PLATFORM_META[platform].label} (v${versionLabel})`}
                 </div>
                 <div className="text-xs text-white/70">
                   {release?.size ? formatBytes(release.size) : "Installer"} · In-app updates included
@@ -226,8 +276,42 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             </span>
           </button>
 
+          {platform === "linux-x64" && linuxDeb && (
+            <button
+              type="button"
+              onClick={handleDebDownload}
+              className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
+            >
+              <Download size={12} />
+              Prefer a .deb package? Download for Debian/Ubuntu (v{linuxDeb.version})
+            </button>
+          )}
+
+          {platform === "linux-x64" && linuxFlatpak && (
+            <button
+              type="button"
+              onClick={handleFlatpakDownload}
+              className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
+            >
+              <Download size={12} />
+              Prefer Flatpak? Download the Flatpak package (v{linuxFlatpak.version})
+            </button>
+          )}
+
+          {platform === "linux-x64" && linuxArm64 && (
+            <button
+              type="button"
+              onClick={handleArm64Download}
+              className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
+            >
+              <Download size={12} />
+              On ARM64 hardware? Download the ARM64 AppImage (v{linuxArm64.version})
+            </button>
+          )}
+
           <p className="text-xs text-white/30 mt-4 text-center">
-            No sign-up required · Free to use · Uninstall via Windows Settings → Apps
+            No sign-up required · Free to use ·{" "}
+            {platform === "windows-x64" ? "Uninstall via Windows Settings → Apps" : "Uninstall by removing the AppImage / package"}
           </p>
         </div>
 

@@ -17,14 +17,6 @@ interface ClassExpressionEditorDialogProps {
   externalExpandedNodes?: Set<string>;
 }
 
-/**
- * ClassExpressionEditorDialog - Wrapper around ClassExpressionDialog
- *
- * This is a compatibility wrapper that maintains the old API while using
- * the unified ClassExpressionDialog implementation under the hood.
- *
- * @deprecated Consider using ClassExpressionDialog directly for new code
- */
 const ClassExpressionEditorDialog: React.FC<ClassExpressionEditorDialogProps> = ({
   isOpen,
   onClose,
@@ -38,7 +30,7 @@ const ClassExpressionEditorDialog: React.FC<ClassExpressionEditorDialogProps> = 
   onToggleNode,
   externalExpandedNodes = new Set()
 }) => {
-  // Convert Set to Array for ClassExpressionDialog
+
   const expandedNodesArray = Array.from(externalExpandedNodes);
 
   return (

@@ -1,9 +1,4 @@
-/**
- * Playwright Global Setup
- *
- * Runs ONCE before all tests. Ensures the `playwright_test` user exists and has
- * at least one project with a sample OWL file for editor tests.
- */
+
 
 import { readFileSync } from 'fs';
 import { resolve } from 'path';

@@ -63,16 +63,16 @@ export const RatingModal: React.FC<RatingModalProps> = ({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        {/* Header */}
+        {}
         <div className="border-b border-gray-200 px-6 py-4">
           <h2 className="text-xl font-semibold text-gray-900">
             Rate {pluginName}
           </h2>
         </div>
 
-        {/* Content */}
+        {}
         <div className="px-6 py-4 space-y-6">
-          {/* Star Rating */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Your Rating *
@@ -103,7 +103,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
             </div>
           </div>
 
-          {/* Recommendation */}
+          {}
           <div>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -119,7 +119,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
             </label>
           </div>
 
-          {/* Review */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Review (Optional)
@@ -133,7 +133,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
             />
           </div>
 
-          {/* Merits */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               What do you like? (Optional)
@@ -147,7 +147,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
             />
           </div>
 
-          {/* Demerits */}
+          {}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               What could be improved? (Optional)
@@ -162,7 +162,7 @@ export const RatingModal: React.FC<RatingModalProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
+        {}
         <div className="border-t border-gray-200 px-6 py-4 flex justify-end gap-3">
           <button
             onClick={onClose}

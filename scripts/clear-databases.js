@@ -1,14 +1,8 @@
-/**
- * Database Cleanup Script
- * Clears both MongoDB and GraphDB
- *
- * Run with: node clear-databases.js
- */
+
 
 const MongoClient = require('mongodb').MongoClient;
 const axios = require('axios');
 
-// Configuration
 const MONGODB_URI = 'mongodb://localhost:27017';
 const MONGODB_DB = 'ontocode';
 const GRAPHDB_URL = 'http://localhost:7200';
@@ -55,11 +49,10 @@ async function clearGraphDB() {
     console.log(`Repository: ${GRAPHDB_URL}/repositories/${GRAPHDB_REPO}`);
 
     try {
-        // Check if GraphDB is accessible
+
         await axios.get(`${GRAPHDB_URL}/rest/repositories`);
         console.log('✓ GraphDB is accessible');
 
-        // Get current triple count
         const countQuery = 'SELECT (COUNT(*) as ?count) WHERE { ?s ?p ?o }';
         const countResponse = await axios.post(
             `${GRAPHDB_URL}/repositories/${GRAPHDB_REPO}`,
@@ -76,7 +69,7 @@ async function clearGraphDB() {
         console.log(`\nCurrent triple count: ${count}`);
 
         if (count > 102) {
-            // Clear user data - Use SPARQL UPDATE endpoint (works for both Free and Enterprise)
+
             console.log('\nClearing user data triples...');
             console.log('(Note: ~102 system triples will remain - these are GraphDB RDF/RDFS/OWL metadata)');
 
@@ -97,7 +90,7 @@ async function clearGraphDB() {
             console.log('✓ User data cleared');
             console.log('✓ System triples remain (RDF/RDFS/OWL vocabulary - this is normal)');
         } else if (count >= 100 && count <= 105) {
-            // Allow small variance around 102 (GraphDB may have 100-105 system triples)
+
             console.log('✓ GraphDB contains only system triples (RDF/RDFS/OWL vocabulary)');
             console.log('✓ No user data to clear - database is clean');
         } else if (count > 0) {

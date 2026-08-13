@@ -1,7 +1,4 @@
-/**
- * Pre-flight for Electron desktop E2E.
- * Playwright launches the real OntoCode Electron window (not Chromium+Vite).
- */
+
 
 import fs from 'fs';
 import path from 'path';

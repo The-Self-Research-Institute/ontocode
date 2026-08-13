@@ -1,6 +1,5 @@
 import { ApiError } from "../services/apiClient";
 
-/** User-facing message for timeouts and proxy errors (avoids misleading “CORS” confusion). */
 export function friendlyApiErrorMessage(err: unknown, context?: string): string {
   const prefix = context ? `${context}: ` : "";
   if (err instanceof ApiError) {

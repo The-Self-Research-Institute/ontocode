@@ -20,39 +20,37 @@ import java.util.List;
 
 @Service
 public class SparqlQueryService {
-    
+
     private static final Logger log = LoggerFactory.getLogger(SparqlQueryService.class);
-    
+
     @Autowired
     private SparqlQueryRepository repo;
-    
+
     @Autowired
     private SparqlProperties props;
-    
+
     private final WebClient client;
     private final ObjectMapper om;
 
     public SparqlQueryService(SparqlQueryRepository repo,
-                             WebClient.Builder builder, 
+                             WebClient.Builder builder,
                              SparqlProperties props,
                              ObjectMapper om) {
         this.repo = repo;
         this.props = props;
         this.om = om;
-        
+
         WebClient.Builder webClientBuilder = builder.baseUrl(props.getEndpointUrl());
         if (props.getUsername() != null && !props.getUsername().isBlank()) {
-            webClientBuilder.defaultHeaders(headers -> 
+            webClientBuilder.defaultHeaders(headers ->
                 headers.setBasicAuth(props.getUsername(), props.getPassword())
             );
         }
         this.client = webClientBuilder.build();
     }
 
-    // ========== QUERY MANAGEMENT ==========
-
-    public List<SparqlQueryEntity> list(String projectId) { 
-        return repo.findByProjectId(projectId); 
+    public List<SparqlQueryEntity> list(String projectId) {
+        return repo.findByProjectId(projectId);
     }
 
     public SparqlQueryEntity create(String projectId, String name, String queryText) {
@@ -72,19 +70,16 @@ public class SparqlQueryService {
         return repo.save(entity);
     }
 
-    public void delete(String id) { 
-        repo.deleteById(id); 
+    public void delete(String id) {
+        repo.deleteById(id);
     }
-
-    // ========== QUERY EXECUTION ==========
 
     public Mono<JsonNode> execute(String projectId, String queryText) {
         log.debug("Executing SPARQL query for project: {}", projectId);
-        
+
         String graph = props.getProjectGraphUri(projectId);
         String upper = queryText.toUpperCase();
-        
-        // Enrich query with project graph if not specified
+
         String enrichedQuery = (upper.contains("FROM") || upper.contains("GRAPH"))
                 ? queryText
                 : queryText.replaceFirst("(?i)WHERE", "\nFROM <" + graph + ">\nWHERE");

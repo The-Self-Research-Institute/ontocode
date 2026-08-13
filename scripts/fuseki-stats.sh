@@ -1,23 +1,4 @@
 #!/usr/bin/env bash
-# fuseki-stats.sh — Generate TDB2 statistics for the Fuseki query optimizer.
-#
-# TDB2's ARQ query planner uses a stats.opt file containing predicate
-# frequencies to choose optimal join ordering. Without it, the planner
-# falls back to heuristics, which can produce slow plans for complex queries.
-#
-# HOW TO RUN (on the EC2 host):
-#   1. Stop Fuseki (required — tdb2.tdbstats needs exclusive access to the files)
-#   2. Run this script
-#   3. Start Fuseki
-#
-# Example:
-#   docker compose stop fuseki
-#   bash scripts/fuseki-stats.sh
-#   docker compose start fuseki
-#
-# After stats are generated, Fuseki picks them up automatically on next start.
-# Re-run this script whenever your dataset grows significantly (e.g. after
-# adding a large ontology). Stats are stale once triple count changes by >20%.
 
 set -euo pipefail
 
@@ -32,7 +13,6 @@ echo "TDB2 path : $TDB2_LOC"
 echo "Stats file: $STATS_FILE"
 echo ""
 
-# Check that Fuseki is stopped — stats generation requires no active TDB2 lock
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     echo "ERROR: Fuseki container '$CONTAINER_NAME' is still running."
     echo "Stop it first:  docker compose stop fuseki"
@@ -41,8 +21,6 @@ fi
 
 echo "Fuseki is stopped. Generating statistics..."
 
-# Run tdb2.tdbstats using a throw-away container that shares the fuseki-data volume.
-# The stats.opt file is written directly into the TDB2 dataset directory.
 docker run --rm \
     -v ontocode_fuseki-data:/fuseki/databases \
     --entrypoint /bin/sh \

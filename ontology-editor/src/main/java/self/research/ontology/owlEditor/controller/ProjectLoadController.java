@@ -76,14 +76,9 @@ public class ProjectLoadController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
     private static final java.util.regex.Pattern PCT_PATTERN = java.util.regex.Pattern.compile("(\\d+)%");
-    
-    // Project-level locks to prevent concurrent saves
+
     private final ConcurrentHashMap<String, Object> projectSaveLocks = new ConcurrentHashMap<>();
 
-    // Tracks projects with an active uploadByFileRef in progress.
-    // Prevents a second call from triggering a full re-import while the first
-    // is still running the Fuseki PUT (Fuseki appears empty during the PUT,
-    // so hasGraphData() returns false and the skip guard doesn't fire).
     private final java.util.Set<String> importInFlight =
         java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
 
@@ -100,7 +95,6 @@ public class ProjectLoadController {
     private final ProjectRepository projectRepository;
     private final self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService;
 
-    // Desktop-only — null in cloud
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.lang.Nullable
     private self.research.ontology.owlEditor.cache.ProjectOntologyCache ontologyCache;
@@ -166,7 +160,7 @@ public class ProjectLoadController {
         this.exportJobService = exportJobService;
     }
 
-    @PostMapping("/upload/{projectId:.+}")  // Allow slashes in path variable
+    @PostMapping("/upload/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
                                                       @RequestParam(required = false) String ownerEmail,
@@ -180,9 +174,7 @@ public class ProjectLoadController {
         log.info("[ProjectLoadController] ═══ Upload STARTED - projectId: {}, filename: {}, size: {} bytes, ownerEmail: {}, workspaceId: {}, parentProjectId: {}, action: {}, compressed: {}",
             projectId, file.getOriginalFilename(), file.getSize(), ownerEmail, workspaceId, parentProjectId, action, compressed);
 
-        // VALIDATION: Check file size (max 1GB) — multipart-specific, done here before
-        // delegating to the shared InputStream-based path also used by chunk reassembly.
-        long maxSize = 1024L * 1024 * 1024; // 1GB
+        long maxSize = 1024L * 1024 * 1024;
         if (file.getSize() > maxSize) {
             log.warn("File too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
             return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
@@ -208,13 +200,6 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Shared file-processing pipeline: duplicate detection, disk + GridFS storage
-     * (with GZIP auto-detect/decompression), citation extraction, metadata update,
-     * and import dispatch. Called directly by {@link #upload} for single-shot
-     * multipart uploads, and by the chunk-reassembly path once all chunks of a
-     * large upload have arrived and been concatenated back into one stream.
-     */
     private ResponseEntity<Map<String, Object>> processUploadedFile(
             String projectId,
             InputStream fileStream,
@@ -233,36 +218,29 @@ public class ProjectLoadController {
             String actualProjectId = projectId;
             boolean isReplacement = false;
             String filename = originalFilename;
-            
-            // Skip duplicate check for hierarchical project IDs (files from project library)
-            // Hierarchical IDs like "proj-123--file-456" are already unique
-            // Note: Using -- separator to avoid URL encoding issues with / (%2F)
+
             boolean isHierarchicalId = projectId.contains("--");
-            
-            // Check for duplicate filename and handle based on action parameter
+
             if (!isHierarchicalId && ownerEmail != null && !ownerEmail.isEmpty()) {
-                // First, check if filename conflicts with shared files
+
                 if (shareService.isFilenameInSharedFiles(filename, ownerEmail)) {
                     log.warn("Upload blocked - filename conflicts with shared file: {} for user: {}", filename, ownerEmail);
                     return ResponseEntity.status(HttpStatus.CONFLICT)
                             .body(Map.of(
-                                "success", false, 
+                                "success", false,
                                 "error", "The file '" + filename + "' is already shared with you. Please upload with a different file name or version."
                             ));
                 }
-                
-                // Then check if user owns a file with this name
+
                 Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, ownerEmail);
                 if (existingProjectId.isPresent()) {
-                    // Handle based on action parameter
+
                     if ("replace".equals(action)) {
-                        // Replace existing file
+
                         actualProjectId = existingProjectId.get();
                         isReplacement = true;
                         log.info("Replacing existing file: {} for user: {} with projectId: {}", filename, ownerEmail, actualProjectId);
-                        
-                        // Clean up stale files before re-import so OntologyFileController
-                        // does not serve the old version while the new import is processing
+
                         try {
                             Path oldProjectDir = storageManager.projectDir(actualProjectId);
                             for (String staleFile : new String[]{
@@ -278,7 +256,6 @@ public class ProjectLoadController {
                             log.warn("Failed to clean up stale files for project {}: {}", actualProjectId, cleanupEx.getMessage());
                         }
 
-                        // Clear the GraphDB dataset so stale triples do not bleed into the new import
                         try {
                             datasetService.clearDataset(actualProjectId);
                             log.info("Cleared GraphDB dataset before re-import for project {}", actualProjectId);
@@ -286,13 +263,13 @@ public class ProjectLoadController {
                             log.warn("Failed to clear GraphDB dataset for project {}: {}", actualProjectId, clearEx.getMessage());
                         }
                     } else if ("create_copy".equals(action)) {
-                        // Create a copy with modified filename
+
                         String copyFilename = generateCopyFilename(filename, ownerEmail);
                         filename = copyFilename;
-                        // Use the provided projectId for the new copy
+
                         log.info("Creating copy with new filename: {} for user: {} with projectId: {}", copyFilename, ownerEmail, actualProjectId);
                     } else {
-                        // No action specified - return conflict for user decision
+
                         log.warn("Duplicate file detected, awaiting user decision: {} for user: {}", filename, ownerEmail);
                         return ResponseEntity.status(HttpStatus.CONFLICT)
                                 .body(Map.of(
@@ -305,10 +282,9 @@ public class ProjectLoadController {
                     }
                 }
             }
-            
+
             log.info("[ProjectLoadController] [TIMING] Duplicate check: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
-            // Optimize by writing to filesystem and GridFS in one pass
             stepStart = System.nanoTime();
             Path projectDir = storageManager.prepareProjectDir(actualProjectId);
             Path original = projectDir.resolve("ontology.original.owl");
@@ -345,10 +321,10 @@ public class ProjectLoadController {
                 filename = importRoot.getFileName().toString();
                 log.info("[ProjectLoadController] Ontology package root selected: {}", importRoot);
             } else {
-                // Auto-detect GZIP compression
+
                 InputStream effectiveStream = fileStream;
                 boolean wasCompressed = compressed;
-                
+
                 if (!compressed) {
                     PushbackInputStream pb = new PushbackInputStream(fileStream, 2);
                     byte[] signature = new byte[2];
@@ -356,7 +332,7 @@ public class ProjectLoadController {
                     if (len > 0) {
                         pb.unread(signature, 0, len);
                     }
-                    
+
                     if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
                         log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
                         effectiveStream = new GZIPInputStream(pb);
@@ -381,7 +357,7 @@ public class ProjectLoadController {
 
                     gridfsFileId = gridFSFileService.storeFile(
                         actualProjectId,
-                        filename,  // Use potentially modified filename
+                        filename,
                         contentType,
                         tee
                     );
@@ -390,25 +366,17 @@ public class ProjectLoadController {
 
             log.info("[ProjectLoadController] [TIMING] File save (disk + GridFS): {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
-            // FIX: Add error handling - verify GridFS storage succeeded
             if (gridfsFileId == null || gridfsFileId.isEmpty()) {
                 throw new RuntimeException("Failed to store file in GridFS - no file ID returned");
             }
 
             log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
 
-            // SKIP sanitization here — ProjectImportService.runImport() does it during async import.
-            // Doing it twice wastes 10-15 seconds on 224 MB files (streams entire file for IRI scanning).
-
-            // Extract citation-entity mappings from uploaded file for smart repositioning
-            // This must be done BEFORE GraphDB import, as GraphDB will reorganize the content
             stepStart = System.nanoTime();
             log.info("Extracting citation-entity mappings from uploaded file: {}", filename);
             storageManager.extractCitationMappingsFromFile(importRoot, actualProjectId);
             log.info("[ProjectLoadController] [TIMING] Citation extraction: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
-            // FIX: Batch metadata updates into single operation for better performance
-            // Use the potentially modified filename
             stepStart = System.nanoTime();
             ProjectStatus status = ProjectStatus.uploaded(filename);
             metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail, workspaceId, parentProjectId);
@@ -423,21 +391,20 @@ public class ProjectLoadController {
             RDFFormat format = detectFormat(importRoot);
             log.info("[ProjectLoadController] [TIMING] Format detection: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
-            // Skip duplicate full-file streaming parse for large uploads; import already scans the file.
             if (Files.size(importRoot) <= 50L * 1024 * 1024) {
                 preparseService.preparse(importRoot, actualProjectId, format);
             } else {
                 log.info("[ProjectLoadController] Skipping preparse for large upload ({} bytes)", Files.size(importRoot));
             }
-            
+
             long totalUploadMs = (System.nanoTime() - uploadStartTime) / 1_000_000;
             log.info("[ProjectLoadController] ═══ Upload endpoint COMPLETED in {} ms ({} sec) for project: {}",
                     totalUploadMs, totalUploadMs / 1000, actualProjectId);
 
-            String message = isReplacement ? "File replaced successfully, processing scheduled" : 
+            String message = isReplacement ? "File replaced successfully, processing scheduled" :
                             ("create_copy".equals(action) ? "Copy created successfully with name '" + filename + "', processing scheduled" :
                             "Upload complete, processing scheduled");
-            
+
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "projectId", actualProjectId,
@@ -448,23 +415,9 @@ public class ProjectLoadController {
         }
     }
 
-    // Chunked-upload sessions currently being reassembled — prevents two requests for the
-    // same uploadId (e.g. a client retry racing the original) from reassembling/dispatching twice.
     private final java.util.Set<String> chunkReassemblyInFlight =
         java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
 
-    /**
-     * Receives one chunk of a large upload. The client compresses the whole file first (as the
-     * regular /upload endpoint's clients already do), then splits the (possibly compressed) bytes
-     * into fixed-size chunks — this endpoint just concatenates them back in order. Once the final
-     * chunk (by index count, not necessarily arrival order) has been written, it reassembles the
-     * pieces into one file and hands off to the exact same {@link #processUploadedFile} pipeline
-     * the single-shot /upload endpoint uses, so GZIP auto-detection, duplicate handling, GridFS
-     * storage, and import dispatch all behave identically regardless of which path was used.
-     *
-     * Chunks may arrive out of order (client retries), so completeness is checked by counting
-     * files on disk rather than assuming the highest-index chunk is always last.
-     */
     @PostMapping("/upload-chunk/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> uploadChunk(
             @PathVariable String projectId,
@@ -489,8 +442,6 @@ public class ProjectLoadController {
 
             byte[] chunkBytes = chunk.getBytes();
 
-            // Verify integrity before writing — a corrupted chunk should be retried by the
-            // client, not silently reassembled into a broken file.
             String actualHash = sha256Hex(chunkBytes);
             if (!actualHash.equalsIgnoreCase(chunkHash)) {
                 log.warn("[ProjectLoadController] Chunk hash mismatch uploadId={} chunkIndex={}: expected={} actual={}",
@@ -518,8 +469,6 @@ public class ProjectLoadController {
                         "chunkIndex", chunkIndex, "totalReceived", receivedCount, "totalChunks", totalChunks));
             }
 
-            // All chunks present — only one request should reassemble (guards against a retried
-            // final chunk racing the original request that's already reassembling).
             if (!chunkReassemblyInFlight.add(uploadId)) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "received", true, "reassembling", true,
@@ -543,10 +492,7 @@ public class ProjectLoadController {
                 log.info("[ProjectLoadController] Reassembled {} chunks ({} bytes) for uploadId={}, dispatching to import pipeline",
                         totalChunks, reassembledSize, uploadId);
 
-                // The single-shot /upload endpoint rejects oversized files before ever reading
-                // them; chunking bypasses that check per-chunk (each part is well under the
-                // limit), so the cap has to be re-applied here against the reassembled total.
-                long maxSize = 1024L * 1024 * 1024; // 1GB
+                long maxSize = 1024L * 1024 * 1024;
                 if (reassembledSize > maxSize) {
                     log.warn("Reassembled upload too large: {} bytes (max: {} bytes) for uploadId={}", reassembledSize, maxSize, uploadId);
                     return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
@@ -592,12 +538,11 @@ public class ProjectLoadController {
         }
     }
 
-    /** Safety net for chunk-upload sessions abandoned mid-transfer (tab closed, network dropped). */
     @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 30 * 60 * 1000)
     public void sweepAbandonedChunkUploads() {
         try {
             Path root = storageManager.chunkUploadsRoot();
-            long maxAgeMs = 2 * 60 * 60 * 1000L; // 2 hours
+            long maxAgeMs = 2 * 60 * 60 * 1000L;
             try (java.util.stream.Stream<Path> dirs = Files.list(root)) {
                 dirs.filter(Files::isDirectory).forEach(dir -> {
                     try {
@@ -617,11 +562,6 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Server-side import by file reference — avoids browser download/re-upload for large files.
-     * Reads the file directly from the shared MongoDB GridFS (via file_metadata UUID → gridfsId),
-     * writes it to disk, and dispatches the import job exactly as the regular upload does.
-     */
     @PostMapping("/upload-by-file-ref/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> uploadByFileRef(
             @PathVariable String projectId,
@@ -635,9 +575,7 @@ public class ProjectLoadController {
         long startTime = System.nanoTime();
         log.info("[ProjectLoadController] ═══ UploadByFileRef STARTED - projectId: {}, fileId: {}, ownerEmail: {}",
                 projectId, fileId, ownerEmail);
-        // Guard: if an import is already running for this project, return immediately.
-        // Without this, a second frontend call while the Fuseki PUT is in flight (Fuseki
-        // still shows 0 triples) bypasses the hasGraphData skip and starts a full re-import.
+
         if (!importInFlight.add(projectId)) {
             log.info("[ProjectLoadController] Import already in flight for project {}, returning ALREADY_LOADING", projectId);
             return ResponseEntity.ok(Map.of(
@@ -657,9 +595,6 @@ public class ProjectLoadController {
                 ));
             }
 
-            // Desktop fast path: skip re-import if data already exists.
-            // Priority: OWLAPI cached → MongoDB status COMPLETED → Fuseki SPARQL count.
-            // MongoDB check is most reliable (always fast, doesn't require Fuseki connection).
             if (ontologyCache != null) {
                 boolean owlapiReady = ontologyCache.has(projectId);
 
@@ -669,28 +604,24 @@ public class ProjectLoadController {
 
                 boolean fileExists = storageManager.findCurrentOntology(projectId).isPresent();
 
-                // If MongoDB status is PROCESSING or ERROR, the last import was interrupted
-                // or failed — do NOT skip even if Fuseki has partial data. Force re-import.
                 boolean importFailed = mongoStatus
                     .map(s -> "PROCESSING".equals(s.status()) || "ERROR".equals(s.status()))
                     .orElse(false);
                 if (importFailed && fileExists) {
                     log.info("[ProjectLoadController] MongoDB status is PROCESSING/ERROR — forcing re-import for {}", projectId);
-                    // Fall through to full import path (do not set shouldSkip)
+
                 }
 
-                // Extra Fuseki check only if MongoDB says completed but file is missing
-                // (handles case where data was manually cleared)
                 boolean fusekiHasData = false;
                 if (importFailed) {
-                    // Never skip on a previously failed/interrupted import
+
                     mongoCompleted = false;
                 } else if (mongoCompleted && !fileExists) {
-                    // File missing → someone cleared data, allow re-import
+
                     mongoCompleted = false;
                     log.info("[ProjectLoadController] MongoDB says COMPLETED but file missing — forcing re-import for {}", projectId);
                 } else if (!mongoCompleted && fileExists) {
-                    // MongoDB not completed but file exists → check Fuseki as fallback
+
                     fusekiHasData = datasetService.hasGraphData(projectId);
                 }
 
@@ -708,8 +639,7 @@ public class ProjectLoadController {
                     body.put("projectId", projectId);
                     body.put("status", "ALREADY_LOADED");
                     body.put("source", "desktop-cache-skip");
-                    // Block until OWLAPI is warm on reopen — logs show many ALREADY_LOADED returns
-                    // with owlapi=false while the UI fell through to SPARQL (Fuseki often down).
+
                     if (!owlapiReady && desktopOntologyLoader != null) {
                         log.info("[ProjectLoadController] ALREADY_LOADED — blocking OWLAPI warm for {}", projectId);
                         body.putAll(desktopOntologyLoader.warmProject(projectId, 120_000));
@@ -723,7 +653,6 @@ public class ProjectLoadController {
                 }
             }
 
-            // 1. Look up file_metadata by UUID fileId to resolve gridfsId and fileName
             Document fileMeta = mongoTemplate.getDb()
                     .getCollection("file_metadata")
                     .find(new Document("fileId", fileId)
@@ -740,7 +669,6 @@ public class ProjectLoadController {
             String fileName = fileMeta.getString("fileName");
             log.info("[ProjectLoadController] Resolved file: fileName={}, gridfsId={}", fileName, gridfsId);
 
-            // 2. Stream file bytes from GridFS
             Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
             if (resourceOpt.isEmpty()) {
                 log.error("[ProjectLoadController] GridFS content missing for gridfsId: {}", gridfsId);
@@ -748,7 +676,6 @@ public class ProjectLoadController {
                         .body(Map.of("success", false, "error", "File content not found in storage"));
             }
 
-            // 3. Clear dataset when replacing
             if ("replace".equals(action)) {
                 try {
                     datasetService.clearDataset(projectId);
@@ -758,7 +685,6 @@ public class ProjectLoadController {
                 }
             }
 
-            // 4. Write file to project directory (same path as normal upload)
             Path projectDir = storageManager.prepareProjectDir(projectId);
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
@@ -773,7 +699,6 @@ public class ProjectLoadController {
             log.info("[ProjectLoadController] [TIMING] GridFS read + disk write: {} ms",
                     (System.nanoTime() - startTime) / 1_000_000);
 
-            // 5. Citation mappings, metadata, dispatch import
             storageManager.extractCitationMappingsFromFile(original, projectId);
             ProjectStatus status = ProjectStatus.uploaded(fileName);
             metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, workspaceId, parentProjectId);
@@ -811,14 +736,8 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Generate a unique filename for a copy by adding a numeric suffix
-     * @param originalFilename The original filename
-     * @param ownerEmail The owner's email
-     * @return A unique filename with suffix (e.g., "ontology-copy-1.owl")
-     */
     private String generateCopyFilename(String originalFilename, String ownerEmail) {
-        // Extract base name and extension
+
         String baseName;
         String extension = "";
         int dotIndex = originalFilename.lastIndexOf('.');
@@ -828,15 +747,14 @@ public class ProjectLoadController {
         } else {
             baseName = originalFilename;
         }
-        
-        // Try incrementing suffixes until we find one that doesn't exist
+
         int copyNumber = 1;
         String candidateFilename;
         do {
             candidateFilename = baseName + "-copy-" + copyNumber + extension;
             copyNumber++;
         } while (metadataService.isDuplicateFilename(candidateFilename, ownerEmail));
-        
+
         log.info("Generated copy filename: {} from original: {}", candidateFilename, originalFilename);
         return candidateFilename;
     }
@@ -968,8 +886,7 @@ public class ProjectLoadController {
 
     private RDFFormat detectFormat(Path file) {
         String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
-        
-        // Unambiguous extensions - trust the extension
+
         if (fileName.endsWith(".ttl") || fileName.endsWith(".turtle")) {
             return RDFFormat.TURTLE;
         } else if (fileName.endsWith(".nt") || fileName.endsWith(".ntriples")) {
@@ -979,8 +896,7 @@ public class ProjectLoadController {
         } else if (fileName.endsWith(".n3")) {
             return RDFFormat.N3;
         }
-        
-        // Ambiguous extensions (.owl, .rdf) - inspect content
+
         if (fileName.endsWith(".owl") || fileName.endsWith(".rdf")) {
             RDFFormat detectedFormat = detectFormatByContent(file);
             if (detectedFormat != null) {
@@ -988,76 +904,63 @@ public class ProjectLoadController {
                 return detectedFormat;
             }
         }
-        
-        // Default to RDF/XML
+
         return RDFFormat.RDFXML;
     }
-    
-    /**
-     * Detect RDF format by inspecting file content
-     * @param file The file to inspect
-     * @return Detected format or null if unable to detect
-     */
+
     private RDFFormat detectFormatByContent(Path file) {
         try {
-            // Read first 2KB to detect format
+
             byte[] header = java.nio.file.Files.readAllBytes(file);
             int readLength = Math.min(2048, header.length);
-            
-            // Skip UTF-8 BOM if present
+
             int offset = 0;
-            if (header.length >= 3 && header[0] == (byte) 0xEF && 
+            if (header.length >= 3 && header[0] == (byte) 0xEF &&
                 header[1] == (byte) 0xBB && header[2] == (byte) 0xBF) {
                 offset = 3;
             }
-            
-            // Skip leading whitespace
-            while (offset < readLength && (header[offset] == ' ' || header[offset] == '\t' || 
+
+            while (offset < readLength && (header[offset] == ' ' || header[offset] == '\t' ||
                    header[offset] == '\n' || header[offset] == '\r')) {
                 offset++;
             }
-            
-            String content = new String(header, offset, Math.min(readLength - offset, 1024), 
+
+            String content = new String(header, offset, Math.min(readLength - offset, 1024),
                                        java.nio.charset.StandardCharsets.UTF_8);
             String contentLower = content.toLowerCase(Locale.ROOT);
-            
-            // Check for XML markers
-            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
+
+            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") ||
                 contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
                 log.info("Detected RDF/XML format (found XML markers)");
                 return RDFFormat.RDFXML;
             }
 
-            // Check for Turtle/N3 markers
             if (contentLower.startsWith("@prefix") || contentLower.startsWith("@base") ||
                 contentLower.contains("@prefix ") || contentLower.contains("@base ")) {
                 log.info("Detected Turtle format (found @prefix or @base directive)");
                 return RDFFormat.TURTLE;
             }
-            
-            // Check for N-Triples (subject-predicate-object with full URIs)
+
             if (content.matches("(?s)^\\s*<[^>]+>\\s+<[^>]+>\\s+.*")) {
                 log.info("Detected N-Triples format");
                 return RDFFormat.NTRIPLES;
             }
-            
-            // Check for JSON-LD
+
             if (contentLower.trim().startsWith("{") && contentLower.contains("@context")) {
                 log.info("Detected JSON-LD format");
                 return RDFFormat.JSONLD;
             }
-            
-            // Unable to detect - return null to use default
+
             log.warn("Unable to detect format by content, will use default");
             return null;
-            
+
         } catch (Exception e) {
             log.warn("Failed to detect format by content: {}", e.getMessage());
             return null;
         }
     }
 
-    @GetMapping("/status/{projectId:.+}")  // Allow slashes in path variable
+    @GetMapping("/status/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> status(@PathVariable String projectId) {
         return metadataService.readStatus(projectId)
                 .map(status -> {
@@ -1092,25 +995,19 @@ public class ProjectLoadController {
                     boolean graphReady = false;
                     if ("COMPLETED".equals(status.status())) {
                         if (desktopHierarchyService != null) {
-                            // Desktop: trust the COMPLETED status — OWLAPI is authoritative.
-                            // Skip the Fuseki COUNT which can block 60+ seconds on cold TDB2.
+
                             graphReady = true;
                         } else {
                             graphSize = datasetService.getGraphTripleCount(projectId);
                             graphReady = graphSize > 0;
                         }
                     }
-                    // During PROCESSING, skip synchronous triple COUNT — Fuseki may block for
-                    // minutes on large graphs and stall status polls (gateway 504/500).
+
                     data.put("graphSize", graphSize > 0 ? graphSize : null);
                     data.put("graphReady", graphReady);
 
                     int topLevel = 0;
-                    // hierarchyReady tracks whether the count below is an authoritative, finished
-                    // answer — NOT whether that count is nonzero. A genuinely empty ontology (e.g.
-                    // a freshly auto-created file with no classes yet) legitimately has topLevel=0
-                    // forever; gating readiness on "topLevel > 0" made such projects spin in the
-                    // loading modal indefinitely even though their hierarchy had fully computed.
+
                     boolean hierarchyReady = false;
                     if (desktopHierarchyService != null && owlapiReady) {
                         topLevel = desktopHierarchyService.topLevelClassTotal(projectId);
@@ -1147,28 +1044,22 @@ public class ProjectLoadController {
         try {
             Path exportPath;
 
-            // On desktop, mutations patch the OWLAPI in-memory model immediately but Fuseki sync
-            // is deferred (debounced up to 20s+) — exportOntology below reads from Fuseki, so
-            // without this, a user who edits then immediately exports gets a file missing their
-            // last edits. syncProjectToFuseki no-ops on cloud and when already in sync.
             importService.syncProjectToFuseki(projectId);
 
-            // Check for cached code view content first (preserves citation line positions)
             Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
             if (cachedContent.isPresent()) {
-                log.info("[EXPORT] Using cached code view content to preserve citation positions for project: {}, format: {}", 
+                log.info("[EXPORT] Using cached code view content to preserve citation positions for project: {}, format: {}",
                          projectId, format);
-                
-                // Write cached content to temporary export file
+
                 String extension = storageManager.extensionFor(format);
                 exportPath = storageManager.projectDir(projectId).resolve("ontology.export." + extension);
                 Files.writeString(exportPath, cachedContent.get());
             } else {
-                // No cache - export from GraphDB (default behavior)
+
                 log.info("[EXPORT] No cache found, exporting from GraphDB for project: {}, format: {}", projectId, format);
                 exportPath = storageManager.exportOntology(projectId, format);
             }
-            
+
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
@@ -1181,17 +1072,6 @@ public class ProjectLoadController {
                     .body(Map.of("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
         }
     }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // Async export: submit-then-poll variant of /export/{projectId} above.
-    // Large ontologies can take longer to export than the frontend's client-side
-    // timeouts (10 min in the browser, 5 min in the VS Code extension host) even
-    // though the backend/gateway/ingress are all configured for up to 2 hours —
-    // the client gives up while the server is still working, which surfaces as a
-    // misleading "blocked by CORS policy" network error since no response ever
-    // completed. The old synchronous endpoint above is left untouched for any
-    // other caller; these are purely additive.
-    // ──────────────────────────────────────────────────────────────────────
 
     @PostMapping("/export-async/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> submitExportJob(@PathVariable String projectId,
@@ -1261,17 +1141,15 @@ public class ProjectLoadController {
     public ResponseEntity<Map<String, Object>> reload(@PathVariable String projectId) {
         try {
             log.info("[RELOAD] Reloading project {} from saved file", projectId);
-            
-            // Find the original ontology file
+
             Path originalFile = storageManager.projectDir(projectId).resolve("ontology.original.owl");
             if (!Files.exists(originalFile)) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("success", false, "error", "Original ontology file not found"));
             }
-            
-            // Trigger re-import to reload GraphDB with the saved file
+
             importService.submitImport(projectId, originalFile);
-            
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "message", "Project reload initiated. Processing in background."
@@ -1291,11 +1169,9 @@ public class ProjectLoadController {
             @RequestParam(required = false, defaultValue = "false") boolean force,
             @RequestParam(required = false, defaultValue = "false") boolean merge,
             @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody) {
-        
-        // Get or create a lock object for this project
+
         Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
-        
-        // Synchronize on the project-specific lock to prevent concurrent saves
+
         synchronized (lock) {
             try {
                 String effectiveUserId = (userId != null && !userId.isBlank()) ? userId : "anonymous";
@@ -1305,13 +1181,11 @@ public class ProjectLoadController {
                 log.info("[SAVE] Save requested for project: {} by user: {} (acquiring lock, force={}, merge={})",
                         projectId, username, force, merge);
 
-                // STEP 1: Get this user's unapplied drafts BEFORE applying them (for history recording)
                 log.info("[SAVE] Fetching drafts to record in history...");
                 java.util.List<DraftChange> drafts = draftChangeRepository
                         .findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc(projectId, effectiveUserId);
                 log.info("[SAVE] Found {} unapplied drafts for user {}", drafts.size(), effectiveUserId);
 
-                // STEP 2: Publish only this user's draft graph to main
                 log.info("[SAVE] Applying drafts to GraphDB...");
                 Map<String, ConflictResolution> resolutions = null;
                 if (merge && resolutionsBody != null && !resolutionsBody.isEmpty()) {
@@ -1351,26 +1225,23 @@ public class ProjectLoadController {
                             "error", "Failed to apply drafts: " + draftResult.getMessage()
                         ));
                 }
-                
+
                 log.info("[SAVE] Applied {} draft changes", draftResult.getAppliedCount());
 
-            // STEP 3: Export current state from GraphDB to file system
             Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
             log.info("[SAVE] Ontology exported to: {}", exportPath);
 
-            // STEP 4: Update BOTH original AND current files so changes persist when switching files
             Path originalPath = storageManager.projectDir(projectId).resolve("ontology.original.owl");
             Path currentPath = storageManager.projectDir(projectId).resolve("ontology.current.owl");
-            
+
             if (Files.exists(exportPath)) {
-                // Update original file
+
                 if (!exportPath.equals(originalPath)) {
                     Files.copy(exportPath, originalPath,
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                     log.info("[SAVE] Updated original file: {}", originalPath);
                 }
-                
-                // Update current file (this is what gets loaded when switching back)
+
                 if (!exportPath.equals(currentPath)) {
                     Files.copy(exportPath, currentPath,
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -1378,7 +1249,6 @@ public class ProjectLoadController {
                 }
             }
 
-            // STEP 5: Update GridFS with the current state for backup/versioning
             try (InputStream in = Files.newInputStream(exportPath)) {
                 String gridfsFileId = gridFSFileService.storeFile(
                     projectId,
@@ -1390,14 +1260,12 @@ public class ProjectLoadController {
                 log.info("[SAVE] Saved to GridFS with fileId: {}", gridfsFileId);
             }
 
-            // STEP 6: Update status to COMPLETED after successful save
             ProjectStatus currentStatus = metadataService.readStatus(projectId)
                     .orElse(ProjectStatus.uploaded("ontology.owl"));
             ProjectStatus completedStatus = ProjectStatus.completed(currentStatus.filename());
             metadataService.writeStatus(projectId, completedStatus);
             log.info("[SAVE] Updated project status to COMPLETED");
 
-            // STEP 7: Record changes to GraphDB history
             log.info("[SAVE] Recording {} changes to GraphDB history...", drafts.size());
             for (DraftChange draft : drafts) {
                 String entityIRI = null;
@@ -1405,19 +1273,18 @@ public class ProjectLoadController {
                 String oldValue = null;
                 String newValue = null;
                 String annotationProperty = null;
-                
-                // Extract entity details from operation data
+
                 Map<String, Object> opData = draft.getOperationData();
                 if (opData != null) {
                     entityIRI = opData.containsKey("iri") ? opData.get("iri").toString() : null;
                     entityLabel = opData.containsKey("label") ? opData.get("label").toString() : null;
                     oldValue = opData.containsKey("oldValue") ? opData.get("oldValue").toString() : null;
-                    // newValue can be stored as "value" or "newValue"
-                    newValue = opData.containsKey("value") ? opData.get("value").toString() : 
+
+                    newValue = opData.containsKey("value") ? opData.get("value").toString() :
                                (opData.containsKey("newValue") ? opData.get("newValue").toString() : null);
                     annotationProperty = opData.containsKey("property") ? opData.get("property").toString() : null;
                 }
-                
+
                 historyService.recordEdit(
                     projectId,
                     effectiveUserId,
@@ -1433,11 +1300,9 @@ public class ProjectLoadController {
             }
             log.info("[SAVE] GraphDB history recording complete");
 
-            // STEP 8: Clear applied drafts (cleanup)
             draftTrackingService.clearAppliedDrafts(projectId);
             log.info("[SAVE] Cleared applied drafts");
-            
-            // STEP 9: Notify collaborators that a save completed
+
             if (draftResult.getAppliedCount() > 0) {
                 Map<String, Object> saveNotification = Map.of(
                     "type", "PROJECT_SAVED",
@@ -1451,7 +1316,7 @@ public class ProjectLoadController {
                 messagingTemplate.convertAndSend("/topic/ontology/" + projectId, saveNotification);
                 log.info("[SAVE] Notified collaborators of save completion");
             }
-            
+
             log.info("[SAVE] ✅ Save completed successfully, releasing lock");
 
             refreshDesktopOwlApiAfterSave(projectId);
@@ -1474,7 +1339,6 @@ public class ProjectLoadController {
         }
     }
 
-    /** After publish, reload OWLAPI from disk so desktop reads match saved state. */
     private void refreshDesktopOwlApiAfterSave(String projectId) {
         if (!desktopMode) {
             return;
@@ -1495,12 +1359,6 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Check if a file with the same name already exists for the user
-     * @param filename The filename to check
-     * @param ownerEmail The user's email
-     * @return Conflict information if duplicate exists
-     */
     @GetMapping("/check-duplicate")
     public ResponseEntity<Map<String, Object>> checkDuplicate(
             @RequestParam String filename,
@@ -1518,8 +1376,7 @@ public class ProjectLoadController {
                 ));
             }
             log.info("[CHECK-DUPLICATE] Checking for duplicate - filename: {}, ownerEmail: {}", filename, email);
-            
-            // Check if filename conflicts with shared files
+
             if (shareService.isFilenameInSharedFiles(filename, email)) {
                 log.warn("[CHECK-DUPLICATE] Filename conflicts with shared file: {} for user: {}", filename, email);
                 return ResponseEntity.status(HttpStatus.CONFLICT)
@@ -1529,16 +1386,14 @@ public class ProjectLoadController {
                             "error", "The file '" + filename + "' is already shared with you. Please upload with a different file name or version."
                         ));
             }
-            
-            // Check if user owns a file with this name
+
             Optional<String> existingProjectId = metadataService.getExistingProjectId(filename, email);
             if (existingProjectId.isPresent()) {
                 String projectId = existingProjectId.get();
                 log.info("[CHECK-DUPLICATE] Found duplicate file - projectId: {}", projectId);
-                
-                // Get file metadata
+
                 Optional<ProjectStatus> statusOpt = metadataService.readStatus(projectId);
-                
+
                 return ResponseEntity.ok(Map.of(
                     "success", true,
                     "isDuplicate", true,
@@ -1549,14 +1404,14 @@ public class ProjectLoadController {
                     "lastUpdated", statusOpt.map(s -> s.updatedAt() != null ? s.updatedAt().toString() : "").orElse("")
                 ));
             }
-            
+
             log.info("[CHECK-DUPLICATE] No duplicate found");
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "isDuplicate", false,
                 "message", "No duplicate file found"
             ));
-            
+
         } catch (Exception e) {
             log.error("[CHECK-DUPLICATE] Error checking duplicate", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -1567,21 +1422,13 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Check if a file/ontology is already loaded into GraphDB for a specific project
-     * This endpoint helps prevent duplicate data being loaded into the same project graph
-     * @param projectId The project ID
-     * @param fileName The file name to check
-     * @param fileId Optional file ID
-     * @return Map with exists boolean and details about existing data
-     */
     @GetMapping("/{projectId:.+}/graphdb/check")
     public ResponseEntity<Map<String, Object>> checkGraphDBDuplicate(
             @PathVariable String projectId,
             @RequestParam String fileName,
             @RequestParam(required = false) String fileId) {
         try {
-            // Fast path 1: OWLAPI model cached — data is definitely in Fuseki.
+
             if (ontologyCache != null && ontologyCache.has(projectId)) {
                 long classCount = ontologyCache.get(projectId)
                     .map(c -> c.ontology().classesInSignature().count()).orElse(0L);
@@ -1591,10 +1438,7 @@ public class ProjectLoadController {
                     "graphSize", classCount, "ontologyIRIs", List.of(), "source", "owlapi-cache"));
             }
 
-            // Fast path 2: desktop-only — filesystem check is only safe when Fuseki is
-            // managed exclusively by the desktop app (single user, no external Fuseki changes).
-            // On cloud, Fuseki can be cleared/migrated independently so we must always query it.
-            if (ontologyCache != null) { // ontologyCache bean only exists in desktop mode
+            if (ontologyCache != null) {
                 Optional<java.nio.file.Path> currentFile = storageManager.findCurrentOntology(projectId);
                 if (currentFile.isPresent()) {
                     log.info("[CHECK-GRAPHDB-DUPLICATE] Desktop file-system shortcut — ontology file exists at {}",
@@ -1609,12 +1453,11 @@ public class ProjectLoadController {
             log.info("[CHECK-GRAPHDB-DUPLICATE] Checking Fuseki for project: {}, fileName: {}, fileId: {}",
                 projectId, fileName, fileId);
 
-            // Call the GraphDB service to check if file is already loaded
             Map<String, Object> checkResult = datasetService.checkFileExistsInGraphDB(projectId, fileName, fileId);
-            
+
             boolean exists = (Boolean) checkResult.getOrDefault("exists", false);
             boolean checkFailed = (Boolean) checkResult.getOrDefault("checkFailed", false);
-            
+
             if (checkFailed) {
                 log.warn("[CHECK-GRAPHDB-DUPLICATE] Check failed: {}", checkResult.get("error"));
                 return ResponseEntity.ok(Map.of(
@@ -1624,9 +1467,9 @@ public class ProjectLoadController {
                     "message", "GraphDB check could not be performed, proceeding with caution"
                 ));
             }
-            
+
             if (exists) {
-                log.info("[CHECK-GRAPHDB-DUPLICATE] Found existing data in GraphDB - graphSize: {}", 
+                log.info("[CHECK-GRAPHDB-DUPLICATE] Found existing data in GraphDB - graphSize: {}",
                     checkResult.get("graphSize"));
                 return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -1638,14 +1481,14 @@ public class ProjectLoadController {
                     "message", checkResult.getOrDefault("message", "Data already exists in GraphDB")
                 ));
             }
-            
+
             log.info("[CHECK-GRAPHDB-DUPLICATE] No existing data found in GraphDB");
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "exists", false,
                 "message", "No existing data in GraphDB, file can be loaded"
             ));
-            
+
         } catch (Exception e) {
             log.error("[CHECK-GRAPHDB-DUPLICATE] Error checking GraphDB duplicate", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -1656,12 +1499,6 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Get ontology content in specified format for code view
-     * @param projectId The project ID
-     * @param format The format (turtle, rdfxml, ntriples, jsonld, owlxml, manchester, functional) - defaults to rdfxml
-     * @return Ontology content as plain text
-     */
     @GetMapping("/{projectId:.+}/content")
     public ResponseEntity<Map<String, Object>> getOntologyContent(
             @PathVariable String projectId,
@@ -1669,8 +1506,7 @@ public class ProjectLoadController {
             @RequestParam(defaultValue = "false") boolean forceRefresh) {
         try {
             log.info("Fetching ontology content for project: {} in format: {}, forceRefresh: {}", projectId, format, forceRefresh);
-            
-            // Check for cached code view content first (preserves line positions)
+
             if (!forceRefresh) {
                 Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
                 if (cachedContent.isPresent()) {
@@ -1686,7 +1522,6 @@ public class ProjectLoadController {
                 }
             }
 
-            // No cache or force refresh - export from GraphDB
             Path exportPath = storageManager.exportOntology(projectId, format);
             String content = Files.readString(exportPath);
 
@@ -1708,12 +1543,6 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Paged code-view content for large ontologies. Unlike /content (which buffers the
-     * whole serialization into one JSON string and breaks down past ~100MB), this streams
-     * only the requested line window from the code-view cache file — the client pages
-     * through a 200MB+ document without either side ever holding all of it.
-     */
     @GetMapping("/{projectId:.+}/content-page")
     public ResponseEntity<Map<String, Object>> getOntologyContentPage(
             @PathVariable String projectId,
@@ -1745,12 +1574,6 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Store code view content in cache to preserve line positions.
-     * POST /api/ontology/{projectId}/code-view-cache
-     * This is used when the user inserts citations at specific lines.
-     * Optionally accepts citation-entity mappings for smart repositioning.
-     */
     @PostMapping("/{projectId:.+}/code-view-cache")
     public ResponseEntity<Map<String, Object>> storeCodeViewCache(
             @PathVariable String projectId,
@@ -1758,31 +1581,30 @@ public class ProjectLoadController {
         try {
             String content = (String) request.get("content");
             String format = (String) request.getOrDefault("format", "rdfxml");
-            
+
             if (content == null || content.isEmpty()) {
                 return ResponseEntity.badRequest()
                         .body(Map.of("success", false, "error", "Content is required"));
             }
-            
-            log.info("Storing code view cache for project: {} in format: {}, size: {} bytes", 
+
+            log.info("Storing code view cache for project: {} in format: {}, size: {} bytes",
                      projectId, format, content.length());
-            
+
             storageManager.storeCodeViewCache(projectId, content, format);
-            
-            // Store citation-entity mapping if provided (for smart repositioning)
+
             String citationUrn = (String) request.get("citationUrn");
             String referencedEntity = (String) request.get("referencedEntity");
-            
+
             if (citationUrn != null && referencedEntity != null && !referencedEntity.isEmpty()) {
                 try {
                     storageManager.storeCitationEntityMapping(projectId, citationUrn, referencedEntity);
                     log.info("Stored citation-entity mapping: {} -> {}", citationUrn, referencedEntity);
                 } catch (Exception e) {
                     log.warn("Failed to store citation-entity mapping for project: {}", projectId, e);
-                    // Don't fail the whole request, metadata is optional
+
                 }
             }
-            
+
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "projectId", projectId,
@@ -1799,24 +1621,19 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Clear code view cache for a project.
-     * DELETE /api/ontology/{projectId}/code-view-cache
-     * Optionally specify format to clear only specific format cache.
-     */
     @DeleteMapping("/{projectId:.+}/code-view-cache")
     public ResponseEntity<Map<String, Object>> clearCodeViewCache(
             @PathVariable String projectId,
             @RequestParam(required = false) String format) {
         try {
             log.info("Clearing code view cache for project: {}, format: {}", projectId, format);
-            
+
             if (format != null && !format.isEmpty()) {
                 storageManager.clearCodeViewCacheFormat(projectId, format);
             } else {
                 storageManager.clearCodeViewCache(projectId);
             }
-            
+
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "projectId", projectId,
@@ -1832,18 +1649,11 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Save code view content and sync across all formats.
-     * Reimports the edited content into GraphDB and clears all format caches
-     * so other formats re-export fresh from the updated GraphDB.
-     * POST /api/ontology/{projectId}/code-view-save
-     */
     @PostMapping("/{projectId:.+}/code-view-save")
     public ResponseEntity<Map<String, Object>> saveCodeViewAndSync(
             @PathVariable String projectId,
             @RequestBody Map<String, Object> request) {
-        // Shared with /save/{projectId}'s draft-publish lock: both endpoints reimport into
-        // the same project's graph, so they must not interleave with each other either.
+
         Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
         synchronized (lock) {
         try {
@@ -1855,15 +1665,6 @@ public class ProjectLoadController {
                         .body(Map.of("success", false, "error", "Content is required"));
             }
 
-            // Conflict guard: the client's expectedSourceVersion is whatever /content or
-            // /content-page handed it when Code View was loaded. If the public graph has
-            // been mutated since (another tab's save, a Class Hierarchy edit, etc. — anything
-            // that calls storageManager.clearCodeViewCache) the version will have moved on,
-            // and blindly reimporting this content would silently overwrite that change —
-            // code-view-save has no merge path, only a full graph clear + reload. Absent
-            // (older client) skips the check rather than failing closed. Citation insert/remove
-            // never bump this version (they only write the code-view cache, not clearCodeViewCache),
-            // so they never trip a false conflict against the user's own in-progress edit.
             Object expectedVersionRaw = request.get("expectedSourceVersion");
             if (expectedVersionRaw instanceof Number expectedVersionNum) {
                 long expectedVersion = expectedVersionNum.longValue();
@@ -1882,7 +1683,6 @@ public class ProjectLoadController {
             log.info("[CODE-VIEW-SAVE] Saving and syncing code view for project: {} in format: {}, size: {} bytes",
                      projectId, format, content.length());
 
-            // Step 1: Determine the RDF format for GraphDB import
             boolean isOwlApiFormat = format.equalsIgnoreCase("owlxml")
                     || format.equalsIgnoreCase("manchester")
                     || format.equalsIgnoreCase("manchestersyntax")
@@ -1893,7 +1693,7 @@ public class ProjectLoadController {
             byte[] importBytes;
 
             if (isOwlApiFormat) {
-                // OWL API formats need conversion to RDF/XML before GraphDB import
+
                 String ext = storageManager.extensionFor(format);
                 Path tempFile = Files.createTempFile("codeview-", "." + ext);
                 try {
@@ -1907,13 +1707,12 @@ public class ProjectLoadController {
                 rdfFormat = RDFFormat.RDFXML;
                 log.info("[CODE-VIEW-SAVE] Converted {} to RDF/XML ({} bytes)", format, importBytes.length);
             } else {
-                // Standard RDF formats — write to temp file and sanitize (like import pipeline)
+
                 String ext = storageManager.extensionFor(format);
                 Path tempFile = Files.createTempFile("codeview-", "." + ext);
                 try {
                     Files.writeString(tempFile, content, StandardCharsets.UTF_8);
-                    // Sanitize: fixes malformed RDF/XML, missing namespaces, re-serializes via OWL API
-                    // Safe for all formats — skips non-RDF/XML files automatically
+
                     try {
                         OWLFormatConverter.sanitizeFileOnDisk(tempFile);
                         log.info("[CODE-VIEW-SAVE] Sanitization completed for format: {}", format);
@@ -1931,7 +1730,6 @@ public class ProjectLoadController {
                 };
             }
 
-            // Step 2: Reimport into GraphDB
             log.info("[CODE-VIEW-SAVE] Reimporting {} bytes into GraphDB as {}", importBytes.length, rdfFormat);
             try {
                 try (InputStream is = new ByteArrayInputStream(importBytes)) {
@@ -1948,28 +1746,16 @@ public class ProjectLoadController {
             }
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
-            // bulkLoadChunked() above cleared the dirty marker as if disk now matched Fuseki,
-            // but code-view-save never touches ontology.original.*/ontology.current.* on disk —
-            // only the separate code-view cache below. Re-assert dirty so the next hierarchy
-            // snapshot rebuild (and any OWLAPI re-warm) re-exports fresh from Fuseki instead of
-            // silently parsing whatever stale file happens to be on disk.
             datasetService.markProjectDirty(projectId);
 
-            // The dirty marker above only protects a *future* reload-from-disk (app restart,
-            // re-open) — it does nothing for an already-warm in-memory OWLAPI model in the
-            // current desktop session (Classes/Individuals tabs and the delete-class fast path
-            // all read from it). Without evicting it here, it keeps serving what the ontology
-            // looked like before this save, now diverged from what was just written into Fuseki.
             if (ontologyCache != null) {
                 ontologyCache.evict(projectId);
                 log.info("[CODE-VIEW-SAVE] Evicted in-memory OWLAPI cache for project {} (now stale vs. reimported Fuseki data)", projectId);
             }
 
-            // Step 3: Clear ALL code-view caches (stale after reimport)
             storageManager.clearCodeViewCache(projectId);
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
 
-            // Step 4: Store the saved format's cache (preserves the user's edited content)
             storageManager.storeCodeViewCache(projectId, content, format);
             log.info("[CODE-VIEW-SAVE] Current format cache restored");
 
@@ -1978,8 +1764,7 @@ public class ProjectLoadController {
                     "projectId", projectId,
                     "format", format,
                     "message", "Code view saved and synced across all formats",
-                    // Hand back the post-save version so the client can update its baseline
-                    // in place instead of needing a full reload just to save again.
+
                     "sourceVersion", storageManager.getPublicGraphVersion(projectId)
             ));
         } catch (Exception e) {
@@ -1993,15 +1778,12 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * Get the last modified timestamp for a project (for sync checking)
-     */
     @GetMapping("/metadata/{projectId:.+}/timestamp")
     public ResponseEntity<Map<String, Object>> getProjectTimestamp(@PathVariable String projectId) {
         try {
             log.debug("Fetching timestamp for project: {}", projectId);
             java.time.Instant updatedAt = metadataService.getUpdatedAt(projectId);
-            
+
             if (updatedAt != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true,
@@ -2081,26 +1863,19 @@ public class ProjectLoadController {
         return false;
     }
 
-    /**
-     * Delete a project in free mode (legacy mode without workspace)
-     * This endpoint is routed via /api/ontology/** which goes to the editor service
-     * Performs full cleanup: GraphDB, GridFS, drafts, history, shares, and local files
-     */
     @DeleteMapping("/project/{projectId:.+}")
     public ResponseEntity<?> deleteProject(
             @PathVariable String projectId,
             @RequestParam(required = false) String ownerEmail) {
         try {
             log.info("[ProjectLoadController] DELETE project - projectId: {}, ownerEmail: {}", projectId, ownerEmail);
-            
-            // Check status to verify project exists
+
             var statusOpt = metadataService.readStatus(projectId);
             if (statusOpt.isEmpty()) {
                 log.warn("[ProjectLoadController] Project not found for deletion: {}", projectId);
                 return ResponseEntity.status(404).body(Map.of("success", false, "error", "Project not found"));
             }
-            
-            // Clear GraphDB dataset (best-effort)
+
             try {
                 log.info("[ProjectLoadController] Clearing GraphDB dataset for project: {}", projectId);
                 datasetService.clearDataset(projectId);
@@ -2108,7 +1883,6 @@ public class ProjectLoadController {
                 log.warn("[ProjectLoadController] Failed to clear GraphDB dataset for {}: {}", projectId, e.getMessage());
             }
 
-            // Delete GridFS file (best-effort)
             try {
                 log.info("[ProjectLoadController] Deleting GridFS file for project: {}", projectId);
                 gridFSFileService.deleteFileByProjectId(projectId);
@@ -2116,7 +1890,6 @@ public class ProjectLoadController {
                 log.warn("[ProjectLoadController] Failed to delete GridFS file for {}: {}", projectId, e.getMessage());
             }
 
-            // Clear drafts (best-effort)
             try {
                 log.info("[ProjectLoadController] Clearing drafts for project: {}", projectId);
                 draftTrackingService.discardDrafts(projectId);
@@ -2125,7 +1898,6 @@ public class ProjectLoadController {
                 log.warn("[ProjectLoadController] Failed to clear drafts for {}: {}", projectId, e.getMessage());
             }
 
-            // Delete shares (best-effort)
             try {
                 log.info("[ProjectLoadController] Deleting share records for project: {}", projectId);
                 shareService.deleteShare(projectId);
@@ -2133,7 +1905,6 @@ public class ProjectLoadController {
                 log.warn("[ProjectLoadController] Failed to delete share for {}: {}", projectId, e.getMessage());
             }
 
-            // Delete project metadata from MongoDB
             try {
                 log.info("[ProjectLoadController] Deleting project metadata for: {}", projectId);
                 projectRepository.deleteById(projectId);
@@ -2141,7 +1912,6 @@ public class ProjectLoadController {
                 log.warn("[ProjectLoadController] Failed to delete project metadata for {}: {}", projectId, e.getMessage());
             }
 
-            // Delete local files (best-effort)
             try {
                 log.info("[ProjectLoadController] Deleting local files for project: {}", projectId);
                 Path projectDir = storageManager.projectDir(projectId);
@@ -2168,10 +1938,6 @@ public class ProjectLoadController {
         }
     }
 
-    /**
-     * ALREADY_LOADED fast path: OWLAPI warm needs an on-disk OWL file after app restart
-     * even when Mongo/Fuseki still have the ontology.
-     */
     private void materializeOntologyFromFileRef(String projectId, String fileId) {
         try {
             Document fileMeta = mongoTemplate.getDb()

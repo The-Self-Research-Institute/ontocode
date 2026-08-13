@@ -1,27 +1,39 @@
 export interface ReleaseNote {
-  /** Semantic version this entry documents, e.g. "1.1.0-beta.9". */
+
   version: string;
-  /** Human-readable release date, e.g. "June 2026". */
+
   date: string;
-  /** Short headline for the release. */
+
   title?: string;
-  /** Bullet-point highlights shown to the user. */
+
   highlights: string[];
-  /**
-   * Optional walkthrough video. Accepts a direct media URL (.mp4/.webm/.ogg)
-   * rendered in an HTML5 player. Leave empty/undefined to hide the video block.
-   */
+
   videoUrl?: string;
-  /** Optional poster image shown before the video plays. */
+
   videoPoster?: string;
 }
 
-/**
- * Release notes shown from Help → Version. Add a new entry to the top of this
- * array for each release. To attach a walkthrough video, set `videoUrl` to a
- * direct link to an .mp4/.webm/.ogg file (CDN, GridFS download URL, etc.).
- */
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "1.1.0-beta.18",
+    date: "August 8, 2026",
+    title: "Graph View — Interaction & Layout Options",
+    highlights: [
+      "TSRI-130: Graph View — Clicking a node now selects/expands it in place instead of navigating to the editor. Use the hover card's \"Go to entity\" action or the right-click menu to open a node in the editor.",
+      "TSRI-134: Graph View — Added Hierarchy (Tree), Radial, Layered, and Clustered layout options alongside the existing Network (force-directed) view, plus a Focus/Neighborhood mode centered on a selected node. Switch views from the Visualization dropdown in the toolbar.",
+      "TSRI-131: Graph View — Large ontologies show a curated ~35-node slice of the hierarchy by default for performance. Click 🌳 Expand All in the toolbar to load the full class hierarchy.",
+    ],
+    videoUrl: "",
+  },
+  {
+    version: "1.1.0-beta.17",
+    date: "July 31, 2026",
+    title: "Startup Reliability & Reasoner Fixes",
+    highlights: [
+      "TSRI-227: Desktop — Fixed the reasoner's ontology failing to load on startup, which could prevent the app from starting at all.",
+    ],
+    videoUrl: ""
+  },
   {
     version: "1.1.0-beta.16",
     date: "July 27, 2026",

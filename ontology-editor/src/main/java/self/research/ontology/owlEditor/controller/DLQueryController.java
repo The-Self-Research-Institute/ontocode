@@ -27,19 +27,6 @@ import java.io.ByteArrayOutputStream;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * DL Query Controller - Manchester OWL Syntax queries
- * 
- * Supports querying for:
- * - Subclasses (direct and indirect)
- * - Superclasses (direct and indirect)
- * - Equivalent classes
- * - Instances (individuals of the class expression)
- * 
- * References:
- * - 
- * - https://www.w3.org/TR/owl2-manchester-syntax/
- */
 @RestController
 @RequestMapping("/api/ontology")
 @CrossOrigin(originPatterns = "*")
@@ -78,11 +65,6 @@ public class DLQueryController {
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
-    /**
-     * Submit a DL Query job (async). Results arrive via WebSocket /topic/dlquery/{jobId}
-     * or GET /api/dl-query/jobs/{jobId}.
-     * POST /api/ontology/{projectId}/dl-query
-     */
     @PostMapping("/{projectId}/dl-query")
     public ResponseEntity<Map<String, Object>> executeDLQuery(
             @PathVariable String projectId,
@@ -162,11 +144,6 @@ public class DLQueryController {
         return value != null ? value.toString() : null;
     }
 
-    /**
-     * Add the current DL Query expression as a named defined class, matching
-     * DL Query "Add to ontology" behavior:
-     * NewClass EquivalentTo <Manchester expression>.
-     */
     @PostMapping("/{projectId}/dl/add")
     public ResponseEntity<Map<String, Object>> addDLQueryToOntology(
             @PathVariable String projectId,
@@ -376,9 +353,6 @@ public class DLQueryController {
         return "\"" + value.stringValue().replace("\"", "\\\"") + "\"";
     }
 
-    /**
-     * DL Query Request DTO
-     */
     public static class DLQueryRequest {
         private String expression;
         private List<String> queryTypes;
@@ -457,14 +431,6 @@ public class DLQueryController {
         }
     }
 
-    // ─── Axiom Explanation ────────────────────────────────────────────────────
-
-    /**
-     * Return the justification set(s) for an asserted axiom.
-     * POST /api/ontology/{projectId}/explain-axiom
-     *
-     * Body: { entityIri, relatedIri, sectionName, justificationType, maxJustifications }
-     */
     @PostMapping("/{projectId}/explain-axiom")
     public ResponseEntity<Map<String, Object>> explainAxiom(
             @PathVariable String projectId,

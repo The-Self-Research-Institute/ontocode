@@ -1,11 +1,4 @@
-/**
- * Copy resources/backend (jars, jre, mongodb, plugins) into an existing
- * win-unpacked / portable folder when the installer was built without JARs.
- *
- * Usage:
- *   node scripts/sync-packaged-backend.js
- *   node scripts/sync-packaged-backend.js --target=E:\path\to\win-unpacked
- */
+
 const fs = require('fs');
 const path = require('path');
 

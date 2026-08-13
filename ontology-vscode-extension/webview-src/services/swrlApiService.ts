@@ -1,4 +1,4 @@
-// services/swrlApiService.ts
+
 import apiClient from './apiClient';
 
 export interface ValidationResult {
@@ -59,8 +59,6 @@ class SwrlApiService {
     return `${this.baseUrl}${suffix}`;
   }
 
-  // ===== CRUD & Actions (UNWRAPPED responses) =====
-
   async validateRule(projectId: string, ruleText: string): Promise<ValidationResult> {
     return apiClient.post<ValidationResult>(
       this.path(`/${encodeURIComponent(projectId)}/validate`),
@@ -88,7 +86,7 @@ class SwrlApiService {
   }
 
   async updateRule(projectId: string, ruleId: string, req: UpdateRuleRequest): Promise<SwrlRule> {
-    // If your extension proxy doesn’t have apiPut, your apiClient.put should tunnel via POST + X-HTTP-Method-Override.
+
     return apiClient.put<SwrlRule>(
       this.path(`/${encodeURIComponent(projectId)}/rules/${encodeURIComponent(ruleId)}`),
       req
