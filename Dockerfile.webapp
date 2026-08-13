@@ -1,5 +1,7 @@
-# Build the standalone React (webview-src) app
-FROM --platform=linux/amd64 node:22-alpine AS builder
+# Build the standalone React (webview-src) app.
+# Use Debian (glibc), not Alpine (musl): webview-src pins @rollup/rollup-linux-x64-gnu
+# for WSL/EC2 hosts; musl would fail npm ci with EBADPLATFORM.
+FROM --platform=linux/amd64 node:22-bookworm-slim AS builder
 
 WORKDIR /app
 

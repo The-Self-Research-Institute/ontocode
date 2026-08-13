@@ -111,6 +111,37 @@
             <version>1.4.5.519</version>
         </dependency>
 
+        <!-- OWL Explanation Workbench — real black-box justification finder, the
+             same library Protégé's own "Explanation" panel uses under the hood.
+             owlexplanation:2.0.1 (the version most search results surface) was compiled
+             against OWLAPI 4.5.10 and is binary-incompatible with our 5.5.0 — e.g. its
+             ConsistencyEntailmentChecker calls OWLOntologyManager.createOntology(Set),
+             a method 5.x renamed to createOntology(Collection); no NoSuchMethodError-free
+             classpath exists for 2.0.1 against OWLAPI 5.x. owlexplanation:5.0.0 is the
+             actual OWLAPI-5.x-targeted release (depends on owlapi-api/owlapi-tools in
+             range [5.0.0,5.9.9], matching our 5.5.0) — excluding its own owlapi-api/
+             owlapi-tools/apibinding so our depth-1 owlapi-distribution:5.5.0 wins, same
+             pattern as the ELK dependency below. -->
+        <dependency>
+            <groupId>net.sourceforge.owlapi</groupId>
+            <artifactId>owlexplanation</artifactId>
+            <version>5.0.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-tools</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-apibinding</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <!-- Openllet Reasoner (Pellet - OWLAPI 5.x compatible) -->
         <dependency>
             <groupId>com.github.galigator.openllet</groupId>

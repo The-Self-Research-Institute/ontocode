@@ -574,6 +574,7 @@ ipcMain.handle('notification:show', (_, { title, message }) => {
 /** Service status (used by status bar in renderer) */
 ipcMain.handle('services:status', () => svcMgr.status());
 ipcMain.handle('services:ensureFuseki', () => svcMgr.ensureFuseki());
+ipcMain.handle('services:ensureSwrl', () => svcMgr.ensureSwrl());
 
 /** Toggle DevTools from renderer menu button */
 ipcMain.on('devtools:toggle', () => {

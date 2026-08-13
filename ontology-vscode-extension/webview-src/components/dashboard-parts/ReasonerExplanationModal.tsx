@@ -154,6 +154,15 @@ export const ReasonerExplanationModal = ({
                           })}
                         </div>
                       )}
+                      {cause.axioms && Array.isArray(cause.axioms) && (
+                        <div className="text-[11px] text-gray-700 space-y-1">
+                          {cause.axioms.map((axiom: string, i: number) => (
+                            <div key={i} className="bg-white border rounded px-2 py-1 font-mono">
+                              {axiom}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {cause.tips && Array.isArray(cause.tips) && (
                         <ul className="list-disc list-inside text-[11px] text-gray-700 space-y-1">
                           {cause.tips.map((tip: string, i: number) => (

@@ -246,3 +246,17 @@ export function scheduleSilentDesktopFusekiSync(projectId: string): void {
         }
     })();
 }
+
+/**
+ * Fire-and-forget: start Fuseki and the SWRL reasoner (both lazy by default —
+ * see ServiceManager.js) as soon as the project dashboard is visible, so their
+ * ~10-30s JVM startup happens during idle browsing instead of blocking the
+ * first SPARQL/graph action or reasoning run later. Not tied to a project —
+ * call once on dashboard mount, not per-project.
+ */
+export function prewarmDesktopReasoningServices(): void {
+    if (!isDesktop()) return;
+    const api = (window as any).electronAPI;
+    api?.ensureFuseki?.().catch((e: unknown) => console.debug('[desktop] Fuseki prewarm failed', e));
+    api?.ensureSwrl?.().catch((e: unknown) => console.debug('[desktop] SWRL prewarm failed', e));
+}

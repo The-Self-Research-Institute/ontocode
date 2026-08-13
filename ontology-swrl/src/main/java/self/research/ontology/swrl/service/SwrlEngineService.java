@@ -285,13 +285,19 @@ public class SwrlEngineService {
             long fetchDuration = System.currentTimeMillis() - fetchStart;
             engineLog.info("[EXECUTE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
 
-            if (ensureNamespacePrefixes(projectId, ontology)) {
-                engineCache.remove(projectId);
-            }
+            ensureNamespacePrefixes(projectId, ontology);
             long engineStart = System.currentTimeMillis();
-            SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
+            // Always build a fresh engine from the just-fetched ontology rather than
+            // reusing one cached by projectId — a cached engine wraps whatever
+            // ontology snapshot existed when it was first created, and
+            // ensureNamespacePrefixes() only busts that cache on a brand-new
+            // namespace, not on new individuals/assertions added under a namespace
+            // the engine already knew about. A stale engine here silently reasons
+            // over stale data with no error at all — same class of bug as the
+            // ontology-fetch cache in OntologyClientService.
+            SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
             long engineDuration = System.currentTimeMillis() - engineStart;
-            engineLog.info("[EXECUTE] Engine obtained in {}ms project={}", engineDuration, projectId);
+            engineLog.info("[EXECUTE] Fresh engine created in {}ms project={}", engineDuration, projectId);
 
             List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
             logger.info("Executing {} enabled rules for project: {}", enabledRules.size(), projectId);
@@ -415,10 +421,10 @@ public class SwrlEngineService {
 
         try {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
-            if (ensureNamespacePrefixes(projectId, ontology)) {
-                engineCache.remove(projectId);
-            }
-            SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
+            ensureNamespacePrefixes(projectId, ontology);
+            // Fresh engine per call — see executeRules() for why the cached
+            // getOrCreateEngine() path is unsafe here.
+            SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
 
             // Get the selected rules
             List<SwrlRule> selectedRules = ruleRepository.findAllById(ruleIds);
@@ -494,58 +500,45 @@ public class SwrlEngineService {
     }
 
     /**
-     * ✅ NEW: Execute inference with timeout protection
-     * 
-     * IMPORTANT: SWRLAPI has three types of axioms:
-     * - getAssertedOWLAxioms(): Original axioms from ontology
-     * - getInferredOWLAxioms(): Axioms inferred by OWL reasoner (SubClassOf, etc.)
-     * - getInjectedOWLAxioms(): Axioms created by SWRL rules (ClassAssertions!)
+     * Execute inference with timeout protection.
+     *
+     * SWRLAPI's naming is misleading here: getInferredOWLAxioms() is where regular
+     * SWRL rule conclusions actually land (ClassAssertion/ObjectPropertyAssertion/etc.
+     * produced by a fired rule head), mixed in with the engine's OWL 2 RL closure —
+     * both go through the same rule-engine bridge. getInjectedOWLAxioms() is a much
+     * narrower bucket: it only holds axioms created by SWRL *built-in* invocations
+     * (e.g. swrlb:add binding a new computed value), not regular rule firings. A
+     * rule with no built-ins — the common case — will always report 0 injected
+     * axioms even when it fired correctly; that is not an error. Both sets are
+     * combined below since either can legitimately contain rule output.
      */
-    private Set<OWLAxiom> executeWithTimeout(SWRLRuleEngine engine, String projectId) 
+    private Set<OWLAxiom> executeWithTimeout(SWRLRuleEngine engine, String projectId)
             throws TimeoutException, InterruptedException, ExecutionException {
-        
+
         Future<Set<OWLAxiom>> future = executorService.submit(() -> {
             engine.infer();
-            
-            // Get BOTH inferred (from reasoner) AND injected (from SWRL rules) axioms
+
             Set<OWLAxiom> inferredAxioms = engine.getInferredOWLAxioms();
             Set<OWLAxiom> injectedAxioms = engine.getInjectedOWLAxioms();
-            
-            // Combine both sets - injected axioms are the SWRL results we want!
+
             Set<OWLAxiom> allAxioms = new java.util.HashSet<>(inferredAxioms);
             allAxioms.addAll(injectedAxioms);
-            
-            // Debug: Log axiom type distribution for inferred axioms
+
             Map<String, Long> inferredTypeCounts = inferredAxioms.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
                     ax -> ax.getAxiomType().getName(),
                     java.util.stream.Collectors.counting()
                 ));
             logger.debug("Inferred axiom types for project {}: {}", projectId, inferredTypeCounts);
-            
-            // Debug: Log axiom type distribution for INJECTED axioms (SWRL results)
-            Map<String, Long> injectedTypeCounts = injectedAxioms.stream()
-                .collect(java.util.stream.Collectors.groupingBy(
-                    ax -> ax.getAxiomType().getName(),
-                    java.util.stream.Collectors.counting()
-                ));
-            logger.info("SWRL INJECTED axiom types for project {}: {}", projectId, injectedTypeCounts);
-            
-            // Count ClassAssertions from INJECTED axioms (these are the SWRL rule results!)
-            long injectedClassAssertionCount = injectedAxioms.stream()
+
+            long classAssertionCount = allAxioms.stream()
                 .filter(ax -> ax.getAxiomType().getName().equals("ClassAssertion"))
                 .count();
-            logger.info("ClassAssertion axioms from SWRL rules: {}", injectedClassAssertionCount);
-            
-            // Also log any ClassAssertions from inferred (usually 0 but log it anyway)
-            long inferredClassAssertionCount = inferredAxioms.stream()
-                .filter(ax -> ax.getAxiomType().getName().equals("ClassAssertion"))
-                .count();
-            logger.debug("ClassAssertion axioms from reasoner: {}", inferredClassAssertionCount);
-            
-            logger.info("Total axioms returned: {} (inferred: {}, injected by SWRL: {})", 
+            logger.info("ClassAssertion axioms in result for project {}: {}", projectId, classAssertionCount);
+
+            logger.info("Total axioms returned: {} (from rule engine: {}, from SWRL built-ins: {})",
                 allAxioms.size(), inferredAxioms.size(), injectedAxioms.size());
-            
+
             return allAxioms;
         });
 

@@ -70,6 +70,9 @@ public class ReasonerController {
     @Autowired(required = false)
     private ReasonerWorkerClient reasonerWorkerClient;
 
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext owlApiContext;
+
     @Value("${ontocode.reasoner-worker.enabled:false}")
     private boolean reasonerWorkerEnabled;
 
@@ -92,11 +95,36 @@ public class ReasonerController {
 
         editorReasonerCache.prepareForOntologyLoad(projectId);
 
-        // Cache miss, about to stream from Fuseki below — on desktop, Fuseki sync after a
-        // mutation is deferred (debounced up to 20s+), so force it fresh first. This covers the
-        // gap where the user is already sitting on the Reasoner/DL Query tab and mutates without
-        // switching tabs, so the frontend's ensureDesktopFusekiSync tab-activation gate never
-        // re-fires. No-ops on cloud and when already in sync.
+        // Desktop OWLAPI-first: reuse the model already cached in memory instead of exporting
+        // to Fuseki and re-parsing from scratch — this is how Protege reasons too, with no
+        // external triple store involved at all. Fuseki on desktop is lazy/deferred (may not
+        // even be started), so the old unconditional sync-then-stream path below would fail or
+        // time out whenever it wasn't already running, surfacing as "We could not find this
+        // project's ontology" even though the ontology was sitting in memory the whole time.
+        // copyOntology(DEEP) gives the reasoner its own independent snapshot in a fresh manager —
+        // editorReasonerCache has always held an isolated copy (not the live, mutable model), so
+        // a concurrent edit elsewhere can't invalidate axioms out from under an in-flight
+        // reasoning call; this only changes where that copy's source content comes from.
+        if (owlApiContext != null && owlApiContext.hasOntology(projectId)) {
+            Optional<OWLOntology> live = owlApiContext.ontology(projectId);
+            if (live.isPresent()) {
+                try {
+                    OWLOntologyManager snapshotManager = OWLManager.createOWLOntologyManager();
+                    OWLOntology snapshot = snapshotManager.copyOntology(live.get(), org.semanticweb.owlapi.model.parameters.OntologyCopy.DEEP);
+                    log.info("Ontology loaded from OWLAPI in-memory cache for project {}: {} axioms, {} classes",
+                            projectId, snapshot.getAxiomCount(), snapshot.getClassesInSignature().size());
+                    editorReasonerCache.putOntology(projectId, snapshot);
+                    return snapshot;
+                } catch (Exception e) {
+                    log.warn("Failed to snapshot in-memory OWLAPI model for {}, falling back to Fuseki/GridFS: {}",
+                            projectId, e.getMessage());
+                }
+            }
+        }
+
+        // Cache miss and no in-memory model available (cloud, or desktop before first warm) —
+        // stream from Fuseki. On desktop, Fuseki sync after a mutation is deferred (debounced up
+        // to 20s+), so force it fresh first. No-ops on cloud and when already in sync.
         if (projectImportService != null) {
             projectImportService.syncProjectToFuseki(projectId);
         }
@@ -469,12 +497,21 @@ public class ReasonerController {
 
     private Map<String, Object> buildClassNode(OWLOntology ontology, OWLReasoner reasoner,
                                                OWLClass owlClass, Set<String> visited, int maxDepth) {
+        return buildClassNode(ontology, reasoner, owlClass, visited, maxDepth, false);
+    }
+
+    private Map<String, Object> buildClassNode(OWLOntology ontology, OWLReasoner reasoner,
+                                               OWLClass owlClass, Set<String> visited, int maxDepth,
+                                               boolean suppressEquivalentClassesLabel) {
         String iri = owlClass.getIRI().toString();
 
-        List<Map<String, String>> equivalentClasses = reasoner.getEquivalentClasses(owlClass).getEntities().stream()
-                .filter(cls -> !cls.equals(owlClass))
-                .map(cls -> Map.of("iri", cls.getIRI().toString(), "label", getLabel(cls, ontology)))
-                .collect(Collectors.toList());
+        Node<OWLClass> equivNode = reasoner.getEquivalentClasses(owlClass);
+        List<Map<String, String>> equivalentClasses = suppressEquivalentClassesLabel
+                ? List.of()
+                : equivNode.getEntities().stream()
+                    .filter(cls -> !cls.equals(owlClass))
+                    .map(cls -> Map.of("iri", cls.getIRI().toString(), "label", getLabel(cls, ontology)))
+                    .collect(Collectors.toList());
 
         if (visited.contains(iri) && !owlClass.isOWLThing() && !owlClass.isOWLNothing()) {
             return Map.of("id", iri, "label", getLabel(owlClass, ontology),
@@ -482,19 +519,45 @@ public class ReasonerController {
         }
         visited.add(iri);
 
-        NodeSet<OWLClass> subClassesNodeSet = reasoner.getSubClasses(owlClass, true);
-        boolean hasAnyChildren = subClassesNodeSet.getFlattened().stream()
-                .anyMatch(c -> !c.isOWLNothing() && !c.equals(owlClass));
-
         List<Map<String, Object>> children = new ArrayList<>();
-        if (maxDepth > 0) {
-            for (Node<OWLClass> subClassNode : subClassesNodeSet) {
-                OWLClass representative = subClassNode.getRepresentativeElement();
-                if (representative.isOWLNothing() && !owlClass.isOWLThing()) continue;
-                if (representative.equals(owlClass)) continue;
-                children.add(buildClassNode(ontology, reasoner, representative, visited, maxDepth - 1));
+        boolean hasAnyChildren;
+
+        if (owlClass.isOWLNothing()) {
+            // Nothing has no real "subclasses" under OWL semantics — getSubClasses(Nothing)
+            // is always empty (nothing can be more specific than the empty class). The
+            // classes that actually belong "under" Nothing in an inferred hierarchy are the
+            // ones EQUIVALENT to it — every unsatisfiable class — which is exactly what
+            // getEquivalentClasses(Nothing) returns. Build each as its own child node (like
+            // Protege does: individually red, individually clickable) instead of leaving them
+            // squashed into Nothing's inline "≡ A, B, C..." label with no way to see/select
+            // them one at a time.
+            hasAnyChildren = !equivNode.getEntities().isEmpty()
+                    && equivNode.getEntities().stream().anyMatch(c -> !c.equals(owlClass));
+            if (maxDepth > 0) {
+                for (OWLClass equivClass : equivNode.getEntities()) {
+                    if (equivClass.equals(owlClass)) continue;
+                    // Suppress each unsatisfiable class's own equivalentClasses label — every
+                    // member of this set is mutually equivalent to every other by definition,
+                    // so repeating the same ~10-name list on every single row would be noisy;
+                    // isUnsatisfiable (red) already conveys what actually matters here.
+                    children.add(buildClassNode(ontology, reasoner, equivClass, visited, maxDepth - 1, true));
+                }
+                children.sort(Comparator.comparing(m -> m.get("label").toString()));
             }
-            children.sort(Comparator.comparing(m -> m.get("label").toString()));
+        } else {
+            NodeSet<OWLClass> subClassesNodeSet = reasoner.getSubClasses(owlClass, true);
+            hasAnyChildren = subClassesNodeSet.getFlattened().stream()
+                    .anyMatch(c -> !c.isOWLNothing() && !c.equals(owlClass));
+
+            if (maxDepth > 0) {
+                for (Node<OWLClass> subClassNode : subClassesNodeSet) {
+                    OWLClass representative = subClassNode.getRepresentativeElement();
+                    if (representative.isOWLNothing() && !owlClass.isOWLThing()) continue;
+                    if (representative.equals(owlClass)) continue;
+                    children.add(buildClassNode(ontology, reasoner, representative, visited, maxDepth - 1));
+                }
+                children.sort(Comparator.comparing(m -> m.get("label").toString()));
+            }
         }
 
         Map<String, Object> node = new HashMap<>();

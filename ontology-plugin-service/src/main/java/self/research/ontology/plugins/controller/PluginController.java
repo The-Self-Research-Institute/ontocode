@@ -99,7 +99,12 @@ public class PluginController {
                     InputStream localStream = new FileInputStream(bundle.toFile());
                     HttpHeaders h = new HttpHeaders();
                     h.add(HttpHeaders.CONTENT_TYPE, "application/javascript");
-                    h.add(HttpHeaders.CACHE_CONTROL, "public, max-age=86400");
+                    // Was "public, max-age=86400" — Chromium (Electron's persistent HTTP cache,
+                    // survives app restarts/reinstalls) would then keep serving whatever bundle
+                    // it first fetched for up to 24h with zero revalidation, silently ignoring
+                    // every subsequent rebuild of this file on disk. Desktop plugin bundles are
+                    // only a few tens of KB — always revalidating costs nothing measurable.
+                    h.add(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate");
                     h.add(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
                     return ResponseEntity.ok().headers(h)
                         .contentType(MediaType.valueOf("application/javascript"))

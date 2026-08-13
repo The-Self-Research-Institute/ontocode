@@ -804,6 +804,51 @@ public class ReasonerController {
     }
 
     /**
+     * Clear the reasoner cache for a single project only (targeted eviction).
+     * Called by ontology-editor after every save so a stale, pre-edit cached
+     * ontology can never keep serving reasoning results — without dropping
+     * every other project's/user's cached reasoner state the way the global
+     * clear-cache above does. IDs can be hierarchical (proj-xxx--uuid); evict
+     * both the full id and the base prefix since either could be the actual
+     * cache key depending on which one loadOntology() resolved against.
+     * POST /api/reasoner/clear-cache/{projectId}
+     */
+    @PostMapping("/clear-cache/{projectId}")
+    public ResponseEntity<Map<String, Object>> clearCacheForProject(@PathVariable String projectId) {
+        try {
+            int evicted = 0;
+            OWLOntology removed = ontologyCache.remove(projectId);
+            if (removed != null) {
+                releaseProjectResources(projectId, removed);
+                evicted++;
+            }
+            if (projectId != null && projectId.contains("--")) {
+                String baseProjectId = extractBaseProjectId(projectId);
+                if (!baseProjectId.equals(projectId)) {
+                    OWLOntology removedBase = ontologyCache.remove(baseProjectId);
+                    if (removedBase != null) {
+                        releaseProjectResources(baseProjectId, removedBase);
+                        evicted++;
+                    }
+                }
+            }
+
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Cache cleared for project",
+                "evicted", evicted
+            ));
+
+        } catch (Exception e) {
+            log.error("Error clearing cache for project {}", projectId, e);
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
+    }
+
+    /**
      * Diagnostic endpoint to check GridFS file storage status
      * GET /api/reasoner/diagnose/{projectId}
      */

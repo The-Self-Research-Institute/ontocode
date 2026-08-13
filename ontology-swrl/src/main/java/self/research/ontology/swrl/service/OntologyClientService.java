@@ -8,7 +8,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.cache.annotation.CacheConfig;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.retry.annotation.Backoff;
@@ -51,13 +50,20 @@ public class OntologyClientService {
     }
 
     /**
-     * Fetch ontology with caching and retry logic
-     * 
+     * Fetch ontology with retry logic
+     *
      * ✅ FIXED: No more blocking WebClient calls
      * ✅ ADDED: Retry logic with exponential backoff
      * ✅ IMPROVED: Better error messages
+     *
+     * Deliberately NOT cached: this fetches the project's live ontology from a
+     * separate service (the editor), which mutates independently of SWRL. A
+     * cached copy here would go stale the moment someone edits the project —
+     * with no automatic invalidation wired between the two services, that
+     * meant SWRL could reason against ontology data that was edited/re-imported
+     * minutes or hours ago. The cost of re-fetching on every call is small next
+     * to the cost of silently wrong reasoning results.
      */
-    @Cacheable(key = "#projectId")
     @Retryable(
         value = { RestClientException.class },
         maxAttempts = 3,

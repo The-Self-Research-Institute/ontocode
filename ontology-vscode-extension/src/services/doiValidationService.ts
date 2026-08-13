@@ -1,6 +1,6 @@
 /**
  * Authoritative DOI validation for the extension-host citation insertion
- * command (Ctrl+Shift+C / "Insert Citation").
+ * command (Ctrl+Shift+C / "Insert Citation (Sci2Code)").
  *
  * Mirrors webview-src/services/doiValidationService.ts (kept as a separate
  * copy — extension host and webview are different build targets) — calls

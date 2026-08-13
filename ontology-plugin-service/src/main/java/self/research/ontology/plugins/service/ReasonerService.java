@@ -8,6 +8,9 @@ import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
 import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
+import org.semanticweb.owl.explanation.api.Explanation;
+import org.semanticweb.owl.explanation.api.ExplanationGenerator;
+import org.semanticweb.owl.explanation.impl.blackbox.checker.InconsistentOntologyExplanationGeneratorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -63,6 +66,12 @@ public class ReasonerService {
         t.setDaemon(true);
         return t;
     });
+
+    // Black-box justification search (owlexplanation) re-checks consistency on
+    // candidate axiom subsets internally, so it's far slower than the syntactic
+    // heuristics above — only runs as a fallback when those find nothing.
+    @Value("${ontocode.reasoner.justification-timeout-ms:15000}")
+    private long JUSTIFICATION_TIMEOUT_MS;
 
     /**
      * Create or get cached reasoner for an ontology
@@ -602,6 +611,105 @@ public class ReasonerService {
     }
 
     /**
+     * Real justification finder — same black-box algorithm Protégé's own
+     * Explanation panel uses (via owlexplanation / OWL Explanation Workbench),
+     * for inconsistency patterns the syntactic heuristics elsewhere in this class
+     * don't recognize. Explains Thing ⊑ Nothing (equivalent to "inconsistent"
+     * for a justification search) and returns the first minimal axiom set found,
+     * rendered as readable strings.
+     */
+    private List<String> findGeneralJustification(OWLOntology ontology) {
+        InconsistentOntologyExplanationGeneratorFactory factory =
+            new InconsistentOntologyExplanationGeneratorFactory(
+                new ReasonerFactory(), DATA_FACTORY, OWLManager::createOWLOntologyManager, JUSTIFICATION_TIMEOUT_MS);
+        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(ontology);
+        OWLAxiom entailment = DATA_FACTORY.getOWLSubClassOfAxiom(DATA_FACTORY.getOWLThing(), DATA_FACTORY.getOWLNothing());
+        Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, 1);
+        if (explanations.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Explanation<OWLAxiom> justification = explanations.iterator().next();
+        List<String> lines = new ArrayList<>();
+        for (OWLAxiom axiom : justification.getAxioms()) {
+            lines.add(renderAxiom(axiom, ontology));
+        }
+        return lines;
+    }
+
+    /**
+     * Renders an arbitrary OWL axiom in plain English, matching the style used
+     * elsewhere in this class ("X Type Y", "X SubClassOf Y", "DisjointClasses: ...").
+     * Falls back to OWL functional syntax with IRIs swapped for labels for any
+     * axiom shape not specifically handled — always readable, never blank.
+     */
+    private String renderAxiom(OWLAxiom axiom, OWLOntology ontology) {
+        if (axiom instanceof OWLClassAssertionAxiom) {
+            OWLClassAssertionAxiom ax = (OWLClassAssertionAxiom) axiom;
+            if (!ax.getIndividual().isAnonymous() && !ax.getClassExpression().isAnonymous()) {
+                return getLabel(ax.getIndividual().asOWLNamedIndividual(), ontology) + " Type "
+                    + getLabel(ax.getClassExpression().asOWLClass(), ontology);
+            }
+        } else if (axiom instanceof OWLSubClassOfAxiom) {
+            OWLSubClassOfAxiom ax = (OWLSubClassOfAxiom) axiom;
+            if (!ax.getSubClass().isAnonymous() && !ax.getSuperClass().isAnonymous()) {
+                return getLabel(ax.getSubClass().asOWLClass(), ontology) + " SubClassOf "
+                    + getLabel(ax.getSuperClass().asOWLClass(), ontology);
+            }
+        } else if (axiom instanceof OWLDisjointClassesAxiom) {
+            String names = ((OWLDisjointClassesAxiom) axiom).getClassesInSignature().stream()
+                .map(c -> getLabel(c, ontology))
+                .collect(Collectors.joining(", "));
+            return "DisjointClasses: " + names;
+        } else if (axiom instanceof OWLDisjointUnionAxiom) {
+            OWLDisjointUnionAxiom ax = (OWLDisjointUnionAxiom) axiom;
+            String disjuncts = ax.getClassExpressions().stream()
+                .filter(ce -> !ce.isAnonymous())
+                .map(ce -> getLabel(ce.asOWLClass(), ontology))
+                .collect(Collectors.joining(", "));
+            return getLabel(ax.getOWLClass(), ontology) + " DisjointUnionOf " + disjuncts;
+        } else if (axiom instanceof OWLEquivalentClassesAxiom) {
+            String names = ((OWLEquivalentClassesAxiom) axiom).getClassExpressions().stream()
+                .filter(ce -> !ce.isAnonymous())
+                .map(ce -> getLabel(ce.asOWLClass(), ontology))
+                .collect(Collectors.joining(" ≡ "));
+            return "EquivalentClasses: " + names;
+        } else if (axiom instanceof OWLObjectPropertyAssertionAxiom) {
+            OWLObjectPropertyAssertionAxiom ax = (OWLObjectPropertyAssertionAxiom) axiom;
+            if (!ax.getSubject().isAnonymous() && !ax.getObject().isAnonymous()) {
+                return getLabel(ax.getSubject().asOWLNamedIndividual(), ontology) + " "
+                    + getLabel(ax.getProperty().getNamedProperty(), ontology) + " "
+                    + getLabel(ax.getObject().asOWLNamedIndividual(), ontology);
+            }
+        } else if (axiom instanceof OWLDifferentIndividualsAxiom) {
+            String names = ((OWLDifferentIndividualsAxiom) axiom).getIndividualsInSignature().stream()
+                .map(i -> getLabel(i, ontology))
+                .collect(Collectors.joining(", "));
+            return "DifferentIndividuals: " + names;
+        } else if (axiom instanceof OWLSameIndividualAxiom) {
+            String names = ((OWLSameIndividualAxiom) axiom).getIndividualsInSignature().stream()
+                .map(i -> getLabel(i, ontology))
+                .collect(Collectors.joining(" = "));
+            return "SameIndividual: " + names;
+        } else if (axiom instanceof OWLFunctionalObjectPropertyAxiom) {
+            return "FunctionalObjectProperty: " + getLabel(
+                ((OWLFunctionalObjectPropertyAxiom) axiom).getProperty().getNamedProperty(), ontology);
+        } else if (axiom instanceof OWLInverseFunctionalObjectPropertyAxiom) {
+            return "InverseFunctionalObjectProperty: " + getLabel(
+                ((OWLInverseFunctionalObjectPropertyAxiom) axiom).getProperty().getNamedProperty(), ontology);
+        }
+
+        String rendered = axiom.toString();
+        for (OWLEntity entity : axiom.getSignature()) {
+            String label = getLabel(entity, ontology);
+            String iri = entity.getIRI().toString();
+            if (label != null && !label.isBlank() && !label.equals(iri)) {
+                rendered = rendered.replace("<" + iri + ">", label);
+            }
+        }
+        return rendered;
+    }
+
+    /**
      * Realize the ontology (compute instances for all classes)
      */
     public void realize(OWLOntology ontology, ReasonerType type) {
@@ -1007,7 +1115,33 @@ public class ReasonerService {
             } catch (Exception e) {
                 log.error("Error checking property violations", e);
             }
-            
+
+            // 3.5. Fallback: real black-box justification search for whatever the
+            // syntactic heuristics above don't recognize (cardinality restrictions,
+            // functional/inverse-functional properties, sameAs/differentFrom clashes,
+            // datatype restrictions, complex anonymous class expressions, ...). Only
+            // runs when the fast heuristics found nothing, since justification search
+            // re-checks consistency on candidate axiom subsets internally and is far
+            // slower than the syntactic closure above.
+            if (causes.size() == 1) {
+                try {
+                    List<String> justification = findGeneralJustification(ontology);
+                    if (!justification.isEmpty()) {
+                        Map<String, Object> cause = new HashMap<>();
+                        cause.put("type", "GENERAL_JUSTIFICATION");
+                        cause.put("severity", "ERROR");
+                        cause.put("title", "Minimal Inconsistency Justification");
+                        cause.put("description", "A minimal set of asserted axioms that together make the "
+                            + "ontology inconsistent, found via black-box justification search — the same "
+                            + "technique Protégé's Explanation panel uses — rather than the pattern checks above");
+                        cause.put("axioms", justification);
+                        causes.add(cause);
+                    }
+                } catch (Exception e) {
+                    log.error("Error running general justification search", e);
+                }
+            }
+
             // 4. General recommendations
             Map<String, Object> recommendations = new HashMap<>();
             recommendations.put("type", "RECOMMENDATIONS");
@@ -1054,7 +1188,7 @@ public class ReasonerService {
             return violations;
         }
 
-        Map<OWLNamedIndividual, Map<OWLClass, OWLClass>> provenanceByIndividual = new HashMap<>();
+        Map<OWLNamedIndividual, TypeProvenance> provenanceByIndividual = new HashMap<>();
         for (OWLNamedIndividual individual : ontology.getIndividualsInSignature()) {
             provenanceByIndividual.put(individual, getAssertedTypesClosureWithProvenance(ontology, individual));
         }
@@ -1068,10 +1202,10 @@ public class ReasonerService {
                 continue;
             }
 
-            for (Map.Entry<OWLNamedIndividual, Map<OWLClass, OWLClass>> entry : provenanceByIndividual.entrySet()) {
-                Map<OWLClass, OWLClass> cameFrom = entry.getValue();
+            for (Map.Entry<OWLNamedIndividual, TypeProvenance> entry : provenanceByIndividual.entrySet()) {
+                TypeProvenance provenance = entry.getValue();
                 List<OWLClass> violatingClasses = disjointClasses.stream()
-                    .filter(cameFrom::containsKey)
+                    .filter(provenance.cameFrom::containsKey)
                     .collect(Collectors.toList());
 
                 if (violatingClasses.size() > 1) {
@@ -1090,7 +1224,7 @@ public class ReasonerService {
                         .map(c -> {
                             Map<String, Object> derivation = new HashMap<>();
                             derivation.put("class", getLabel(c, ontology));
-                            derivation.put("via", buildDerivationChain(c, cameFrom, ontology));
+                            derivation.put("via", buildDerivationChain(c, provenance, ontology));
                             return derivation;
                         })
                         .collect(Collectors.toList()));
@@ -1115,7 +1249,21 @@ public class ReasonerService {
      * disjoint-violation case walks the same asserted type + SubClassOf chain).
      */
     private Set<OWLClass> getAssertedTypesClosure(OWLOntology ontology, OWLNamedIndividual individual) {
-        return getAssertedTypesClosureWithProvenance(ontology, individual).keySet();
+        return getAssertedTypesClosureWithProvenance(ontology, individual).cameFrom.keySet();
+    }
+
+    /**
+     * Bundles the BFS parent-pointer map from {@link #getAssertedTypesClosureWithProvenance}
+     * with any disjoint-union case-split explanations, which don't fit the plain
+     * "X ⊑ Y" chain format (see that method's javadoc for why they need their own slot).
+     */
+    private static final class TypeProvenance {
+        final Map<OWLClass, OWLClass> cameFrom;
+        final Map<OWLClass, String> unionDerivations;
+        TypeProvenance(Map<OWLClass, OWLClass> cameFrom, Map<OWLClass, String> unionDerivations) {
+            this.cameFrom = cameFrom;
+            this.unionDerivations = unionDerivations;
+        }
     }
 
     /**
@@ -1128,9 +1276,19 @@ public class ReasonerService {
      * so a type that is both directly asserted and reachable by inheritance is
      * reported as direct — the simpler explanation, matching Protégé's own
      * preference for its least-involved justification.
+     *
+     * Also follows owl:disjointUnionOf: DisjointUnion(A, B1, ..., Bn) means every
+     * instance of A is an instance of exactly one Bi. That's a case-split, not a
+     * simple edge — but if every Bi shares a common (named) ancestor C, then an
+     * instance of A is C in every case, so C is a sound entailment regardless of
+     * which branch holds. This is exactly the reasoning HermiT performs and Protégé
+     * shows as a multi-step justification (e.g. VegetarianPizza's disjoint union of
+     * MeatTopping/SeafoodTopping, both ⊑ PizzaTopping) — our syntactic closure
+     * otherwise has no way to reach PizzaTopping from a VegetarianPizza assertion.
      */
-    private Map<OWLClass, OWLClass> getAssertedTypesClosureWithProvenance(OWLOntology ontology, OWLNamedIndividual individual) {
+    private TypeProvenance getAssertedTypesClosureWithProvenance(OWLOntology ontology, OWLNamedIndividual individual) {
         Map<OWLClass, OWLClass> cameFrom = new LinkedHashMap<>();
+        Map<OWLClass, String> unionDerivations = new LinkedHashMap<>();
         Deque<OWLClass> frontier = new ArrayDeque<>();
 
         for (OWLClassAssertionAxiom ax : ontology.getClassAssertionAxioms(individual)) {
@@ -1169,26 +1327,93 @@ public class ReasonerService {
                     }
                 }
             }
+
+            for (OWLDisjointUnionAxiom duAxiom : ontology.getDisjointUnionAxioms(current)) {
+                List<OWLClass> disjuncts = duAxiom.getClassExpressions().stream()
+                    .filter(ce -> !ce.isAnonymous())
+                    .map(OWLClassExpression::asOWLClass)
+                    .collect(Collectors.toList());
+                if (disjuncts.isEmpty()) {
+                    continue;
+                }
+
+                Set<OWLClass> commonAncestors = null;
+                for (OWLClass disjunct : disjuncts) {
+                    Set<OWLClass> supers = computeAllSuperclasses(ontology, disjunct);
+                    commonAncestors = (commonAncestors == null) ? new HashSet<>(supers)
+                        : intersect(commonAncestors, supers);
+                }
+                if (commonAncestors == null) {
+                    continue;
+                }
+
+                String disjunctLabels = disjuncts.stream()
+                    .map(d -> getLabel(d, ontology))
+                    .collect(Collectors.joining(" or "));
+                for (OWLClass ancestor : commonAncestors) {
+                    if (!cameFrom.containsKey(ancestor)) {
+                        cameFrom.put(ancestor, current);
+                        unionDerivations.put(ancestor, getLabel(current, ontology) + " is a disjoint union of "
+                            + disjunctLabels + " — both are " + getLabel(ancestor, ontology));
+                        frontier.push(ancestor);
+                    }
+                }
+            }
         }
 
-        return cameFrom;
+        return new TypeProvenance(cameFrom, unionDerivations);
+    }
+
+    /** All named classes reachable upward from {@code start} via SubClassOf/EquivalentClasses, including itself. */
+    private Set<OWLClass> computeAllSuperclasses(OWLOntology ontology, OWLClass start) {
+        Set<OWLClass> result = new HashSet<>();
+        Deque<OWLClass> frontier = new ArrayDeque<>();
+        result.add(start);
+        frontier.push(start);
+        while (!frontier.isEmpty()) {
+            OWLClass current = frontier.pop();
+            for (OWLSubClassOfAxiom ax : ontology.getSubClassAxiomsForSubClass(current)) {
+                OWLClassExpression sup = ax.getSuperClass();
+                if (!sup.isAnonymous() && result.add(sup.asOWLClass())) {
+                    frontier.push(sup.asOWLClass());
+                }
+            }
+            for (OWLEquivalentClassesAxiom ax : ontology.getEquivalentClassesAxioms(current)) {
+                for (OWLClassExpression member : ax.getClassExpressions()) {
+                    if (!member.isAnonymous() && result.add(member.asOWLClass())) {
+                        frontier.push(member.asOWLClass());
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private Set<OWLClass> intersect(Set<OWLClass> a, Set<OWLClass> b) {
+        Set<OWLClass> result = new HashSet<>(a);
+        result.retainAll(b);
+        return result;
     }
 
     /**
-     * Human-readable derivation chain for a type reached via inheritance, e.g.
-     * "VegetarianPizza ⊑ Pizza". Returns null when the type was asserted directly
-     * on the individual — there's no chain to explain, and the UI should just show
-     * the class with no extra note.
+     * Human-readable derivation for a type reached via inheritance, e.g.
+     * "VegetarianPizza ⊑ Pizza", or a disjoint-union explanation, e.g. "VegetarianPizza
+     * is a disjoint union of MeatTopping or SeafoodTopping — both are PizzaTopping".
+     * Returns null when the type was asserted directly on the individual — there's no
+     * derivation to explain, and the UI should just show the class with no extra note.
      */
-    private String buildDerivationChain(OWLClass cls, Map<OWLClass, OWLClass> cameFrom, OWLOntology ontology) {
-        if (cameFrom.get(cls) == null) {
+    private String buildDerivationChain(OWLClass cls, TypeProvenance provenance, OWLOntology ontology) {
+        if (provenance.unionDerivations.containsKey(cls)) {
+            return provenance.unionDerivations.get(cls);
+        }
+        if (provenance.cameFrom.get(cls) == null) {
             return null;
         }
         List<String> chain = new ArrayList<>();
         OWLClass current = cls;
         while (current != null) {
             chain.add(0, getLabel(current, ontology));
-            current = cameFrom.get(current);
+            current = provenance.cameFrom.get(current);
         }
         return String.join(" ⊑ ", chain);
     }

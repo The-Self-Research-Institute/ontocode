@@ -46,12 +46,18 @@ export function buildGraphologyGraph(
       graph.addEdgeWithKey(edge.id, edge.from, edge.to, {
         label: edge.label || '',
         size: edge.type === 'subClassOf' ? 1.5 : 1,
-        color: options.dark ? '#4b5563' : '#cbd5e1',
+        color: options.dark ? '#556274' : '#aab8cc',
         edgeType: edge.type
       });
     } catch {
       // Duplicate edge key — skip
     }
+  });
+
+  // Degree-based sizing: hubs read instantly, leaves stay small
+  graph.forEachNode(id => {
+    const degree = graph.degree(id);
+    graph.setNodeAttribute(id, 'size', Math.min(18, 4 + Math.sqrt(degree) * 2.4));
   });
 
   return graph;
