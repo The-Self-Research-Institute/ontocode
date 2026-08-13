@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Cloud fast-open uses asserted hierarchy (no reasoner precompute) for open times.
  */
 @Component
-@Conditional(FastOpenCondition.class)
+//@Conditional(FastOpenCondition.class)
 public class ProjectOntologyCache {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectOntologyCache.class);

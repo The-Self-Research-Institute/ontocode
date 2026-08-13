@@ -10,7 +10,7 @@ import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
 import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '../../utils/desktop';
 import { useAuth } from '../../custom-hook/useAuth';
-import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual } from '../../types';
+import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 
@@ -28,7 +28,7 @@ const UsageTab: React.FC<{
   projectId: string;
   label: string;
 }> = ({ classIri, projectId, label }) => {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); 
   const [loaded, setLoaded] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const [usages, setUsages] = useState<UsageItem[]>([]);
@@ -111,7 +111,6 @@ const UsageTab: React.FC<{
     (u.subjectLabel || u.subject || '').toLowerCase().includes(filter.toLowerCase()) &&
     showTypes[u.type as keyof typeof showTypes] !== false
   );
-
   const usagesByType = {
     instance: filteredUsages.filter(u => u.type === 'instance'),
     subclass: filteredUsages.filter(u => u.type === 'subclass'),
@@ -254,7 +253,8 @@ const UsageTab: React.FC<{
 const ClassEditor: React.FC<{
   item: TreeNode;
   projectId: string;
-  onUpdate: (updatedItem: TreeNode) => void;
+  //onUpdate: (updatedItem: TreeNode) => void;
+  onUpdate: (updatedItem: SelectableItem, markUnsaved?: boolean, previousId?: string) => void;
   onAddAnnotation: () => void;
   onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
@@ -394,27 +394,38 @@ const ClassEditor: React.FC<{
   // IRI Editor State
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
 
-  const handleSaveIRI = async (newIRI: string, newLabel: string) => {
-    try {
-      // Note: Changing IRI is a complex operation that may require backend support
-      // For now, we'll just update the label if it changed
-      if (newLabel !== item.label) {
-        await ontologyMutationService.updateClassLabel(projectId, item.id, newLabel);
-        const updatedItem = { ...item, label: newLabel };
-        onUpdate(updatedItem as TreeNode);
-      }
+const handleSaveIRI = async (newIRI: string, newLabel: string) => {
+  try {
+    const iriChanged = newIRI !== item.id;
+    const labelChanged = newLabel !== item.label;
+    const previousId = item.id;
 
-      // TODO: Add backend support for IRI renaming
-      if (newIRI !== item.id) {
-        console.warn("IRI renaming requires backend support - not yet implemented");
-        notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
-      }
-    } catch (error) {
-      console.error("Failed to update entity:", error);
-      notificationService.error("Update Failed", "Failed to update entity. See console for details.");
+    const targetIri = iriChanged ? newIRI : item.id;
+
+    if (iriChanged) {
+      await ontologyMutationService.renameEntity(
+        projectId, item.id, newIRI,
+        user?.email || "anonymous", user?.username || "Anonymous",
+      );
     }
-  };
 
+    if (iriChanged || labelChanged) {
+      // Preserve the current display label when only the IRI changes.
+      // If there was no explicit rdfs:label before, this creates an explicit label
+      // so the UI continues to show the same name after the IRI rename.
+      await ontologyMutationService.updateClassLabel(projectId, targetIri, newLabel);
+    }
+
+    if (iriChanged || labelChanged) {
+      const updatedItem = { ...item, id: newIRI, iri: newIRI, label: newLabel };
+      onUpdate(updatedItem as TreeNode, true, iriChanged ? previousId : undefined);
+      //if (onRefreshClasses) await onRefreshClasses();
+    }
+  } catch (error) {
+    console.error("Failed to update entity:", error);
+    notificationService.error("Rename Failed", error instanceof Error ? error.message : "Failed to rename entity.");
+  }
+};
   // Load class details including annotations when component mounts.
   // Uses an "alive" flag so stale responses from a previously selected entity
   // are discarded (prevents showing the previous class's data).
@@ -2050,7 +2061,6 @@ const ClassEditor: React.FC<{
         await ontologyMutationService.deleteAxiom(projectId, editingGCAId, item.id, existingDefinition);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
-
       const superIri = findClassIriByLabelOrIri(superExpr, classHierarchy) || superExpr;
       const parsedSub = parseManchesterExpression(subExpr);
       if (parsedSub?.expressionType === "intersection") {

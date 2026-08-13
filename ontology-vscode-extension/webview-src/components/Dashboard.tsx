@@ -194,6 +194,7 @@ const TopMenuBar = ({
   fileList,
   myFiles,
   sharedFiles,
+  activeFileName,
   currentProjectId,
   onShareFile,
   onSave,
@@ -247,10 +248,12 @@ const TopMenuBar = ({
   onHierarchyAnnotationPropChange,
   hierarchyCustomTemplate,
   onHierarchyCustomTemplateChange,
+
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
   sharedFiles: FileInfo[];
+    activeFileName?: string | null; 
   currentProjectId: string | null;
   onShareFile: (fileId: string) => void;
   onSave: () => Promise<void>;
@@ -892,14 +895,15 @@ const TopMenuBar = ({
                               // is implied by hasExport on paid tiers but we
                               // keep both keys explicit so future tiers can
                               // diverge (e.g. a Starter plan with TTL-only).
-                              if (isViewOnly || !subscription.canAccessFeature('hasExport')
-                                  || !subscription.canAccessFeature('hasMultipleExportFormats')) {
-                                onExportProAction?.();
-                                return;
-                              }
+                              // if (isViewOnly || !subscription.canAccessFeature('hasExport')
+                              //     || !subscription.canAccessFeature('hasMultipleExportFormats')) {
+                              //   onExportProAction?.();
+                              //   return;
+                              // }
                               setExportingFormat(format);
                               // Prefer the ontology's actual file name over the raw project id.
                               const baseName = (
+                                 activeFileName || 
                                 myFiles.find((f) => f.projectId === currentProjectId)?.filename ||
                                 currentProjectId
                               ).replace(/\.[^./]+$/, "");
@@ -6582,15 +6586,19 @@ const Dashboard: React.FC<DashboardProps> = ({
   // do its job for its own intended case (Editor button vs. fileReady WS handler racing).
   const autoLoadTriggeredForRef = useRef<string | null>(null);
 
-  // Auto-load selected file from Project Library (admin flow)
+// Auto-load selected file from Project Library (admin flow)
   useEffect(() => {
     if (selectedFileId && selectedFileName && initialProjectId) {
-      if (autoLoadTriggeredForRef.current === selectedFileId) {
-        console.log("[Dashboard] Skipping duplicate auto-load trigger for:", selectedFileId);
+      // Key on id+name, not just id: a rename keeps the same fileId but changes
+      // selectedFileName, and that must NOT be treated as a duplicate trigger —
+      // otherwise a renamed-then-reopened file keeps showing its stale old name
+      // for the rest of the session.
+      const autoLoadKey = `${selectedFileId}::${selectedFileName}`;
+      if (autoLoadTriggeredForRef.current === autoLoadKey) {
+        console.log("[Dashboard] Skipping duplicate auto-load trigger for:", selectedFileId, selectedFileName);
         return;
       }
-      autoLoadTriggeredForRef.current = selectedFileId;
-
+      autoLoadTriggeredForRef.current = autoLoadKey;
       console.log("[Dashboard] Auto-loading selected file:", selectedFileId, selectedFileName);
       console.log("[Dashboard] Parent project for file menu:", initialProjectId);
 
@@ -7765,83 +7773,66 @@ const Dashboard: React.FC<DashboardProps> = ({
     [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName],
   );
 
-  const updateItemInState = useCallback(
-    (updatedItem: SelectableItem, markUnsaved: boolean = true) => {
-      console.log("[DEBUG] updateItemInState called for item:", updatedItem.id, "markUnsaved:", markUnsaved);
-      console.log("[CHANGE TRACKING] Entity updated:", {
-        entityId: updatedItem.id,
-        entityLabel: updatedItem.label,
-        entityType: entitiesTab,
-        modifiedBy: user?.username || "anonymous",
-        timestamp: new Date().toISOString(),
-      });
 
-      const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
-        return items.map((item) => {
-          if (item.id === updatedItem.id) {
-            // Preserve children from the existing item if the new item doesn't have them populated
-            // The updatedItem from details endpoint usually doesn't have the full children tree
-            const existingChildren = (item as TreeNode).children;
-            const newChildren = (updatedItem as TreeNode).children;
+const updateItemInState = useCallback(
+  (updatedItem: SelectableItem, markUnsaved: boolean = true, previousId?: string) => {
+    const matchId = previousId ?? updatedItem.id;
+    console.log("[DEBUG] updateItemInState called for item:", updatedItem.id, "matching against:", matchId);
 
-            return {
-              ...updatedItem,
-              children: newChildren && newChildren.length > 0 ? newChildren : existingChildren,
-            };
-          }
-          const treeNode = item as TreeNode;
-          if (treeNode.children) {
-            return { ...item, children: updateRecursively(treeNode.children) };
-          }
-          return item;
-        });
-      };
-
-      // Update selected item if it matches
-      setSelectedItem((prev) => {
-        if (prev?.id === updatedItem.id) {
-          console.log("[Dashboard] Updating selected item in state (ID match)");
-          return updatedItem;
+    const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
+      return items.map((item) => {
+        if (item.id === matchId) {
+          const existingChildren = (item as TreeNode).children;
+          const newChildren = (updatedItem as TreeNode).children;
+          return {
+            ...updatedItem,
+            children: newChildren && newChildren.length > 0 ? newChildren : existingChildren,
+          };
         }
-        return prev;
+        const treeNode = item as TreeNode;
+        if (treeNode.children) {
+          return { ...item, children: updateRecursively(treeNode.children) };
+        }
+        return item;
       });
+    };
 
-      switch (entitiesTab) {
-        case "Classes":
-          setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
-          break;
-        case "ObjectProperties":
-          setObjectProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
-          setObjectPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
-          break;
-        case "DataProperties":
-          setDataProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
-          setDataPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
-          break;
-        case "AnnotationProperties":
-          setAnnotationProperties((prev) => {
-            const updated = prev.map((p) => (p.id === updatedItem.id ? (updatedItem as AnnotationProperty) : p));
-            setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(updated));
-            return updated;
-          });
-          break;
-        case "Individuals":
-          setIndividuals((prev) => prev.map((i) => (i.id === updatedItem.id ? (updatedItem as Individual) : i)));
-          break;
-        case "Datatypes":
-          setDatatypes((prev) => prev.map((d) => (d.id === updatedItem.id ? (updatedItem as Datatype) : d)));
-          break;
+    setSelectedItem((prev) => {
+      if (prev?.id === matchId) {
+        return updatedItem;
       }
+      return prev;
+    });
 
-      // Mark as unsaved to enable Save button (only if markUnsaved is true).
-      // Skipped in webapp public/live sync since the mutation already landed live.
-      if (markUnsaved && !isLiveWriteMode()) {
-        setHasUnsavedChanges(true);
-      }
-    },
-    [entitiesTab, user],
-  );
+    switch (entitiesTab) {
 
+  case "Classes":
+    setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+    break;
+  case "Objectproperties":
+    setObjectPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+    break;
+  case "Dataproperties":
+    setDataPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+    break;
+  case "Annotationproperties":
+    setAnnotationPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+    break;
+  case "Individuals":
+    setIndividuals((prev) => updateRecursively(prev) as Individual[]);
+    break;
+  case "Datatypes":
+    setDatatypes((prev) => updateRecursively(prev) as Datatype[]);
+    break;
+
+    }
+
+    if (markUnsaved && !isLiveWriteMode()) {
+      setHasUnsavedChanges(true);
+    }
+  },
+  [entitiesTab, user],
+);
   const refreshClassHierarchy = useCallback(async () => {
     if (!projectId) return;
     if (shouldDeferHierarchyDuringFileOpen()) {
@@ -18146,6 +18137,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           fileList={listOfFiles}
           myFiles={myFiles}
           sharedFiles={sharedFiles}
+            activeFileName={activeFileName} 
           currentProjectId={projectId}
           onShareFile={(fileId) => {
             setShareFileId(fileId);
@@ -18365,6 +18357,12 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                     {user.workspaceName}
                   </span>
                 )}
+              
+              {initialProjectName && activeFileName && (
+                <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
+                  {`${initialProjectName} - ${activeFileName}`}
+                </span>
+              )}
               </span>
               {isProjectViewerRole && (
                 <span
@@ -18416,6 +18414,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
               >
                 <Palette size={14} />
               </button>
+             
+
               {onBackToProjects && (
                 <button
                   onClick={handleBackToProjects}
@@ -18426,6 +18426,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   Projects
                 </button>
               )}
+
               {/* Desktop download icon — hidden when already in the desktop app */}
               {!isDesktop() && (
                 <a
@@ -18595,6 +18596,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                     onViewOnlyAction={handleViewOnlyAction}
                     isReasonerRunning={isReasonerRunning}
                     selectedReasoner={selectedReasoner}
+                    user={user}
                   />
                 </div>
               </section>

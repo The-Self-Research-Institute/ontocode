@@ -1,8 +1,4 @@
 import React from "react";
-import { isDesktop } from "../utils/desktop";
-import { UserGuideDesktop } from "./UserGuideDesktop";
-
-import React from "react";
 import { UserGuideWebextension } from "./UserGuideWebextension";
 
 interface UserGuideModalProps {
@@ -13,6 +9,10 @@ interface UserGuideModalProps {
 export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
-  return isDesktop()
-    ? <UserGuideDesktop {...props} /> : <UserGuideWebextension isOpen={isOpen} onClose={onClose} />;
+  return (
+    <UserGuideWebextension
+      isOpen={isOpen}
+      onClose={onClose}
+    />
+  );
 };
