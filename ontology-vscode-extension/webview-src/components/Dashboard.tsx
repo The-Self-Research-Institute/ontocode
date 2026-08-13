@@ -1108,10 +1108,6 @@ const OpenFileDialog = ({
 
   useEffect(() => {
     if (usingProjectFiles) {
-      console.log("[OpenFileDialog] 🔄 projectFiles prop changed:", {
-        count: projectFiles?.length || 0,
-        files: projectFiles?.map((f) => f.filename),
-      });
     }
   }, [projectFiles, usingProjectFiles]);
 
@@ -1265,7 +1261,6 @@ const OpenFileDialog = ({
             {usingProjectFiles && onRefresh && (
               <button
                 onClick={() => {
-                  console.log("[OpenFileDialog] 🔄 Manual refresh clicked");
                   onRefresh();
                 }}
                 className="p-2 rounded-md border hover:bg-gray-50 transition-colors"
@@ -1712,15 +1707,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!currentProjectId) return [];
 
     try {
-      console.log("[Dashboard] 📂 Fetching files for project:", currentProjectId);
       const filesResponse = await apiClient.get<{ files: any[]; count: number; userProjectRole?: string }>(
         `/api/projects/${currentProjectId}/files`,
       );
 
-      console.log("[Dashboard] 📥 Raw files response:", filesResponse);
-
       if (filesResponse && Array.isArray(filesResponse.files)) {
-        console.log("[Dashboard] 📄 Found", filesResponse.files.length, "files in project");
 
         const projectFiles = filesResponse.files.map((file: any) => ({
           id: file.id,
@@ -1731,21 +1722,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           uploadedBy: file.uploadedBy,
         }));
 
-        console.log(`[Dashboard] 📋 Mapped ${projectFiles.length} project files`);
-        console.log("[Dashboard] 📋 Mapped project files:", projectFiles);
-        console.log(
-          "[Dashboard] 📋 File details:",
-          projectFiles.map((f) => ({ id: f.id, name: f.filename })),
-        );
-
-        console.log("[Dashboard] 📋 About to call setProjectFiles with", projectFiles.length, "files");
         setProjectFiles(projectFiles);
-        console.log("[Dashboard] ✅ setProjectFiles called");
 
         setListOfFiles(projectFiles);
-
-        console.log("[Dashboard] ✅ File menu updated with project files (listOfFiles only)");
-        console.log("[Dashboard] ✅ projectFiles state updated with", projectFiles.length, "files");
 
         if (filesResponse.userProjectRole) {
           setUserProjectRole(filesResponse.userProjectRole);
@@ -1753,8 +1732,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         return projectFiles; // Return the files for verification
       } else if (filesResponse && filesResponse.files === undefined) {
-
-        console.log("[Dashboard] ⚠️ Response has no files array:", filesResponse);
 
         if (Array.isArray(filesResponse)) {
           const projectFiles = filesResponse.map((file: any) => ({
@@ -1770,14 +1747,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           setListOfFiles(projectFiles);
           return projectFiles; // Return the files
         } else {
-          console.log("[Dashboard] ⚠️ Unable to parse files from response, clearing file menu");
 
           setProjectFiles([]);
           setListOfFiles([]);
           return []; // Return empty array
         }
       } else {
-        console.log("[Dashboard] ℹ️ No files found in project or empty response");
 
         setProjectFiles([]);
         setListOfFiles([]);
@@ -2244,7 +2219,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     if (showCollaborationPanel && isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')) {
-      console.log("[Dashboard] 🛡️ Closing collaboration panel due to permission change");
       setShowCollaborationPanel(false);
       showToast("Collaboration is no longer available on your current plan. Upgrade to resume.", "info");
     }
@@ -2509,11 +2483,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const activeTheme = entitiesTabs.find((t) => t.id === entitiesTab)?.theme;
 
   const sourceData = React.useMemo(() => {
-    console.log("[Dashboard sourceData] entitiesTab:", entitiesTab);
-    console.log("[Dashboard sourceData] hierarchyViewModes.Classes:", hierarchyViewModes.Classes);
-    console.log("[Dashboard sourceData] classHierarchy:", classHierarchy);
-    console.log("[Dashboard sourceData] classHierarchy length:", classHierarchy.length);
-    console.log("[Dashboard sourceData] classHierarchy first element:", classHierarchy[0]);
 
     switch (entitiesTab) {
       case "Classes":
@@ -2528,21 +2497,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   ? reasonerResults.classHierarchy
                   : [];
 
-          console.log(
-            "[Dashboard] Using inferred class hierarchy, length:",
-            Array.isArray(inferred) ? inferred.length : 0,
-          );
           return Array.isArray(inferred) ? inferred : [];
         }
-        console.log("[Dashboard] Using asserted class hierarchy, length:", classHierarchy.length);
-        console.log("[Dashboard] Returning classHierarchy:", classHierarchy);
         return classHierarchy;
       case "ObjectProperties":
-        console.log(
-          inferredObjectPropertyHierarchy,
-          "[Dashboard] Hierarchy view mode for ObjectProperties:",
-          hierarchyViewModes.ObjectProperties,
-        );
         const objPropData =
           hierarchyViewModes.ObjectProperties === "inferred"
             ? inferredObjectPropertyHierarchy.length > 0
@@ -2765,9 +2723,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     const result = filterRecursively(sourceData);
     const perfDuration = performance.now() - perfStart;
     if (perfDuration > 50 || perfNodesVisited > 5000) {
-      console.log(
-        `[PERF] Dashboard hierarchy filter ("${trimmedQuery}"): visited ${perfNodesVisited} tree nodes in ${perfDuration.toFixed(1)}ms`,
-      );
     }
     return result;
   }, [searchQuery, sourceData, entitiesTab, searchOptions, searchMatchSubtreeDepth]);
@@ -3047,18 +3002,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const loadInferredAnnotationPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading inferred annotation property hierarchy...");
     try {
       const res = await apiClient.get<any>(
         `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${selectedReasoner}`,
       );
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
-      console.log(
-        "[Dashboard] Inferred annotation properties loaded:",
-        Array.isArray(hierarchy) ? hierarchy.length : 0,
-        "items",
-      );
       setInferredAnnotationPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred annotation property hierarchy:", error);
@@ -3068,14 +3017,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const loadInferredDatatypes = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading inferred datatypes...");
     try {
       const res = await apiClient.get<any>(
         `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-datatypes?reasonerType=${selectedReasoner}`,
       );
       const payload = res?.data || res;
       const datatypes = payload?.datatypes || payload?.data?.datatypes || [];
-      console.log("[Dashboard] Inferred datatypes loaded:", Array.isArray(datatypes) ? datatypes.length : 0, "items");
       setInferredDatatypes(Array.isArray(datatypes) ? datatypes : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred datatypes:", error);
@@ -3085,18 +3032,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const loadInferredIndividuals = useCallback(async () => {
     if (!projectId) return;
-    console.log("[Dashboard] Loading inferred individuals...");
     try {
       const res = await apiClient.get<any>(
         `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-individuals?reasonerType=${selectedReasoner}`,
       );
       const payload = res?.data || res;
       const individuals = payload?.individuals || payload?.data?.individuals || [];
-      console.log(
-        "[Dashboard] Inferred individuals loaded:",
-        Array.isArray(individuals) ? individuals.length : 0,
-        "items",
-      );
       setInferredIndividuals(Array.isArray(individuals) ? individuals : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred individuals:", error);
@@ -3180,8 +3121,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         setInferredAxioms([]);
       }
 
-      console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
-
       await loadInferredHierarchy();
       await loadInferredObjectPropertyHierarchy();
       await loadInferredDataPropertyHierarchy();
@@ -3189,14 +3128,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       await loadInferredDatatypes();
       await loadInferredIndividuals();
 
-      console.log("[Dashboard] ✅ All inferred hierarchies processed");
-
       if (selectedClassForIndividuals) {
         await loadClassInstances();
       }
 
       setHierarchyViewModes((prev) => ({ ...prev, Classes: "inferred" }));
-      console.log("[Dashboard] ✅ Automatically switched Classes tab to inferred mode");
 
       notificationService.success(
         "Classification Complete",
@@ -3259,7 +3195,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const toggleReasonerSync = useCallback(() => {
     const newSyncState = !isReasonerSynced;
     setIsReasonerSynced(newSyncState);
-    console.log("[Dashboard] Reasoner auto-sync:", newSyncState ? "enabled" : "disabled");
     if (newSyncState) {
       notificationService.success("Auto-sync Enabled", "Reasoner will automatically re-run on changes");
     } else {
@@ -3467,7 +3402,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         });
       }
 
-      console.log(`[Dashboard] Plugin ${pluginId} installed and loaded`);
       notificationService.success("Plugin Installed", `${pluginId} has been installed successfully`);
       clearPluginUpdateCache();
       setHasPluginUpdates(false);
@@ -3545,7 +3479,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         setMainTab((current) => (current === tabId ? "Entities" : current));
       }
 
-      console.log(`[Dashboard] Plugin ${pluginId} uninstalled`);
       clearPluginUpdateCache();
       setHasPluginUpdates(false);
     } catch (error) {
@@ -3563,8 +3496,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         try {
           const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(currentProjectId)}`);
           const status = statusRes?.data?.status || statusRes?.status;
-
-          console.log(`[Dashboard] Project ${currentProjectId} status:`, status);
 
           if (status === "COMPLETED") {
             const topLevel = Number(statusRes?.data?.topLevelClasses ?? 0);
@@ -3624,7 +3555,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         } catch (error: any) {
 
           if (error?.status === 404) {
-            console.log("[Dashboard] No editor status record yet for", currentProjectId);
             return { ready: true, status: "NOT_REGISTERED" };
           }
           console.error("[Dashboard] Error checking project status:", error);
@@ -3646,7 +3576,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       setLoadFailure(null);
 
       if (!forceRefresh && currentProjectId === projectId && classHierarchy.length > 0 && metadata) {
-        console.log("[Dashboard] ⚡ Project already loaded, skipping re-fetch:", currentProjectId);
         setIsInitialLoading(false);
         setIsHierarchyLoading(false);
         setIsMetadataLoading(false);
@@ -3674,24 +3603,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           const applyDirectly = earlySavedSyncMode === "public";
           ontologyMutationService.setRealTimeSync(applyDirectly);
           setSyncMode(applyDirectly ? "public" : "private");
-          console.log("[Dashboard] 🔍 Early syncMode restore (covers admin flow):", {
-            currentProjectId,
-            isAdminFlow,
-            earlySavedSyncMode,
-            applyDirectly,
-          });
         }
       }
-
-      console.log(`Loading ontology "${currentProjectId}"...`);
-      console.log("[Dashboard] 🔄 Fetching data for project:", currentProjectId);
-      console.log("[Dashboard]  Admin flow:", isAdminFlow, "Parent project:", parentProjectId);
-      console.log("[Dashboard] 👤 User context:", {
-        email: user?.email,
-        username: user?.username,
-        isAdmin: user?.isAdmin,
-        workspaceId: user?.workspaceId,
-      });
 
       if (window.vscode) {
         window.vscode.postMessage({ type: "requestCollaborationStatus" });
@@ -3703,15 +3616,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
 
         if (!forceRefresh && !isExpectingFileReady) {
-          console.log("[Dashboard] ⚡ Skipping status check for existing file - loading directly from GraphDB");
         } else if (!forceRefresh) {
 
-          console.log("[Dashboard] Waiting for file processing to complete...");
           const result = await waitForProcessingComplete(currentProjectId);
 
           if (!result.ready) {
             if (result.status === "HIERARCHY_WARMING") {
-              console.log("[Dashboard] Graph ready, hierarchy still warming — proceeding with retry loop");
               setIsHierarchyLoading(true);
               setLoadingStatusMessage(result.error || "Loading class tree…");
             } else {
@@ -3725,11 +3635,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
           }
         } else {
-          console.log("[Dashboard] ⚡ Force refresh mode - skipping processing status check");
         }
-
-        console.log("[Dashboard] File processing complete, fetching ontology data...");
-        console.log("[Dashboard] 📡 Loading data from GraphDB database for:", currentProjectId);
 
         const encodedProjectId = encodeURIComponent(currentProjectId);
 
@@ -3926,7 +3832,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           if (warm.ready) {
             owlapiReadyHandledRef.current = currentProjectId;
             desktopHierarchyDeferredForProject.current = null;
-            console.log("[Dashboard] OWLAPI fast-open ready — using in-memory hierarchy");
             applyDeclarationCounts(warm);
             setLoadingStatusMessage("Loading classes…");
             desktopDeferredSectionsLoadedRef.current.clear();
@@ -3940,20 +3845,17 @@ const Dashboard: React.FC<DashboardProps> = ({
               setLoadingStatusMessage("Opening ontology (fast path)…");
             }
           } else {
-            console.log("[Dashboard] OWLAPI warm in progress — deferring hierarchy until fast-open completes");
             desktopHierarchyDeferredForProject.current = currentProjectId;
             setIsHierarchyLoading(true);
             setLoadingStatusMessage("Opening ontology (fast path)…");
           }
         } else {
-          console.log("[Dashboard] Web mode — Fuseki/Mongo hierarchy (no auto OWLAPI warm)");
         }
 
         let instanceCountsData: any = {};
         setClassInstanceCounts({});
 
         if (!desktopOwlapiReady && desktopHierarchyDeferredForProject.current === currentProjectId) {
-          console.log("[Dashboard] Deferring class hierarchy — awaiting OWLAPI fast-open");
           setIsHierarchyLoading(true);
           setLoadingStatusMessage("Opening ontology (fast path)…");
         }
@@ -4213,7 +4115,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
             applyDeclarationCounts(cs);
           } catch (e) {
-            console.debug("[Dashboard] cache-status after top-level:", e);
           }
         }
         const desktopDeferredHierarchy = isDesktop() && !desktopOwlapiReady;
@@ -4299,7 +4200,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 );
                 if (!isStaleLoad()) applyDeclarationCounts(cs);
               } catch (e) {
-                console.debug("[Dashboard] cache-status counts:", e);
               }
             }
             const res = await apiClient.get<any>(
@@ -4438,9 +4338,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         })();
 
-        console.log("[Dashboard] 🔍 File loading decision - isAdminFlow:", isAdminFlow);
         if (!isAdminFlow) {
-          console.log("[Dashboard] ✅ Non-admin flow - fetching files for user");
           try {
             const lists = await fetchProjects();
 
@@ -4452,11 +4350,9 @@ const Dashboard: React.FC<DashboardProps> = ({
               if (isNonWorkspaceMode) {
                 ontologyMutationService.setRealTimeSync(true);
                 setSyncMode("public");
-                console.log("[Dashboard] ?? Non-workspace mode - applying changes directly to GraphDB");
               } else {
                 ontologyMutationService.setRealTimeSync(false);
                 setSyncMode("private");
-                console.log("[Dashboard] ?? File is private - using draft mode (click Save to apply changes)");
               }
             }
 
@@ -4474,19 +4370,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             );
             const isShared = isSharedWithMe || isSharedByMe || hasProjectMembers;
             setIsCurrentFileShared(isShared);
-
-            console.log("[Dashboard] 📊 File shared status:", isShared, "for project:", currentProjectId);
-            console.log("[Dashboard] 📥 Shared WITH me:", isSharedWithMe);
-            console.log("[Dashboard] 📤 Shared BY me:", isSharedByMe);
-            console.log("[Dashboard] 👥 Has project members:", hasProjectMembers);
-            console.log(
-              "[Dashboard] 📋 Shared files list:",
-              sharedProjectsList.map((f: any) => f.id),
-            );
-            console.log(
-              "[Dashboard] 📋 My files list:",
-              myProjectsList.map((f: any) => f.id),
-            );
 
             const syncModeKey = projectId ? `ontocode_sync_mode_${projectId}` : null;
             const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
@@ -4551,28 +4434,22 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
 
             if (isDesktop() && !isShared) {
-              console.log("[Dashboard] 📝 Desktop private draft mode (Save to publish)");
             } else if (isNonWorkspaceMode && !isShared) {
-              console.log("[Dashboard] 📝 Non-workspace mode - mutations apply directly to GraphDB");
             }
 
             if (isShared) {
-              console.log("[Dashboard] 📤 File is shared - enabling real-time collaboration");
 
               const handleDataChanged = async (changedProjectId: string) => {
 
                 if (changedProjectId.startsWith("__deleted__:")) {
                   const deletedId = changedProjectId.replace("__deleted__:", "");
-                  console.log("[Dashboard] ⚠️ Project deleted by another user:", deletedId);
                   notificationService.error("Project Deleted", "This project has been deleted by another user.");
                   return;
                 }
 
-                console.log("[Dashboard] 🔄 Change detected from another user! Refreshing data...");
                 notificationService.info("New Changes Available", "Another user saved changes. Refreshing data...");
 
                 await fetchData(changedProjectId, false, undefined, true);
-                console.log("[Dashboard] ✅ Refresh complete, monitoring restarted");
               };
 
               try {
@@ -4582,13 +4459,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                 if (timestampData && timestampData.updatedAt) {
                   const currentTimestamp = new Date(timestampData.updatedAt).getTime();
                   syncService.startMonitoring(currentProjectId, handleDataChanged, currentTimestamp);
-                  console.log("[Dashboard] 🔍 Started monitoring for changes (5 minutes)");
                 }
               } catch (error) {
                 console.warn("[Dashboard] Could not start change monitoring:", error);
               }
             } else {
-              console.log("[Dashboard] 📝 File is private - using draft mode (click Save to apply changes)");
             }
           } catch (fileError) {
             console.error("[Dashboard] ❌ Failed to fetch files:", fileError);
@@ -4601,16 +4476,13 @@ const Dashboard: React.FC<DashboardProps> = ({
             setSharedFiles([]);
           }
         } else {
-          console.log("[Dashboard] ℹ️ Admin flow detected - skipping user file fetch (will use project files)");
         }
 
         syncService.stopMonitoring(currentProjectId);
 
         if (isAdminFlow && parentProjectId) {
-          console.log("[Dashboard] 📂 Admin flow - Fetching files from project:", parentProjectId);
           await fetchProjectFiles(parentProjectId);
         } else {
-          console.log("[Dashboard] ℹ️ Regular user flow - files already loaded from user email query");
         }
 
         if (isDesktop() && !isStaleLoad()) {
@@ -4621,7 +4493,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       } catch (error: any) {
 
         if (error?.name === "AbortError" || error?.code === "ERR_CANCELED" || error?.message?.includes("aborted")) {
-          console.log("[Dashboard] fetchData cancelled (user switched files)");
           if (fetchDataGenerationRef.current === loadGeneration) {
             setIsInitialLoading(false);
             setIsHierarchyLoading(false);
@@ -4667,13 +4538,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshOntologyAnnotations = async () => {
     if (!projectId) return;
     try {
-      console.log("[Dashboard] 🔄 Refreshing ontology annotations for project:", projectId);
       const response = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${encodeProjectId(projectId)}/annotations`));
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
-      console.log("[Dashboard] 📥 Raw annotations data received:", data);
       const validAnnotations = normalizeOntologyAnnotations(data);
-      console.log("[Dashboard] ✅ Valid annotations after filtering:", validAnnotations);
 
       setOntologyAnnotations(validAnnotations);
     } catch (error) {
@@ -4688,11 +4556,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       const payload = response?.data || response;
       const data = payload?.data || payload || [];
       const validImports = Array.isArray(data) ? data : [];
-      console.log("[Dashboard] 📥 Loaded imports from backend:", validImports);
-      console.log(
-        "[Dashboard] Local imports:",
-        validImports.filter((imp: string) => !imp.startsWith("http://") && !imp.startsWith("https://")),
-      );
 
       setOntologyImports(validImports);
     } catch (error) {
@@ -4760,7 +4623,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       }
 
-      console.log("[Dashboard] Adding annotation with payload:", payload);
       await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, { ...payload, ...draftBodyFields() });
 
       const newAnnotation: any = {
@@ -4770,7 +4632,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         language: payload.language || language,
       };
       setOntologyAnnotations((prev) => [...prev, newAnnotation]);
-      console.log("[Dashboard] ✅ Annotation added, optimistically updated UI");
 
       setTimeout(() => {
         refreshOntologyAnnotations();
@@ -4810,7 +4671,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       }
 
-      console.log("[Dashboard] Updating annotation with payload:", payload);
       await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, { ...payload, ...draftBodyFields() });
 
       setOntologyAnnotations((prev) =>
@@ -4825,7 +4685,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             : ann,
         ),
       );
-      console.log("[Dashboard] ✅ Annotation updated, optimistically updated UI");
 
       await refreshOntologyAnnotations();
       notificationService.success("Annotation Updated", "Ontology annotation updated successfully.");
@@ -4921,10 +4780,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           iri.startsWith("file://") || // file:// protocol
           /^[^:\/]+\.(?:owl|rdf|ttl|n3|nt|xml)$/i.test(iri)); // Simple filename like "file.owl"
 
-      console.log("[Dashboard] Import IRI:", iri);
-      console.log("[Dashboard] Is URL:", isUrl);
-      console.log("[Dashboard] Is local file:", isLocalFile);
-
       let importIriForBackend = iri.trim();
 
       if (isLocalFile && !iri.startsWith("file://") && !isUrl) {
@@ -4944,7 +4799,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           importIriForBackend = normalizedPath;
         }
-        console.log("[Dashboard] Converted to URI:", importIriForBackend);
       }
 
       if (isEdit && originalIri !== importIriForBackend) {
@@ -4955,7 +4809,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       if (!isEdit || originalIri !== importIriForBackend) {
-        console.log("[Dashboard] Posting import IRI to backend:", importIriForBackend);
 
         if (isEdit && originalIri !== importIriForBackend) {
 
@@ -4967,19 +4820,16 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           setOntologyImports((prev) => [...prev, importIriForBackend]);
         }
-        console.log("[Dashboard] ⚡ Optimistically added import to UI");
 
         const addImportRes = await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
           importIri: importIriForBackend,
           ...draftBodyFields(),
         });
         importResolution = addImportRes?.resolution ?? null;
-        console.log("[Dashboard] ✅ Import IRI saved to backend, resolution:", importResolution);
       }
 
       const hasActualPath = iri.startsWith("file://") || /^[A-Za-z]:[\\\/]/.test(iri) || iri.startsWith("/");
       if (isLocalFile && hasActualPath && window.vscode) {
-        console.log("[Dashboard] Local file with actual path detected, requesting upload:", iri);
 
         const cleanPath = iri.startsWith("file://") ? iri.replace("file:///", "").replace("file://", "") : iri;
         window.vscode.postMessage({
@@ -4988,7 +4838,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           currentProjectId: projectId,
         });
       } else if (isLocalFile && !hasActualPath) {
-        console.log("[Dashboard] Local file is a relative reference (filename only), skipping upload:", iri);
       }
 
       setIsImportDialogOpen(false);
@@ -5106,7 +4955,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         payload.oldPrefix = cleanedOriginal;
       }
 
-      console.log("[Dashboard] Saving prefix:", payload);
       await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, { ...payload, ...draftBodyFields() });
 
       await refreshPrefixes();
@@ -5128,7 +4976,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const cleanedPrefix = prefix.endsWith(":") ? prefix.slice(0, -1) : prefix;
 
-      console.log("[Dashboard] Deleting prefix:", cleanedPrefix);
       await apiClient.delete(
         withDraftAndUser(`/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`),
       );
@@ -5173,11 +5020,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     try {
-      console.log("[Dashboard] Adding general class axiom:", {
-        projectId,
-        subClass: axiomDefinition,
-        superClass: axiomSuperClass,
-      });
       await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
         subClass: axiomDefinition,
         superClass: axiomSuperClass || "",
@@ -5251,12 +5093,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         oldAxiom.subExpression ||
         oldAxiom.definition ||
         "";
-      console.log("[Dashboard] Updating general class axiom:", {
-        projectId,
-        oldAxiom,
-        oldValue,
-        newAxiom: { subClass, superClass },
-      });
 
       await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
         oldValue,
@@ -5307,7 +5143,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         axiom.subExpression ||
         axiom.definition ||
         "";
-      console.log("[Dashboard] Deleting general class axiom:", { projectId, axiom, value });
 
       if (!value) {
         notificationService.error("Axiom Failed", "Cannot delete axiom without a value.");
@@ -5621,15 +5456,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         params.set("userEmail", resolvedEmail);
       }
       const projectsUrl = params.toString() ? `${primaryEndpoint}?${params.toString()}` : primaryEndpoint;
-      console.log("[Dashboard] 📂 fetchProjects called");
-      console.log("[Dashboard] 📂 User:", { email: user?.email, workspaceId: user?.workspaceId, isWorkspaceMode });
-      console.log("[Dashboard] 📂 Fetching from:", projectsUrl);
-      console.log("[Dashboard] 📂 resolvedEmail:", resolvedEmail);
 
       let response;
       try {
         response = await apiClient.get<any>(projectsUrl);
-        console.log("[Dashboard] 📥 Primary endpoint response:", response);
       } catch (error: any) {
         console.error("[Dashboard] ❌ Primary endpoint error:", error);
         const status = error?.status || error?.response?.status;
@@ -5640,29 +5470,13 @@ const Dashboard: React.FC<DashboardProps> = ({
             : fallbackEndpoint;
           console.warn("[Dashboard] ⚠️ Projects endpoint missing, falling back to:", fallbackUrl);
           response = await apiClient.get<any>(fallbackUrl);
-          console.log("[Dashboard] 📥 Fallback endpoint response:", response);
         } else {
           throw error;
         }
       }
 
-      console.log("[Dashboard] 📥 fetchProjects RAW response:", response);
-      console.log("[Dashboard] 📥 fetchProjects response type:", typeof response);
-      console.log("[Dashboard] 📥 fetchProjects response keys:", response ? Object.keys(response) : "null");
-
       const data = response?.data || response;
 
-      console.log("[Dashboard] 📥 fetchProjects processed data:", {
-        success: data?.success,
-        hasMyFiles: data?.myFiles !== undefined,
-        myFilesCount: data?.myFiles?.length || 0,
-        hasSharedFiles: data?.sharedFiles !== undefined,
-        sharedFilesCount: data?.sharedFiles?.length || 0,
-        hasProjects: data?.projects !== undefined,
-        projectsCount: data?.projects?.length || 0,
-        myFilesData: data?.myFiles,
-        sharedFilesData: data?.sharedFiles,
-      });
       setHasFetchedProjects(true);
 
       if (data?.success) {
@@ -5698,15 +5512,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           setSharedFiles(sharedFilesWithNames);
           setListOfFiles(allProjects);
 
-          console.log(
-            "[Dashboard] ✅ Files loaded - My Files:",
-            myFilesWithNames.length,
-            "Shared:",
-            sharedFilesWithNames.length,
-          );
-          console.log("[Dashboard] 📋 Sample myFile:", myFilesWithNames[0]);
-          console.log("[Dashboard] 📋 Sample sharedFile:", sharedFilesWithNames[0]);
-
           return { myFiles: myFilesWithNames, sharedFiles: sharedFilesWithNames };
         } else if (data.projects) {
 
@@ -5738,25 +5543,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           setSharedFiles(sharedFilesList);
           setListOfFiles(projectsWithNames);
 
-          console.log(
-            "[Dashboard] ✅ Files loaded (legacy format) - My Files:",
-            myFilesList.length,
-            "Shared:",
-            sharedFilesList.length,
-          );
-          console.log("[Dashboard] 📋 Sample project:", projectsWithNames[0]);
-
           return { myFiles: myFilesList, sharedFiles: sharedFilesList };
         } else {
-          console.log("[Dashboard] ⚠️ No myFiles/sharedFiles or projects in response - setting empty arrays");
-          console.log("[Dashboard] ⚠️ Full response data:", data);
           setMyFiles([]);
           setSharedFiles([]);
           setListOfFiles([]);
           return { myFiles: [], sharedFiles: [] };
         }
       } else {
-        console.log("[Dashboard] ⚠️ Response not successful:", data);
         setMyFiles([]);
         setSharedFiles([]);
         setListOfFiles([]);
@@ -5885,15 +5679,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (classHierarchy.length > 0 && classHierarchy[0].id === "http://www.w3.org/2002/07/owl#Thing") {
       const owlThingId = classHierarchy[0].id;
       const childCount = classHierarchy[0].children?.length || 0;
-      console.log("[Dashboard] Class hierarchy loaded, owl:Thing has", childCount, "top-level children");
 
       if (!isHierarchyLoading) {
         setIsInitialLoading(false);
       }
 
       if (childCount > 0 && !expandedNodes.includes(owlThingId)) {
-        console.log("[Dashboard] Auto-expanding owl:Thing (preserving existing expanded nodes)");
-        console.log("[DEBUG] useEffect[classHierarchy] triggering setExpandedNodes");
         setExpandedNodes((prev) => (prev.includes(owlThingId) ? prev : [...prev, owlThingId]));
       }
     }
@@ -6008,35 +5799,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     if (!user) {
-      console.log("[Dashboard] Skipping initial fetch - user not available");
       return;
     }
 
-    console.log("[Dashboard] Initial mount - fetching projects list");
     const resolvedEmail = resolveUserEmail();
-    console.log("[Dashboard] User details:", {
-      email: resolvedEmail || user.email,
-      username: user.username,
-      isAdmin: user.isAdmin,
-      workspaceId: user.workspaceId,
-    });
-    console.log("[Dashboard] Component props:", {
-      initialProjectId,
-      projectId,
-      onBackToProjects: !!onBackToProjects,
-    });
 
-    console.log(
-      "[Dashboard] 🔍 useEffect triggered - user.email:",
-      user?.email,
-      "user.workspaceId:",
-      user?.workspaceId,
-    );
-    console.log("[Dashboard] ✅ Fetching all projects for user email:", resolvedEmail || "(none)");
     fetchProjects();
 
     if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.current) {
-      console.log("[Dashboard] 🔄 Restoring last opened ontology:", storedProjectId);
       hasUserSelectedFileRef.current = true;
       setHasUserSelectedFile(true);
       setProjectId(storedProjectId);
@@ -6046,7 +5816,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       setActiveFileName(storedProjectId);
       fetchData(storedProjectId, false)
         .then(() => {
-          console.log("[Dashboard] ✅ Last file restored:", storedProjectId);
         })
         .catch((err) => {
           console.warn("[Dashboard] ⚠️ Failed to restore last file:", storedProjectId, err);
@@ -6156,15 +5925,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     if (selectedFileId && selectedFileName && initialProjectId) {
       if (autoLoadTriggeredForRef.current === selectedFileId) {
-        console.log("[Dashboard] Skipping duplicate auto-load trigger for:", selectedFileId);
         return;
       }
       autoLoadTriggeredForRef.current = selectedFileId;
 
-      console.log("[Dashboard] Auto-loading selected file:", selectedFileId, selectedFileName);
-      console.log("[Dashboard] Parent project for file menu:", initialProjectId);
-
-      console.log("[Dashboard] 🧹 Cleaning up previous file state...");
       setIsInitialLoading(true);
       setMainTab("Entities");
       setEntitiesTab("Classes");
@@ -6175,7 +5939,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     return () => {
-      console.log("[Dashboard] 🧹 Cleanup on unmount");
     };
   }, [selectedFileId, selectedFileName, initialProjectId]);
 
@@ -6333,7 +6096,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleWaitForLoading = useCallback(() => {
     userLoadingChoice.current = "wait";
 
-    console.log("[Dashboard] Wait for Loading clicked - keeping dialog open");
     // Dialog will be closed by IMPORT_COMPLETED handler when data loads
   }, []);
 
@@ -6341,7 +6103,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     userLoadingChoice.current = "continue";
     setShowLoadingChoice(false);
     setBackgroundImportActive(true);
-    console.log("[Dashboard] Continue Working clicked - closing dialog, showing persistent progress banner");
 
     setTimeout(() => {
       userLoadingChoice.current = null;
@@ -6351,7 +6112,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      console.log(message, "message");
 
       if (message.type === "uploadProgress") {
         const targetProject = message.projectId;
@@ -6367,12 +6127,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       if (message.type === "showLoading") {
-        console.log("[Dashboard] showLoading received - file upload starting for project:", message.projectId);
         setHasUserSelectedFile(true);
         hasUserSelectedFileRef.current = true;
         pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
         setPendingImportProjectId(message.projectId);
-        console.log("[Dashboard] Set pendingImportProjectIdRef.current to:", pendingImportProjectIdRef.current);
         setIsExpectingFileReady(true);
         setImportReadyToBrowse(false);
         setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
@@ -6393,11 +6151,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       if (!isMountedRef.current) {
-        console.log("[Dashboard] Ignoring message before mount:", event.data.type);
         return;
       }
 
-      console.log("[Dashboard] Received message:", message.type, message);
       switch (message.type) {
         case "duplicateFilePrompt": {
           const defaultCopyName = message.defaultCopyName || buildDefaultCopyName(message.fileName, 1);
@@ -6420,9 +6176,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "openProjectFile":
 
           if (initialProjectId) {
-            console.log("[Dashboard] 📋 Refreshing file list before opening project file");
             fetchProjectFiles(initialProjectId).then(() => {
-              console.log("[Dashboard] ✅ File list refreshed, proceeding to open file");
             });
           }
 
@@ -6447,40 +6201,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "fileLoaded":
 
           if (initialProjectId) {
-            console.log(
-              "[Dashboard] 📋 File list refresh triggered by fileReady, initialProjectId:",
-              initialProjectId,
-              "message.projectId:",
-              message.projectId,
-              "uploadedFileId:",
-              message.uploadedFileId,
-              "uploadedFileName:",
-              message.uploadedFileName,
-            );
-            console.log("[Dashboard] 📋 Current projectFiles count before refresh:", projectFiles.length);
 
             const fetchWithRetry = async (retries = 3, delay = 300) => {
               for (let attempt = 1; attempt <= retries; attempt++) {
-                console.log(`[Dashboard] 📋 Fetch attempt ${attempt}/${retries}...`);
                 const fetchedFiles = await fetchProjectFiles(initialProjectId);
 
                 if (message.uploadedFileId) {
                   const found = fetchedFiles.some((f) => f.id === message.uploadedFileId);
-                  console.log(
-                    `[Dashboard] 📋 Looking for file ${message.uploadedFileId} (${message.uploadedFileName}) in ${fetchedFiles.length} files, found: ${found}`,
-                  );
-                  console.log(
-                    `[Dashboard] 📋 File IDs in list:`,
-                    fetchedFiles.map((f) => f.id),
-                  );
 
                   if (found) {
-                    console.log(`[Dashboard] ✅ File found in list after ${attempt} attempt(s)!`);
                     return true;
                   }
 
                   if (attempt < retries) {
-                    console.log(`[Dashboard] ⏳ File not found, waiting ${delay}ms before retry ${attempt + 1}...`);
                     await new Promise((resolve) => setTimeout(resolve, delay));
                   } else {
                     console.warn(`[Dashboard] ⚠️ File ${message.uploadedFileId} not found after ${retries} attempts`);
@@ -6489,7 +6222,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                   }
                 } else {
 
-                  console.log("[Dashboard] ✅ File list refreshed (no specific file verification)");
                   return true;
                 }
               }
@@ -6498,24 +6230,16 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             fetchWithRetry()
               .then((success) => {
-                console.log("[Dashboard] ✅ File list refresh complete, success:", success);
-                console.log("[Dashboard] 📋 ProjectFiles count after refresh:", projectFiles.length);
               })
               .catch((err) => {
                 console.error("[Dashboard] ❌ Failed to refresh file list:", err);
               });
           } else {
-            console.log("[Dashboard] ⚠️ fileReady received but no initialProjectId, cannot refresh");
           }
 
           if (initialProjectId && message.projectId === initialProjectId) {
 
             if (message.uploadedFileId && message.uploadedFileName) {
-              console.log(
-                "[Dashboard] 📂 New file created in project, auto-loading:",
-                message.uploadedFileId,
-                message.uploadedFileName,
-              );
 
               fetchProjects();
 
@@ -6524,7 +6248,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
               }, 200);
             } else {
-              console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
               fetchProjects();
             }
             break;
@@ -6534,7 +6257,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             pendingImportProjectIdRef.current &&
             message.projectId === pendingImportProjectIdRef.current
           ) {
-            console.log("[Dashboard] FileReady for project file import:", message);
             setHasUserSelectedFile(true);
             hasUserSelectedFileRef.current = true;
             setProjectId(message.projectId);
@@ -6542,11 +6264,9 @@ const Dashboard: React.FC<DashboardProps> = ({
             setLoadingProjectName(message.uploadedFileName);
 
             if (loadingPromiseRef.current) {
-              console.log("[Dashboard] Already loading, skipping duplicate fetchData call");
             } else {
               loadingPromiseRef.current = fetchData(message.projectId, false, initialProjectId)
                 .then(() => {
-                  console.log("[Dashboard] Loading completed for:", message.projectId);
                   setShowLoadingChoice(false);
                   setShowQueueStatus(false);
                   setQueuePosition(undefined);
@@ -6570,8 +6290,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             break;
           }
 
-          console.log("[Dashboard] Loading project:", message.projectId);
-
           setHasUserSelectedFile(true);
           hasUserSelectedFileRef.current = true;
 
@@ -6579,14 +6297,11 @@ const Dashboard: React.FC<DashboardProps> = ({
           const newBaseId = message.projectId?.replace(/-\d+$/, "");
           const isSameFile = currentBaseId === newBaseId;
           if (!isSameFile) {
-            console.log("[Dashboard] Updating projectId from", projectId, "to", message.projectId);
             setProjectId(message.projectId);
           } else {
-            console.log("[Dashboard] ProjectId essentially same, keeping current:", projectId);
           }
 
           const projId = message.projectId || "";
-          console.log("[Dashboard] Setting active file name for projectId:", projId);
           if (projId.includes(".owl") || projId.includes(".rdf") || projId.includes(".ttl")) {
             setActiveFileName(projId);
           } else {
@@ -6594,12 +6309,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           setActiveFileId(null); // In free mode, fileId is same as projectId
           setSelectedItem(null);
-          console.log(message, "message=====>", projId);
           setLoadingProjectName(message.uploadedFileName);
           userLoadingChoice.current = null; // Reset choice for new loading
 
           if (isSameFile && hasUserSelectedFileRef.current) {
-            console.log("[Dashboard] Same file already loaded — skipping loading dialog, doing silent refresh");
             setShowLoadingChoice(false);
             setIsInitialLoading(false);
             if (!loadingPromiseRef.current) {
@@ -6618,11 +6331,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
 
           if (loadingPromiseRef.current) {
-            console.log("[Dashboard] Already loading, skipping duplicate fetchData call");
           } else {
             loadingPromiseRef.current = fetchData(message.projectId, false)
               .then(() => {
-                console.log("[Dashboard] Loading completed for:", message.projectId);
 
                 setShowLoadingChoice(false);
                 setShowQueueStatus(false);
@@ -6658,15 +6369,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
           break;
         case "importStatusUpdate":
-
-          console.log(
-            `[Dashboard] 📨 Import status update for "${message.status.projectId}": ${message.status.type}`,
-            message.status,
-          );
-          console.log(
-            `[Dashboard] 📍 Current projectId: ${projectId} | Message projectId: ${message.status.projectId}`,
-          );
-          console.log(`[Dashboard] 🎯 Status: ${message.status.status} | Progress: ${message.status.progress}%`);
 
           if (message.status.projectId) {
             setProjectImportStatuses((prev) => ({
@@ -6731,36 +6433,21 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
 
           if (message.status.type === "IMPORT_COMPLETED") {
-            console.log("[Dashboard] ✅ IMPORT_COMPLETED for project:", message.status.projectId);
-            console.log("[Dashboard] User choice:", userLoadingChoice.current);
-            console.log("[Dashboard] Current projectId:", projectId);
-            console.log("[Dashboard] pendingImportProjectIdRef.current:", pendingImportProjectIdRef.current);
-            console.log("[Dashboard] isExpectingFileReady:", isExpectingFileReady);
 
             const isCurrentProject = message.status.projectId === projectId;
             const isPendingImport = message.status.projectId === pendingImportProjectIdRef.current;
             const userChoice = userLoadingChoice.current;
 
             if (isCurrentProject || isPendingImport) {
-              console.log("[Dashboard] Should auto-load:", isPendingImport ? "pending import" : "current project");
 
               if (isPendingImport) {
-                console.log("[Dashboard] Setting projectId to:", message.status.projectId);
 
                 const currentBaseId = projectId?.replace(/-\d+$/, "");
                 const newBaseId = message.status.projectId?.replace(/-\d+$/, "");
                 if (currentBaseId !== newBaseId) {
-                  console.log(
-                    "[Dashboard] ProjectId is different, updating from",
-                    projectId,
-                    "to",
-                    message.status.projectId,
-                  );
                   setProjectId(message.status.projectId);
                 } else {
-                  console.log("[Dashboard] ProjectId is essentially the same (ignoring timestamp), skipping update");
                 }
-                console.log(message, "message--->");
                 setLoadingProjectName(message.status.filename || message.status.projectId);
 
                 if (!initialProjectId) {
@@ -6776,7 +6463,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               setQueuePosition(undefined);
               setTotalInQueue(undefined);
               setEstimatedWaitTimeMs(undefined);
-              console.log("[Dashboard] Cleared pendingImportProjectIdRef");
               setIsExpectingFileReady(false);
 
               if (!isDesktop() && !directEditorLoadRequestedRef.current) {
@@ -6791,7 +6477,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               directEditorLoadRequestedRef.current = false;
 
               const cleanupUI = () => {
-                console.log("[Dashboard] Closing dialogs after IMPORT_COMPLETED");
                 setShowLoadingChoice(false);
                 setShowQueueStatus(false);
                 setQueuePosition(undefined);
@@ -6809,7 +6494,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               );
 
               if (loadingPromiseRef.current) {
-                console.log("[Dashboard] fetchData already in progress (from fileReady), chaining UI cleanup");
                 loadingPromiseRef.current.then(cleanupUI).catch(() => {
                   cleanupUI();
                 });
@@ -6819,13 +6503,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                 const owlThingChildren =
                   classHierarchy.find((n) => n.id === "http://www.w3.org/2002/07/owl#Thing")?.children?.length ?? 0;
                 if (targetProjectId === projectId && owlThingChildren > 0 && metadata) {
-                  console.log("[Dashboard] IMPORT_COMPLETED: project already loaded, skipping redundant fetch");
                   cleanupUI();
                   setIsInitialLoading(false);
                   setIsHierarchyLoading(false);
                 } else {
 
-                  console.log("[Dashboard] No fetchData in progress — server-side import flow, triggering fetchData now");
                   loadingPromiseRef.current = fetchData(targetProjectId, false, initialProjectId)
                     .then(() => {
                       loadingPromiseRef.current = null;
@@ -6840,12 +6522,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               setTimeout(() => fetchProjects(), 500);
             } else {
-              console.log("[Dashboard] Import completed for different project - not auto-loading");
             }
           }
 
           if (message.status.type === "IMPORT_FAILED") {
-            console.log("[Dashboard] ❌ IMPORT_FAILED for project:", message.status.projectId);
             console.error("[Dashboard] Error details:", {
               statusMessage: message.status.statusMessage,
               error: message.status.metadata?.error,
@@ -6864,25 +6544,18 @@ const Dashboard: React.FC<DashboardProps> = ({
               errorMessage.includes("UnknownHostException")
             ) {
               displayError = "Cannot connect to the ontology service. Please ensure backend services are running.";
-              console.log("[Dashboard] 🔄 Translated error to user-friendly message (UnknownHost)");
             } else if (errorMessage.includes("Connection refused") || errorMessage.includes("ConnectException")) {
               displayError = "Ontology service connection refused. Please verify backend services are running.";
-              console.log("[Dashboard] 🔄 Translated error to user-friendly message (Connection refused)");
             } else if (errorMessage.includes("HTTP error code 404")) {
               displayError = "Ontology data store not found or not initialized. Please check service configuration.";
-              console.log("[Dashboard] 🔄 Translated error to user-friendly message (404)");
             } else if (errorMessage.includes("unable to start transaction")) {
               displayError =
                 "Unable to start database transaction. Please verify backend services are running.";
-              console.log("[Dashboard] 🔄 Translated error to user-friendly message (transaction)");
             }
-
-            console.log("[Dashboard] 📝 Display error:", displayError);
 
             notificationService.error("Import Failed", `Failed to import "${projectName}": ${displayError}`);
 
             if (message.status.projectId === projectId) {
-              console.log("[Dashboard] Closing dialogs for current project");
               setLoadFailure({ message: displayError, projectId: message.status.projectId });
               setShowLoadingChoice(false);
               setShowQueueStatus(false);
@@ -6967,11 +6640,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
 
         case "updateLoadingStatus":
-          console.log(
-            "[Dashboard] 📊 Loading status update:",
-            message.message,
-            `(${message.attempt}/${message.maxAttempts})`,
-          );
           setLoadingStatusMessage(message.message);
           break;
 
@@ -7006,7 +6674,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         case "citationFormatted":
 
-          console.log("[Dashboard] 📚 Received formatted citation");
           if (message.citation && message.projectId === projectId) {
 
             setCodeViewContent((prev) => {
@@ -7032,7 +6699,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     };
 
-    console.log("[Dashboard] 📢 Attaching message listener");
     window.addEventListener("message", handleMessage);
 
     const handleImportStatusCustomEvent = (e: Event) => {
@@ -7054,7 +6720,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     window.addEventListener("queueStatsUpdate", handleQueueStatsCustomEvent);
 
     const handleForceClose = () => {
-      console.log("[Dashboard] forceCloseLoadingDialog received — clearing spinner");
       setIsInitialLoading(false);
       setShowLoadingChoice(false);
       setShowQueueStatus(false);
@@ -7071,12 +6736,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     if (window.vscode && !webviewReadySentRef.current) {
       webviewReadySentRef.current = true;
-      console.log("[Dashboard] 📢 Sending webviewReady to extension (first time only)");
       window.vscode.postMessage({ type: "webviewReady" });
     }
 
     return () => {
-      console.log("[Dashboard] 📢 Removing message listener");
       window.removeEventListener("message", handleMessage);
       window.removeEventListener("importStatusUpdate", handleImportStatusCustomEvent);
       window.removeEventListener("queueStatusUpdate", handleQueueStatusCustomEvent);
@@ -7120,7 +6783,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     async (nodeId: string) => {
       if (!projectId) return;
       try {
-        console.log(`[loadChildren] Loading children for node: ${nodeId}`);
 
         const findNode = (nodes: TreeNode[]): TreeNode | undefined => {
           for (const n of nodes) {
@@ -7143,7 +6805,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         });
 
         if (alreadyLoaded) {
-          console.log(`[loadChildren] ⚡ Children already loaded for node: ${nodeId}, skipping API call`);
           return;
         }
 
@@ -7258,14 +6919,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const updateItemInState = useCallback(
     (updatedItem: SelectableItem, markUnsaved: boolean = true) => {
-      console.log("[DEBUG] updateItemInState called for item:", updatedItem.id, "markUnsaved:", markUnsaved);
-      console.log("[CHANGE TRACKING] Entity updated:", {
-        entityId: updatedItem.id,
-        entityLabel: updatedItem.label,
-        entityType: entitiesTab,
-        modifiedBy: user?.username || "anonymous",
-        timestamp: new Date().toISOString(),
-      });
 
       const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
         return items.map((item) => {
@@ -7289,7 +6942,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       setSelectedItem((prev) => {
         if (prev?.id === updatedItem.id) {
-          console.log("[Dashboard] Updating selected item in state (ID match)");
           return updatedItem;
         }
         return prev;
@@ -7330,7 +6982,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshClassHierarchy = useCallback(async () => {
     if (!projectId) return;
     if (shouldDeferHierarchyDuringFileOpen()) {
-      console.log("[Dashboard] Deferring class hierarchy refresh during file open");
       return;
     }
     const now = Date.now();
@@ -7354,7 +7005,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}&userId=${encodeURIComponent(refreshUserId)}${refreshDraftScopeParam}&_t=${now}`);
 
       if (projectIdRef.current !== requestedProjectId) {
-        console.log("[Dashboard] Discarding stale class hierarchy response for", requestedProjectId, "— now viewing", projectIdRef.current);
         return;
       }
 
@@ -7412,7 +7062,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       const hierarchyWithCounts = applyInstanceCountsToTree([owlThingNode], classInstanceCounts);
       setClassHierarchy(hierarchyWithCounts);
       setIsHierarchyLoading(false);
-      console.log("[Dashboard] ✅ Class hierarchy refreshed via refreshClassHierarchy");
 
       const owlThing = "http://www.w3.org/2002/07/owl#Thing";
       const seenIds = new Set<string>();
@@ -7423,7 +7072,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         try {
           await loadChildren(nodeId);
         } catch (err) {
-          console.log(`[Dashboard] Could not reload children for ${nodeId}:`, err);
         }
       }
     } catch (error: any) {
@@ -7506,13 +7154,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "Classes") return;
     if (shouldDeferHierarchyDuringFileOpen()) return;
 
-    console.log("[Dashboard] Classes tab active, view mode:", currentHierarchyViewMode);
     if (currentHierarchyViewMode === "inferred") {
 
-      console.log("[Dashboard] Loading inferred hierarchy from API...");
       loadInferredHierarchy();
     } else {
-      console.log("[Dashboard] Refreshing asserted hierarchy...");
       refreshClassHierarchy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7700,7 +7345,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         const res = await apiClient.get<any>(`/api/ontology/cache-status/${encodeProjectId(projectId)}`);
         const ready = res?.owlapiReady ?? res?.data?.owlapiReady;
         if (ready && !cancelled) {
-          console.log("[Dashboard] Desktop deferred hierarchy — OWLAPI now ready, rendering once");
           applyOwlapiReady(res);
           return;
         }
@@ -7727,10 +7371,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "ObjectProperties") return;
-    console.log("[Dashboard] ObjectProperties tab active, view mode:", hierarchyViewModes.ObjectProperties);
     if (hierarchyViewModes.ObjectProperties === "inferred") {
 
-      console.log("[Dashboard] Loading inferred object property hierarchy from API...");
       loadInferredObjectPropertyHierarchy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7738,10 +7380,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "DataProperties") return;
-    console.log("[Dashboard] DataProperties tab active, view mode:", hierarchyViewModes.DataProperties);
     if (hierarchyViewModes.DataProperties === "inferred") {
 
-      console.log("[Dashboard] Loading inferred data property hierarchy from API...");
       loadInferredDataPropertyHierarchy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7787,8 +7427,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       const customEvent = event as CustomEvent;
       const edit = customEvent.detail;
 
-      console.log("[Dashboard] 🔄 Handling remote edit event:", edit);
-
       if (!projectId) {
         console.warn("[Dashboard] No project ID, cannot apply remote edit");
         return;
@@ -7803,18 +7441,15 @@ const Dashboard: React.FC<DashboardProps> = ({
         const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
         const currentUserId = user?.email || user?.userId;
         if (editUserId && currentUserId && editUserId === currentUserId) {
-          console.log("[Dashboard] ⏭️ Skipping refresh - edit was made by current user");
           return;
         }
       }
 
       switch (edit.type) {
         case "CLASS_ADDED":
-          console.log("[Dashboard] 📚 Class added by another user, refreshing hierarchy");
 
           if ((edit as any).parent) {
             const parentId = (edit as any).parent;
-            console.log(`[Dashboard] Refreshing children of parent: ${parentId}`);
             loadChildren(parentId);
           } else {
 
@@ -7823,7 +7458,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           break;
 
         case "CLASS_DELETED":
-          console.log("[Dashboard] 🗑️ Class deleted by remote user, removing from tree then refreshing");
           {
 
             const deletedId =
@@ -7857,11 +7491,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         case "CLASS_MODIFIED":
         case "CLASS_RENAMED":
-          console.log("[Dashboard] ✏️ Class modified/renamed:", edit);
 
           const classId = (edit as any).nodeId || (edit as any).iri || (edit as any).id;
           if (classId) {
-            console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
             const userId = user?.email || user?.userId;
             const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
 
@@ -7879,9 +7511,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     ...details,
                     id: details.id || details.iri || classId,
                   };
-                  console.log("[Dashboard] Received updated class data:", merged);
                   updateItemInState(merged);
-                  console.log("[Dashboard] ✅ Class updated in state");
                 })
                 .catch((error) => console.error("[Dashboard] Failed to refresh class details:", error));
             }, 200);
@@ -7895,7 +7525,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "ANNOTATION_ADDED":
         case "ANNOTATION_MODIFIED":
         case "ANNOTATION_DELETED":
-          console.log("[Dashboard] 📝 Refreshing annotation due to annotation edit:", edit);
 
           setTimeout(() => {
 
@@ -7905,12 +7534,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               const editSubject = (edit as any).subject || (edit as any).iri || (edit as any).id;
 
               if (editSubject && editSubject !== entityId) {
-                console.log(
-                  `[Dashboard] Edit subject (${editSubject}) does not match selected item (${entityId}), but refreshing anyway to be safe`,
-                );
               }
-
-              console.log(`[Dashboard] Refreshing selected item: ${entityId}`);
 
               let url: string;
               if (entitiesTab === "ObjectProperties" || entitiesTab === "DataProperties" || entitiesTab === "AnnotationProperties") {
@@ -7930,14 +7554,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                     newData.id = newData.iri;
                   }
 
-                  console.log("[Dashboard] Received updated entity data:", newData);
-
                   updateItemInState(newData);
-                  console.log("[Dashboard] ✅ Selected item refreshed with new annotations");
                 })
                 .catch((error) => console.error("[Dashboard] Failed to refresh selected item:", error));
             } else {
-              console.log("[Dashboard] No item selected, skipping annotation refresh");
             }
           }, 200); // 200ms delay
           break;
@@ -7945,7 +7565,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "PROPERTY_ADDED":
         case "PROPERTY_MODIFIED":
         case "PROPERTY_DELETED":
-          console.log("[Dashboard] 🔗 Refreshing all properties due to property edit");
 
           refreshProperties();
 
@@ -7955,33 +7574,28 @@ const Dashboard: React.FC<DashboardProps> = ({
         case "INDIVIDUAL_ADDED":
         case "INDIVIDUAL_MODIFIED":
         case "INDIVIDUAL_DELETED":
-          console.log("[Dashboard] 👤 Refreshing individuals due to individual edit");
 
           apiClient
             .get(withDraftScope(`/api/ontology/individuals/${projectId}`))
             .then((response) => {
               setIndividuals(response.data || []);
-              console.log("[Dashboard] ✅ Individuals refreshed");
             })
             .catch((error) => console.error("[Dashboard] Failed to refresh individuals:", error));
           break;
 
         case "SPARQL_UPDATE":
-          console.log("[Dashboard] 📊 SPARQL update detected, refreshing all data");
           showNotification(`${(edit as any).username || "Someone"} executed a SPARQL update. Refreshing...`, "info");
 
           fetchData(projectId, false);
           break;
 
         case "CHANGE_REVERTED":
-          console.log("[Dashboard] ⏪ Change reverted, refreshing all data");
           showNotification(`${(edit as any).username || "Someone"} reverted a change. Refreshing...`, "info");
 
           fetchData(projectId, false);
           break;
 
         case "PROJECT_SAVED":
-          console.log("[Dashboard] 💾 Project saved by another user");
           showNotification(
             `${(edit as any).username || "Someone"} saved the project with ${(edit as any).appliedChanges || 0} changes`,
             "info",
@@ -7992,23 +7606,19 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         case "DISJOINT_ADDED":
         case "DISJOINT_REMOVED":
-          console.log("[Dashboard] 🔗 Disjoint axiom changed, refreshing class hierarchy");
           refreshClassHierarchy();
           break;
 
         case "EQUIVALENT_ADDED":
         case "EQUIVALENT_REMOVED":
-          console.log("[Dashboard] ⚖️ Equivalent class axiom changed, refreshing selected item:", edit);
 
           if (selectedItem && selectedItem.id === (edit as any).nodeId) {
-            console.log("[Dashboard] Refreshing selected class details for equivalent axiom change");
 
             setTimeout(() => {
               apiClient
                 .get(withDraftScope(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`))
                 .then((response) => {
                   const details = response?.data?.data || response?.data || response;
-                  console.log("[Dashboard] ✅ Class details refreshed with equivalent axioms:", details);
                   updateItemInState({
                     ...selectedItem,
                     equivalentClassesAxioms: details.equivalentClassesAxioms || [],
@@ -8021,17 +7631,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         case "SUBCLASS_ADDED":
         case "SUBCLASS_REMOVED":
-          console.log("[Dashboard] ⬆️ Subclass axiom changed, refreshing selected item:", edit);
 
           if (selectedItem && selectedItem.id === (edit as any).nodeId) {
-            console.log("[Dashboard] Refreshing selected class details for subclass axiom change");
 
             setTimeout(() => {
               apiClient
                 .get(withDraftScope(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(selectedItem.id)}`))
                 .then((response) => {
                   const details = response?.data?.data || response?.data || response;
-                  console.log("[Dashboard] ✅ Class details refreshed with subclass axioms:", details);
                   updateItemInState({
                     ...selectedItem,
                     subClassOfAxioms: details.subClassOfAxioms || [],
@@ -8049,21 +7656,18 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         case "IMPORT_ADDED":
         case "IMPORT_REMOVED":
-          console.log("[Dashboard] 📦 Import changed by remote user, refreshing imports");
           refreshOntologyImports();
           break;
 
         case "ONTOLOGY_ANNOTATION_ADDED":
         case "ONTOLOGY_ANNOTATION_MODIFIED":
         case "ONTOLOGY_ANNOTATION_DELETED":
-          console.log("[Dashboard] 📝 Ontology annotation changed by remote user, refreshing");
           refreshOntologyAnnotations();
           break;
 
         case "SWRL_RULE_ADDED":
         case "SWRL_RULE_MODIFIED":
         case "SWRL_RULE_DELETED":
-          console.log("[Dashboard] 📏 SWRL rule changed by remote user, notifying SWRL plugin");
           showNotification(
             `${(edit as any).username || "Someone"} ${
               edit.type === "SWRL_RULE_ADDED" ? "added" : edit.type === "SWRL_RULE_MODIFIED" ? "modified" : "deleted"
@@ -8075,7 +7679,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         case "GCI_ADDED":
         case "GCI_REMOVED":
-          console.log("[Dashboard] 🔢 GCI changed by remote user, refreshing GCIs");
           apiClient
             .get(withDraftScope(`/api/ontology/metadata/${projectId}/gci`))
             .then((response) => {
@@ -8091,35 +7694,29 @@ const Dashboard: React.FC<DashboardProps> = ({
                   }))
                 : [];
               setGeneralClassAxioms(gcis);
-              console.log("[Dashboard] ✅ GCIs refreshed");
             })
             .catch((error) => console.error("[Dashboard] Failed to refresh GCIs:", error));
           break;
 
         default:
-          console.log("[Dashboard] 🔄 Generic remote edit, refreshing metadata");
 
           apiClient
             .get(`/api/ontology/metadata/${projectId}?userId=${encodeURIComponent(resolveMutationActor(user?.userId || user?.email, user?.username).userId)}${isDraftScopeActive() ? "&draft=true" : ""}`)
             .then((response) => {
               setMetadata(response.data);
-              console.log("[Dashboard] ✅ Metadata refreshed");
             })
             .catch((error) => console.error("[Dashboard] Failed to refresh metadata:", error));
       }
 
       if (collaborationPanelRef.current) {
-        console.log("[Dashboard] 🔄 Refreshing collaboration panel changes");
         collaborationPanelRef.current.refreshChanges();
       }
     };
 
     window.addEventListener("remoteEditReceived", handleRemoteEdit as EventListener);
-    console.log("[Dashboard] 🎧 Registered listener for remote edits");
 
     return () => {
       window.removeEventListener("remoteEditReceived", handleRemoteEdit as EventListener);
-      console.log("[Dashboard] 🎧 Unregistered listener for remote edits");
     };
   }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
@@ -8127,7 +7724,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     const handleRollback = (event: Event) => {
       const customEvent = event as CustomEvent;
       const detail = customEvent.detail;
-      console.log("[Dashboard] 🔄 Rollback event received:", detail);
 
       if (!projectId || detail?.projectId !== projectId) {
         return;
@@ -8151,8 +7747,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       const isAddedRollback = detail.action && detail.action.toLowerCase() === "added";
 
       if (isAddedRollback) {
-
-        console.log("[Dashboard] 🗑️ Rollback of added change - removing entity from UI:", detail.entityIRI);
 
         if (selectedItem?.id === detail.entityIRI) {
           setSelectedItem(null);
@@ -8190,8 +7784,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       setTimeout(() => {
 
         if (detail?.entityIRI) {
-          console.log("[Dashboard] 🔄 Refreshing entity details after rollback for:", detail.entityIRI);
-          console.log("[Dashboard] 🔄 Entity type from event:", detail.entityType, "Current tab:", entitiesTab);
 
           const entityType = detail.entityType ? detail.entityType.toLowerCase() : "";
           let apiEndpoint = "";
@@ -8217,8 +7809,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             apiEndpoint = `/api/ontology/${projectId}/individuals/${encodeURIComponent(detail.entityIRI)}`;
           } else {
 
-            console.log("[Dashboard] 🔄 No specific tab match, using current entitiesTab:", entitiesTab);
-
             apiEndpoint = `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(detail.entityIRI)}`;
           }
 
@@ -8230,8 +7820,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 if (!newData.id && newData.iri) {
                   newData.id = newData.iri;
                 }
-                console.log("[Dashboard] ✅ Refreshed entity after rollback:", newData);
-                console.log("[Dashboard] 📝 Updated label:", newData.label);
 
                 updateItemInState(newData, false);
 
@@ -8242,7 +7830,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 const isAnnotationChange = entityType.includes("annotation") || (oldValue && newValue); // Has old/new values = annotation change
 
                 if (isAnnotationChange && (entitiesTab === "Classes" || entityType.includes("class"))) {
-                  console.log("[Dashboard] 📝 Soft refresh: updating class node annotations in place");
 
                   setClassHierarchy((prevHierarchy) => {
                     const updateNodeInTree = (nodes: TreeNode[]): TreeNode[] => {
@@ -8279,12 +7866,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               .catch((error) => {
                 console.error("[Dashboard] Failed to refresh entity after rollback:", error);
 
-                console.log("[Dashboard] Attempting full data refresh after rollback error");
                 if (projectId) fetchData(projectId, false);
               });
           } else {
 
-            console.log("[Dashboard] No API endpoint matched, doing full refresh");
             if (projectId) fetchData(projectId, false);
           }
         }
@@ -8292,7 +7877,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
 
     window.addEventListener("ontologyRollback", handleRollback as EventListener);
-    console.log("[Dashboard] 🎧 Registered listener for rollback events");
 
     return () => {
       window.removeEventListener("ontologyRollback", handleRollback as EventListener);
@@ -8301,7 +7885,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     const handleFileShared = (event: CustomEvent) => {
-      console.log("[Dashboard] 📨 File shared event received:", event.detail);
       const notification = event.detail;
 
       showToast(
@@ -8310,7 +7893,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
 
       if (projectId) {
-        console.log("[Dashboard] Refreshing data after file share...");
         setTimeout(() => {
           fetchData(projectId, false);
         }, 500);
@@ -8318,7 +7900,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
 
     window.addEventListener("fileShared", handleFileShared as EventListener);
-    console.log("[Dashboard] 🎧 Registered listener for file share events");
 
     return () => {
       window.removeEventListener("fileShared", handleFileShared as EventListener);
@@ -8327,7 +7908,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     const handleReconnection = (event: Event) => {
-      console.log("[Dashboard] 🔄 Collaboration reconnected, refreshing data...");
       if (projectId) {
         showNotification("Reconnected! Refreshing data...", "info");
 
@@ -8392,7 +7972,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             setPluginLoadingStates((prev) => ({ ...prev, [plugin.id]: { loading: true, error: null } }));
 
             await pluginLoader.loadPlugin(plugin.id);
-            console.log(`[Dashboard] Auto-loaded plugin: ${plugin.id}`);
 
             setPluginLoadingStates((prev) => ({ ...prev, [plugin.id]: { loading: false, error: null } }));
 
@@ -8408,7 +7987,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         });
 
         await Promise.all(loadPluginPromises);
-        console.log(`[Dashboard] All plugins loaded in parallel`);
       } catch (error) {
         console.error("[Dashboard] Failed to load installed plugins:", error);
       }
@@ -8583,9 +8161,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
     try {
       const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-      console.log("[Dashboard] Updating draft count for project:", projectId, "user:", effectiveUserId);
       const stats = await draftTrackingService.getDraftStats(projectId, effectiveUserId);
-      console.log("[Dashboard] Draft stats received:", stats);
       setDraftCount(stats.unappliedDrafts);
       setHasUnsavedChanges(stats.unappliedDrafts > 0);
     } catch (error) {
@@ -8616,12 +8192,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         } : prev);
       }
     } catch (err) {
-      console.debug("[Dashboard] Silent metadata refresh failed:", err);
     }
   }, [projectId, user]);
 
   const markAsUnsaved = useCallback(() => {
-    console.log("[DEBUG] markAsUnsaved called");
     codeViewDirtyRef.current = true;
     if (!isLiveWriteMode()) {
       setHasUnsavedChanges(true);
@@ -8647,14 +8221,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     }, 3000);
 
     if (isReasonerSynced && isReasonerRunning && projectId) {
-      console.log("[DEBUG] Auto-sync: Re-running reasoner after ontology change");
 
       setTimeout(async () => {
         try {
           const reasonerType = normalizeReasonerType(selectedReasoner);
           const results = await fetchReasonerBundle(reasonerType);
           setReasonerResults(results);
-          console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
         } catch (error) {
           console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
         }
@@ -8670,7 +8242,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     const forcePublish = options?.force ?? false;
     const mergePublish = options?.merge ?? false;
     const mergeResolutions = options?.resolutions;
-    console.log("[DEBUG] handleSave called", { forcePublish, mergePublish });
     if (!projectId || isSaving) return;
 
     if (isDesktop()) {
@@ -8695,7 +8266,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     const performSave = async (force: boolean, merge: boolean, resolutions?: Record<string, { action: string }>) => {
       setIsSaving(true);
-      console.log("[Dashboard] 💾 Saving changes to backend...");
 
       syncService.notifyLocalSave(projectId);
 
@@ -8707,11 +8277,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (force) params.set("force", "true");
       if (merge) params.set("merge", "true");
       const saveUrl = `/api/ontology/save/${projectId}?${params.toString()}`;
-      console.log("[Dashboard] 📤 Save URL:", saveUrl);
       const response = await apiClient.post(saveUrl, merge && resolutions ? resolutions : undefined);
       const duration = Date.now() - startTime;
-
-      console.log(`[Dashboard] Save response received after ${duration}ms:`, response);
 
       const data = response.data || response;
 
@@ -8787,8 +8354,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSwitchFile = useCallback(
     (newProjectId: string) => {
       const switchFile = async () => {
-        console.log("[Dashboard] 🔄 Switching to file:", newProjectId);
-        console.log("[Dashboard] 🧹 Clearing current state for:", projectId);
 
         setClassHierarchy([]);
         setObjectProperties([]);
@@ -8823,16 +8388,13 @@ const Dashboard: React.FC<DashboardProps> = ({
           });
         } else {
 
-          console.log("[Dashboard] 🌐 Browser mode - loading file via fetchData:", newProjectId);
           setIsInitialLoading(true);
           fetchData(newProjectId, true);
         }
 
-        console.log("[Dashboard] ✅ State cleared, loading new file:", newProjectId);
       };
 
       if (!hasUnsavedChanges || draftCount === 0) {
-        console.log("[Dashboard] No unsaved changes, switching directly");
         switchFile();
         return;
       }
@@ -8907,7 +8469,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       if (fileLoadingRef.current && lastLoadedFileRef.current === fileId) {
-        console.log("[Dashboard] Skipping duplicate handleLoadProjectFile call for:", fileId);
         return;
       }
 
@@ -8915,7 +8476,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const ontologyProjectIdCheck = `${initialProjectId}--${fileId}`;
       if (projectId === ontologyProjectIdCheck && classHierarchy.length > 0) {
-        console.log("[Dashboard] ✅ File already loaded, skipping re-fetch:", fileId);
         setActiveFileId(fileId);
         setActiveFileName(fileName);
         if (onFileSelected && isMountedRef.current) onFileSelected(fileId, fileName);
@@ -8924,10 +8484,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       try {
         const loadFilePerfStart = Date.now();
-        console.log(
-          `[Dashboard] [PERF] ⏱️ handleLoadProjectFile started at ${new Date().toISOString()} for file: ${fileName} (${fileId})`,
-        );
-        console.log("[Dashboard] 📂 Loading file from project:", fileId, fileName);
 
         lastLoadedFileRef.current = fileId;
         fileLoadingRef.current = true;
@@ -8958,10 +8514,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
 
           if (graphCheck?.exists && (graphCheck.graphSize ?? 0) > 0) {
-            console.log(
-              `[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (HIT: ${graphCheck.graphSize} triples)`,
-            );
-            console.log(`[Dashboard] ⚡ File already in GraphDB (${graphCheck.graphSize} triples), loading directly`);
             notificationService.info("Loading", `Loading ${fileName} from cache...`);
             await fetchData(ontologyProjectId, false, initialProjectId, true);
             setShowLoadingChoice(false);
@@ -8975,7 +8527,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         } catch (checkErr) {
           console.warn("[Dashboard] GraphDB check failed, falling back to full upload:", checkErr);
-          console.log(`[Dashboard] [PERF] GraphDB cache check: ${Date.now() - loadFilePerfStart}ms (MISS/ERROR)`);
         }
 
         if (isViewOnlyMember) {
@@ -8992,7 +8543,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         notificationService.info("Loading File", `Loading ${fileName}...`);
 
-        console.log("[Dashboard] 🔄 Resetting state for new file...");
         setClassHierarchy([]);
         setObjectProperties([]);
         setDataProperties([]);
@@ -9039,12 +8589,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           throw new Error(importResult?.message || "Failed to trigger server-side import");
         }
 
-        console.log(
-          `[Dashboard] [PERF] Server-side import dispatched: ${Date.now() - loadFilePerfStart}ms`,
-        );
-
         if ((importResult as any)?.status === "ALREADY_LOADED") {
-          console.log("[Dashboard] ✅ Desktop cache hit (ALREADY_LOADED) — fetching data directly");
           pendingImportProjectIdRef.current = null;
           setPendingImportProjectId(null);
           setInImportQueue(false);
@@ -9052,9 +8597,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           await fetchData(ontologyProjectId, false, initialProjectId, true);
           return;
         }
-
-        console.log("[Dashboard] ✅ Server-side import triggered via uploadByFileRef");
-        console.log("[Dashboard] Pending import project:", ontologyProjectId);
 
         const poll = (window as any).electronAPI?.pollImportStatus;
         if (isDesktop() && poll) poll(ontologyProjectId);
@@ -9095,7 +8637,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           const age = Date.now() - draft.timestamp;
 
           if (age < 24 * 60 * 60 * 1000) {
-            console.log("[Dashboard] Found draft, restoring...", draft);
 
             setHasUnsavedChanges(true);
           } else {
@@ -9284,7 +8825,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       oldLang?: string,
       oldDatatype?: string,
     ) => {
-      console.log("[Dashboard] handleAnnotationDialogEdit called with:", propertyIri, oldValue, newValue);
       if (!projectId) return;
 
       const isEntityAnnotation = mainTab !== "ActiveOntology" && !!selectedItem;
@@ -9576,7 +9116,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
 
     try {
-      console.log("[refreshProperties] Starting property refresh...");
       if (isDesktop()) {
         await waitForDesktopOwlApiReady(projectId);
       } else {
@@ -9597,10 +9136,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             ? propertiesRes
             : [];
 
-      console.log("[refreshProperties] Total properties fetched:", allProps.length);
-
       const opList = allProps.filter((p: any) => p.type === "ObjectProperty");
-      console.log("[refreshProperties] Object properties:", opList.length);
       setObjectProperties((prev: Property[]) => {
         const prevMap = new Map(prev.map((p: Property) => [p.id, p]));
         return opList.map((freshProp: Property) => {
@@ -9612,8 +9148,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           return freshProp;
         });
       });
-
-      console.log("[Dashboard] ✅ Properties refreshed");
 
       const opMap = new Map<string, TreeNode>();
       opList.forEach((p: any) => {
@@ -9655,16 +9189,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       });
 
-      console.log(
-        "[refreshProperties] Built object property hierarchy with",
-        topOpNode.children?.length,
-        "top-level properties",
-      );
-
       setObjectPropertyHierarchy([{ ...topOpNode, children: [...(topOpNode.children || [])] }]);
 
       const dpList = allProps.filter((p: any) => p.type === "DatatypeProperty");
-      console.log("[refreshProperties] Data properties:", dpList.length);
       setDataProperties((prev: Property[]) => {
         const prevMap = new Map(prev.map((p: Property) => [p.id, p]));
         return dpList.map((freshProp: Property) => {
@@ -9716,14 +9243,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
       });
 
-      console.log(
-        "[refreshProperties] Built data property hierarchy with",
-        topDpNode.children?.length,
-        "top-level properties",
-      );
-
       setDataPropertyHierarchy([{ ...topDpNode, children: [...(topDpNode.children || [])] }]);
-      console.log("[refreshProperties] Property refresh complete");
     } catch (error) {
       console.error("Failed to refresh properties:", error);
     }
@@ -9856,7 +9376,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       try {
-        console.log("[handleAddObjectProperty] Creating property:", name, "type:", type, "parentId:", parentId);
         const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
         const cleanName = (name || "NewObjectProperty").replace(/\s+/g, "_");
         const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
@@ -9872,7 +9391,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }
 
-        console.log("[handleAddObjectProperty] Creating with IRI:", newIri, "parent:", parentIri);
         await ontologyMutationService.createObjectProperty(
           projectId,
           newIri,
@@ -9882,11 +9400,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           user?.username || "Anonymous",
         );
 
-        console.log("[handleAddObjectProperty] Property created, refreshing...");
-
         await new Promise((resolve) => setTimeout(resolve, 300));
         await refreshProperties();
-        console.log("[handleAddObjectProperty] Refresh complete");
         showNotification(`Object property "${name}" created successfully!`);
       } catch (error) {
         console.error("Failed to create object property:", error);
@@ -9906,7 +9421,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       try {
-        console.log("[handleAddDataProperty] Creating property:", name, "type:", type, "parentId:", parentId);
         const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
         const cleanName = (name || "NewDataProperty").replace(/\s+/g, "_");
         const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
@@ -9922,7 +9436,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }
 
-        console.log("[handleAddDataProperty] Creating with IRI:", newIri, "parent:", parentIri);
         await ontologyMutationService.createDataProperty(
           projectId,
           newIri,
@@ -9932,11 +9445,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           user?.username || "Anonymous",
         );
 
-        console.log("[handleAddDataProperty] Property created, refreshing...");
-
         await new Promise((resolve) => setTimeout(resolve, 300));
         await refreshProperties();
-        console.log("[handleAddDataProperty] Refresh complete");
         showNotification(`Data property "${name}" created successfully!`);
       } catch (error) {
         console.error("Failed to create data property:", error);
@@ -9956,7 +9466,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       try {
-        console.log("[handleAddClassInline] Creating class:", name, "type:", type, "parentId:", parentId);
         const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
         const cleanName = (name || "NewClass").replace(/\s+/g, "_");
         const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
@@ -9972,7 +9481,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         }
 
-        console.log("[handleAddClassInline] Creating with IRI:", newIri, "parent:", parentIri);
         await ontologyMutationService.createClass(
           projectId,
           newIri,
@@ -10050,7 +9558,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         await loadChildren(parentIri);
 
-        console.log("[handleAddClassInline] Refresh complete");
         showNotification(`Class "${name}" created successfully!`);
       } catch (error) {
         console.error("Failed to create class:", error);
@@ -10689,7 +10196,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
 
   const handleMakeSiblingsDisjoint = useCallback(async () => {
-    console.log("[DEBUG] handleMakeSiblingsDisjoint called");
     const activeEntitiesTab =
       mainTab === "IndividualsByClass" ? "Classes" : entitiesTab;
     const activeSelectedItem =
@@ -10735,7 +10241,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           );
 
           showNotification(`Successfully made ${classIds.length} classes pairwise disjoint.`, "info");
-          console.log(`[MUTATION:disjoint] ✓ ${classIds.length} classes — refreshing hierarchy`);
 
           lastClassHierarchyRefreshAt.current = 0;
           refreshClassHierarchy();
@@ -10828,7 +10333,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         setMetadata((prev) =>
           prev ? { ...prev, classCount: Math.max(0, ((prev as any).classCount || 0) - iris.length) } : prev,
         );
-        console.log(`[MUTATION:delete] ✓ Classes:${iris.join(", ")}`);
         showNotification(
           iris.length > 1 ? `Deleted ${iris.length} classes successfully!` : "Class deleted successfully!",
           "info",
@@ -10877,7 +10381,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         onConfirm: async () => {
           isMutatingRef.current = true;
           try {
-            console.log("[DELETE] Deleting item:", { id: item.id, label: item.label, tab: activeTab });
 
             switch (activeTab) {
               case "Individuals":
@@ -10974,7 +10477,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 prev ? { ...prev, [countField]: Math.max(0, ((prev as any)[countField] || 0) - 1) } : prev,
               );
             }
-            console.log(`[MUTATION:delete] ✓ ${activeTab}:${item.id}`);
             showNotification(`"${item.label}" deleted successfully!`, "info");
           } catch (error) {
             console.error("Failed to delete item:", error);
@@ -11018,7 +10520,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleRenameItem = useCallback(
     async (itemId: string, newLabel: string) => {
       if (isViewOnlyMember) { handleViewOnlyAction(); return; }
-      console.log("[DEBUG] handleRenameItem called for itemId:", itemId, "newLabel:", newLabel);
       if (!projectId || !newLabel.trim()) return;
 
       try {
@@ -11067,7 +10568,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             return next;
           });
         }
-        console.log(`[MUTATION:rename] ✓ ${itemId} → "${newLabel}", annotProp cache updated:`, hierarchyAnnotationPropIri === "http://www.w3.org/2000/01/rdf-schema#label");
         showNotification(`Renamed to "${newLabel}"`, "info");
       } catch (error) {
         console.error("Failed to rename item:", error);
@@ -11504,7 +11004,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId || !dlQuery.trim()) return;
     try {
       await ontologyMutationService.addDlQueryClass(projectId, dlQuery, dlQuery, user?.email);
-      console.log("DL expression submitted to backend.");
     } catch (e) {
       console.warn("DL add endpoint not available; skipping.", e);
     }
@@ -11522,15 +11021,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       setCodeViewLintIssues([]);
 
       if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
-        console.log("[Dashboard] Same format clicked, content already loaded");
         return;
       }
 
       if (forceRefresh) {
-        console.log("[Dashboard] Force refresh - clearing code view cache");
         try {
           await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
-          console.log("[Dashboard] Code view cache cleared");
         } catch (cacheError) {
           console.warn("[Dashboard] Failed to clear code view cache:", cacheError);
         }
@@ -11613,9 +11109,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setHasLocalCodeViewChanges(false);
           codeViewDirtyRef.current = false;
           if (response.cached) {
-            console.log("[Dashboard] Content loaded from cache (line positions preserved)");
           } else {
-            console.log("[Dashboard] Content loaded fresh from GraphDB");
           }
         } else {
           console.error("[Dashboard] Code view content fetch returned success=false:", response.error);
@@ -11737,13 +11231,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       },
     };
 
-    console.log("[Dashboard] Manual citation created:", manualCitation);
-
     setPendingCitation(manualCitation);
     setCitationInsertionMode(true);
     setShowManualCitationDialog(false);
 
-    console.log("[Dashboard] Citation insertion mode enabled - search for location to insert");
   }, []);
 
   const handleCodeContentChange = useCallback(
@@ -11756,7 +11247,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       } else {
         setCodeViewSyntaxError(null); // clear error as user edits; re-validated on save
       }
-      console.log("[Dashboard] Code view content updated via editing");
     },
     [codeViewFormat],
   );
@@ -11841,12 +11331,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       lastCodeViewSaveContentRef.current = content;
       setSavingCodeView(true);
       try {
-        console.log(
-          "[Dashboard] Saving code view content to backend, format:",
-          codeViewFormat,
-          "size:",
-          content.length,
-        );
 
         let response: any;
         try {
@@ -11874,7 +11358,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
 
         if (response.success) {
-          console.log("[MUTATION:code-save] ✓ synced — refreshing hierarchy+properties");
           notificationService.success("Saved", "Code content saved and synced across all formats");
           setHasLocalCodeViewChanges(false);
           setCodeViewSyntaxError(null);
@@ -11943,13 +11426,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         const lines = codeViewContent.split("\n");
 
-        console.log("[Dashboard] Citation insertion triggered at line:", lineNumber);
-        console.log("[Dashboard] Total lines in content:", lines.length);
-        console.log("[Dashboard] Pending citation:", pendingCitation);
-        console.log("[Dashboard] Citation data extracted:", citationData);
-
         insertAtIndex = Math.max(0, Math.min(lineNumber, lines.length));
-        console.log("[Dashboard] Citation will be inserted at index:", insertAtIndex);
 
         const clickedLine = lines[Math.min(lineNumber, lines.length - 1)] || "";
         let referencedEntity = "";
@@ -12002,73 +11479,53 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         const ntriplesSubjectMatch = clickedLine.match(/^([<][^>]+[>])\s+[<]/);
 
-        console.log("[Dashboard] Entity extraction patterns - checking in priority order...");
-        console.log("[Dashboard] Clicked line:", clickedLine.substring(0, 150));
-
         if (rdfAboutMatch) {
           referencedEntity = rdfAboutMatch[1];
-          console.log("[Dashboard] ✓ Extracted from rdf:about:", referencedEntity);
         } else if (rdfIdMatch) {
           referencedEntity = rdfIdMatch[1];
-          console.log("[Dashboard] ✓ Extracted from rdf:ID:", referencedEntity);
         } else if (owlXmlIriMatch) {
           referencedEntity = owlXmlIriMatch[1];
-          console.log("[Dashboard] ✓ Extracted from IRI attribute:", referencedEntity);
         } else if (owlXmlAbbrevMatch) {
           referencedEntity = owlXmlAbbrevMatch[1];
-          console.log("[Dashboard] ✓ Extracted from abbreviatedIRI:", referencedEntity);
         } else if (rdfResourceMatch) {
           referencedEntity = rdfResourceMatch[1];
-          console.log("[Dashboard] ✓ Extracted from rdf:resource:", referencedEntity);
         } else if (jsonLdIdMatch) {
           referencedEntity = jsonLdIdMatch[1];
-          console.log("[Dashboard] ✓ Extracted from JSON-LD @id:", referencedEntity);
         }
         // PRIORITY 2: Import declarations (HIGH priority for import lines)
         else if (importMatch) {
           referencedEntity = importMatch[1];
-          console.log("[Dashboard] ✓ Extracted from import declaration:", referencedEntity);
         }
         // PRIORITY 3: Full URI in angle brackets
         else if (fullUriMatch) {
           referencedEntity = fullUriMatch[1];
-          console.log("[Dashboard] ✓ Extracted full URI from angle brackets:", referencedEntity);
         }
         // PRIORITY 4: N-Triples subject (full URI)
         else if (ntriplesSubjectMatch) {
           referencedEntity = ntriplesSubjectMatch[1].replace(/^</, "").replace(/>$/, "");
-          console.log("[Dashboard] ✓ Extracted from N-Triples subject:", referencedEntity);
         }
         // PRIORITY 5: Format-specific declarations
         else if (manchesterDeclMatch) {
           referencedEntity = manchesterDeclMatch[1].replace(/^[<:]/, "").replace(/>$/, "");
-          console.log("[Dashboard] ✓ Extracted from Manchester declaration:", referencedEntity);
         } else if (functionalEntityMatch) {
           referencedEntity = functionalEntityMatch[1].replace(/^</, "").replace(/>$/, "");
-          console.log("[Dashboard] ✓ Extracted from Functional syntax:", referencedEntity);
         }
         // PRIORITY 6: OWL axioms and properties
         else if (owlAxiomMatch) {
           referencedEntity = owlAxiomMatch[1].replace(/^</, "").replace(/>$/, "");
-          console.log("[Dashboard] ✓ Extracted from OWL axiom:", referencedEntity);
         } else if (restrictionMatch && !restrictionMatch[1].match(/^\d+$/)) {
           referencedEntity = restrictionMatch[1].replace(/^</, "").replace(/>$/, "");
-          console.log("[Dashboard] ✓ Extracted from restriction:", referencedEntity);
         } else if (annotationMatch && annotationMatch[1]) {
           referencedEntity = annotationMatch[1].replace(/^</, "").replace(/>$/, "");
-          console.log("[Dashboard] ✓ Extracted from annotation:", referencedEntity);
         } else if (swrlMatch) {
           referencedEntity = swrlMatch[1].replace(/^</, "").replace(/>$/, "");
-          console.log("[Dashboard] ✓ Extracted from SWRL rule:", referencedEntity);
         }
         // PRIORITY 7: Prefixed names (lowest priority)
         else if (prefixedNameMatch) {
           referencedEntity = prefixedNameMatch[1];
-          console.log("[Dashboard] ✓ Extracted prefixed name:", referencedEntity);
         }
         // PRIORITY 7: XML element tags (look nearby for entity reference)
         else if (xmlOwlElementMatch) {
-          console.log("[Dashboard] Found OWL XML element tag, looking for nearby entity...");
 
           const nearbyLines = lines
             .slice(Math.max(0, lineNumber - 2), Math.min(lines.length, lineNumber + 3))
@@ -12077,15 +11534,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           const nearbyId = nearbyLines.match(/rdf:ID="([^"]+)"/);
           if (nearbyAbout) {
             referencedEntity = nearbyAbout[1];
-            console.log("[Dashboard] ✓ Extracted from nearby rdf:about:", referencedEntity);
           } else if (nearbyId) {
             referencedEntity = nearbyId[1];
-            console.log("[Dashboard] ✓ Extracted from nearby rdf:ID:", referencedEntity);
           }
         }
 
         if (!referencedEntity) {
-          console.log("[Dashboard] ✗ No entity found from primary patterns, trying fallbacks...");
         }
 
         if (!referencedEntity) {
@@ -12093,7 +11547,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           const anyIriMatch = clickedLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
           if (anyIriMatch) {
             referencedEntity = anyIriMatch[1];
-            console.log("[Dashboard] FALLBACK: Extracted IRI from angle brackets:", referencedEntity);
           }
 
           if (!referencedEntity) {
@@ -12104,12 +11557,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               !anyPrefixedMatch[1].startsWith("https:")
             ) {
               referencedEntity = anyPrefixedMatch[1];
-              console.log("[Dashboard] FALLBACK: Extracted prefixed name:", referencedEntity);
             }
           }
 
           if (!referencedEntity && lineNumber >= 0) {
-            console.log("[Dashboard] SUPER FALLBACK: Searching nearby lines (±3) for entity URL...");
             const contextLines = lines.slice(Math.max(0, lineNumber - 3), Math.min(lines.length, lineNumber + 3));
             for (let i = 0; i < contextLines.length; i++) {
               const contextLine = contextLines[i];
@@ -12120,21 +11571,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               if (contextAbout) {
                 referencedEntity = contextAbout[1];
-                console.log(
-                  `[Dashboard] SUPER FALLBACK: Found rdf:about in line ${lineNumber - 3 + i}:`,
-                  referencedEntity,
-                );
                 break;
               } else if (contextIri) {
                 referencedEntity = contextIri[1];
-                console.log(`[Dashboard] SUPER FALLBACK: Found IRI in line ${lineNumber - 3 + i}:`, referencedEntity);
                 break;
               } else if (contextResource) {
                 referencedEntity = contextResource[1];
-                console.log(
-                  `[Dashboard] SUPER FALLBACK: Found rdf:resource in line ${lineNumber - 3 + i}:`,
-                  referencedEntity,
-                );
                 break;
               }
             }
@@ -12146,7 +11588,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 const contextIri = contextLine.match(/<((?:https?|urn|file):[^\s>]+|[^\s>]*:\/\/[^\s>]+)>/);
                 if (contextIri) {
                   referencedEntity = contextIri[1];
-                  console.log("[Dashboard] SUPER FALLBACK: Found IRI in nearby line:", referencedEntity);
                   break;
                 }
 
@@ -12157,19 +11598,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                   !contextPrefixed[1].startsWith("https:")
                 ) {
                   referencedEntity = contextPrefixed[1];
-                  console.log("[Dashboard] SUPER FALLBACK: Found prefixed name in nearby line:", referencedEntity);
                   break;
                 }
               }
             }
           }
         } // Close aggressive fallback if (!referencedEntity) block started around line 7936
-
-        console.log("[Dashboard] ========== ENTITY EXTRACTION DEBUG ==========");
-        console.log("[Dashboard] Clicked line content:", clickedLine);
-        console.log("[Dashboard] Format:", codeViewFormat);
-        console.log("[Dashboard] Referenced entity extracted:", referencedEntity || "(none detected)");
-        console.log("[Dashboard] =============================================");
 
         const escapeTurtle = (str: string): string => {
           if (!str) return "";
@@ -12490,10 +11924,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           citationLines.push("");
         }
 
-        console.log("[Dashboard] Inserting full citation details at index:", insertAtIndex);
-        console.log("[Dashboard] Citation lines count:", citationLines.length);
-        console.log("[Dashboard] Total lines before insertion:", lines.length);
-
         let modifiedContent: string;
 
         if (codeViewFormat === "jsonld") {
@@ -12520,7 +11950,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           });
           const afterIndex = findGraphInsertionIndex(codeViewContent, lineNumber);
           modifiedContent = insertCitationNodeIntoJsonLd(codeViewContent, citationNode, afterIndex);
-          console.log("[Dashboard] JSON-LD citation node inserted into @graph after index", afterIndex ?? "(end)");
         } else {
 
           if (codeViewFormat === "rdfxml" || codeViewFormat === "owlxml") {
@@ -12555,11 +11984,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             if (rootElementLine >= 0 && insertAtIndex <= rootTagCloseLine) {
 
               insertAtIndex = rootTagCloseLine + 1;
-              console.log(
-                `[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`,
-                insertAtIndex,
-                "to respect XML structure",
-              );
             }
 
             for (let i = lines.length - 1; i >= Math.max(0, lines.length - 10); i--) {
@@ -12567,37 +11991,19 @@ const Dashboard: React.FC<DashboardProps> = ({
               if (trimmed === "</rdf:RDF>" || trimmed === "</Ontology>" || trimmed === "</owl:Ontology>") {
                 if (insertAtIndex > i) {
                   insertAtIndex = i; // Insert before the closing tag
-                  console.log(
-                    `[Dashboard] ${codeViewFormat.toUpperCase()}: Adjusted insertion to line`,
-                    insertAtIndex,
-                    "to stay inside root element",
-                  );
                 }
                 break;
               }
             }
           }
 
-          console.log("[Dashboard] Final insertion index after adjustments:", insertAtIndex);
-
           lines.splice(insertAtIndex, 0, ...citationLines);
-
-          console.log("[Dashboard] Total lines after insertion:", lines.length);
 
           modifiedContent = lines.join("\n");
         }
-        console.log("[Dashboard] Modified content length:", modifiedContent.length, "bytes");
 
         setCodeViewContent(modifiedContent);
         setHasLocalCodeViewChanges(true); // Mark that we have local modifications
-        console.log("[Dashboard] Code view updated locally with full citation at line", insertAtIndex);
-
-        console.log(
-          "[Dashboard] Inserting citation - current format at line",
-          insertAtIndex,
-          ", other formats near entity:",
-          referencedEntity || "(none)",
-        );
 
         const allFormats = ["turtle", "rdfxml", "ntriples", "owlxml", "manchester", "functional", "jsonld"] as const;
         const otherFormats = allFormats.filter((f) => f !== codeViewFormat);
@@ -12817,15 +12223,12 @@ const Dashboard: React.FC<DashboardProps> = ({
             citationUrn: citationUrn,
             referencedEntity: referencedEntity || "",
           });
-          console.log("[Dashboard] Current format cache stored:", codeViewFormat);
-          console.log("[Dashboard] Stored citation-entity mapping:", citationUrn, "->", referencedEntity || "(none)");
         } catch (e) {
           console.warn("[Dashboard] Failed to store current format cache:", e);
         }
 
         function findEntityLocation(content: string, entity: string): number {
           if (!entity) {
-            console.log("[findEntityLocation] No entity provided");
             return -1;
           }
 
@@ -12842,13 +12245,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           localName = localName.replace(/["'>]+$/, "").replace(/^["'<]+/, "");
 
           const prefix = entity.includes(":") && !entity.includes("://") ? entity.split(":")[0] : "";
-
-          console.log(`[findEntityLocation] ========== SEARCHING FOR ENTITY ==========`);
-          console.log(`[findEntityLocation] Full entity: '${entity}'`);
-          console.log(`[findEntityLocation] Local name: '${localName}'`);
-          console.log(`[findEntityLocation] Prefix: '${prefix || "(none)"}'`);
-          console.log(`[findEntityLocation] Total lines to search: ${lines.length}`);
-          console.log(`[findEntityLocation] =============================================`);
 
           const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
           const safeEntity = escapeRegex(entity);
@@ -12960,27 +12356,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               if (matched) {
                 matchCount++;
-                console.log(
-                  `[findEntityLocation] ✓ Match #${matchCount} at line ${lineIdx} (priority ${priority}): ${desc}`,
-                );
-                console.log(
-                  `[findEntityLocation]   Line preview: ${line.substring(0, 120)}${line.length > 120 ? "..." : ""}`,
-                );
 
                 if (priority > bestMatchPriority) {
                   bestMatch = lineIdx;
                   bestMatchPriority = priority;
                   bestMatchDesc = desc;
-                  console.log(`[findEntityLocation]   >>> NEW BEST MATCH (priority ${priority})`);
 
                   if (priority >= 90) {
-                    console.log(
-                      `[findEntityLocation] High-priority match found (${priority} >= 90), using immediately`,
-                    );
                     const endLine = findEntityBlockEnd(lines, lineIdx);
-                    console.log(`[findEntityLocation] ========== MATCH FOUND ==========`);
-                    console.log(`[findEntityLocation] Line: ${lineIdx}, End: ${endLine}, Reason: ${desc}`);
-                    console.log(`[findEntityLocation] ===================================`);
                     return endLine;
                   }
                 }
@@ -12990,23 +12373,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
           if (bestMatch >= 0) {
             const endLine = findEntityBlockEnd(lines, bestMatch);
-            console.log(`[findEntityLocation] ========== BEST MATCH FOUND ==========`);
-            console.log(`[findEntityLocation] Total matches: ${matchCount}`);
-            console.log(`[findEntityLocation] Best match line: ${bestMatch}`);
-            console.log(`[findEntityLocation] Best match priority: ${bestMatchPriority}`);
-            console.log(`[findEntityLocation] Best match reason: ${bestMatchDesc}`);
-            console.log(`[findEntityLocation] Inserting after line: ${endLine}`);
-            console.log(`[findEntityLocation] =====================================`);
             return endLine;
           }
 
-          console.log(`[findEntityLocation] ========== NO MATCH FOUND ==========`);
-          console.log(`[findEntityLocation] Entity '${entity}' not found in ${lines.length} lines`);
-          console.log(`[findEntityLocation] Showing first 10 lines for debugging:`);
           for (let i = 0; i < Math.min(10, lines.length); i++) {
-            console.log(`[findEntityLocation]   Line ${i}: ${lines[i].substring(0, 100)}`);
           }
-          console.log(`[findEntityLocation] ===================================`);
 
           return -1;
         }
@@ -13116,13 +12487,11 @@ const Dashboard: React.FC<DashboardProps> = ({
                 citationUrn: citationUrn,
                 referencedEntity: referencedEntity || "",
               });
-              console.log("[Dashboard] JSON-LD format cache stored with citation node");
               succeededFormats.push(fmt);
               continue;
             }
 
             if (!fmtContent) {
-              console.log(`[Dashboard] Generating minimal ${fmt} skeleton for citation storage`);
               if (fmt === "turtle") {
                 fmtContent = `@prefix owl: <http://www.w3.org/2002/07/owl#> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix dc: <http://purl.org/dc/elements/1.1/> .\n@prefix bibo: <http://purl.org/ontology/bibo/> .\n\n`;
               } else if (fmt === "rdfxml") {
@@ -13141,10 +12510,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             if (fmtContent !== null) {
               const fmtLines = fmtContent.split("\n");
 
-              console.log(
-                `[Dashboard] Processing format ${fmt}: ${fmtLines.length} lines, searching for entity: '${referencedEntity || "(none)"}'`,
-              );
-
               let fmtCitationLines: string[] = [];
               if (fmt === "turtle") {
                 fmtCitationLines = generateTurtleCitationBlock();
@@ -13162,24 +12527,16 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               let fmtInsertIndex = -1;
               if (referencedEntity) {
-                console.log(`[Dashboard] Searching for entity '${referencedEntity}' in ${fmt} format...`);
                 fmtInsertIndex = findEntityLocation(fmtContent, referencedEntity);
                 if (fmtInsertIndex >= 0) {
-                  console.log(`[Dashboard] ✓ Found entity '${referencedEntity}' at line ${fmtInsertIndex} in ${fmt}`);
                 } else {
-                  console.log(`[Dashboard] ✗ Entity '${referencedEntity}' NOT found in ${fmt}`);
 
-                  console.log(`[Dashboard] First 5 lines of ${fmt}:`, fmtLines.slice(0, 5).join("\n"));
-                  console.log(`[Dashboard] Original clicked line:`, clickedLine.substring(0, 150));
                 }
               }
 
               if (fmtInsertIndex < 0) {
 
                 fmtInsertIndex = Math.max(0, fmtLines.length - 5);
-                console.log(
-                  `[Dashboard] No entity found - inserting near end of file at line ${fmtInsertIndex} (will be adjusted for XML formats)`,
-                );
               }
 
               if (fmt === "rdfxml" || fmt === "owlxml") {
@@ -13213,9 +12570,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
                 if (rootElementLine >= 0 && fmtInsertIndex <= rootTagCloseLine) {
                   fmtInsertIndex = rootTagCloseLine + 1;
-                  console.log(
-                    `[Dashboard] ${fmt.toUpperCase()}: Adjusted insertion to line ${fmtInsertIndex} to respect XML structure`,
-                  );
                 }
 
                 for (let i = fmtLines.length - 1; i >= Math.max(0, fmtLines.length - 10); i--) {
@@ -13223,9 +12577,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                   if (trimmed === "</rdf:RDF>" || trimmed === "</Ontology>" || trimmed === "</owl:Ontology>") {
                     if (fmtInsertIndex > i) {
                       fmtInsertIndex = i;
-                      console.log(
-                        `[Dashboard] ${fmt.toUpperCase()}: Adjusted insertion to line ${fmtInsertIndex} to stay inside root element`,
-                      );
                     }
                     break;
                   }
@@ -13241,7 +12592,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 citationUrn: citationUrn,
                 referencedEntity: referencedEntity || "",
               });
-              console.log("[Dashboard] Format cache stored with citation near entity:", fmt);
               succeededFormats.push(fmt);
             }
           } catch (fmtError) {
@@ -13253,25 +12603,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (failedFormats.length > 0) {
           console.warn(`[Dashboard] Citation sync failed for formats: ${failedFormats.join(", ")}`);
         }
-        console.log(`[Dashboard] Citation inserted in formats: ${succeededFormats.join(", ")}`);
         setHasLocalCodeViewChanges(false);
-
-        console.log("[Dashboard] Citations stored in cache for all formats, GraphDB will be updated on save/export");
-
-        console.log("[Dashboard] ========== CITATION INSERTION SUMMARY ==========");
-        console.log("[Dashboard] Current format:", codeViewFormat);
-        console.log("[Dashboard] Inserted at line:", insertAtIndex);
-        console.log(
-          "[Dashboard] Referenced entity:",
-          referencedEntity || "(NONE - citations went to default location)",
-        );
-        console.log(
-          "[Dashboard] Entity was",
-          referencedEntity
-            ? "FOUND and used for cross-format placement"
-            : "NOT FOUND - fallback to default location used",
-        );
-        console.log("[Dashboard] ================================================");
 
         notificationService.success(
           "Citation Inserted",
@@ -13281,12 +12613,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         );
 
         setCitationJustInserted(true);
-        console.log("[Dashboard] Citation insertion flag set - next format switch will reload from cache");
 
         setPendingCitation(null);
         setCitationInsertionMode(false);
         setSelectedInsertionLine(null);
-        console.log("[Dashboard] Citation insertion mode reset after successful insertion");
       } catch (error) {
         console.error("[Dashboard] Error inserting citation at location:", error);
         notificationService.error("Citation Error", "Failed to insert citation at location");
@@ -13295,7 +12625,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         setCitationInsertionMode(false);
         setSelectedInsertionLine(null);
         setCitationJustInserted(false);
-        console.log("[Dashboard] Citation insertion mode reset due to error");
       }
     },
     [pendingCitation, projectId, codeViewFormat, codeViewContent],
@@ -13321,7 +12650,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 content: result.content,
                 format: fmt,
               });
-              console.log(`[Dashboard] Format ${fmt} cache updated after removal (JSON-LD node removed)`);
             }
             continue;
           }
@@ -13429,9 +12757,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             content: fmtModifiedContent,
             format: fmt,
           });
-          console.log(
-            `[Dashboard] Format ${fmt} cache updated after removal (${uniqueFmtLinesToRemove.length} lines removed)`,
-          );
         } catch (fmtError) {
           console.warn(`[Dashboard] Failed to update format ${fmt} after removal:`, fmtError);
         }
@@ -13449,34 +12774,19 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       notificationService.info("Removing Citation", "Scanning for citation and removing from all formats...");
 
-      console.log("[Dashboard] ========================================");
-      console.log("[Dashboard] Attempting to remove citation at line:", lineNumber);
-
       const lines = codeViewContent.split("\n");
 
       const clickedLine = lines[lineNumber] || "";
-      console.log("[Dashboard] Clicked line content:", clickedLine.substring(0, 100));
-      console.log("[Dashboard] Current format:", codeViewFormat);
-      console.log("[Dashboard] Total lines in content:", lines.length);
 
       const citationUriPattern = /urn:citation:([a-zA-Z0-9]+)/i;
 
       let citationUri = "";
       const searchRange = 20; // Search 20 lines up and down
-      console.log(
-        "[Dashboard] Searching for citation URI from line",
-        Math.max(0, lineNumber - searchRange),
-        "to",
-        Math.min(lines.length, lineNumber + searchRange),
-      );
 
       for (let i = Math.max(0, lineNumber - searchRange); i < Math.min(lines.length, lineNumber + searchRange); i++) {
         const match = lines[i].match(citationUriPattern);
         if (match) {
           citationUri = match[1];
-          console.log("[Dashboard] Found citation URI at line", i, ":", citationUri);
-          console.log("[Dashboard] Full match:", match[0]);
-          console.log("[Dashboard] Line content:", lines[i].substring(0, 100));
           break;
         }
       }
@@ -13495,8 +12805,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         );
         return;
       }
-
-      console.log("[Dashboard] Citation URI to remove:", citationUri);
 
       if (codeViewFormat === "jsonld") {
         const jsonLdRemoval = removeCitationNodeFromJsonLd(codeViewContent, citationUri);
@@ -13536,7 +12844,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
               await syncCitationRemovalToOtherFormats(citationUri, "jsonld");
 
-              console.log("[Dashboard] Removing citation from GraphDB:", citationUri);
               window.vscode?.postMessage({
                 type: "removeCitationFromGraphDB",
                 citationUri: `urn:citation:${citationUri}`,
@@ -13553,7 +12860,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
           },
           onCancel: () => {
-            console.log("[Dashboard] Citation removal cancelled by user");
             setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
           },
         });
@@ -13571,8 +12877,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         notificationService.warning("Remove Citation", "Could not find the citation in the content.");
         return;
       }
-
-      console.log("[Dashboard] Lines containing citation URI:", citationUriLines);
 
       const linesToRemove = new Set<number>();
 
@@ -13678,7 +12982,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           linesToRemove.add(i);
         }
 
-        console.log(`[Dashboard] Citation block: lines ${blockStart} to ${blockEnd}`);
       }
 
       const sortedLines = [...linesToRemove].sort((a, b) => a - b);
@@ -13708,14 +13011,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      console.log("[Dashboard] ========================================");
-      console.log("[Dashboard] Lines to remove (descending):", uniqueLinesToRemove);
-      console.log("[Dashboard] Total lines to remove:", uniqueLinesToRemove.length);
-      console.log("[Dashboard] Lines content preview (first 10):");
       uniqueLinesToRemove.slice(0, 10).forEach((idx) => {
-        console.log(`  Line ${idx}: ${lines[idx]?.substring(0, 80)}...`);
       });
-      console.log("[Dashboard] ========================================");
 
       const lineCount = uniqueLinesToRemove.length;
       setConfirmDialog({
@@ -13724,36 +13021,23 @@ const Dashboard: React.FC<DashboardProps> = ({
         message: `Are you sure you want to remove this citation? ${lineCount} line${lineCount !== 1 ? "s" : ""} will be deleted.`,
         onConfirm: async () => {
           try {
-            console.log("[Dashboard] ========================================");
-            console.log("[Dashboard] User confirmed citation removal");
-            console.log("[Dashboard] Performing citation removal for URI:", citationUri);
-            console.log("[Dashboard] Removing", uniqueLinesToRemove.length, "lines");
 
             const newLines = [...lines];
-            console.log("[Dashboard] Original line count:", newLines.length);
 
             for (const lineIdx of uniqueLinesToRemove) {
-              console.log("[Dashboard] Removing line", lineIdx, ":", newLines[lineIdx]?.substring(0, 60));
               newLines.splice(lineIdx, 1);
             }
 
-            console.log("[Dashboard] New line count:", newLines.length);
-            console.log("[Dashboard] Lines removed:", lines.length - newLines.length);
-
             const modifiedContent = newLines.join("\n");
-            console.log("[Dashboard] Modified content length:", modifiedContent.length, "characters");
 
             setCodeViewContent(modifiedContent);
             setHasLocalCodeViewChanges(true);
-            console.log("[Dashboard] Code view content updated with modified content");
-            console.log("[Dashboard] hasLocalCodeViewChanges set to true");
 
             try {
               await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
                 content: modifiedContent,
                 format: codeViewFormat,
               });
-              console.log("[Dashboard] Current format cache stored after removal");
             } catch (e) {
               console.warn("[Dashboard] Failed to store current format cache:", e);
             }
@@ -13771,7 +13055,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             await syncCitationRemovalToOtherFormats(citationUri, codeViewFormat);
 
-            console.log("[Dashboard] Removing citation from GraphDB:", citationUri);
             window.vscode?.postMessage({
               type: "removeCitationFromGraphDB",
               citationUri: `urn:citation:${citationUri}`,
@@ -13781,7 +13064,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             notificationService.success("Citation Removed", `Successfully removed citation from all formats`);
 
             setCitationRemovalMode(false);
-            console.log("[Dashboard] Citation removal mode reset");
 
             setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
           } catch (error) {
@@ -13792,7 +13074,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         },
         onCancel: () => {
-          console.log("[Dashboard] Citation removal cancelled by user");
           setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
         },
       });
@@ -13862,7 +13143,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => {
       if (projectId) {
         syncService.stopMonitoring(projectId);
-        console.log("[Dashboard] Stopped monitoring for project:", projectId);
       }
     };
   }, [projectId]);
@@ -14287,7 +13567,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                   context={{
                     apiClient,
                     showNotification: (msg: string, type: "info" | "success" | "warning" | "error") => {
-                      console.log(`[${type}] ${msg}`);
                     },
                   }}
                 />
@@ -16744,14 +16023,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       <OpenFileDialog
         isOpen={showOpenDialog}
         onClose={() => {
-          console.log(
-            "[Dashboard] Closing OpenFileDialog. myFiles:",
-            myFiles.length,
-            "sharedFiles:",
-            sharedFiles.length,
-            "projectFiles:",
-            projectFiles.length,
-          );
           setShowOpenDialog(false);
         }}
         myFiles={myFiles}
@@ -16772,7 +16043,6 @@ const Dashboard: React.FC<DashboardProps> = ({
         onRefresh={
           initialProjectId
             ? () => {
-                console.log("[Dashboard] 🔄 Refresh triggered from OpenFileDialog");
                 fetchProjectFiles(initialProjectId);
               }
             : undefined
@@ -17104,7 +16374,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             if (projectId && !initialProjectId) {
 
               try {
-                console.log("[Dashboard] 📂 Fetching project files for merge wizard:", projectId);
                 await fetchProjectFiles(projectId);
               } catch (error) {
                 console.warn("[Dashboard] ⚠️ Could not fetch project files:", error);
@@ -17212,11 +16481,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               {isCloudDeployment && projectId && (
                 <button
                   onClick={() => {
-                    console.log("[Dashboard] Collaboration button clicked", {
-                      subscription,
-                      deploymentType,
-                      isCloudDeployment,
-                    });
 
                     if (isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')) {
                       showToast(
@@ -17944,11 +17208,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         onMergeComplete={async (targetProjectId: string, isNewFile?: boolean) => {
           try {
-            console.log("[Dashboard] 🔄 Merge complete - targetProjectId:", targetProjectId, "isNewFile:", isNewFile);
 
             if (isNewFile) {
 
-              console.log("[Dashboard] ✅ New file merge — refreshing project file list only");
               if (initialProjectId) {
                 await fetchProjectFiles(initialProjectId);
               }
@@ -17957,10 +17219,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               return;
             }
 
-            console.log("[Dashboard] Current projectId:", projectId);
-
             if (targetProjectId === projectId) {
-              console.log("[Dashboard] ✅ Refreshing current file data after merge");
 
               setIsInitialLoading(true);
               notificationService.info("Processing Merge", "Waiting for merged data to finish importing…");
@@ -17977,7 +17236,6 @@ const Dashboard: React.FC<DashboardProps> = ({
               setSelectedItem(null);
               setClassInstanceCounts({});
 
-              console.log("[Dashboard] ⏳ Waiting for merge re-import (including hierarchy rebuild) to complete...");
               const mergeWaitResult = await waitForProcessingComplete(targetProjectId);
 
               if (!mergeWaitResult.ready && mergeWaitResult.status === "ERROR") {
@@ -17994,10 +17252,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   mergeWaitResult.error || "Import is taking longer than expected. Attempting to load current data…",
                 );
               } else {
-                console.log("[Dashboard] ✅ GraphDB import and hierarchy rebuild completed!");
               }
-
-              console.log("[Dashboard] 🔄 Starting data fetch with force refresh...");
 
               try {
                 const hierarchyReady = !!mergeWaitResult.ready;
@@ -18005,7 +17260,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                   setIsExpectingFileReady(true);
                 }
                 await fetchData(targetProjectId, true, undefined, hierarchyReady);
-                console.log("[Dashboard] ✅ Data fetch completed successfully");
               } catch (fetchError) {
                 console.error("[Dashboard] ❌ Failed to fetch data after merge:", fetchError);
                 notificationService.error("Refresh Failed", "Could not load merged data. Please refresh manually.");
@@ -18014,7 +17268,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                 return;
               }
 
-              console.log("[Dashboard] 📊 Data refresh complete");
               notificationService.success("Merge Complete", "Your ontology has been updated with the merged data!");
 
               try {
@@ -18024,13 +17277,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               }
             } else {
 
-              console.log("[Dashboard] ⚠️ Merge targeted a different existing file:", targetProjectId);
-
               const mergeWaitResult2 = await waitForProcessingComplete(targetProjectId);
               const importCompleted = mergeWaitResult2.ready;
 
               if (importCompleted && targetProjectId === projectId) {
-                console.log("[Dashboard] ✅ Merge target is current file — refreshing loaded data");
                 try {
 
                   setIsInitialLoading(true);
@@ -18047,7 +17297,6 @@ const Dashboard: React.FC<DashboardProps> = ({
                   setClassInstanceCounts({});
 
                   await fetchData(targetProjectId, true, undefined, true);
-                  console.log("[Dashboard] ✅ Data fetch completed successfully after merge");
 
                   try {
                     await refreshClassHierarchy();

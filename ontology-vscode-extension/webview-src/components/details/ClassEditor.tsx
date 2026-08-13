@@ -77,7 +77,6 @@ const UsageTab: React.FC<{
         { signal: controller.signal },
       );
       const usageData = response?.data?.data || response?.data || response || [];
-      console.log('[UsageTab] Loaded usages:', usageData);
       setUsages(Array.isArray(usageData) ? usageData : []);
       setLoaded(true);
     } catch (error: any) {
@@ -317,34 +316,24 @@ const ClassEditor: React.FC<{
 
   useEffect(() => {
     if (propObjectProperties) {
-      console.log("[ClassEditor] Updating object properties from props:", propObjectProperties.length);
       setProperties(propObjectProperties);
     }
   }, [propObjectProperties]);
 
   useEffect(() => {
     if (propDataProperties) {
-      console.log("[ClassEditor] Updating data properties from props:", propDataProperties.length);
       setDataProperties(propDataProperties);
     }
   }, [propDataProperties]);
 
   useEffect(() => {
     if (propObjectPropertyHierarchy) {
-      console.log(
-        "[ClassEditor] Updating object property hierarchy from props, nodes:",
-        propObjectPropertyHierarchy.length,
-      );
       setObjectPropertyHierarchy(propObjectPropertyHierarchy);
     }
   }, [propObjectPropertyHierarchy]);
 
   useEffect(() => {
     if (propDataPropertyHierarchy) {
-      console.log(
-        "[ClassEditor] Updating data property hierarchy from props, nodes:",
-        propDataPropertyHierarchy.length,
-      );
       setDataPropertyHierarchy(propDataPropertyHierarchy);
     }
   }, [propDataPropertyHierarchy]);
@@ -429,7 +418,6 @@ const ClassEditor: React.FC<{
     const currentId = item.id;
     const annotationsAtFetchStart = item.annotations;
     const shortIri = currentId.split(/[#/]/).pop() || currentId;
-    console.log(`[perf][ClassEditor] ▶ select "${shortIri}" — annotations only (axioms on Description tab)`);
 
     (async () => {
       const t1 = performance.now();
@@ -451,10 +439,8 @@ const ClassEditor: React.FC<{
             if (latestItem.id === currentId && latestItem.annotations === annotationsAtFetchStart) {
               onUpdate({ ...latestItem, annotations: annData.annotations } as TreeNode);
             } else {
-              console.log(`[perf][ClassEditor] Skipping stale annotations response for "${shortIri}" — local annotations changed since fetch started`);
             }
           }
-          console.log(`[perf][ClassEditor] ✓ annotations in ${(performance.now() - t1).toFixed(0)}ms`);
         }
       } catch (e) {
         console.warn(`[perf][ClassEditor] ✗ annotations failed`, e);
@@ -658,7 +644,6 @@ const ClassEditor: React.FC<{
         );
       }
       if (loadGen !== detailsLoadGenRef.current) {
-        console.log("[ClassEditor] Discarding stale class details response");
         return null;
       }
 
@@ -667,13 +652,6 @@ const ClassEditor: React.FC<{
       const restrictionEquivs = equivAxioms.filter(
         (a: Axiom) => a.isRestriction === true || a.isRestriction === "true",
       );
-      console.log("[ClassEditor] Class details loaded:", {
-        id: details?.id,
-        equivalentCount: equivAxioms.length,
-        restrictionEquivCount: restrictionEquivs.length,
-        restrictionEquivs: restrictionEquivs.map((a: Axiom) => a.definition),
-        full: details,
-      });
 
       const hasOwlApiInferred =
         details?.inferredFromOwlApi === true ||
@@ -687,7 +665,6 @@ const ClassEditor: React.FC<{
             { signal, timeout: isDesktop() ? 15_000 : 45_000 },
           );
           const inferredData = inferredResponse?.data?.data || inferredResponse?.data || {};
-          console.log("[ClassEditor] Inferred class details loaded:", inferredData);
 
           details = {
             ...details,
@@ -722,7 +699,6 @@ const ClassEditor: React.FC<{
         inferredEquivalentClassesAxioms: details.inferredEquivalentClassesAxioms,
         isUnsatisfiable: details.isUnsatisfiable,
       };
-      console.log("[ClassEditor] Updated item:", updatedItem);
       onUpdate(updatedItem);
       return details;
     } catch (error) {
@@ -778,11 +754,9 @@ const ClassEditor: React.FC<{
       const axioms = axiomListForType(details, axiomType) || [];
       const found = axioms.some((a) => restrictionMatchesAxiom(a, restrictionData, axiomType));
       if (found) {
-        console.log(`[ClassEditor] Restriction visible after attempt ${attempt}`);
         return;
       }
       if (attempt < maxAttempts) {
-        console.log(`[ClassEditor] Restriction not visible yet (attempt ${attempt}/${maxAttempts}), retrying...`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
@@ -827,7 +801,6 @@ const ClassEditor: React.FC<{
 
       const instances = response?.data?.data || response?.data || response || [];
       const list = Array.isArray(instances) ? instances : [];
-      console.log("[ClassEditor] Class instances loaded:", list.length);
       setClassInstances(list);
       return list;
     } catch (error) {
@@ -838,7 +811,6 @@ const ClassEditor: React.FC<{
   };
 
   const handleNavigate = (iri: string, type: string) => {
-    console.log("[ClassEditor] Navigate to:", { iri, type });
 
     if (type === "class") {
 
@@ -855,7 +827,6 @@ const ClassEditor: React.FC<{
 
       const classNode = findInHierarchy(classHierarchy);
       if (classNode) {
-        console.log("[ClassEditor] Navigating to class:", classNode);
 
         onUpdate(classNode);
       } else {
@@ -888,7 +859,6 @@ const ClassEditor: React.FC<{
       }
 
       if (propertyNode) {
-        console.log("[ClassEditor] Navigating to property:", propertyNode);
 
         onUpdate(propertyNode);
       } else {
@@ -906,7 +876,6 @@ const ClassEditor: React.FC<{
     restrictionData?: any,
     subjectClassIri?: string,
   ) => {
-    console.log("[ClassEditor] openEditor called:", { type, title, classHierarchyLength: classHierarchy.length });
     setEditorType(type);
 
     if (existingValue && existingId) {
@@ -1086,12 +1055,6 @@ const ClassEditor: React.FC<{
   };
 
   const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
-    console.log("[ClassEditor] handleAddAxiom called:", {
-      type,
-      definition,
-      restrictionData,
-      classHierarchyLength: classHierarchy.length,
-    });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1106,13 +1069,6 @@ const ClassEditor: React.FC<{
             notificationService.error("Save Failed", "Restriction is missing required property or filler class.");
             return;
           }
-          console.log("[ClassEditor] Adding object restriction:", {
-            axiomType: restrictionData.axiomType,
-            propertyIri: restrictionData.propertyIri,
-            restrictionType: restrictionData.restrictionType,
-            fillerIri: restrictionData.fillerIri,
-            cardinality: restrictionData.cardinality,
-          });
           await ontologyMutationService.addObjectRestriction(
             projectId,
             item.id,
@@ -1136,13 +1092,6 @@ const ClassEditor: React.FC<{
             console.warn("[ClassEditor] Invalid restrictionType for data restriction:", restrictionData.restrictionType);
             return;
           }
-          console.log("[ClassEditor] Adding data restriction:", {
-            axiomType: restrictionData.axiomType,
-            propertyIri: restrictionData.propertyIri,
-            restrictionType: restrictionData.restrictionType,
-            fillerIri: restrictionData.fillerIri,
-            cardinality: restrictionData.cardinality,
-          });
           await ontologyMutationService.addDataRestriction(
             projectId,
             item.id,
@@ -1175,11 +1124,6 @@ const ClassEditor: React.FC<{
         try {
           switch (type) {
             case "EquivalentTo":
-              console.log("[ClassEditor] Calling addEquivalentClass:", {
-                projectId,
-                classIri: item.id,
-                equivalentClassIri: definition,
-              });
               await ontologyMutationService.addEquivalentClass(
                 projectId,
                 item.id,
@@ -1187,14 +1131,8 @@ const ClassEditor: React.FC<{
                 user?.email,
                 user?.username || user?.email,
               );
-              console.log("[ClassEditor] addEquivalentClass completed successfully");
               break;
             case "SubClassOf":
-              console.log("[ClassEditor] Calling addSubClassOf:", {
-                projectId,
-                classIri: item.id,
-                parentIri: definition,
-              });
               await ontologyMutationService.addSubClassOf(
                 projectId,
                 item.id,
@@ -1202,14 +1140,8 @@ const ClassEditor: React.FC<{
                 user?.email,
                 user?.username || user?.email,
               );
-              console.log("[ClassEditor] addSubClassOf completed successfully");
               break;
             case "DisjointWith":
-              console.log("[ClassEditor] Calling addDisjointWith:", {
-                projectId,
-                classIri: item.id,
-                disjointIri: definition,
-              });
               await ontologyMutationService.addDisjointWith(
                 projectId,
                 item.id,
@@ -1217,7 +1149,6 @@ const ClassEditor: React.FC<{
                 user?.email,
                 user?.username || user?.email,
               );
-              console.log("[ClassEditor] addDisjointWith completed successfully");
               break;
           }
         } catch (mutationError) {
@@ -1232,7 +1163,6 @@ const ClassEditor: React.FC<{
 
         const parsed = parseManchesterExpression(definition);
         if (parsed && type !== "DisjointWith") {
-          console.log(`[ClassEditor] Parsed ${parsed.expressionType} expression:`, parsed.iris);
           if (parsed.expressionType === "intersection") {
             await ontologyMutationService.addIntersection(projectId, item.id, parsed.iris, type as "EquivalentTo" | "SubClassOf");
           } else {
@@ -1251,12 +1181,9 @@ const ClassEditor: React.FC<{
         }
       }
 
-      console.log("[ClassEditor] Waiting 800ms for GraphDB to index...");
       await new Promise((resolve) => setTimeout(resolve, 800));
 
-      console.log("[ClassEditor] Reloading class details after axiom addition");
       await loadClassDetails(undefined, true);
-      console.log("[ClassEditor] Class details reloaded after axiom addition");
       // Also notify parent to update tree if needed (though axioms usually don't change tree structure unless it's subclassof)
       // onUpdate(item); // We might not need this if we reload details
     } catch (error) {
@@ -1271,7 +1198,6 @@ const ClassEditor: React.FC<{
   const handleDeleteAxiom = async (type: AxiomType, id: string, classIriOverride?: string, axiomOverride?: Axiom) => {
     if (isSavingAxiomRef.current) return;
     const ownerIri = classIriOverride || item.id;
-    console.log("[ClassEditor] handleDeleteAxiom called:", { type, id, classIri: ownerIri });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1283,7 +1209,6 @@ const ClassEditor: React.FC<{
       };
 
       const axiom = axiomOverride || axiomArrays[type]?.find((a) => a.id === id);
-      console.log("[ClassEditor] Found axiom:", axiom);
 
       const isRestriction = axiom?.isRestriction === true || axiom?.isRestriction === "true";
 
@@ -1294,15 +1219,6 @@ const ClassEditor: React.FC<{
         const isDataProperty =
           axiom.propertyIri === "http://www.w3.org/2002/07/owl#topDataProperty" ||
           dataProperties.some((p) => p.id === axiom.propertyIri);
-
-        console.log("[ClassEditor] Deleting restriction:", {
-          classIri: ownerIri,
-          axiomType,
-          propertyIri: axiom.propertyIri,
-          restrictionType: axiom.restrictionType,
-          fillerIri: axiom.fillerIri,
-          isDataProperty,
-        });
 
         const restrictionCardinality =
           axiom.cardinality != null
@@ -1337,12 +1253,9 @@ const ClassEditor: React.FC<{
         await loadClassDetails(undefined, true);
       } else {
 
-        console.log("[ClassEditor] Deleting simple class axiom:", { type, classIri: ownerIri, targetIri: id });
-
         const definitionText = axiom?.definition;
         switch (type) {
           case "EquivalentTo":
-            console.log("[ClassEditor] Calling deleteEquivalentClass");
             await ontologyMutationService.deleteEquivalentClass(
               projectId,
               ownerIri,
@@ -1353,11 +1266,6 @@ const ClassEditor: React.FC<{
             );
             break;
           case "SubClassOf":
-            console.log("[ClassEditor] Calling deleteSubClassOf with params:", {
-              projectId,
-              classIri: ownerIri,
-              superClassIri: id,
-            });
             await ontologyMutationService.deleteSubClassOf(
               projectId,
               ownerIri,
@@ -1366,10 +1274,8 @@ const ClassEditor: React.FC<{
               user?.username || user?.email,
               definitionText,
             );
-            console.log("[ClassEditor] deleteSubClassOf completed");
             break;
           case "DisjointWith":
-            console.log("[ClassEditor] Calling deleteDisjointWith");
             await ontologyMutationService.deleteDisjointWith(
               projectId,
               ownerIri,
@@ -1382,9 +1288,7 @@ const ClassEditor: React.FC<{
 
         await new Promise((resolve) => setTimeout(resolve, 300));
 
-        console.log("[ClassEditor] Reloading class details after delete");
         await loadClassDetails(undefined, true);
-        console.log("[ClassEditor] loadClassDetails completed");
       }
     } catch (error) {
       console.error("[ClassEditor] Failed to delete axiom:", error);
@@ -1401,14 +1305,12 @@ const ClassEditor: React.FC<{
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
-      console.log("[ClassEditor] handleEditAxiom called:", { type, oldId, newDefinition });
 
       const isOldSimpleIRI = oldId.startsWith("http://") || oldId.startsWith("https://") || oldId.startsWith("urn:");
       const isNewSimpleIRI =
         newDefinition.startsWith("http://") || newDefinition.startsWith("https://") || newDefinition.startsWith("urn:");
 
       if (isOldSimpleIRI && isNewSimpleIRI) {
-        console.log("[ClassEditor] Using atomic UPDATE operation");
         switch (type) {
           case "EquivalentTo":
             await ontologyMutationService.updateEquivalentClass(
@@ -1442,8 +1344,6 @@ const ClassEditor: React.FC<{
             break;
         }
       } else {
-
-        console.log("[ClassEditor] Using DELETE + ADD approach for complex/mixed expressions");
 
         if (isOldSimpleIRI) {
           switch (type) {
@@ -1527,9 +1427,7 @@ const ClassEditor: React.FC<{
       }
 
       await new Promise((resolve) => setTimeout(resolve, 300));
-      console.log("[ClassEditor] Reloading class details after edit");
       await loadClassDetails(undefined, true);
-      console.log("[ClassEditor] Edit completed successfully");
     } catch (error) {
       console.error("[ClassEditor] Failed to edit axiom:", error);
       notificationService.error("Edit Failed", `Failed to edit axiom: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1541,10 +1439,6 @@ const ClassEditor: React.FC<{
 
   const handleDisjointWithConfirm = async (nodes: TreeNode[]) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] handleDisjointWithConfirm called:", {
-      nodes: nodes.map((n) => ({ id: n.id, label: n.label })),
-      isEditing: !!editingDisjointWithId,
-    });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1557,20 +1451,16 @@ const ClassEditor: React.FC<{
       }
 
       if (editingDisjointWithId) {
-        console.log("[ClassEditor] Editing disjoint with - deleting old:", editingDisjointWithId);
         await ontologyMutationService.deleteDisjointWith(projectId, item.id, editingDisjointWithId);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
       for (const targetIri of classIris) {
-        console.log("[ClassEditor] Adding disjoint with:", { classIri: item.id, targetIri });
         await ontologyMutationService.addDisjointWith(projectId, item.id, targetIri);
       }
 
       await new Promise((resolve) => setTimeout(resolve, 300));
-      console.log("[ClassEditor] Reloading class details after adding disjoint with");
       await loadClassDetails(undefined, true);
-      console.log("[ClassEditor] loadClassDetails completed after disjoint with");
     } catch (error) {
       console.error("[ClassEditor] Failed to add disjoint with:", error);
       notificationService.error("Add Failed", `Failed to add disjoint with: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1584,7 +1474,6 @@ const ClassEditor: React.FC<{
   };
 
   const handleEditDisjointWith = (axiomId: string) => {
-    console.log("[ClassEditor] handleEditDisjointWith called:", { classIri: item.id, axiomId });
 
     const axiom =
       classDetails?.disjointClassesAxioms?.find((a: Axiom) => a.id === axiomId) ||
@@ -1632,10 +1521,6 @@ const ClassEditor: React.FC<{
 
   const handleDisjointUnionConfirm = async (nodes: TreeNode[]) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] handleDisjointUnionConfirm called:", {
-      nodes: nodes.map((n) => ({ id: n.id, label: n.label })),
-      isEditing: !!editingDisjointUnionId,
-    });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1649,20 +1534,14 @@ const ClassEditor: React.FC<{
       }
 
       if (editingDisjointUnionId) {
-        console.log("[ClassEditor] Editing disjoint union - deleting old:", editingDisjointUnionId);
         await ontologyMutationService.deleteDisjointUnion(projectId, item.id, editingDisjointUnionId);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      console.log("[ClassEditor] Adding disjoint union:", { classIri: item.id, memberIris });
-
       await ontologyMutationService.addDisjointUnion(projectId, item.id, memberIris);
-      console.log("[ClassEditor] addDisjointUnion completed");
 
       await new Promise((resolve) => setTimeout(resolve, 300));
-      console.log("[ClassEditor] Reloading class details after adding disjoint union");
       await loadClassDetails(undefined, true);
-      console.log("[ClassEditor] loadClassDetails completed after disjoint union");
     } catch (error) {
       console.error("[ClassEditor] Failed to add disjoint union:", error);
       notificationService.error("Add Failed", `Failed to add disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1676,7 +1555,6 @@ const ClassEditor: React.FC<{
   };
 
   const handleEditDisjointUnion = async (listNodeId: string) => {
-    console.log("[ClassEditor] handleEditDisjointUnion called:", { classIri: item.id, listNodeId });
 
     const disjointUnionAxiom = (classDetails?.disjointUnionAxioms || item.disjointUnionAxioms)?.find(
       (ax: Axiom) => ax.id === listNodeId,
@@ -1687,7 +1565,6 @@ const ClassEditor: React.FC<{
     }
 
     const members = disjointUnionAxiom.members || [];
-    console.log("[ClassEditor] Found disjoint union members:", members);
 
     setEditingDisjointUnionId(listNodeId);
     setEditingDisjointUnionMembers(members);
@@ -1696,17 +1573,13 @@ const ClassEditor: React.FC<{
 
   const handleDeleteDisjointUnion = async (listNodeId: string) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] handleDeleteDisjointUnion called:", { classIri: item.id, listNodeId });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
       await ontologyMutationService.deleteDisjointUnion(projectId, item.id, listNodeId);
-      console.log("[ClassEditor] deleteDisjointUnion completed");
 
       await new Promise((resolve) => setTimeout(resolve, 300));
-      console.log("[ClassEditor] Reloading class details after deleting disjoint union");
       await loadClassDetails(undefined, true);
-      console.log("[ClassEditor] loadClassDetails completed after delete disjoint union");
     } catch (error) {
       console.error("[ClassEditor] Failed to delete disjoint union:", error);
       notificationService.error("Delete Failed", `Failed to delete disjoint union: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1717,7 +1590,6 @@ const ClassEditor: React.FC<{
   };
 
   const handleEditHasKey = async (listNodeId: string) => {
-    console.log("[ClassEditor] handleEditHasKey called:", { classIri: item.id, listNodeId });
 
     const hasKeyAxiom = (classDetails?.hasKeyAxioms || item.hasKeyAxioms)?.find((ax: Axiom) => ax.id === listNodeId);
     if (!hasKeyAxiom) {
@@ -1726,7 +1598,6 @@ const ClassEditor: React.FC<{
     }
 
     const props = hasKeyAxiom.properties || [];
-    console.log("[ClassEditor] Found has key properties:", props);
 
     setEditingHasKeyId(listNodeId);
     setEditingHasKeyProperties(props);
@@ -1735,17 +1606,13 @@ const ClassEditor: React.FC<{
 
   const handleDeleteHasKey = async (listNodeId: string) => {
     if (isSavingAxiomRef.current) return;
-    console.log("[ClassEditor] handleDeleteHasKey called:", { classIri: item.id, listNodeId });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
       await ontologyMutationService.deleteHasKey(projectId, item.id, listNodeId);
-      console.log("[ClassEditor] deleteHasKey completed");
 
       await new Promise((resolve) => setTimeout(resolve, 300));
-      console.log("[ClassEditor] Reloading class details after deleting has key");
       await loadClassDetails(undefined, true);
-      console.log("[ClassEditor] loadClassDetails completed after delete has key");
     } catch (error) {
       console.error("[ClassEditor] Failed to delete has key:", error);
       notificationService.error("Delete Failed", `Failed to delete has key: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1757,11 +1624,6 @@ const ClassEditor: React.FC<{
 
   const handleAddHasKey = async (propertyIris: string[]) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] handleAddHasKey called:", {
-      classIri: item.id,
-      propertyIris,
-      isEditing: !!editingHasKeyId,
-    });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1772,19 +1634,14 @@ const ClassEditor: React.FC<{
       }
 
       if (editingHasKeyId) {
-        console.log("[ClassEditor] Editing has key - deleting old:", editingHasKeyId);
         await ontologyMutationService.deleteHasKey(projectId, item.id, editingHasKeyId);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      console.log("[ClassEditor] Adding has key:", { classIri: item.id, propertyIris });
       await ontologyMutationService.addHasKey(projectId, item.id, propertyIris);
-      console.log("[ClassEditor] addHasKey completed");
 
       await new Promise((resolve) => setTimeout(resolve, 300));
-      console.log("[ClassEditor] Reloading class details after adding has key");
       await loadClassDetails(undefined, true);
-      console.log("[ClassEditor] loadClassDetails completed after has key");
     } catch (error) {
       console.error("[ClassEditor] Failed to add has key:", error);
       notificationService.error("Add Failed", `Failed to add has key: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1799,7 +1656,6 @@ const ClassEditor: React.FC<{
 
   const handleAddInstance = async (name: string) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] handleAddInstance called:", { name, classIri: item.id });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1810,7 +1666,6 @@ const ClassEditor: React.FC<{
         await ontologyMutationService.addIndividual(projectId, name, item.id);
       }
 
-      console.log("[ClassEditor] Reloading instances after adding");
       for (let attempt = 1; attempt <= 6; attempt++) {
         if (isDesktop()) {
           await waitForDesktopOwlApiReady(projectId);
@@ -1840,7 +1695,6 @@ const ClassEditor: React.FC<{
 
   const handleDeleteInstance = async (individualIri: string) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] handleDeleteInstance called:", { individualIri, classIri: item.id });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1872,26 +1726,22 @@ const ClassEditor: React.FC<{
   };
 
   const handleEditInstance = (instanceId: string) => {
-    console.log("[ClassEditor] handleEditInstance called:", { instanceId, classIri: item.id });
     setEditingInstanceId(instanceId);
     setIsInstancesOpen(true);
   };
 
   const handleAddGCA = () => {
-    console.log("[ClassEditor] Opening GCA editor for new axiom");
     setEditingGCAId(undefined);
     setIsGCAEditorOpen(true);
   };
 
   const handleEditGCA = (axiomId: string) => {
-    console.log("[ClassEditor] Opening GCA editor for existing axiom:", axiomId);
     setEditingGCAId(axiomId);
     setIsGCAEditorOpen(true);
   };
 
   const handleDeleteGCA = async (axiomId: string, ancestorIri?: string) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] Deleting GCA:", axiomId, ancestorIri ? `(ancestor: ${ancestorIri})` : '');
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1914,7 +1764,6 @@ const ClassEditor: React.FC<{
 
   const handleGCAConfirm = async (subExpr: string, superExpr: string) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] GCA confirm:", { subExpr, superExpr, editing: editingGCAId });
     setIsSavingAxiom(true);
     isSavingAxiomRef.current = true;
     try {
@@ -1959,11 +1808,6 @@ const ClassEditor: React.FC<{
 
   const handleInstancesConfirm = async (selectedIndividuals: Individual[]) => {
     if (isSavingAxiom) return;
-    console.log("[ClassEditor] handleInstancesConfirm called:", {
-      selectedCount: selectedIndividuals.length,
-      classIri: item.id,
-      isEditing: !!editingInstanceId,
-    });
     setIsSavingAxiom(true);
     try {
       if (editingInstanceId) {

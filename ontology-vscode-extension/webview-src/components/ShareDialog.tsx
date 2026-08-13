@@ -39,24 +39,20 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
     setError('');
     try {
       const response = await apiClient.get(`/api/shares/project/${projectId}`);
-      console.log('[ShareDialog] Fetch response:', response);
 
       if (response && response.share) {
         setShareData(response.share);
       } else if (response && response.success === false) {
 
-        console.log('[ShareDialog] No share found, creating new one');
         await createShare();
       } else {
 
-        console.log('[ShareDialog] No share found, creating new one');
         await createShare();
       }
     } catch (err: any) {
       console.error('[ShareDialog] Failed to fetch share data:', err);
 
       if (err?.status === 404 || err?.status === 500 || err?.message?.includes('not found')) {
-        console.log('[ShareDialog] Share not found or error occurred, creating new one');
         await createShare();
       } else {
         setError('Failed to load share data: ' + (err?.message || 'Unknown error'));
@@ -69,13 +65,11 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
   const createShare = async () => {
     setError('');
     try {
-      console.log('[ShareDialog] Creating share for project:', projectId, 'owner:', userEmail);
       const response = await apiClient.post('/api/shares/create', {
         projectId,
         ownerEmail: userEmail,
         permission: 'view'
       });
-      console.log('[ShareDialog] Create response:', response);
 
       if (response && response.share) {
         setShareData(response.share);
@@ -103,13 +97,11 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
     setError('');
 
     try {
-      console.log('[ShareDialog] Adding email:', newEmail, 'with permission:', selectedPermission);
       const response = await apiClient.post('/api/shares/add-email', {
         projectId,
         email: newEmail,
         permission: selectedPermission
       });
-      console.log('[ShareDialog] Add email response:', response);
 
       if (response && response.share) {
         setShareData(response.share);
@@ -133,12 +125,10 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ isOpen, onClose, projectId, u
     setError('');
 
     try {
-      console.log('[ShareDialog] Removing email:', email);
       const response = await apiClient.post('/api/shares/remove-email', {
         projectId,
         email
       });
-      console.log('[ShareDialog] Remove email response:', response);
 
       if (response && response.share) {
         setShareData(response.share);

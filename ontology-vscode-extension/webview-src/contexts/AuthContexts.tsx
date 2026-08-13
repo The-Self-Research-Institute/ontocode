@@ -157,7 +157,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const ignoringWorkspaceRef = useRef(false);
     const logout = useCallback((showExpiredMessage = false) => {
-        console.log('[AuthContext] Logging out...');
 
         clearSessionCache();
         clearLastOpenedProjectState();
@@ -172,7 +171,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (window.vscode) {
             window.vscode.postMessage({ type: 'logout' });
         }
-        console.log('[AuthContext]  Logout successful');
     }, []);
 
     useEffect(() => {
@@ -182,7 +180,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const token = localStorage.getItem('authToken');
             if (!token || isTokenExpired(token)) {
 
-                console.log('[AuthContext] 401 + token expired — session expired, logging out');
                 logout(true);
             } else {
 
@@ -213,13 +210,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             window.vscode.postMessage({ type: 'requestAuthToken' });
         } else {
 
-            console.log('[AuthContext] Browser mode - checking localStorage for auth token');
             const token = localStorage.getItem('authToken');
 
             if (token) {
 
                 if (isTokenExpired(token)) {
-                    console.log('[AuthContext] Stored token is expired, clearing');
                     localStorage.removeItem('authToken');
                     setLoading(false);
                     return;
@@ -294,14 +289,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     if (message.token) {
 
                         if (isTokenExpired(message.token)) {
-                            console.log('[AuthContext]  Stored token is expired, logging out');
                             logout(true);
                             setLoading(false);
                             return;
                         }
 
                         if (ignoringWorkspaceRef.current) {
-                            console.log('[AuthContext] 🚫 Ignoring workspace from storedAuthToken (switching workspaces)');
 
                             localStorage.setItem('authToken', message.token);
                             ignoringWorkspaceRef.current = false; // Reset flag
@@ -360,7 +353,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         const interval = setInterval(() => {
             if (isTokenExpired(user.token)) {
-                console.log('[AuthContext]  Token expired, logging out');
                 logout(true);
                 return;
             }
@@ -380,14 +372,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const login = async (username: string, password: string) => {
         try {
-            console.log('[AuthContext] Attempting login for user:', username);
 
             const response = await apiClient.post('/api/auth/login', { 
                 username, 
                 password 
             });
-
-            console.log('[AuthContext] Login response:', response);
 
             const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
             const responseData = response?.data || response;
@@ -407,11 +396,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 throw new Error('No token received from server');
             }
 
-            console.log('[AuthContext] User isAdmin:', isAdmin);
-            console.log('[AuthContext] Saving token to localStorage...');
-
             localStorage.setItem('authToken', token);
-            console.log('[AuthContext] Token saved. Verify:', !!localStorage.getItem('authToken'));
 
             if (window.vscode) {
 
@@ -422,16 +407,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             const lastWorkspaceId = localStorage.getItem('lastWorkspaceId');
             const skipWorkspaceMode = isSkipWorkspaceMode();
-            console.log('[AuthContext] Checking auto-select: lastWorkspaceId=', lastWorkspaceId, 'userInfo.workspaceId=', userInfo.workspaceId, 'deploymentType=', deploymentType, 'isAdmin=', isAdmin, 'skipWorkspaceMode=', skipWorkspaceMode);
 
             if (!skipWorkspaceMode && !userInfo.workspaceId && lastWorkspaceId && (deploymentType === 'cloud' || isAdmin)) {
-                console.log('[AuthContext] 🔄 Auto-selecting last workspace after login:', lastWorkspaceId);
                 try {
                     const selectResponse = await apiClient.post(`/api/workspaces/${lastWorkspaceId}/select`);
-                    console.log('[AuthContext] 📥 Workspace select response:', selectResponse);
 
                     if (selectResponse.jwt) {
-                        console.log('[AuthContext] ✅ Auto-selected workspace successfully');
 
                         localStorage.setItem('authToken', selectResponse.jwt);
                         if (window.vscode) {
@@ -452,11 +433,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                             subscriptionPlan: selectResponse.subscriptionPlan || wsUserInfo.subscriptionPlan,
                             enterpriseDomainBypass
                         };
-                        console.log('[AuthContext] 👤 Setting user with workspace:', userData);
                         setUser(userData);
                         setNeedsWorkspaceSelection(false);
                         setSessionExpiredMessage(null);
-                        console.log('[AuthContext] ✅ Login complete with auto-selected workspace');
 
                         return;
                     } else {
@@ -468,7 +447,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     // Fall through to normal login flow without workspace
                 }
             } else {
-                console.log('[AuthContext] ℹ️ Skipping auto-select (already has workspace or no last workspace)');
             }
 
             setUser({
@@ -487,7 +465,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             if (deploymentType === 'self-hosted' || deploymentType === 'cloud') {
                 try {
-                    console.log('[AuthContext] Updating role based on deployment type:', deploymentType);
                     const roleResponse = await apiClient.put('/api/auth/update-role', {
                         username,
                         deploymentType
@@ -497,7 +474,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     if (newToken) {
 
                         localStorage.setItem('authToken', newToken);
-                        console.log('[AuthContext] Updated token saved. Verify:', !!localStorage.getItem('authToken'));
 
                         if (window.vscode) {
 
@@ -567,15 +543,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const signup = async (username: string, email: string, password: string) => {
         try {
-            console.log('[AuthContext] Attempting signup for user:', username);
 
             const response = await apiClient.post('/api/auth/signup', { 
                 username, 
                 email, 
                 password
             });
-
-            console.log('[AuthContext] Signup response:', response);
 
             const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
 
@@ -584,7 +557,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
 
             if (token) {
-                console.log('[AuthContext] Saving token to localStorage...');
 
                 localStorage.setItem('authToken', token);
 
@@ -600,8 +572,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 const deploymentType = getStoredDeploymentType();
                 const isAdmin = responseData?.isAdmin || userInfo.isAdmin || false;
 
-                console.log('[AuthContext] Initial signup - deploymentType:', deploymentType, 'isAdmin:', isAdmin);
-
                 setUser({ 
                     token,
                     userId: userInfo.userId,
@@ -614,7 +584,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
                 if (deploymentType === 'self-hosted' || deploymentType === 'cloud') {
                     try {
-                        console.log('[AuthContext] Updating role based on deployment type:', deploymentType);
                         const roleResponse = await apiClient.put('/api/auth/update-role', {
                             username,
                             deploymentType
@@ -651,7 +620,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                                 userInfo.workspaceId
                             );
                             setNeedsWorkspaceSelection(requiresWorkspace);
-                            console.log('[AuthContext] After role update - isAdmin:', newIsAdmin, 'needsWorkspaceSelection:', requiresWorkspace);
                         }
                     } catch (roleError) {
                         console.error('[AuthContext] Failed to update role after signup:', roleError);
@@ -680,7 +648,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const responseData = response?.data || response;
             const message = responseData?.message || 'Registration successful! Please check your email to verify your account.';
             const verificationEmail = responseData?.email || email;
-            console.log('[AuthContext] Signup successful - awaiting email verification:', message);
             return { requiresVerification: true, email: verificationEmail, message };
         } catch (error: any) {
             console.error('[AuthContext] Signup failed:', error);
@@ -731,7 +698,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const verifyEmailAndLogin = async (token: string): Promise<string> => {
-        console.log('[AuthContext] Verifying email and auto-logging in...');
         const response = await apiClient.get('/api/auth/verify-email', { token });
         const data = response?.data || response;
 
@@ -765,7 +731,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
         setNeedsWorkspaceSelection(!userInfo.workspaceId);
         setSessionExpiredMessage(null);
-        console.log('[AuthContext] ✅ Email verified and auto-logged in as', data?.username);
         return verifiedEmail;
     };
 
@@ -802,13 +767,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const selectWorkspace = (workspaceData: any) => {
-        console.log('[AuthContext] 📥 selectWorkspace called with:', workspaceData);
-        console.log('[AuthContext] Current user before selection:', user);
 
         if (workspaceData.skipWorkspace) {
-            console.log('[AuthContext] ✅ User skipped workspace selection, continuing to editor');
-            console.log('[AuthContext] Setting needsWorkspaceSelection to false');
-            console.log('[AuthContext] User will proceed to editor without workspace context');
 
             clearLastOpenedProjectState();
             localStorage.setItem(SKIP_WORKSPACE_MODE_KEY, 'true');
@@ -817,7 +777,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             apiClient.put('/api/auth/last-opened', { projectId: null, projectName: null, fileId: null, fileName: null }).catch(() => {});
 
             ignoringWorkspaceRef.current = true;
-            console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
 
             if (user) {
                 setUser({
@@ -837,15 +796,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             throw new Error('No token received from workspace selection');
         }
 
-        console.log('[AuthContext] 💾 Applying workspace session');
         applyWorkspaceSession(workspaceData);
-        console.log('[AuthContext]  Workspace selection complete');
     };
 
     const switchWorkspace = () => {
-        console.log('[AuthContext] 🔄 switchWorkspace called');
-        console.log('[AuthContext] Current user:', user);
-        console.log('[AuthContext] Current needsWorkspaceSelection:', needsWorkspaceSelection);
 
         if (!user) {
             console.warn('[AuthContext] No user to switch workspace for');
@@ -853,7 +807,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         ignoringWorkspaceRef.current = true;
-        console.log('[AuthContext] 🚫 Set ignoringWorkspaceRef to prevent workspace restoration');
         clearLastOpenedProjectState();
         localStorage.removeItem(SKIP_WORKSPACE_MODE_KEY);
         localStorage.setItem(SUPPRESS_WORKSPACE_AUTO_OPEN_KEY, 'true');
@@ -868,12 +821,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             workspaceName: undefined,
             workspaceRole: undefined
         };
-        console.log('[AuthContext] Setting user to (no workspace):', updatedUser);
         setUser(updatedUser);
 
-        console.log('[AuthContext] Setting needsWorkspaceSelection to true');
         setNeedsWorkspaceSelection(true);
-        console.log('[AuthContext] ✅ Workspace switch initiated - should show workspace selection');
     };
 
     const updateSubscriptionPlan = async (planId: string) => {
@@ -892,7 +842,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 subscriptionPlan: planId
             });
 
-            console.log('[AuthContext] Workspace subscription plan updated to:', planId);
         } catch (error: any) {
             console.error('[AuthContext] Failed to update workspace subscription plan:', error);
             throw error;
@@ -906,10 +855,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             }
             const storedToken = localStorage.getItem('authToken');
             if (!storedToken || isTokenExpired(storedToken)) {
-                console.log('[AuthContext] ⏭ Skipping refresh — token expired or missing');
                 return;
             }
-            console.log('[AuthContext] 🔄 Refreshing permissions from server...');
 
             if (user?.workspaceId) {
                 const response = await apiClient.post(`/api/workspaces/${user.workspaceId}/select`);
@@ -925,7 +872,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
             const newToken = data.jwt;
             if (newToken) {
-                console.log('[AuthContext] ✅ Received fresh JWT after refresh');
                 localStorage.setItem('authToken', newToken);
                 if (window.vscode) {
                     window.vscode.postMessage({ type: 'saveAuthToken', token: newToken });
@@ -970,14 +916,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         try {
-            console.log('[AuthContext] Updating user role for deployment type:', deploymentType);
 
             const response = await apiClient.put('/api/auth/update-role', {
                 username: user.username,
                 deploymentType
             });
-
-            console.log('[AuthContext] Role update response:', response);
 
             const token = response?.jwt || response?.token || response?.data?.jwt || response?.data?.token;
             if (token) {

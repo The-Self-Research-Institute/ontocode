@@ -332,7 +332,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const NEW_FILE_VALID_EXTENSIONS = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
 
   const handleCreateNewFile = () => {
-    console.log("[ProjectLibrary] 📝 Creating new file for project:", projectId);
     if (isDesktop()) {
       setShowNewFileNamePrompt(true);
       return;
@@ -492,23 +491,11 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       const message = event.data;
 
       if (message.type === "fileReady" || message.type === "importStatusUpdate") {
-        console.log(
-          "[ProjectLibrary] 📋 Received import completion message:",
-          "projectId:",
-          message.projectId,
-          "uploadedFileId:",
-          message.uploadedFileId,
-          "uploadedFileName:",
-          message.uploadedFileName,
-        );
 
         if (message.projectId === projectId || message.status?.status === "COMPLETED") {
-          console.log("[ProjectLibrary] 📋 Refetching files after import completion");
-          console.log("[ProjectLibrary] 📋 Current files count before refresh:", files.length);
 
           const fetchWithRetry = async (retries = 3, delay = 1000) => {
             for (let attempt = 1; attempt <= retries; attempt++) {
-              console.log(`[ProjectLibrary] 📋 Fetch attempt ${attempt}/${retries}...`);
               const fetchedFiles = await loadFiles();
 
               if (message.uploadedFileId || message.uploadedFileName) {
@@ -516,35 +503,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
                 if (message.uploadedFileId) {
                   found = fetchedFiles.some((f) => f.id === message.uploadedFileId);
-                  console.log(
-                    `[ProjectLibrary] 📋 Looking for file ID ${message.uploadedFileId} in ${fetchedFiles.length} files, found: ${found}`,
-                  );
                 }
 
                 if (!found && message.uploadedFileName) {
                   const normalizedTarget = message.uploadedFileName.toLowerCase();
                   const matchedFile = fetchedFiles.find((f) => f.name.toLowerCase() === normalizedTarget);
                   found = !!matchedFile;
-                  console.log(
-                    `[ProjectLibrary] 📋 Looking for filename "${message.uploadedFileName}" in ${fetchedFiles.length} files, found: ${found}`,
-                  );
                   if (matchedFile) {
-                    console.log(`[ProjectLibrary] 📋 Matched file by name - ID: ${matchedFile.id}`);
                   } else {
-                    console.log(
-                      `[ProjectLibrary] 📋 Available filenames:`,
-                      fetchedFiles.map((f) => f.name),
-                    );
                   }
                 }
 
                 if (found) {
-                  console.log(`[ProjectLibrary] ✅ File found in list after ${attempt} attempt(s)!`);
                   return true;
                 }
 
                 if (attempt < retries) {
-                  console.log(`[ProjectLibrary] ⏳ File not found, waiting ${delay}ms before retry ${attempt + 1}...`);
                   await new Promise((resolve) => setTimeout(resolve, delay));
                 } else {
                   console.warn(
@@ -555,7 +529,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 }
               } else {
 
-                console.log("[ProjectLibrary] ✅ File list refreshed (no specific file verification)");
                 return true;
               }
             }
@@ -585,10 +558,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     try {
       setLoading(true);
       const response = await apiClient.get(`/api/projects/${projectId}/files`);
-      console.log("[ProjectLibrary] Files response:", response);
 
       const fileList = response?.files || response?.data || [];
-      console.log("[ProjectLibrary] Parsed file list:", fileList);
 
       if (response?.userProjectRole) {
         setUserProjectRole(response.userProjectRole);
@@ -614,8 +585,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       const targetFileName = overrideFileName || file.name;
       setProcessingFile(targetFileName);
 
-      console.log(`[ProjectLibrary] Processing file: ${targetFileName} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
-
       const isLargeFile = file.size > 10 * 1024 * 1024;
 
       if (isLargeFile) {
@@ -623,8 +592,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       }
 
       setUploadProgress(10); // Starting upload
-
-      console.log("[ProjectLibrary] Uploading file via multipart...");
 
       const formData = new FormData();
       formData.append("file", file, targetFileName);
@@ -644,7 +611,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         },
       });
 
-      console.log("[ProjectLibrary] Upload response:", uploadResponse);
       setUploadProgress(100);
 
       if (isLargeFile) {
@@ -694,7 +660,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       } else if (error.status === 413) {
 
         const responseData = error.data;
-        console.log("Storage limit response data:", responseData);
         if (responseData?.message) {
           errorMessage = responseData.message;
         } else if (responseData?.error) {
@@ -710,7 +675,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         errorMessage = `Failed to upload file: ${error.message}`;
       }
 
-      console.log("Final error message to display:", errorMessage);
       showToast(errorMessage, "error");
     } finally {
       if (!isMountedRef.current) {
@@ -752,22 +716,16 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     }
 
     try {
-      console.log("[ProjectLibrary] Checking for duplicate file:", file.name);
       const checkResponse = await apiClient.get(
         `/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(file.name)}`,
       );
-      console.log("[ProjectLibrary] Duplicate check raw response:", JSON.stringify(checkResponse));
 
       const checkData = (checkResponse as any)?.data || checkResponse;
-      console.log("[ProjectLibrary] Parsed check data:", JSON.stringify(checkData));
 
       if (checkData?.exists === true) {
         const existing = checkData.existingFile || {};
         const existingFileId = existing.fileId || existing.id || null;
         const existingFileName = existing.fileName || existing.name || file.name;
-
-        console.log("[ProjectLibrary] Duplicate detected! File ID:", existingFileId, "Name:", existingFileName);
-        console.log("[ProjectLibrary] Existing file object:", JSON.stringify(existing));
 
         if (existingFileId) {
           showToast(`File "${existingFileName}" already exists in this project.`, "error");
@@ -779,7 +737,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         }
       }
 
-      console.log("[ProjectLibrary] No duplicate found (exists=" + checkData?.exists + "), proceeding with upload");
     } catch (error: any) {
 
       console.error("[ProjectLibrary] Error details:", error?.message, error?.status, error?.data);

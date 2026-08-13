@@ -24,7 +24,6 @@ class PluginManager {
       active: false,
     });
 
-    console.log(`✓ Plugin registered: ${plugin.name} v${plugin.version}`);
     this.emit('plugin-registered', plugin);
   }
 
@@ -35,8 +34,6 @@ class PluginManager {
   setContext(context: PluginContext): void {
     const previousContext = this.context;
     this.context = context;
-
-    console.log('Plugin context updated:', context);
 
     if (previousContext?.projectId !== context.projectId) {
       this.handleProjectChange(previousContext?.projectId, context.projectId);
@@ -57,19 +54,16 @@ class PluginManager {
     }
 
     if (pluginState.active) {
-      console.log(`Plugin "${pluginState.plugin.name}" is already active.`);
       return true;
     }
 
     try {
-      console.log(`Activating plugin: ${pluginState.plugin.name}...`);
 
       const result = await pluginState.plugin.activate(this.context || undefined);
 
       if (result !== false) {
         pluginState.active = true;
         pluginState.error = undefined;
-        console.log(`✓ Plugin activated: ${pluginState.plugin.name}`);
         this.emit('plugin-activated', pluginState.plugin);
         return true;
       }
@@ -92,13 +86,11 @@ class PluginManager {
     }
 
     try {
-      console.log(`Deactivating plugin: ${pluginState.plugin.name}...`);
 
       const result = await pluginState.plugin.deactivate(this.context || undefined);
 
       if (result !== false) {
         pluginState.active = false;
-        console.log(`✓ Plugin deactivated: ${pluginState.plugin.name}`);
         this.emit('plugin-deactivated', pluginState.plugin);
         return true;
       }
@@ -198,7 +190,6 @@ class PluginManager {
     }
 
     this.plugins.delete(id);
-    console.log(`Plugin unregistered: ${pluginState.plugin.name}`);
     this.emit('plugin-unregistered', pluginState.plugin);
 
     return true;
@@ -216,7 +207,6 @@ class PluginManager {
     this.eventListeners.clear();
     this.context = null;
 
-    console.log('All plugins cleared');
   }
 }
 

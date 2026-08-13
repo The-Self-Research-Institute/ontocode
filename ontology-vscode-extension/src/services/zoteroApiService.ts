@@ -48,7 +48,6 @@ class ZoteroApiService {
         const groupId = config.get<string>('groupId', '');
 
         if (!apiKey || !userId) {
-            console.log('[ZoteroAPI] API key or user ID not configured');
             return null;
         }
 
@@ -75,7 +74,6 @@ class ZoteroApiService {
 
         const url = `${this.baseUrl}/${libraryPath}/items`;
         const qTrim = opts?.q?.trim();
-        console.log('[ZoteroAPI] Fetching from:', url, 'start:', start, 'limit:', pageSize, qTrim ? `q="${qTrim}"` : '(full library)');
 
         const params: Record<string, string | number> = {
                 limit: pageSize,
@@ -96,7 +94,6 @@ class ZoteroApiService {
             timeout: 20000
         });
 
-        console.log(`[ZoteroAPI] Fetched ${response.data.length} items`);
         const totalResults = parseInt(response.headers['total-results'] || '0', 10);
         return { items: response.data, totalResults };
     }
@@ -105,7 +102,6 @@ class ZoteroApiService {
         const config = this.getConfig();
 
         if (!config) {
-            console.log('[ZoteroAPI] Not configured, skipping fetch');
             return [];
         }
 
@@ -129,7 +125,7 @@ class ZoteroApiService {
                     break;
                 }
             } catch (error) {
-                if (throwOnError) throw error;
+                if (throwOnError) {throw error;}
                 return this.handleFetchError(error);
             }
         }

@@ -32,7 +32,7 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
   }
 
   async getChildren(element?: SidebarItem): Promise<SidebarItem[]> {
-    if (element) return []; // flat list, no nesting
+    if (element) {return [];} // flat list, no nesting
 
     const [status, authToken] = await Promise.all([
       sci2CodeService.getConnectionStatus(),

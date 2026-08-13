@@ -67,7 +67,6 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
       children: [],
       hasChildren: false
     } as TreeNode));
-    console.log('[MultiPropertySelectorDialog] Object hierarchy updated, nodes:', newObjectTree.length, 'first node children:', newObjectTree[0]?.children?.length);
     setObjectPropertiesTree(newObjectTree);
   }, [objectPropertyHierarchy, objectProperties]);
 
@@ -77,7 +76,6 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
       children: [],
       hasChildren: false
     } as TreeNode));
-    console.log('[MultiPropertySelectorDialog] Data hierarchy updated, nodes:', newDataTree.length, 'first node children:', newDataTree[0]?.children?.length);
     setDataPropertiesTree(newDataTree);
   }, [dataPropertyHierarchy, dataProperties]);
 
@@ -178,16 +176,12 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
     const handler = activeTab === 'object' ? onAddObjectProperty : onAddDataProperty;
     if (!handler) return;
 
-    console.log('[MultiPropertySelectorDialog] Creating property:', inlinePropertyName, 'in tab:', activeTab);
     setIsCreatingProperty(true);
     try {
       const parentId = selectedProperty?.id;
       const type = selectedProperty ? 'subclass' : 'sibling';
 
-      console.log('[MultiPropertySelectorDialog] Parent:', parentId, 'Type:', type);
-
       if (parentId && !effectiveExpandedNodes.includes(parentId)) {
-        console.log('[MultiPropertySelectorDialog] Expanding parent node:', parentId);
         handleToggleNode(parentId);
       }
 
@@ -196,13 +190,10 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
         : 'http://www.w3.org/2002/07/owl#topDataProperty';
 
       if (!selectedProperty && !effectiveExpandedNodes.includes(topNodeId)) {
-        console.log('[MultiPropertySelectorDialog] Expanding top node:', topNodeId);
         handleToggleNode(topNodeId);
       }
 
-      console.log('[MultiPropertySelectorDialog] Calling handler...');
       await handler(type, parentId, inlinePropertyName.trim());
-      console.log('[MultiPropertySelectorDialog] Handler completed');
 
       setShowInlinePropertyCreate(false);
       setInlinePropertyName('');

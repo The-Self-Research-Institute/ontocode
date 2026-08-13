@@ -235,7 +235,6 @@ const IndividualEditor: React.FC<{
 
         const latestItem = itemRef.current;
         if (latestItem.id !== currentId || latestItem !== itemAtFetchStart) {
-          console.log(`[IndividualEditor] Skipping stale details response for "${currentId}" — local item changed since fetch started`);
           return;
         }
 

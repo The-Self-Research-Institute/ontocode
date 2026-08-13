@@ -45,10 +45,7 @@ export const changeTrackingService = {
 
   async getRecentChanges(projectId: string, count: number = 20): Promise<OntologyChange[]> {
     try {
-      console.log(`[changeTrackingService] Getting recent changes for project: ${projectId}`);
       const response = await apiClient.get(`/api/ontology/${projectId}/changes/recent?count=${count}`);
-
-      console.log('[changeTrackingService] Recent changes response:', response);
 
       const data = response.data || response;
 

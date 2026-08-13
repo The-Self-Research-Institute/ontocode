@@ -42,7 +42,6 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
   const [isCreatingClass, setIsCreatingClass] = useState(false);
 
   useEffect(() => {
-    console.log('[ClassSelectorDialog] Class hierarchy updated, nodes:', classHierarchy.length);
     setTreeData(classHierarchy);
   }, [classHierarchy]);
 
@@ -122,16 +121,12 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
   const handleInlineCreateSubmit = async () => {
     if (!inlineClassName.trim() || !onAddClass) return;
 
-    console.log('[ClassSelectorDialog] Creating class:', inlineClassName);
     setIsCreatingClass(true);
     try {
       const parentId = selectedClass?.id;
       const type: 'subclass' | 'sibling' = selectedClass ? 'subclass' : 'sibling';
 
-      console.log('[ClassSelectorDialog] Parent:', parentId, 'Type:', type);
-
       if (parentId && !expandedNodes.includes(parentId)) {
-        console.log('[ClassSelectorDialog] Expanding parent node:', parentId);
         setExpandedNodes(prev => [...prev, parentId]);
         if (onToggleNode) {
           await onToggleNode(parentId);
@@ -140,16 +135,13 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
 
       const topNodeId = 'http://www.w3.org/2002/07/owl#Thing';
       if (!selectedClass && !expandedNodes.includes(topNodeId)) {
-        console.log('[ClassSelectorDialog] Expanding top node:', topNodeId);
         setExpandedNodes(prev => [...prev, topNodeId]);
         if (onToggleNode) {
           await onToggleNode(topNodeId);
         }
       }
 
-      console.log('[ClassSelectorDialog] Calling handler...');
       await onAddClass(type, parentId, inlineClassName.trim());
-      console.log('[ClassSelectorDialog] Handler completed');
 
       setShowInlineCreate(false);
       setInlineClassName('');

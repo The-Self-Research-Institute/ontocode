@@ -30,7 +30,6 @@ class IssueReportService {
 
     setEditorUrl(url: string): void {
         this.editorUrl = url;
-        console.log('[IssueReportService] Editor URL updated to:', url);
     }
 
     logError(message: string, error?: Error): void {
@@ -57,7 +56,6 @@ class IssueReportService {
             this.outputChannel.appendLine(logEntry);
         }
 
-        console.log(message);
     }
 
     getRecentErrorLogs(): string {
@@ -89,7 +87,6 @@ class IssueReportService {
     async validateJiraConnection(): Promise<{ success: boolean; message: string }> {
         try {
             const url = `${this.editorUrl}/api/v1/issues/jira/validate`;
-            console.log('[IssueReportService] Validating Jira connection at:', url);
 
             const response = await fetch(url, {
                 method: 'GET'

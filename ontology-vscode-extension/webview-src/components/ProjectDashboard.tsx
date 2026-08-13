@@ -115,12 +115,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   onOpenSubscriptionPlans,
 }) => {
   const { user, logout, switchWorkspace, refreshPermissions } = useAuth();
-  console.log("[ProjectDashboard] Rendered with user:", {
-    email: user?.email,
-    workspaceId: user?.workspaceId,
-    workspaceName: user?.workspaceName,
-  });
-  console.log("[ProjectDashboard] switchWorkspace function:", typeof switchWorkspace);
 
   const subscription = useSubscription();
   const isOwner = user?.workspaceRole === "OWNER";
@@ -315,7 +309,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         });
         setTeamMembers((prev) => {
           if (JSON.stringify(prev) !== JSON.stringify(teamMembersList)) {
-            console.log("[ProjectDashboard] Members updated via polling");
             return teamMembersList;
           }
           return prev;
@@ -328,10 +321,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         const planChanged = currentPlan && currentPlan !== lastSeenPlan;
         const statusChanged = currentStatus && currentStatus !== lastSeenStatus;
         if ((planChanged || statusChanged) && (lastSeenPlan || lastSeenStatus)) {
-          console.log(
-            "[ProjectDashboard] Subscription state changed (%s/%s -> %s/%s) — refreshing permissions",
-            lastSeenPlan, lastSeenStatus, currentPlan, currentStatus,
-          );
 
           await refreshPermissions().catch(() => undefined);
         }
@@ -378,23 +367,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         ? await apiClient.get(`/api/projects/my?workspaceId=${user.workspaceId}`)
         : await apiClient.get(`/api/projects/my`);
       const projectsData = projectsResponse?.data || projectsResponse;
-      console.log("[ProjectDashboard] Projects API response:", JSON.stringify(projectsData, null, 2));
       const loadedProjects = projectsData?.projects || [];
-      console.log(
-        "[ProjectDashboard] Loaded projects:",
-        loadedProjects.length,
-        loadedProjects.map((p: any) => ({
-          name: p.name,
-          memberCount: p.memberCount,
-          fileCount: p.fileCount,
-          members: p.members?.length,
-          files: p.files?.length,
-        })),
-      );
       setProjects(loadedProjects);
 
       if (loadedProjects.length === 0) {
-        console.log("[ProjectDashboard] No projects returned from API");
       }
 
       if (!isDesktop() && user?.workspaceId) {
@@ -405,9 +381,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
           setWorkspaceOwnerId(workspaceData?.ownerId || null);
           setWorkspaceDisplayName(workspaceData?.name || "");
-
-          console.log("[ProjectDashboard] Workspace members from backend:", members);
-          console.log("[ProjectDashboard] Workspace owner ID:", workspaceData?.ownerId);
 
           const teamMembersList = members.map((member: any) => {
 
@@ -426,7 +399,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
           const activeCount = teamMembersList.filter((m: any) => m.status === "ACTIVE").length;
           const pendingCount = teamMembersList.filter((m: any) => m.status === "PENDING").length;
 
-          console.log("[ProjectDashboard] Team members loaded:", activeCount, "active +", pendingCount, "pending");
           setTeamMembers(teamMembersList);
         } catch (error) {
           console.error("[ProjectDashboard] Error loading workspace members:", error);
@@ -525,7 +497,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
         role: role,
       });
 
-      console.log("Invitation sent successfully:", response?.message || "Invitation sent");
       return response;
     } catch (error: any) {
       console.error("Error inviting member:", error);
@@ -580,7 +551,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       confirmText: "Remove",
       onConfirm: async () => {
         try {
-          console.log("[ProjectDashboard] Removing active member:", member.email);
           await apiClient.delete(`/api/workspaces/${user?.workspaceId}/members/${member.email}`);
           showToast(`${member.username} has been removed from the workspace successfully.`, "success");
           await loadData();
@@ -601,13 +571,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       return;
     }
 
-    console.log(
-      "[ProjectDashboard] Opening cancel invitation modal for:",
-      member.email,
-      "token:",
-      member.invitationToken,
-    );
-
     showConfirm({
       title: "Cancel Invitation",
       message: `Are you sure you want to cancel the invitation for ${member.email}? The invitation link will no longer work.`,
@@ -615,9 +578,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       confirmText: "Cancel Invitation",
       onConfirm: async () => {
         try {
-          console.log("[ProjectDashboard] Cancelling invitation with token:", member.invitationToken);
           await apiClient.delete(`/api/invitations/${member.invitationToken}`);
-          console.log("[ProjectDashboard] Invitation cancelled successfully");
           showToast(`Invitation for ${member.email} has been cancelled successfully.`, "success");
           await loadData();
         } catch (error: any) {
@@ -774,7 +735,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       const updatedProjectResponse = await apiClient.get(`/api/projects/${projectSettingsModal.projectId}`);
       const updatedProject =
         updatedProjectResponse?.data?.project || updatedProjectResponse?.project || updatedProjectResponse;
-      console.log("[ProjectDashboard] Updated project data:", updatedProject);
       setProjectSettingsModal(updatedProject);
       loadData();
     } catch (error: any) {
@@ -803,7 +763,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   };
 
   const filteredProjects = useMemo(() => {
-    console.log("[ProjectDashboard] Recalculating filteredProjects, projects:", projects.length);
 
     return projects.filter(
       (project) =>
@@ -939,7 +898,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               {!isDesktop() && (
                 <button
                   onClick={() => {
-                    console.log("[ProjectDashboard] 🔙 Back to workspace clicked");
                     switchWorkspace();
                   }}
                   className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
@@ -958,7 +916,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   {!isDesktop() && currentWorkspaceName && (
                     <button
                       onClick={() => {
-                        console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (inline)");
                         switchWorkspace();
                       }}
                       className="ml-2 px-2.5 py-0.5 bg-gradient-to-r from-purple-50 to-indigo-50 text-purple-700 border border-purple-200 rounded-full text-xs hover:from-purple-100 hover:to-indigo-100 hover:border-purple-300 hover:shadow-sm transition-all inline-flex items-center gap-1.5 font-medium max-w-[55vw] sm:max-w-none"
@@ -1017,7 +974,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               {!isDesktop() && (
                 <button
                   onClick={() => {
-                    console.log("[ProjectDashboard] 🔘 Switch workspace button clicked (main button)");
                     switchWorkspace();
                   }}
                   className="h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:from-indigo-600 hover:to-purple-600"

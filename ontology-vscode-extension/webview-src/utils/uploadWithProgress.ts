@@ -137,8 +137,6 @@ export async function uploadBlobInChunks(
   const totalChunks = chunks.length;
   const totalBytes = data.length;
 
-  console.log(`[uploadBlobInChunks] Starting: uploadId=${uploadId}, ${totalChunks} chunks, ${(totalBytes / (1024 * 1024)).toFixed(1)}MB total`);
-
   let uploadedBytes = 0;
   let finalText = "";
   let finalStatus = 0;

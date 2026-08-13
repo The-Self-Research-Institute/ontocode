@@ -73,7 +73,6 @@ async function uploadChunkWithRetry(
             if (attempt > 0) {
 
                 const delay = Math.pow(2, attempt) * 1000;
-                console.log(`[UploadOptimizer] Retrying chunk ${metadata.chunkIndex + 1}/${metadata.totalChunks} after ${delay}ms delay`);
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
 
@@ -102,23 +101,17 @@ export async function optimizedUpload(
 ): Promise<void> {
     const finalConfig = { ...DEFAULT_CONFIG, ...config };
 
-    console.log(`[UploadOptimizer] Starting optimized upload for ${fileName}`);
-    console.log(`[UploadOptimizer] Original size: ${fileData.length} bytes`);
-    console.log(`[UploadOptimizer] Compression: ${finalConfig.enableCompression ? 'enabled' : 'disabled'}`);
-
     let processedData = fileData;
     if (finalConfig.enableCompression) {
         const startTime = Date.now();
         processedData = await compressData(fileData);
         const compressionTime = Date.now() - startTime;
         const compressionRatio = ((1 - processedData.length / fileData.length) * 100).toFixed(1);
-        console.log(`[UploadOptimizer] Compressed to ${processedData.length} bytes (${compressionRatio}% reduction) in ${compressionTime}ms`);
     }
 
     const shouldChunk = processedData.length > finalConfig.chunkSize;
 
     if (!shouldChunk) {
-        console.log(`[UploadOptimizer] File is small enough, uploading in single request`);
         const metadata: ChunkMetadata = {
             chunkIndex: 0,
             totalChunks: 1,
@@ -131,7 +124,6 @@ export async function optimizedUpload(
     }
 
     const chunks = splitIntoChunks(processedData, finalConfig.chunkSize);
-    console.log(`[UploadOptimizer] Split into ${chunks.length} chunks of ~${finalConfig.chunkSize / (1024 * 1024)}MB each`);
 
     let uploadedBytes = 0;
     const totalBytes = processedData.length;
@@ -145,18 +137,14 @@ export async function optimizedUpload(
             fileName
         };
 
-        console.log(`[UploadOptimizer] Uploading chunk ${i + 1}/${chunks.length} (${chunk.length} bytes)`);
-
         await uploadChunkWithRetry(uploadFn, chunk, metadata, finalConfig.maxRetries);
 
         uploadedBytes += chunk.length;
         const percent = Math.round((uploadedBytes / totalBytes) * 100);
         finalConfig.onProgress?.(percent, uploadedBytes, totalBytes);
 
-        console.log(`[UploadOptimizer] Chunk ${i + 1}/${chunks.length} uploaded successfully (${percent}% complete)`);
     }
 
-    console.log(`[UploadOptimizer] All chunks uploaded successfully`);
 }
 
 export function shouldCompressFile(fileName: string): boolean {

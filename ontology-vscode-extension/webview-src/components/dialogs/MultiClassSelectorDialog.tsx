@@ -49,7 +49,6 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   const [isCreatingClass, setIsCreatingClass] = useState(false);
 
   useEffect(() => {
-    console.log('[MultiClassSelectorDialog] Class hierarchy updated, nodes:', classHierarchy.length);
     setTreeData(classHierarchy);
   }, [classHierarchy]);
 
@@ -178,46 +177,34 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   const effectiveExpandedNodes = externalExpandedNodes || expandedNodes;
 
   const handleInlineAddClass = (type: 'subclass' | 'sibling' | 'individual') => {
-    console.log('[MultiClassSelectorDialog] handleInlineAddClass called with type:', type);
-    console.log('[MultiClassSelectorDialog] onAddClass exists:', !!onAddClass);
-    console.log('[MultiClassSelectorDialog] selectedNode:', selectedNode?.label);
 
     if (type === 'individual') {
-      console.log('[MultiClassSelectorDialog] Ignoring individual type');
       return;
     }
 
     setInlineCreateType(type);
     setShowInlineClassCreate(true);
     setInlineClassName('');
-    console.log('[MultiClassSelectorDialog] Inline form should now be visible');
   };
 
   const handleInlineClassCreateSubmit = async () => {
     if (!inlineClassName.trim() || !onAddClass) return;
 
-    console.log('[MultiClassSelectorDialog] Creating class:', inlineClassName);
     setIsCreatingClass(true);
     try {
       const parentId = selectedNode?.id;
       const type = selectedNode ? 'subclass' : 'sibling';
 
-      console.log('[MultiClassSelectorDialog] Parent:', parentId, 'Type:', type);
-
       if (parentId && !effectiveExpandedNodes.includes(parentId)) {
-        console.log('[MultiClassSelectorDialog] Expanding parent node:', parentId);
         await handleToggleNode(parentId);
       }
 
       const topNodeId = 'http://www.w3.org/2002/07/owl#Thing';
       if (!selectedNode && !effectiveExpandedNodes.includes(topNodeId)) {
-        console.log('[MultiClassSelectorDialog] Expanding top node:', topNodeId);
         await handleToggleNode(topNodeId);
       }
 
-      console.log('[MultiClassSelectorDialog] Calling handler...');
       await onAddClass(type, parentId, inlineClassName.trim());
-      console.log('[MultiClassSelectorDialog] Handler completed');
 
       setShowInlineClassCreate(false);
       setInlineClassName('');

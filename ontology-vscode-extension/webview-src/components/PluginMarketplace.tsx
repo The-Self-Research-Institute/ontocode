@@ -111,10 +111,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       }
 
       const apiBaseUrl = getPluginApiBaseUrl();
-      console.log("[PluginMarketplace] Fetching from:", `${apiBaseUrl}/api/plugins?size=50`);
       const response = await fetch(`${apiBaseUrl}/api/plugins?size=50`, { headers });
-
-      console.log("[PluginMarketplace] Response status:", response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -123,10 +120,8 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       }
 
       const data = await response.json();
-      console.log("[PluginMarketplace] Received data:", data);
 
       const pluginsList = Array.isArray(data) ? data : data.content || [];
-      console.log("[PluginMarketplace] Processing plugins:", pluginsList.length);
 
       const pluginsWithStats = await Promise.all(
         pluginsList.map(async (p: any) => {
@@ -163,7 +158,6 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         }),
       );
 
-      console.log("[PluginMarketplace] Final plugins with stats:", pluginsWithStats);
       setPlugins(pluginsWithStats);
     } catch (error) {
       console.error("[PluginMarketplace] Failed to fetch plugins:", error);

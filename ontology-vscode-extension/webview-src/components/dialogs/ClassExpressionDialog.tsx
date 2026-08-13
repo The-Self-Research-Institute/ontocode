@@ -351,19 +351,12 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   };
 
   const buildDataRestriction = (): string => {
-    console.log('[ClassExpressionDialog] buildDataRestriction called', {
-      selectedDataProperty,
-      datatype,
-      dataRestrictionType,
-      dataCardinality
-    });
     if (!selectedDataProperty) {
       console.warn('[ClassExpressionDialog] buildDataRestriction: No data property selected');
       return '';
     }
 
     const propName = selectedDataProperty.label;
-    console.log('[ClassExpressionDialog] buildDataRestriction: propName=', propName, 'datatype=', datatype);
 
     switch (dataRestrictionType) {
       case 'some':
@@ -419,17 +412,6 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const handleConfirm = async () => {
     if (isSavingConfirm) return;
 
-    console.log('[ClassExpressionDialog] handleConfirm called', {
-      activeTab,
-      axiomType,
-      selectedClass: selectedClass?.id,
-      selectedClassLabel: selectedClass?.label,
-      selectedProperty: selectedProperty?.id,
-      restrictionFiller: restrictionFiller?.id,
-      selectedDataProperty: selectedDataProperty?.id,
-      manchesterExpression: manchesterExpression
-    });
-
     let expression = '';
     let restrictionData: RestrictionData | undefined = undefined;
 
@@ -437,7 +419,6 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       case 'hierarchy':
         if (selectedClass) {
           expression = selectedClass.id;
-          console.log('[ClassExpressionDialog] Hierarchy tab - selected class IRI:', expression, 'label:', selectedClass.label);
         } else {
           console.warn('[ClassExpressionDialog] Hierarchy tab - no class selected!');
           notificationService.warning('Selection Required', 'Please select a class from the hierarchy');
@@ -473,9 +454,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         }
         break;
       case 'dataRestriction':
-        console.log('[ClassExpressionDialog] dataRestriction case - calling buildDataRestriction');
         expression = buildDataRestriction();
-        console.log('[ClassExpressionDialog] dataRestriction expression result:', expression);
 
         if (selectedDataProperty) {
           const fillerIri = datatype.startsWith('http://') || datatype.startsWith('rdf:') || datatype.startsWith('rdfs:') || datatype.startsWith('owl:')
@@ -486,7 +465,6 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                 : datatype)
               : datatype) 
             : `http://www.w3.org/2001/XMLSchema#${datatype.replace('xsd:', '')}`;
-          console.log('[ClassExpressionDialog] dataRestriction fillerIri:', fillerIri);
           restrictionData = {
             type: 'dataRestriction',
             axiomType,
@@ -495,13 +473,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
             fillerIri: fillerIri,
             cardinality: ['min', 'max', 'exactly'].includes(dataRestrictionType) ? dataCardinality : undefined
           };
-          console.log('[ClassExpressionDialog] dataRestriction restrictionData:', restrictionData);
         }
         break;
     }
 
     if (expression) {
-      console.log('[ClassExpressionDialog] Calling onConfirm with expression:', expression);
       setIsSavingConfirm(true);
       try {
         await onConfirm(expression, restrictionData);
@@ -824,17 +800,6 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   );
 
   useEffect(() => {
-    console.log('[ClassExpressionDialog] OK button state:', {
-      isOkEnabled,
-      activeTab,
-      selectedClass: selectedClass?.id,
-      selectedClassExists: selectedClass !== null,
-      selectedProperty: selectedProperty?.id,
-      restrictionFiller: restrictionFiller?.id,
-      selectedDataProperty: selectedDataProperty?.id,
-      datatype,
-      dataRestrictionType
-    });
   }, [isOkEnabled, activeTab, selectedClass, selectedProperty, restrictionFiller, selectedDataProperty, datatype, dataRestrictionType]);
 
   if (!isOpen) return null;
@@ -992,7 +957,6 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   searchQuery={classSearchQuery}
                   onSearchQueryChange={setClassSearchQuery}
                   onSelectItem={(item) => {
-                    console.log('[ClassExpressionDialog] Class selected from hierarchy:', item);
                     setSelectedClass(item as TreeNode);
                   }}
                   onToggleNode={handleHierarchyToggle}
