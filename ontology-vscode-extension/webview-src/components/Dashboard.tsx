@@ -194,6 +194,7 @@ const TopMenuBar = ({
   fileList,
   myFiles,
   sharedFiles,
+  activeFileName,
   currentProjectId,
   onShareFile,
   onSave,
@@ -230,6 +231,7 @@ const TopMenuBar = ({
   onCheckConsistency,
   onExplainInconsistency,
   onOpenReasonerSettings,
+  onClearReasonerCache,
   isConsistencyLoading,
   onGoToProjectDashboard,
   onGoToWorkspace,
@@ -246,10 +248,12 @@ const TopMenuBar = ({
   onHierarchyAnnotationPropChange,
   hierarchyCustomTemplate,
   onHierarchyCustomTemplateChange,
+
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
   sharedFiles: FileInfo[];
+    activeFileName?: string | null; 
   currentProjectId: string | null;
   onShareFile: (fileId: string) => void;
   onSave: () => Promise<void>;
@@ -286,6 +290,7 @@ const TopMenuBar = ({
   onCheckConsistency?: () => void;
   onExplainInconsistency?: () => void;
   onOpenReasonerSettings?: () => void;
+  onClearReasonerCache?: () => void;
   isConsistencyLoading?: boolean;
   onGoToProjectDashboard?: () => void;
   onGoToWorkspace?: () => void;
@@ -693,6 +698,17 @@ const TopMenuBar = ({
                     >
                       Configure...
                     </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        if (onClearReasonerCache) onClearReasonerCache();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-red-50 text-red-600 flex items-center gap-2"
+                      title="Discard the in-memory ontology/reasoner cache so the next run reloads fresh"
+                    >
+                      <Trash2 size={12} />
+                      Clear reasoner cache
+                    </button>
                     <div className="border-t border-gray-200 my-1"></div>
                     <div className="px-4 py-1 text-[11px] text-gray-500 font-semibold">Select Reasoner:</div>
                     <button
@@ -879,14 +895,15 @@ const TopMenuBar = ({
                               // is implied by hasExport on paid tiers but we
                               // keep both keys explicit so future tiers can
                               // diverge (e.g. a Starter plan with TTL-only).
-                              if (isViewOnly || !subscription.canAccessFeature('hasExport')
-                                  || !subscription.canAccessFeature('hasMultipleExportFormats')) {
-                                onExportProAction?.();
-                                return;
-                              }
+                              // if (isViewOnly || !subscription.canAccessFeature('hasExport')
+                              //     || !subscription.canAccessFeature('hasMultipleExportFormats')) {
+                              //   onExportProAction?.();
+                              //   return;
+                              // }
                               setExportingFormat(format);
                               // Prefer the ontology's actual file name over the raw project id.
                               const baseName = (
+                                 activeFileName || 
                                 myFiles.find((f) => f.projectId === currentProjectId)?.filename ||
                                 currentProjectId
                               ).replace(/\.[^./]+$/, "");
@@ -1900,6 +1917,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, []);
   const [searchQuery, setSearchQuery] = useState("");
+  /** Under each search hit, show loaded descendants up to this depth; unrelated branches stay hidden. */
+  const [searchMatchSubtreeDepth, setSearchMatchSubtreeDepth] = useState(5);
   const [searchOptions, setSearchOptions] = useState({
     useRegex: false,
     searchAnnotations: false,
@@ -2768,6 +2787,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   ]);
 
   const filteredData = React.useMemo(() => {
+    const perfStart = performance.now();
+    let perfNodesVisited = 0;
     const trimmedQuery = searchQuery.trim();
     const lowercasedQuery = trimmedQuery.toLowerCase();
     let regex: RegExp | null = null;
@@ -2840,8 +2861,36 @@ const Dashboard: React.FC<DashboardProps> = ({
       return haystack.toLowerCase().includes(lowercasedQuery);
     };
 
+    /** Clip a loaded subtree so only `maxDepth` levels of children remain (0 = leaf). */
+    const clipToDepth = (items: SelectableItem[], maxDepth: number): SelectableItem[] => {
+      if (!Array.isArray(items) || maxDepth < 0) return [];
+      return items
+        .filter((item) => item && item.id && !isDeprecated(item) && !isBuiltIn(item))
+        .map((item) => {
+          const kids = Array.isArray((item as any).children) ? (item as any).children : [];
+          if (maxDepth === 0) {
+            return {
+              ...item,
+              children: [],
+              hasChildren: Boolean((item as any).hasChildren) || kids.length > 0,
+            } as any;
+          }
+          const clipped = clipToDepth(kids, maxDepth - 1);
+          return {
+            ...item,
+            children: clipped,
+            hasChildren: clipped.length > 0 || Boolean((item as any).hasChildren),
+          } as any;
+        });
+    };
+
+    /**
+     * Search visibility:
+     * - Keep matches + ancestors on the path to matches (hide unrelated siblings).
+     * - Under each match, show loaded descendants only up to searchMatchSubtreeDepth.
+     * Without a query, keep the full (non-deprecated/non-builtin-filtered) tree.
+     */
     const filterRecursively = (items: SelectableItem[]): SelectableItem[] => {
-      // Safety check: ensure items is an array
       if (!Array.isArray(items)) {
         console.warn("[Dashboard] filterRecursively received non-array:", items);
         return [];
@@ -2849,16 +2898,10 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const results: SelectableItem[] = [];
       for (const item of items) {
-        // Skip null/undefined items
-        if (!item || !item.id) {
-          continue;
-        }
+        perfNodesVisited++;
+        if (!item || !item.id) continue;
+        if (isDeprecated(item)) continue;
 
-        if (isDeprecated(item)) {
-          continue;
-        }
-
-        // Safely get children array
         const children = Array.isArray((item as any).children) ? (item as any).children : [];
 
         if (isBuiltIn(item) && children.length > 0) {
@@ -2866,19 +2909,29 @@ const Dashboard: React.FC<DashboardProps> = ({
           results.push(...childResults);
           continue;
         }
+        if (isBuiltIn(item)) continue;
 
-        let matches = matchesQuery(item);
-        if (children.length > 0) {
-          const childResults = filterRecursively(children);
-          if (childResults.length > 0) {
-            results.push({ ...item, children: childResults, hasChildren: true } as any);
-            matches = true;
-          }
+        if (!trimmedQuery) {
+          results.push(item);
+          continue;
         }
-        if (matches && !results.find((r) => r.id === item.id)) {
-          // Ensure children is always an array when adding to results
-          results.push({ ...item, children: children.length > 0 ? children : [] } as any);
+
+        const selfMatch = matchesQuery(item);
+        const childResults = children.length > 0 ? filterRecursively(children) : [];
+
+        if (selfMatch) {
+          // Hit: show this node; under it only a depth-limited subtree (not the whole ontology).
+          const subtree = clipToDepth(children, searchMatchSubtreeDepth);
+          results.push({
+            ...item,
+            children: subtree,
+            hasChildren: subtree.length > 0 || Boolean((item as any).hasChildren),
+          } as any);
+        } else if (childResults.length > 0) {
+          // Ancestor of a hit: keep path, hide non-matching siblings.
+          results.push({ ...item, children: childResults, hasChildren: true } as any);
         }
+        // else: unrelated — hide
       }
       return results;
     };
@@ -2889,8 +2942,48 @@ const Dashboard: React.FC<DashboardProps> = ({
       return [];
     }
 
-    return filterRecursively(sourceData);
-  }, [searchQuery, sourceData, entitiesTab, searchOptions]);
+    const result = filterRecursively(sourceData);
+    const perfDuration = performance.now() - perfStart;
+    if (perfDuration > 50 || perfNodesVisited > 5000) {
+      console.log(
+        `[PERF] Dashboard hierarchy filter ("${trimmedQuery}"): visited ${perfNodesVisited} tree nodes in ${perfDuration.toFixed(1)}ms`,
+      );
+    }
+    return result;
+  }, [searchQuery, sourceData, entitiesTab, searchOptions, searchMatchSubtreeDepth]);
+
+  // When searching: auto-expand every visible path node so hits aren't hidden behind collapsed parents.
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) return;
+
+    const ids: string[] = [];
+    const walk = (items: SelectableItem[]) => {
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        if (!item?.id) continue;
+        const kids = Array.isArray((item as any).children) ? (item as any).children : [];
+        if (kids.length > 0) {
+          ids.push(item.id);
+          walk(kids);
+        }
+      }
+    };
+    walk(filteredData as SelectableItem[]);
+    if (ids.length === 0) return;
+
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of ids) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? Array.from(next) : prev;
+    });
+  }, [searchQuery, filteredData]);
 
   const fetchReasonerBundle = useCallback(
     async (reasonerType: string) => {
@@ -3475,6 +3568,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       const data = extractResponseData(resp);
       setExplanationState({ open: true, loading: false, data, error: null });
       notificationService.info("Explanation Ready", "Review the inconsistency report.");
+
+      // The explanation just re-ran the check fresh and found the ontology
+      // consistent — but the sidebar's consistency banner/stats are frozen
+      // React state from whatever the last classify/consistency run showed.
+      // Without this, the sidebar can keep saying "inconsistent" forever
+      // after the ontology was fixed, directly contradicting this dialog.
+      if (data?.isConsistent === true) {
+        setReasonerResults(null);
+        checkConsistency();
+      }
     } catch (error: any) {
       const backendData = error?.response?.data;
       console.error("[Dashboard] Explain inconsistency failed:", {
@@ -3493,7 +3596,45 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       notificationService.error("Explain Inconsistency Failed", `${friendlyMessage}${suggestion}`);
     }
-  }, [projectId, selectedReasoner]);
+  }, [projectId, selectedReasoner, checkConsistency]);
+
+  const clearReasonerCache = useCallback(async () => {
+    // Uses the in-app toast (collaboration.addNotification) rather than
+    // notificationService directly — outside VS Code, notificationService
+    // prefers a browser OS-level notification whenever permission is already
+    // granted, which is easy to miss for a quick confirmation like this. The
+    // toast queue always renders on-screen immediately regardless of that.
+    const userId = user?.userId || user?.email || "system";
+    try {
+      await apiClient.post(`/plugin-service/api/reasoner/clear-cache`, {});
+      collaboration.addNotification({
+        type: "success",
+        message: "Reasoner cache cleared — the next run reloads the ontology fresh.",
+        userId,
+        username: "",
+        userColor: "#22c55e",
+        timestamp: Date.now(),
+      });
+
+      // Drop the frozen classify/stats results (they reflect whatever the cached,
+      // possibly-stale ontology last showed) and re-run consistency fresh against
+      // the now-uncached ontology, so the sidebar can't keep showing "inconsistent"
+      // after the underlying reason for that has already been cleared/fixed.
+      setReasonerResults(null);
+      checkConsistency();
+    } catch (error: any) {
+      const friendlyMessage =
+        error?.response?.data?.error || error?.message || "Failed to clear the reasoner cache.";
+      collaboration.addNotification({
+        type: "error",
+        message: `Clear cache failed: ${friendlyMessage}`,
+        userId,
+        username: "",
+        userColor: "#ef4444",
+        timestamp: Date.now(),
+      });
+    }
+  }, [user, collaboration, checkConsistency]);
 
   const setCurrentHierarchyViewMode = (mode: "asserted" | "inferred") => {
     setHierarchyViewModes((prev) => ({ ...prev, [entitiesTab]: mode }));
@@ -6445,15 +6586,19 @@ const Dashboard: React.FC<DashboardProps> = ({
   // do its job for its own intended case (Editor button vs. fileReady WS handler racing).
   const autoLoadTriggeredForRef = useRef<string | null>(null);
 
-  // Auto-load selected file from Project Library (admin flow)
+// Auto-load selected file from Project Library (admin flow)
   useEffect(() => {
     if (selectedFileId && selectedFileName && initialProjectId) {
-      if (autoLoadTriggeredForRef.current === selectedFileId) {
-        console.log("[Dashboard] Skipping duplicate auto-load trigger for:", selectedFileId);
+      // Key on id+name, not just id: a rename keeps the same fileId but changes
+      // selectedFileName, and that must NOT be treated as a duplicate trigger —
+      // otherwise a renamed-then-reopened file keeps showing its stale old name
+      // for the rest of the session.
+      const autoLoadKey = `${selectedFileId}::${selectedFileName}`;
+      if (autoLoadTriggeredForRef.current === autoLoadKey) {
+        console.log("[Dashboard] Skipping duplicate auto-load trigger for:", selectedFileId, selectedFileName);
         return;
       }
-      autoLoadTriggeredForRef.current = selectedFileId;
-
+      autoLoadTriggeredForRef.current = autoLoadKey;
       console.log("[Dashboard] Auto-loading selected file:", selectedFileId, selectedFileName);
       console.log("[Dashboard] Parent project for file menu:", initialProjectId);
 
@@ -7628,83 +7773,66 @@ const Dashboard: React.FC<DashboardProps> = ({
     [projectId, fetchInferredChildren, applyInstanceCountsToTree, classInstanceCounts, getLocalName],
   );
 
-  const updateItemInState = useCallback(
-    (updatedItem: SelectableItem, markUnsaved: boolean = true) => {
-      console.log("[DEBUG] updateItemInState called for item:", updatedItem.id, "markUnsaved:", markUnsaved);
-      console.log("[CHANGE TRACKING] Entity updated:", {
-        entityId: updatedItem.id,
-        entityLabel: updatedItem.label,
-        entityType: entitiesTab,
-        modifiedBy: user?.username || "anonymous",
-        timestamp: new Date().toISOString(),
-      });
 
-      const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
-        return items.map((item) => {
-          if (item.id === updatedItem.id) {
-            // Preserve children from the existing item if the new item doesn't have them populated
-            // The updatedItem from details endpoint usually doesn't have the full children tree
-            const existingChildren = (item as TreeNode).children;
-            const newChildren = (updatedItem as TreeNode).children;
+const updateItemInState = useCallback(
+  (updatedItem: SelectableItem, markUnsaved: boolean = true, previousId?: string) => {
+    const matchId = previousId ?? updatedItem.id;
+    console.log("[DEBUG] updateItemInState called for item:", updatedItem.id, "matching against:", matchId);
 
-            return {
-              ...updatedItem,
-              children: newChildren && newChildren.length > 0 ? newChildren : existingChildren,
-            };
-          }
-          const treeNode = item as TreeNode;
-          if (treeNode.children) {
-            return { ...item, children: updateRecursively(treeNode.children) };
-          }
-          return item;
-        });
-      };
-
-      // Update selected item if it matches
-      setSelectedItem((prev) => {
-        if (prev?.id === updatedItem.id) {
-          console.log("[Dashboard] Updating selected item in state (ID match)");
-          return updatedItem;
+    const updateRecursively = (items: SelectableItem[]): SelectableItem[] => {
+      return items.map((item) => {
+        if (item.id === matchId) {
+          const existingChildren = (item as TreeNode).children;
+          const newChildren = (updatedItem as TreeNode).children;
+          return {
+            ...updatedItem,
+            children: newChildren && newChildren.length > 0 ? newChildren : existingChildren,
+          };
         }
-        return prev;
+        const treeNode = item as TreeNode;
+        if (treeNode.children) {
+          return { ...item, children: updateRecursively(treeNode.children) };
+        }
+        return item;
       });
+    };
 
-      switch (entitiesTab) {
-        case "Classes":
-          setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
-          break;
-        case "ObjectProperties":
-          setObjectProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
-          setObjectPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
-          break;
-        case "DataProperties":
-          setDataProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
-          setDataPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
-          break;
-        case "AnnotationProperties":
-          setAnnotationProperties((prev) => {
-            const updated = prev.map((p) => (p.id === updatedItem.id ? (updatedItem as AnnotationProperty) : p));
-            setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(updated));
-            return updated;
-          });
-          break;
-        case "Individuals":
-          setIndividuals((prev) => prev.map((i) => (i.id === updatedItem.id ? (updatedItem as Individual) : i)));
-          break;
-        case "Datatypes":
-          setDatatypes((prev) => prev.map((d) => (d.id === updatedItem.id ? (updatedItem as Datatype) : d)));
-          break;
+    setSelectedItem((prev) => {
+      if (prev?.id === matchId) {
+        return updatedItem;
       }
+      return prev;
+    });
 
-      // Mark as unsaved to enable Save button (only if markUnsaved is true).
-      // Skipped in webapp public/live sync since the mutation already landed live.
-      if (markUnsaved && !isLiveWriteMode()) {
-        setHasUnsavedChanges(true);
-      }
-    },
-    [entitiesTab, user],
-  );
+    switch (entitiesTab) {
 
+  case "Classes":
+    setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+    break;
+  case "Objectproperties":
+    setObjectPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+    break;
+  case "Dataproperties":
+    setDataPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+    break;
+  case "Annotationproperties":
+    setAnnotationPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+    break;
+  case "Individuals":
+    setIndividuals((prev) => updateRecursively(prev) as Individual[]);
+    break;
+  case "Datatypes":
+    setDatatypes((prev) => updateRecursively(prev) as Datatype[]);
+    break;
+
+    }
+
+    if (markUnsaved && !isLiveWriteMode()) {
+      setHasUnsavedChanges(true);
+    }
+  },
+  [entitiesTab, user],
+);
   const refreshClassHierarchy = useCallback(async () => {
     if (!projectId) return;
     if (shouldDeferHierarchyDuringFileOpen()) {
@@ -11814,22 +11942,81 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const handleGraphNodeClick = useCallback(
     (nodeId: string) => {
-      console.log("[DEBUG] handleGraphNodeClick called for nodeId:", nodeId);
       const flatten = (nodes: TreeNode[]): TreeNode[] =>
         nodes.flatMap((n) => [n, ...(n.children ? flatten(n.children) : [])]);
 
-      const allItems: SelectableItem[] = [...flatten(classHierarchy), ...individuals];
-      const item = allItems.find((i: SelectableItem) => i.id === nodeId);
-      if (item) {
-        let tab = "Classes";
-        if ("types" in item) tab = "Individuals";
+      const normalizeIri = (value: string) => {
+        try {
+          return decodeURIComponent(String(value || "").trim());
+        } catch {
+          return String(value || "").trim();
+        }
+      };
+      const localName = (value: string) => {
+        const n = normalizeIri(value);
+        const hash = n.lastIndexOf("#");
+        const slash = n.lastIndexOf("/");
+        const cut = Math.max(hash, slash);
+        return cut >= 0 ? n.slice(cut + 1) : n;
+      };
 
-        setEntitiesTab(tab);
-        setSelectedItem(item);
-        setMainTab("Entities");
+      const target = normalizeIri(nodeId);
+      const targetLocal = localName(target);
+
+      // Search every entity pool so properties/datatypes land on their own tab,
+      // not just classes and individuals.
+      const pools: Array<{ tab: string; items: SelectableItem[] }> = [
+        { tab: "Classes", items: flatten(classHierarchy) },
+        { tab: "Individuals", items: individuals },
+        { tab: "ObjectProperties", items: [...flatten(objectPropertyHierarchy), ...objectProperties] },
+        { tab: "DataProperties", items: [...flatten(dataPropertyHierarchy), ...dataProperties] },
+        { tab: "AnnotationProperties", items: [...flatten(annotationPropertyHierarchy), ...annotationProperties] },
+        { tab: "Datatypes", items: datatypes },
+      ];
+
+      const matchItem = (items: SelectableItem[]) =>
+        items.find((i) => normalizeIri(i.id) === target) ||
+        items.find((i) => localName(i.id) === targetLocal && targetLocal.length > 0) ||
+        null;
+
+      for (const pool of pools) {
+        const item = matchItem(pool.items);
+        if (item) {
+          setEntitiesTab(pool.tab);
+          setSelectedItem(item);
+          setMainTab("Entities");
+          return;
+        }
       }
+
+      // Fallback: open Entities anyway with a synthetic selection (same as collab navigate).
+      // Graph IRIs can appear before the Entities tree has lazy-loaded that branch.
+      const label = targetLocal || target;
+      const synthetic = {
+        id: target,
+        label,
+        children: [],
+        hasChildren: false,
+      } as TreeNode;
+      setEntitiesTab("Classes");
+      setSelectedItem(synthetic);
+      setMainTab("Entities");
+      notificationService.info(
+        "Opened in Entities",
+        `${label} wasn’t in the loaded tree yet — opened by IRI`,
+      );
     },
-    [classHierarchy, individuals],
+    [
+      classHierarchy,
+      individuals,
+      objectPropertyHierarchy,
+      objectProperties,
+      dataPropertyHierarchy,
+      dataProperties,
+      annotationPropertyHierarchy,
+      annotationProperties,
+      datatypes,
+    ],
   );
 
   const findClassNodeById = useCallback(
@@ -14892,10 +15079,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                       setShowCitationPicker(true);
                     }}
                     className="ml-auto px-3 py-1 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-1"
-                    title={isViewOnlyMember ? "Pro feature: citations require a Pro plan" : "Insert citation"}
+                    title={isViewOnlyMember ? "Pro feature: citations require a Pro plan" : "Insert citation via Sci2Code"}
                   >
                     <BookOpen size={16} />
-                    Citation
+                    Citation (Sci2Code)
                   </button>
                   <button
                     onClick={() => {
@@ -16841,81 +17028,73 @@ const Dashboard: React.FC<DashboardProps> = ({
     setIsObjectPropertyExpressionDialogOpen(true);
   };
 
-  const handleManchesterConfirm = async (expression: string, restrictionData?: any) => {
-    if (!selectedItem || !projectId || !selectorTarget) return;
-    const target = selectorTarget as "domain" | "range";
-    const editing = selectorEditingItem;
-    const isDataProperty = (selectedItem as any)?.type === "DatatypeProperty";
-    const relationType = target === "domain" ? "Domain" : "Range";
-    const userId = user?.email || "anonymous";
-    const username = user?.username || "Anonymous";
-    const useManchesterApi =
-      !restrictionData &&
-      (isManchesterClassExpression(expression) ||
-        (editing != null && isManchesterClassExpression(editing)));
+const handleManchesterConfirm = async (expression: string, restrictionData?: any) => {
+  if (!selectedItem || !projectId || !selectorTarget) return;
+  const target = selectorTarget as "domain" | "range";
+  const editing = selectorEditingItem;
+  const isDataProperty = (selectedItem as any)?.type === "DatatypeProperty";
+  const relationType = target === "domain" ? "Domain" : "Range";
+  const userId = user?.email || "anonymous";
+  const username = user?.username || "Anonymous";
 
-    try {
-      if (useManchesterApi) {
-        if (editing) {
-          if (isManchesterClassExpression(editing)) {
-            await expressionService.deletePropertyExpressionAxiom(
-              projectId, selectedItem.id, relationType, editing, isDataProperty, userId, username,
-            );
-          } else if (isSimpleOntologyIri(editing)) {
-            if (target === "domain") {
-              await ontologyMutationService.deletePropertyDomain(projectId, selectedItem.id, editing, userId, username);
-            } else {
-              await ontologyMutationService.deletePropertyRange(projectId, selectedItem.id, editing, userId, username);
-            }
-          }
-        }
-        await expressionService.addPropertyExpressionAxiom(
-          projectId, selectedItem.id, relationType, expression, isDataProperty, userId, username,
+  try {
+    // Remove the OLD value, based on what shape IT is — independent of the new value.
+    if (editing) {
+      if (isManchesterClassExpression(editing)) {
+        await expressionService.deletePropertyExpressionAxiom(
+          projectId, selectedItem.id, relationType, editing, isDataProperty, userId, username,
         );
-        const prop = selectedItem as Property;
-        if (editing) {
-          if (target === "domain") {
-            updateItemInState({ ...selectedItem, domains: (prop.domains || []).map((d) => (d === editing ? expression : d)) });
-          } else {
-            updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map((r) => (r === editing ? expression : r)) });
-          }
-        } else if (target === "domain") {
-          updateItemInState({ ...selectedItem, domains: [...(prop.domains || []), expression] });
-        } else {
-          updateItemInState({ ...selectedItem, ranges: [...(prop.ranges || []), expression] });
-        }
-      } else if (editing) {
-        await ontologyMutationService.editRelation(projectId, {
-          operation: 'edit',
-          entityIri: selectedItem.id,
-          relationshipType: target,
-          oldTargetIri: editing,
-          targetIri: expression,
-          userId,
-          username,
-        });
-        const prop = selectedItem as Property;
+      } else if (isSimpleOntologyIri(editing)) {
         if (target === "domain") {
-          updateItemInState({ ...selectedItem, domains: (prop.domains || []).map((d) => (d === editing ? expression : d)) });
+          await ontologyMutationService.deletePropertyDomain(projectId, selectedItem.id, editing, userId, username);
         } else {
-          updateItemInState({ ...selectedItem, ranges: (prop.ranges || []).map((r) => (r === editing ? expression : r)) });
+          await ontologyMutationService.deletePropertyRange(projectId, selectedItem.id, editing, userId, username);
         }
-      } else if (target === "domain") {
+      }
+    }
+
+    // Add the NEW value, based on what shape IT is.
+    if (restrictionData) {
+      if (target === "domain") {
         await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, userId, username, restrictionData);
-        updateItemInState({ ...selectedItem, domains: [...((selectedItem as Property).domains || []), expression] });
       } else {
         await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, userId, username, restrictionData);
-        updateItemInState({ ...selectedItem, ranges: [...((selectedItem as Property).ranges || []), expression] });
       }
-    } catch (error) {
-      console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
-      notificationService.error("Property axiom", `Failed to ${editing ? 'update' : 'add'} ${target}`);
-    } finally {
-      setIsClassExpressionDialogOpen(false);
-      setSelectorTarget(null);
-      setSelectorEditingItem(null);
+    } else if (isManchesterClassExpression(expression)) {
+      await expressionService.addPropertyExpressionAxiom(
+        projectId, selectedItem.id, relationType, expression, isDataProperty, userId, username,
+      );
+    } else if (target === "domain") {
+      await ontologyMutationService.addPropertyDomain(projectId, selectedItem.id, expression, userId, username);
+    } else {
+      await ontologyMutationService.addPropertyRange(projectId, selectedItem.id, expression, userId, username);
     }
-  };
+
+    const prop = selectedItem as Property;
+    if (target === "domain") {
+      updateItemInState({
+        ...selectedItem,
+        domains: editing
+          ? (prop.domains || []).map((d) => (d === editing ? expression : d))
+          : [...(prop.domains || []), expression],
+      });
+    } else {
+      updateItemInState({
+        ...selectedItem,
+        ranges: editing
+          ? (prop.ranges || []).map((r) => (r === editing ? expression : r))
+          : [...(prop.ranges || []), expression],
+      });
+    }
+  } catch (error) {
+    console.error(`Failed to ${editing ? 'replace' : 'add'} ${selectorTarget}`, error);
+    notificationService.error("Property axiom", `Failed to ${editing ? 'update' : 'add'} ${target}`);
+  } finally {
+    setIsClassExpressionDialogOpen(false);
+    setSelectorTarget(null);
+    setSelectorEditingItem(null);
+  }
+};
 
   // Handler for property selector (subProperty/inverse/disjoint/equivalent)
   const handlePropertySelected = async (expression: string) => {
@@ -17958,6 +18137,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           fileList={listOfFiles}
           myFiles={myFiles}
           sharedFiles={sharedFiles}
+            activeFileName={activeFileName} 
           currentProjectId={projectId}
           onShareFile={(fileId) => {
             setShareFileId(fileId);
@@ -18075,6 +18255,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onCheckConsistency={checkConsistency}
           onExplainInconsistency={explainInconsistency}
           onOpenReasonerSettings={() => setIsReasonerSettingsOpen(true)}
+          onClearReasonerCache={clearReasonerCache}
           isConsistencyLoading={isConsistencyLoading}
           onGoToProjectDashboard={onGoToProjectDashboard}
           onGoToWorkspace={onGoToWorkspace}
@@ -18176,6 +18357,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                     {user.workspaceName}
                   </span>
                 )}
+              
+              {initialProjectName && activeFileName && (
+                <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
+                  {`${initialProjectName} - ${activeFileName}`}
+                </span>
+              )}
               </span>
               {isProjectViewerRole && (
                 <span
@@ -18227,6 +18414,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               >
                 <Palette size={14} />
               </button>
+             
+
               {onBackToProjects && (
                 <button
                   onClick={handleBackToProjects}
@@ -18237,6 +18426,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   Projects
                 </button>
               )}
+
               {/* Desktop download icon — hidden when already in the desktop app */}
               {!isDesktop() && (
                 <a
@@ -18318,6 +18508,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                   onSearchQueryChange={setSearchQuery}
                   searchOptions={searchOptions}
                   onSearchOptionsChange={setSearchOptions}
+                  searchMatchSubtreeDepth={searchMatchSubtreeDepth}
+                  onSearchMatchSubtreeDepthChange={setSearchMatchSubtreeDepth}
                   onSelectItem={setSelectedItem}
                   onToggleNode={toggleNode}
                   onAddItem={handleAddItem}
@@ -18404,6 +18596,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                     onViewOnlyAction={handleViewOnlyAction}
                     isReasonerRunning={isReasonerRunning}
                     selectedReasoner={selectedReasoner}
+                    user={user}
                   />
                 </div>
               </section>

@@ -1314,7 +1314,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         ) : (
           /* Results View Layout */
           <>
-            {/* Left Panel - Consistency & Stats */}
+            {/* Left Panel - Consistency & Stats. overflow-hidden on the panel itself — the
+                Unsatisfiable/Equivalent Classes section below gets its own dedicated scroll
+                region (flex-1 min-h-0 overflow-y-auto) instead of the whole panel scrolling,
+                so Reasoner Information/Entity Counts above and the Actions footer (Classify/
+                Explain Inconsistency buttons) below always stay fully visible and pinned,
+                never pushed off-screen by however much unsatisfiable/equivalent content there is. */}
             <div className={`w-80 border-r flex flex-col overflow-hidden ${
               isDark ? 'border-gray-700 bg-gray-900' : 'border-gray-300 bg-white'
             }`}>
@@ -1401,9 +1406,17 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 </div>
               </div>
 
-              {/* Unsatisfiable Classes */}
+              {/* Scrollable middle region — the only part of the panel allowed to grow/scroll.
+                  min-h-0 is required alongside flex-1: without it, a flex child defaults to
+                  min-height:auto and never actually shrinks to enable its own overflow-y-auto,
+                  which is why Actions (Classify/Explain Inconsistency) kept getting pushed
+                  entirely off-screen instead of the content here scrolling internally. */}
+              <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+              {/* Unsatisfiable Classes. Bounded max-h + its own scroll (not flex-1) — flex-1
+                  made this greedily claim all remaining space in the panel, leaving nothing
+                  for the Equivalent Classes section below it to render into. */}
               {combinedUnsat.length > 0 && (
-                <div className={`px-4 py-3 border-b flex-1 overflow-hidden flex flex-col ${
+                <div className={`px-4 py-3 border-b flex flex-col ${
                   isDark ? 'bg-red-900/10 border-gray-700' : 'bg-red-50 border-gray-300'
                 }`}>
                   <div className="flex items-center justify-between mb-2">
@@ -1418,7 +1431,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       Explain
                     </button>
                   </div>
-                  <div className="flex-1 overflow-y-auto space-y-1">
+                  <div className="max-h-56 overflow-y-auto space-y-1">
                     {combinedUnsat.map((cls: any, idx: number) => {
                       const clsData = typeof cls === 'string'
                         ? { iri: cls, label: cls.split('#').pop() || cls.split('/').pop() || cls }
@@ -1467,6 +1480,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                   </div>
                 </div>
               )}
+              </div>
 
               {/* Actions */}
               <div className={`px-4 py-3 border-t mt-auto ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
@@ -1726,6 +1740,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                                 ) : (
                                   JSON.stringify(v)
                                 )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {Array.isArray(cause.axioms) && cause.axioms.length > 0 && (
+                          <ul className="space-y-1">
+                            {cause.axioms.map((axiom: string, i: number) => (
+                              <li key={i} className="text-xs font-mono opacity-90">
+                                {axiom}
                               </li>
                             ))}
                           </ul>

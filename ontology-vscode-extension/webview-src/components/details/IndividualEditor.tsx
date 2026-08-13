@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { Panel, AnnotationsDisplay, MultiSelectSection, CollaboratorPresenceBar } from './common';
 import type { Individual, Property, PropertyAssertion, TreeNode } from '../../types';
-import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog, ClassExpressionDialog } from '../dialogs';
+import { Plus, Trash2, Loader2, Search, Edit3 } from 'lucide-react';
+import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDialog, ClassExpressionDialog, IRIEditorDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
@@ -126,7 +126,8 @@ const IndividualUsageTab: React.FC<{
 
 const IndividualEditor: React.FC<{
   item: Individual;
-  onUpdate: (updatedItem: Individual) => void;
+  //onUpdate: (updatedItem: Individual) => void;
+   onUpdate: (updatedItem: Individual, markUnsaved?: boolean, previousId?: string) => void;
   onAddAnnotation: () => void;
   onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
@@ -304,7 +305,7 @@ const IndividualEditor: React.FC<{
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editorTitle, setEditorTitle] = useState("");
   const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
-
+  const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
   const handleAddAssertion = async (data?: { 
     propertyLabel: string; 
     targetLabel: string; 
@@ -511,19 +512,49 @@ const IndividualEditor: React.FC<{
       setEditorAction(() => action);
       setIsEditorOpen(true);
   };
-  
+  const handleSaveIRI = async (newIRI: string, newLabel: string) => {
+  try {
+    const iriChanged = newIRI !== item.id;
+    const labelChanged = newLabel !== item.label;
+    const targetIri = iriChanged ? newIRI : item.id;
+    const previousId = item.id;
+    if (iriChanged) {
+      await ontologyMutationService.renameEntity(
+        projectId, item.id, newIRI,
+        userId || "anonymous", username || "Anonymous",
+      );
+    }
+    if (iriChanged || labelChanged) {
+      await ontologyMutationService.updateClassLabel(projectId, targetIri, newLabel, userId, username);
+    }
+    if (iriChanged || labelChanged) {
+      const updatedItem = { ...item, id: newIRI, iri: newIRI, label: newLabel };
+      onUpdate(updatedItem as Individual, true, iriChanged ? previousId : undefined);
+    }
+  } catch (error) {
+    console.error("Failed to update individual:", error);
+    notificationService.error("Rename Failed", error instanceof Error ? error.message : "Failed to rename entity.");
+  }
+};
   return (
     <div className="flex flex-col h-full bg-white">
       {/* Header with IRI */}
-      <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <div className="bg-purple-200 text-purple-800 p-1 rounded text-xs font-bold">I</div>
-          <div className="flex flex-col min-w-0">
-            <span className="font-bold text-sm truncate">{item.label}</span>
-            <span className="text-xs text-gray-500 truncate font-mono">{item.id}</span>
-          </div>
-        </div>
-      </div>
+     <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
+  <div className="flex items-center gap-2 overflow-hidden">
+    <div className="bg-purple-200 text-purple-800 p-1 rounded text-xs font-bold">I</div>
+    <div className="flex flex-col min-w-0">
+      <span className="font-bold text-sm truncate">{item.label}</span>
+      <span className="text-xs text-gray-500 truncate font-mono">{item.id}</span>
+    </div>
+  </div>
+<button
+  onClick={() => setIsIRIEditorOpen(true)}
+  className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
+  title="Edit IRI and Label"
+>
+  <Edit3 size={16} />
+</button>
+</div>
       <CollaboratorPresenceBar entityId={item.id} />
 
       {/* Tabs */}
@@ -938,6 +969,14 @@ const IndividualEditor: React.FC<{
           }}
         />
       )}
+      <IRIEditorDialog
+  isOpen={isIRIEditorOpen}
+  onClose={() => setIsIRIEditorOpen(false)}
+  currentIRI={item.id}
+  currentLabel={item.label}
+  entityType="Individual"
+  onSave={handleSaveIRI}
+/>
     </div>
   );
 };

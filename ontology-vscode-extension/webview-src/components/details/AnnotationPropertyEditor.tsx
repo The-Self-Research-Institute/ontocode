@@ -9,7 +9,7 @@ import type { AnnotationProperty } from '../../types';
 
 interface AnnotationPropertyEditorProps {
   item: AnnotationProperty;
-  onUpdate: (updatedItem: AnnotationProperty) => void;
+  onUpdate: (updatedItem: AnnotationProperty, markUnsaved?: boolean, previousId?: string) => void;
   onAddAnnotation: () => void;
   onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
@@ -24,6 +24,7 @@ interface AnnotationPropertyEditorProps {
   /** Full annotation properties list, used to resolve superproperty IRIs to their
    * actual rdfs:label instead of showing the bare IRI. */
   annotationProperties?: AnnotationProperty[];
+  user?: { email?: string; username?: string; userId?: string };
 }
 
 interface UsageItem {
@@ -193,6 +194,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   onViewOnlyAction,
   onNavigate,
   annotationProperties,
+  user,
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
@@ -220,13 +222,28 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
 
   const handleSaveIRI = async (newIRI: string, newLabel: string) => {
     try {
-      if (newLabel !== item.label) {
-        await ontologyMutationService.updateClassLabel(projectId, item.id, newLabel);
-        onUpdate({ ...item, label: newLabel } as AnnotationProperty);
+      const iriChanged = newIRI !== item.id;
+      const labelChanged = newLabel !== item.label;
+      const previousId = item.id;
+      const targetIri = iriChanged ? newIRI : item.id;
+
+      if (iriChanged) {
+        await ontologyMutationService.renameEntity(
+          projectId,
+          item.id,
+          newIRI,
+          user?.email || "anonymous",
+          user?.username || "Anonymous",
+        );
       }
-      if (newIRI !== item.id) {
-        console.warn("IRI renaming requires backend support - not yet implemented");
-        notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
+
+      if (iriChanged || labelChanged) {
+        await ontologyMutationService.updateClassLabel(projectId, targetIri, newLabel, user?.email, user?.username);
+      }
+
+      if (iriChanged || labelChanged) {
+        const updatedItem = { ...item, id: newIRI, iri: newIRI, label: newLabel };
+         onUpdate(updatedItem as AnnotationProperty, true, iriChanged ? previousId : undefined);
       }
     } catch (error) {
       console.error("Failed to update annotation property:", error);

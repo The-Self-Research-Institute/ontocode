@@ -357,12 +357,17 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
     return result;
   };
-
+const localName = (iri: string): string => {
+  const hashIdx = iri.lastIndexOf('#');
+  const slashIdx = iri.lastIndexOf('/');
+  const idx = Math.max(hashIdx, slashIdx);
+  return idx >= 0 ? iri.slice(idx + 1) : iri;
+};
   const buildObjectRestriction = (): string => {
     if (!selectedProperty || !restrictionFiller) return '';
 
-    const propName = selectedProperty.label;
-    const fillerName = restrictionFiller.label;
+      const propName = localName(selectedProperty.id);
+  const fillerName = localName(restrictionFiller.id);
 
     switch (restrictionType) {
       case 'some':
@@ -394,7 +399,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       return '';
     }
 
-    const propName = selectedDataProperty.label;
+    const propName = localName(selectedDataProperty.id);
     console.log('[ClassExpressionDialog] buildDataRestriction: propName=', propName, 'datatype=', datatype);
 
     switch (dataRestrictionType) {

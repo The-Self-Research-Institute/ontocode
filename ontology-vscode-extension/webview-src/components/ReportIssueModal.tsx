@@ -13,11 +13,17 @@ import {
   Image,
   File,
   FileVideo,
+  Mail,
 } from "lucide-react";
 import { useAuth } from "../custom-hook/useAuth";
 import { getCloudGatewayUrl } from "../config/deploymentConfig";
 import { isAppOnline, subscribeOnlineStatus } from "../utils/connectivity";
 import { isDesktop } from "../utils/desktop";
+import { validateEmail } from "../utils/validation";
+
+// Desktop has no required login, so `user.email` is often just this placeholder
+// (see AuthContexts.tsx) — never use it to pre-fill the report-issue email field.
+const DESKTOP_PLACEHOLDER_EMAIL = "local@ontocode.desktop";
 
 interface ReportIssueModalProps {
   projectName?: string;
@@ -38,6 +44,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   onClose,
 }) => {
   const { user } = useAuth();
+  const desktop = isDesktop();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [stepsToReproduce, setStepsToReproduce] = useState("");
@@ -55,10 +62,37 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     jiraFailureReason?: string;
   } | null>(null);
 
+  // Desktop only: no required login, so we collect + locally cache an email to
+  // attribute reports to (JWT-derived reporter email covers web/VS Code already).
+  const [email, setEmail] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [localProfile, setLocalProfile] = useState<Record<string, unknown> | null>(null);
+
   useEffect(() => {
     setOnline(isAppOnline());
     return subscribeOnlineStatus(setOnline);
   }, []);
+
+  useEffect(() => {
+    if (!desktop) return;
+    (window as any).electronAPI
+      ?.getProfile()
+      .then((profile: Record<string, unknown> | null) => {
+        setLocalProfile(profile);
+        const savedEmail = typeof profile?.email === "string" ? profile.email : "";
+        if (savedEmail) {
+          setEmail(savedEmail);
+        } else if (user?.email && user.email !== DESKTOP_PLACEHOLDER_EMAIL) {
+          setEmail(user.email);
+        }
+      })
+      .catch(() => {
+        /* no saved profile yet — leave email blank */
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktop]);
+
+  const emailValidation = desktop ? validateEmail(email) : { isValid: true };
 
   // Get system info
   const getSystemInfo = () => {
@@ -275,6 +309,12 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       return;
     }
 
+    if (desktop && !emailValidation.isValid) {
+      setEmailTouched(true);
+      alert(emailValidation.error || "Please enter a valid email address");
+      return;
+    }
+
     setSubmitting(true);
     setSubmitResult(null);
 
@@ -290,6 +330,10 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       formData.append("issueType", issueType);
 
       formData.append("priority", priority);
+
+      if (desktop && email.trim()) {
+        formData.append("userEmail", email.trim());
+      }
 
       if (projectId) {
         formData.append("projectId", projectId);
@@ -328,6 +372,14 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       const result = await response.json();
 
       if (result.success) {
+        if (desktop && email.trim()) {
+          (window as any).electronAPI
+            ?.saveProfile({ ...localProfile, email: email.trim() })
+            .catch(() => {
+              /* non-critical — worst case the email isn't pre-filled next time */
+            });
+        }
+
         const jiraFailureReason = result.jiraFailureReason || undefined;
         setSubmitResult({
           success: true,
@@ -568,6 +620,32 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             </div>
           </div>
 
+          {/* Email (desktop only — web/VS Code already attribute reports to the logged-in user) */}
+          {desktop && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                <Mail size={16} className="text-purple-600" />
+                Your Email <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onBlur={() => setEmailTouched(true)}
+                placeholder="you@example.com"
+                className={`w-full px-4 py-3 border-2 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black placeholder-gray-400 transition-all ${
+                  emailTouched && !emailValidation.isValid ? "border-red-400" : "border-gray-300"
+                }`}
+                disabled={submitting}
+              />
+              <p className={`text-xs ${emailTouched && !emailValidation.isValid ? "text-red-500 font-medium" : "text-gray-500"}`}>
+                {emailTouched && !emailValidation.isValid
+                  ? emailValidation.error
+                  : "So we can follow up with you about this report"}
+              </p>
+            </div>
+          )}
+
           {/* Title */}
           <div className="space-y-2">
             <label className="flex items-center gap-2 text-sm font-semibold text-gray-800">
@@ -784,8 +862,24 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             </button>
             <button
               onClick={handleSubmit}
-              disabled={submitting || !online || !title.trim() || !description.trim()}
-              title={!online ? "Connect to the internet to submit a report" : undefined}
+              disabled={
+                submitting ||
+                !online ||
+                !title.trim() ||
+                !description.trim() ||
+                (desktop && !emailValidation.isValid)
+              }
+              title={
+                !online
+                  ? "Connect to the internet to submit a report"
+                  : desktop && !emailValidation.isValid
+                    ? emailValidation.error || "Enter a valid email address"
+                    : !title.trim()
+                      ? "Enter a title"
+                      : !description.trim()
+                        ? "Enter a description"
+                        : undefined
+              }
               className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg hover:shadow-xl transition-all"
             >
               {submitting ? (

@@ -40,7 +40,7 @@ public class DesktopController {
     private static final String DESKTOP_EMAIL        = "local@desktop";
     private static final String DESKTOP_USERNAME     = "Desktop User";
     private static final String DESKTOP_PLAN         = "PRO";
-
+private static final String DESKTOP_WORKSPACE_NAME = "Local Desktop Workspace"; 
     // ── JWT (unsigned — desktop only, never leaves localhost) ─────────────────
     // The interceptor does not validate signatures; it only decodes claims.
     private static final String DESKTOP_TOKEN = buildDesktopJwt();
@@ -181,6 +181,7 @@ public class DesktopController {
         user.put("id", DESKTOP_USER_ID);
         user.put("userId", DESKTOP_USER_ID);
         user.put("username", DESKTOP_USERNAME);
+     user.put("workspaceName", DESKTOP_WORKSPACE_NAME);
         user.put("email", DESKTOP_EMAIL);
         user.put("roles", List.of("ROLE_USER", "ROLE_ADMIN"));
         user.put("subscriptionPlanName", DESKTOP_PLAN);
@@ -198,6 +199,7 @@ public class DesktopController {
         ws.put("workspaceId", DESKTOP_WORKSPACE_ID);
         ws.put("name", "Local Desktop Workspace");
         ws.put("ownerId", DESKTOP_USER_ID);
+         ws.put("name", DESKTOP_WORKSPACE_NAME); 
         ws.put("subscriptionPlan", DESKTOP_PLAN);
         ws.put("billingStatus", "ACTIVE");
         ws.put("maxMembers", 1);

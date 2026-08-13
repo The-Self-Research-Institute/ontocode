@@ -25,6 +25,8 @@ dist/
 # Environment
 .env
 *.env.local
+.env.deploy
+.env.*-release
 
 # Documents & media (not source code)
 *.xlsx
@@ -79,6 +81,7 @@ ontology-vscode-extension/e2e/
 
 # Electron — bundled Java runtime
 electron-app/Java
+electron-app/resources/backend/jre17/
 
 # Electron — local build docs
 electron-app/BUILD_COMMANDS.md
@@ -164,6 +167,12 @@ temp-runimport.txt
 
 # Claude Code local settings (per-developer, not shared team config)
 .claude/settings.local.json
+.claude/settings.json
+
+# Cursor IDE — local-machine config, not team-shared
+.cursor/
+.cursorignore
+.cursorindexingignore
 
 # Citation metadata auto-appended by the citation-insertion feature (local noise)
 /references.bib
@@ -195,3 +204,29 @@ plugins/*/SPARQL_TEST_CASES.md
 plugins/*/SWRL_TEST_CASES.md
 plugins/graph-view-plugin/test-harness.html
 plugins/graph-view-plugin/foaf-harness-sample.ttl
+
+remote-dev-release.log
+
+.deploy-logs/
+
+# WSL / remote-build dev tooling (personal iteration scripts, not part of the product)
+scripts/remote-*.sh
+scripts/probe-remote-*.sh
+scripts/check-jdk-prereqs.sh
+scripts/check-windows-prereqs.ps1
+scripts/check-wsl-prereqs.sh
+scripts/check-env-deploy-keys.py
+scripts/docker-hub-login.sh
+scripts/fix-webview-linux-natives.sh
+scripts/fix-wsl-build-env.sh
+scripts/report-env-deploy.sh
+scripts/setup-wsl-nopasswd-sudo.sh
+scripts/_watch-build.sh
+
+# Local build-script variants at repo root — build-and-push.sh is the tracked entry point
+/build-all.bat
+/build-all.ps1
+/build-all-wsl.sh
+/build-and-push
+/build-and-push.cmd
+/build-and-push.ps1

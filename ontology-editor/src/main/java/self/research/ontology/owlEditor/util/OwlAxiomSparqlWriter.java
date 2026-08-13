@@ -98,7 +98,51 @@ public final class OwlAxiomSparqlWriter {
         sparql.append("}");
         return sparql.toString();
     }
+public static String toDeleteWhere(Set<? extends OWLAxiom> axioms) throws Exception {
+    if (axioms == null || axioms.isEmpty()) {
+        return "";
+    }
 
+    OWLOntologyManager tempManager = OWLManager.createOWLOntologyManager();
+    OWLOntology tempOntology = tempManager.createOntology(
+            IRI.create("urn:ontocode:axiom-del:" + UUID.randomUUID()));
+    tempManager.addAxioms(tempOntology, axioms);
+
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    tempManager.saveOntology(tempOntology, new RDFXMLDocumentFormat(), out);
+
+    var model = Rio.parse(
+            new ByteArrayInputStream(out.toByteArray()),
+            "",
+            RDFFormat.RDFXML);
+
+    java.util.Map<String, String> bNodeVars = new java.util.HashMap<>();
+    StringBuilder pattern = new StringBuilder();
+    for (var st : model) {
+        if (isTemporaryOntologyHeader(st)) {
+            continue;
+        }
+        pattern.append("  ")
+                .append(toSparqlPatternTerm(st.getSubject(), bNodeVars))
+                .append(" ")
+                .append(toSparqlPatternTerm(st.getPredicate(), bNodeVars))
+                .append(" ")
+                .append(toSparqlPatternTerm(st.getObject(), bNodeVars))
+                .append(" .\n");
+    }
+
+    String patternStr = pattern.toString();
+    return PREFIXES + "DELETE {\n" + patternStr + "}\nWHERE {\n" + patternStr + "}";
+}
+
+/** Like toSparqlTerm, but renders blank nodes as SPARQL variables so the same pattern
+ *  can be used structurally in both the DELETE and WHERE clauses. */
+private static String toSparqlPatternTerm(Value value, java.util.Map<String, String> bNodeVars) {
+    if (value instanceof org.eclipse.rdf4j.model.BNode bNode) {
+        return bNodeVars.computeIfAbsent(bNode.getID(), id -> "?bn_" + bNodeVars.size());
+    }
+    return toSparqlTerm(value);
+}
     private static boolean isTemporaryOntologyHeader(org.eclipse.rdf4j.model.Statement st) {
         return st.getPredicate().stringValue().equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
                 && st.getObject().stringValue().equals("http://www.w3.org/2002/07/owl#Ontology");

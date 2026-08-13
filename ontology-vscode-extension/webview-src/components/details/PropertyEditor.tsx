@@ -134,7 +134,7 @@ const PropertyUsageTab: React.FC<{ projectId: string; propertyIri: string; label
 
 const PropertyEditor: React.FC<{
   item: Property;
-  onUpdate: (updatedItem: Property) => void;
+  onUpdate: (updatedItem: Property, markUnsaved?: boolean, previousId?: string) => void;
   onAddAnnotation: () => void;
   onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
@@ -151,25 +151,27 @@ const PropertyEditor: React.FC<{
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   onNavigate?: (iri: string, type: string) => void;
+    user?: { email?: string; username?: string; userId?: string };
 }> = ({
-    item,
-    onUpdate,
-    onAddAnnotation,
-    onEditAnnotation,
-    onDeleteAnnotation,
-    activeTheme,
-    projectId,
-    onAddDomainClick,
-    onAddRangeClick,
-    onAddSubPropertyClick,
-    onAddInverseClick,
-    onAddDisjointClick,
-    onAddEquivalentClick,
-    objectProperties = [],
-    viewMode = 'asserted',
-    isViewOnly = false,
-    onViewOnlyAction,
-    onNavigate,
+        item,
+        onUpdate,
+        onAddAnnotation,
+        onEditAnnotation,
+        onDeleteAnnotation,
+        activeTheme,
+        projectId,
+        onAddDomainClick,
+        onAddRangeClick,
+        onAddSubPropertyClick,
+        onAddInverseClick,
+        onAddDisjointClick,
+        onAddEquivalentClick,
+        objectProperties = [],
+        viewMode = 'asserted',
+        isViewOnly = false,
+        onViewOnlyAction,
+        onNavigate,
+        user,
 }) => {
     const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -390,22 +392,30 @@ const PropertyEditor: React.FC<{
     };
 
     const annotationCount = Object.keys(item.annotations || {}).length;
+const handleSaveIRI = async (newIRI: string, newLabel: string) => {
+  try {
+    const iriChanged = newIRI !== item.id;
+    const labelChanged = newLabel !== item.label;
+    const previousId = item.id;
+    const targetIri = iriChanged ? newIRI : item.id;
 
-    const handleSaveIRI = async (newIRI: string, newLabel: string) => {
-        try {
-            if (newLabel !== item.label) {
-                await ontologyMutationService.updateClassLabel(projectId, item.id, newLabel);
-                onUpdate({ ...item, label: newLabel });
-            }
-            if (newIRI !== item.id) {
-                console.warn("IRI renaming requires backend support - not yet implemented");
-                notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
-            }
-        } catch (error) {
-            console.error("Failed to update property:", error);
-            notificationService.error("Update Failed", "Failed to update property. See console for details.");
-        }
-    };
+    if (iriChanged) {
+      await ontologyMutationService.renameEntity(
+        projectId, item.id, newIRI,
+        user?.email || "anonymous", user?.username || "Anonymous",
+      );
+    }
+    if (iriChanged || labelChanged) {
+      await ontologyMutationService.updateClassLabel(projectId, targetIri, newLabel);
+    }
+    if (iriChanged || labelChanged) {
+      onUpdate({ ...item, id: newIRI, label: newLabel }, true, iriChanged ? previousId : undefined);
+    }
+  } catch (error) {
+    console.error("Failed to update property:", error);
+    notificationService.error("Rename Failed", error instanceof Error ? error.message : "Failed to rename entity.");
+  }
+};
 
     return (
         <div className="flex flex-col h-full bg-white">

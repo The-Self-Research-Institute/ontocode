@@ -152,6 +152,7 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
   // approach) is easy to miss entirely since it appears away from where the
   // user is looking right after pressing the shortcut.
   const quickPick = vscode.window.createQuickPick<QuickPickCitation>();
+  quickPick.title = 'Insert Citation (Sci2Code)';
   quickPick.placeholder = 'Loading your Zotero library...';
   quickPick.matchOnDescription = true;
   quickPick.matchOnDetail = true;

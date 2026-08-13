@@ -227,7 +227,7 @@ class ZoteroApiService {
     }
 
     /**
-     * Entry point for "Configure Citation Library" — branches on whether a key
+     * Entry point for "Configure Zotero API Key" — branches on whether a key
      * is already saved so the same command also covers changing the key and
      * disconnecting, instead of always showing a "not configured" message
      * that's wrong (and offers nothing useful) once you're already connected.

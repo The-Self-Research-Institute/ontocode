@@ -75,9 +75,14 @@ function check() {
 
     for (const bin of candidates) {
         try {
-            // `java -version` prints to stderr; `java --version` (Java 9+) prints to stdout
+            // `java -version` prints to stderr; `java --version` (Java 9+) prints to stdout.
+            // Timeout is generous (not a fixed wait — returns as soon as the process exits)
+            // because the bundled JRE's first read can be slow when it lives inside a
+            // FUSE-mounted AppImage (squashfuse) sitting on a slow filesystem (e.g. a
+            // Windows drive mounted into WSL) — that cold read alone has been observed
+            // to take ~7s, which a 5s timeout misreports as "Java not found".
             const out = execFileSync(bin, ['--version'], {
-                timeout: 5000,
+                timeout: 20000,
                 encoding: 'utf8',
                 windowsHide: true,
             });

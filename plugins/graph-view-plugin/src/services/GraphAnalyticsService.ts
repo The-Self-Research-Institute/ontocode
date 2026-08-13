@@ -241,18 +241,22 @@ function findStructuralGaps(
   }
 
   const nodeById = new Map(nodes.map(n => [n.id, n]));
-  const topInCluster = (clusterId: number): string => {
-    let best = '';
-    let bestScore = -1;
-    for (const [id, c] of communities) {
-      if (c !== clusterId) continue;
-      const score = degree.get(id) ?? 0;
-      if (score > bestScore) {
-        bestScore = score;
-        best = nodeById.get(id)?.label || id.split(/[#/]/).pop() || id;
-      }
+  // Precompute the top-degree node per cluster in a single O(n) pass — the pairwise
+  // loop below is already O(clusters^2); calling a full O(n) scan (topInCluster) from
+  // inside it made the whole thing O(clusters^2 * n), which on a large ontology with
+  // many communities reaches into the billions of operations.
+  const bestInCluster = new Map<number, { id: string; score: number }>();
+  for (const [id, c] of communities) {
+    const score = degree.get(id) ?? 0;
+    const current = bestInCluster.get(c);
+    if (!current || score > current.score) {
+      bestInCluster.set(c, { id, score });
     }
-    return best;
+  }
+  const topInCluster = (clusterId: number): string => {
+    const best = bestInCluster.get(clusterId);
+    if (!best) return '';
+    return nodeById.get(best.id)?.label || best.id.split(/[#/]/).pop() || best.id;
   };
 
   const gaps: StructuralGap[] = [];

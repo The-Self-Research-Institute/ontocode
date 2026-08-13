@@ -25,6 +25,7 @@ public class DesktopOwlApiMutationService {
     private final ProjectOntologyCache ontologyCache;
     private final OwlApiMutationPatcher patcher;
     private final InMemorySparqlOntologyMutator sparqlMutator;
+    private final StorageManager storageManager;
     @Nullable
     private final DesktopOntologyLoader desktopOntologyLoader;
     @Nullable
@@ -39,12 +40,14 @@ public class DesktopOwlApiMutationService {
     public DesktopOwlApiMutationService(ProjectOntologyCache ontologyCache,
                                         OwlApiMutationPatcher patcher,
                                         InMemorySparqlOntologyMutator sparqlMutator,
+                                        StorageManager storageManager,
                                         @Nullable DesktopOntologyLoader desktopOntologyLoader,
                                         @Nullable ProjectImportService projectImportService,
                                         @Nullable DesktopFusekiSyncScheduler fusekiSyncScheduler) {
         this.ontologyCache = ontologyCache;
         this.patcher = patcher;
         this.sparqlMutator = sparqlMutator;
+        this.storageManager = storageManager;
         this.desktopOntologyLoader = desktopOntologyLoader;
         this.projectImportService = projectImportService;
         this.fusekiSyncScheduler = fusekiSyncScheduler;
@@ -76,6 +79,15 @@ public class DesktopOwlApiMutationService {
             if (fusekiSyncScheduler != null) {
                 fusekiSyncScheduler.scheduleAfterMutation(projectId);
             }
+            // OntologyMutationService's full mutation path always calls this after a
+            // real mutation (see its invalidatePublicCodeViewCache) — this fast path
+            // bypasses that service entirely, and until now skipped this call too.
+            // Left uninvalidated, /api/ontology/export/{projectId} keeps serving the
+            // stale cached document forever (Fuseki and the live OWLAPI model both
+            // update correctly; only this file-backed export cache didn't), which is
+            // exactly what SWRL fetches its ontology from — so anything added through
+            // this fast path (e.g. new individuals) was invisible to SWRL rules.
+            storageManager.clearCodeViewCache(projectId);
         } catch (IOException e) {
             log.warn("[OwlApiDesktop] Persist after mutation failed for {}: {}", projectId, e.getMessage());
             return false;

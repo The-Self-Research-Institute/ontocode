@@ -27,75 +27,125 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    margin-bottom: 32px;
+    margin-bottom: 24px;
   }
 
   .logo-img {
-    width: 64px;
-    height: 64px;
-    border-radius: 16px;
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
     box-shadow: 0 4px 24px rgba(59,130,246,0.4);
     object-fit: contain;
   }
 
-  .logo-icon {
-    width: 64px;
-    height: 64px;
-    border-radius: 16px;
-    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 32px;
-    box-shadow: 0 4px 24px rgba(59,130,246,0.4);
-  }
-
   .app-name {
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
     letter-spacing: 0.5px;
     color: #f8fafc;
   }
 
   .app-tagline {
-    font-size: 12px;
+    font-size: 11px;
     color: #64748b;
     letter-spacing: 0.5px;
   }
 
-  /* Progress bar */
+  /* Step list */
+  .steps {
+    width: 420px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
+    -webkit-app-region: no-drag;
+  }
+
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    opacity: 0.4;
+    transition: opacity 0.3s ease;
+  }
+  .step.active, .step.done { opacity: 1; }
+
+  .step-icon {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .step-icon .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #334155;
+  }
+
+  .step-icon .spinner {
+    display: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #334155;
+    border-top-color: #60a5fa;
+    animation: spin 0.8s linear infinite;
+  }
+  .step.active .step-icon .dot { display: none; }
+  .step.active .step-icon .spinner { display: block; }
+
+  .step-icon .check {
+    display: none;
+    color: #34d399;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .step.done .step-icon .spinner,
+  .step.done .step-icon .dot { display: none; }
+  .step.done .step-icon .check { display: block; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .step-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .step-label { font-size: 13px; font-weight: 500; color: #e2e8f0; }
+  .step-detail {
+    font-size: 11px;
+    color: #64748b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Overall progress bar */
   .progress-track {
-    width: 320px;
+    width: 420px;
     height: 4px;
     background: #1e293b;
     border-radius: 2px;
     overflow: hidden;
-    margin-bottom: 20px;
+    margin-bottom: 18px;
+    -webkit-app-region: no-drag;
   }
   .progress-fill {
     height: 100%;
     background: linear-gradient(90deg, #3b82f6, #8b5cf6);
     border-radius: 2px;
-    width: 0%;
-    transition: width 0.4s ease;
-  }
-  .progress-fill.indeterminate {
-    width: 30%;
-    animation: shimmer 1.4s ease-in-out infinite;
-  }
-  @keyframes shimmer {
-    0%   { transform: translateX(-400%); }
-    100% { transform: translateX(500%); }
+    width: 2%;
+    transition: width 0.5s ease;
   }
 
   /* Log console */
   .log-area {
     width: 420px;
-    height: 100px;
+    height: 76px;
     background: #0a0f1e;
     border: 1px solid #1e293b;
     border-radius: 8px;
-    padding: 10px 12px;
+    padding: 8px 12px;
     overflow-y: auto;
     font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
     font-size: 11px;
@@ -116,33 +166,104 @@
   .log-badge.warn  { color: #fbbf24; }
   .log-badge.error { color: #f87171; }
   .log-msg         { color: #94a3b8; }
+
+  .details-toggle {
+    font-size: 11px;
+    color: #475569;
+    cursor: pointer;
+    margin-bottom: 8px;
+    -webkit-app-region: no-drag;
+  }
+  .details-toggle:hover { color: #64748b; }
 </style>
 </head>
 <body>
 
 <div class="logo-area">
-  <img src="splash-logo.png" alt="OntoCode" class="logo-img" width="64" height="64" />
+  <img src="splash-logo.png" alt="OntoCode" class="logo-img" width="56" height="56" />
   <div class="app-name">OntoCode</div>
   <div class="app-tagline">DESKTOP EDITION</div>
 </div>
 
-<div class="progress-track">
-  <div class="progress-fill indeterminate" id="bar"></div>
+<div class="steps" id="steps">
+  <div class="step" data-key="java">
+    <span class="step-icon"><span class="dot"></span><span class="spinner"></span><span class="check">&#10003;</span></span>
+    <span class="step-body">
+      <span class="step-label">Checking system</span>
+      <span class="step-detail"></span>
+    </span>
+  </div>
+  <div class="step" data-key="mongo">
+    <span class="step-icon"><span class="dot"></span><span class="spinner"></span><span class="check">&#10003;</span></span>
+    <span class="step-body">
+      <span class="step-label">Preparing workspace</span>
+      <span class="step-detail"></span>
+    </span>
+  </div>
+  <div class="step" data-key="backend">
+    <span class="step-icon"><span class="dot"></span><span class="spinner"></span><span class="check">&#10003;</span></span>
+    <span class="step-body">
+      <span class="step-label">Loading editor</span>
+      <span class="step-detail"></span>
+    </span>
+  </div>
+  <div class="step" data-key="ready">
+    <span class="step-icon"><span class="dot"></span><span class="spinner"></span><span class="check">&#10003;</span></span>
+    <span class="step-body">
+      <span class="step-label">Ready</span>
+      <span class="step-detail"></span>
+    </span>
+  </div>
 </div>
 
-<div class="log-area" id="log"></div>
+<div class="progress-track">
+  <div class="progress-fill" id="bar"></div>
+</div>
+
+<div class="details-toggle" id="detailsToggle">Show details</div>
+<div class="log-area" id="log" style="display:none;"></div>
 
 <script>
-  const logEl  = document.getElementById('log');
-  const barEl  = document.getElementById('bar');
+  const logEl = document.getElementById('log');
+  const barEl = document.getElementById('bar');
 
-  const STEPS = [
-    { key: 'java',   label: 'Java 17+',     pct: 10 },
-    { key: 'mongo',  label: 'MongoDB',       pct: 35 },
-    { key: 'fuseki', label: 'Fuseki',        pct: 65 },
-    { key: 'editor', label: 'OWL Editor',    pct: 90 },
-    { key: 'done',   label: 'Ready',         pct: 100 },
-  ];
+  const stepEls = {};
+  document.querySelectorAll('.step').forEach(el => { stepEls[el.dataset.key] = el; });
+
+  const ORDER = ['java', 'mongo', 'backend', 'ready'];
+  const BASE_PCT = { java: 5, mongo: 15, backend: 30, ready: 100 };
+
+  let currentIndex = -1;
+  let backendTicks = 0;
+
+  function setDetail(key, text) {
+    const el = stepEls[key];
+    if (el) el.querySelector('.step-detail').textContent = text;
+  }
+
+  function activateStep(key) {
+    const idx = ORDER.indexOf(key);
+    if (idx < 0 || idx <= currentIndex) return;
+    // Mark every step up to (not including) this one as done, in case a
+    // milestone was skipped (e.g. dev mode jumps straight to "ready").
+    for (let i = 0; i <= currentIndex; i++) {
+      stepEls[ORDER[i]].classList.remove('active');
+      stepEls[ORDER[i]].classList.add('done');
+    }
+    currentIndex = idx;
+    stepEls[key].classList.add('active');
+    setProgress(BASE_PCT[key]);
+  }
+
+  function completeStep(key) {
+    activateStep(key);
+    stepEls[key].classList.remove('active');
+    stepEls[key].classList.add('done');
+  }
+
+  function setProgress(pct) {
+    barEl.style.width = Math.min(pct, 100) + '%';
+  }
 
   function appendLog(level, msg) {
     const line = document.createElement('div');
@@ -161,19 +282,60 @@
     logEl.appendChild(line);
     logEl.scrollTop = logEl.scrollHeight;
 
-    // Advance progress bar based on keywords in the message
-    STEPS.forEach(({ key, pct }) => {
-      const txt = msg.toLowerCase();
-      if (txt.includes(key) || (key === 'editor' && txt.includes('owl editor'))) {
-        setProgress(pct);
-      }
-    });
+    route(msg);
   }
 
-  function setProgress(pct) {
-    barEl.classList.remove('indeterminate');
-    barEl.style.width = pct + '%';
+  // Friendly, rotating messages shown while the editor loads — real Spring
+  // Boot milestones drive *when* these advance, but the text stays generic
+  // (no "Mongo repositories" / "Tomcat" jargon a non-technical user shouldn't
+  // need to see). The raw technical lines still land in the hidden details log.
+  const BACKEND_MESSAGES = [
+    'Loading ontology engine…',
+    'Preparing reasoner…',
+    'Setting up plugins…',
+    'Warming up your workspace…',
+    'Almost there…',
+  ];
+
+  function nudgeBackend() {
+    backendTicks += 1;
+    setProgress(Math.min(BASE_PCT.backend + backendTicks * 6, 88));
+    setDetail('backend', BACKEND_MESSAGES[Math.min(backendTicks - 1, BACKEND_MESSAGES.length - 1)]);
   }
+
+  function route(msg) {
+    const m = msg.toLowerCase();
+
+    if (m.includes('checking java runtime')) { activateStep('java'); return; }
+    if (m.includes('java') && m.includes('detected')) { completeStep('java'); return; }
+
+    if (m.includes('dev mode') || m.includes('skipping bundled service startup')) {
+      // Dev mode: services run under Docker already — skip straight to ready.
+      completeStep('java'); completeStep('mongo'); completeStep('backend');
+      activateStep('ready');
+      return;
+    }
+
+    if (m.includes('starting mongodb')) { activateStep('mongo'); return; }
+    if (m.includes('mongodb ready on port')) { completeStep('mongo'); return; }
+
+    if (m.includes('starting desktop service')) { activateStep('backend'); setDetail('backend', BACKEND_MESSAGES[0]); return; }
+    if (m.includes('[desktop] still starting')) { nudgeBackend(); return; }
+    if (m.includes('bootstrapping spring data') || m.includes('tomcat initialized') || m.includes('root webapplicationcontext')) {
+      nudgeBackend();
+      return;
+    }
+    if (m.includes('desktop service ready on port')) { completeStep('backend'); activateStep('ready'); return; }
+
+    if (m.includes('routing proxy ready on port')) { completeStep('ready'); setProgress(100); return; }
+  }
+
+  const toggleEl = document.getElementById('detailsToggle');
+  toggleEl.addEventListener('click', () => {
+    const showing = logEl.style.display !== 'none';
+    logEl.style.display = showing ? 'none' : 'block';
+    toggleEl.textContent = showing ? 'Show details' : 'Hide details';
+  });
 
   // Receive log events from the main process via the splash-preload bridge
   if (window.splashBridge) {

@@ -52,6 +52,7 @@ export const DetailsPanel = ({
   onViewOnlyAction,
   isReasonerRunning = false,
   selectedReasoner = "HERMIT",
+  user,
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -93,6 +94,7 @@ export const DetailsPanel = ({
   onViewOnlyAction?: () => void;
   isReasonerRunning?: boolean;
   selectedReasoner?: string;
+  user?: { email?: string; username?: string; userId?: string };
 }) => {
   if (!selectedItem) {
     return (
@@ -114,6 +116,7 @@ export const DetailsPanel = ({
     projectId: projectId || "",
     isViewOnly,
     onViewOnlyAction,
+    user,
   };
 
   switch (entitiesTab) {
