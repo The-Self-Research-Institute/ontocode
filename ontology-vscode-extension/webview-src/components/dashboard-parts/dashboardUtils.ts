@@ -294,7 +294,6 @@ export const combineReasonerResults = (classificationPayload: any, statsPayload?
 };
 
 export const showNotification = (message: string, type: "info" | "error" | "warning" = "info") => {
-  console.log(`[${type.toUpperCase()}]`, message);
   if (window.vscode) {
     window.vscode.postMessage({
       type: "notification",

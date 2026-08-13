@@ -82,7 +82,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
     const baseUrl = getBaseUrl() || window.location.origin;
     const sockJsUrl = new URL("/ws", baseUrl).toString();
-    console.log("[CollaborationContext] 🌐 Browser mode — connecting via SockJS:", sockJsUrl);
 
     const client = new Client({
       webSocketFactory: () => new SockJS(sockJsUrl) as any,
@@ -92,14 +91,12 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,
       onConnect: () => {
-        console.log("[CollaborationContext] ✅ WebSocket connected");
         setState((prev) => ({ ...prev, connected: true }));
 
         if (user.email) {
           const sub = client.subscribe(`/topic/shares/${user.email}`, (msg) => {
             try {
               const notification = JSON.parse(msg.body);
-              console.log("[CollaborationContext] 📨 Share notification:", notification);
               window.dispatchEvent(new CustomEvent("fileShared", { detail: notification }));
             } catch (e) {
               console.error("[CollaborationContext] Share parse error:", e);
@@ -124,7 +121,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
           const wsSub = client.subscribe(`/topic/workspace/${user.workspaceId}`, (msg) => {
             try {
               const event = JSON.parse(msg.body);
-              console.log("[CollaborationContext] 🏢 Workspace event:", event);
               window.dispatchEvent(new CustomEvent("workspaceEvent", { detail: event }));
             } catch (e) {
               console.error("[CollaborationContext] Workspace event parse error:", e);
@@ -138,7 +134,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         }
       },
       onDisconnect: () => {
-        console.log("[CollaborationContext] ❌ WebSocket disconnected");
         setState((prev) => ({ ...prev, connected: false }));
       },
       onWebSocketError: (e) => {
@@ -259,7 +254,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
           const edit = JSON.parse(msg.body);
 
           if (edit.userId === userId && !METADATA_EVENT_TYPES.has(edit.type)) return;
-          console.log("[CollaborationContext] 📝 Remote edit:", edit);
           handleRemoteEdit(edit);
         } catch (e) {
           console.error("[CollaborationContext] Edit parse error:", e);
@@ -270,7 +264,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       const presenceSub = client.subscribe(`/topic/presence/${projectId}`, (msg) => {
         try {
           const presence = JSON.parse(msg.body);
-          console.log("[CollaborationContext] 👥 Presence:", presence);
           handlePresenceUpdate(presence);
         } catch (e) {
           console.error("[CollaborationContext] Presence parse error:", e);
@@ -281,7 +274,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       const lockSub = client.subscribe(`/topic/locks/${projectId}`, (msg) => {
         try {
           const lock = JSON.parse(msg.body);
-          console.log("[CollaborationContext] 🔒 Lock:", lock);
           handleLockUpdate(lock);
         } catch (e) {
           console.error("[CollaborationContext] Lock parse error:", e);
@@ -292,7 +284,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       const importSub = client.subscribe(`/topic/import/${projectId}`, (msg) => {
         try {
           const status = JSON.parse(msg.body);
-          console.log("[CollaborationContext] 📦 Import status:", status);
           window.dispatchEvent(new CustomEvent("importStatusUpdate", { detail: status }));
         } catch (e) {
           console.error("[CollaborationContext] Import parse error:", e);
@@ -303,7 +294,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       const queueSub = client.subscribe(`/topic/queue/${projectId}`, (msg) => {
         try {
           const status = JSON.parse(msg.body);
-          console.log("[CollaborationContext] 📋 Queue status:", status);
           window.dispatchEvent(new CustomEvent("queueStatusUpdate", { detail: status }));
         } catch (e) {
           console.error("[CollaborationContext] Queue status parse error:", e);
@@ -356,7 +346,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         })
         .catch((e) => console.error("[CollaborationContext] Failed to fetch active users:", e));
 
-      console.log(`[CollaborationContext] 🔗 Joined project topics: ${projectId}`);
     },
     [user],
   );
@@ -365,17 +354,13 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
 
-      console.log("[CollaborationContext] 📨 Received message:", message.type, message);
-
       switch (message.type) {
         case "collaborationStatus":
-          console.log("[CollaborationContext] ✅ Updating connection status to:", message.connected);
           setState((prev) => {
             const wasDisconnected = !prev.connected;
             const isNowConnected = message.connected;
 
             if (wasDisconnected && isNowConnected) {
-              console.log("[CollaborationContext] 🔄 Reconnected! Dispatching refresh event...");
               const reconnectEvent = new CustomEvent("collaborationReconnected", {
                 detail: { timestamp: Date.now() },
               });
@@ -402,7 +387,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
           break;
 
         case "ROLLBACK":
-          console.log("[CollaborationContext] 🔄 Rollback event received:", message);
 
           const rollbackEvent = new CustomEvent("ontologyRollback", {
             detail: message,
@@ -411,7 +395,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
           break;
 
         case "shareNotification":
-          console.log("[CollaborationContext] 📨 Share notification received:", message.notification);
 
           const shareEvent = new CustomEvent("fileShared", {
             detail: message.notification,
@@ -422,8 +405,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     };
 
     window.addEventListener("message", handleMessage);
-
-    console.log("[CollaborationContext] 🚀 Component mounted, requesting collaboration status...");
 
     if (window.vscode) {
       window.vscode.postMessage({ type: "requestCollaborationStatus" });
@@ -605,14 +586,12 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
   }, []);
 
   const handleRemoteEdit = useCallback((edit: any) => {
-    console.log("[CollaborationContext] 📝 Processing remote edit:", edit);
 
     const remoteEditEvent = new CustomEvent("remoteEditReceived", {
       detail: edit,
     });
 
     window.dispatchEvent(remoteEditEvent);
-    console.log("[CollaborationContext] ✅ Dispatched remoteEditReceived event");
 
     setState((prev) => {
       const id = `notif-${Date.now()}-${Math.random()}`;
@@ -649,7 +628,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       return newState;
     });
 
-    console.log("[CollaborationContext] 📢 Added notification for remote edit");
   }, []);
 
   const publishCursor = useCallback(

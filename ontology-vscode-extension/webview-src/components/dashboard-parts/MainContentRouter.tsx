@@ -166,7 +166,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     return () => {
       if (projectId) {
         syncService.stopMonitoring(projectId);
-        console.log("[Dashboard] Stopped monitoring for project:", projectId);
       }
     };
   }, [projectId]);
@@ -248,7 +247,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
               context={{
                 apiClient,
                 showNotification: (msg: string, type: "info" | "success" | "warning" | "error") => {
-                  console.log(`[${type}] ${msg}`);
                 },
               }}
             />

@@ -170,16 +170,11 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     try {
       setLoading(true);
       setError("");
-      console.log("[WorkspaceSelection] Fetching workspaces from /api/workspaces...");
       const response = await apiClient.get("/api/workspaces");
-      console.log("[WorkspaceSelection] Raw response:", JSON.stringify(response, null, 2));
 
       const data = response?.data || response;
-      console.log("[WorkspaceSelection] Parsed data:", JSON.stringify(data, null, 2));
 
       const workspaceList = data?.workspaces || [];
-      console.log("[WorkspaceSelection] Workspace list:", workspaceList);
-      console.log("[WorkspaceSelection] Workspace count:", workspaceList.length);
 
       setWorkspaces(workspaceList);
 
@@ -205,24 +200,20 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
   const createAndSelectDefaultWorkspace = async () => {
     try {
-      console.log("[WorkspaceSelection] Creating default workspace...");
       const response = await apiClient.post("/api/workspaces", {
         name: "My Workspace",
         description: "Default workspace for ontology projects",
         subscriptionPlan: "FREE",
       });
-      console.log("[WorkspaceSelection] Create workspace response:", response);
 
       const data = response?.data || response;
       if (data?.workspace) {
         const newWorkspace = data.workspace;
-        console.log("[WorkspaceSelection] Default workspace created:", newWorkspace.workspaceId);
 
         const selectResponse = await apiClient.post(`/api/workspaces/${newWorkspace.workspaceId}/select`);
         const selectData = selectResponse?.data || selectResponse;
 
         if (selectData?.jwt) {
-          console.log("[WorkspaceSelection] Auto-selected default workspace");
           onWorkspaceSelected(selectData);
         }
       }
@@ -234,20 +225,14 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
 
   const handleSelectWorkspace = async (workspaceId: string) => {
     try {
-      console.log("[WorkspaceSelection] 🎯 Selecting workspace:", workspaceId);
       setSelecting(true);
       setError("");
 
       const response = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
-      console.log("[WorkspaceSelection] 📥 Select workspace response:", response);
-      console.log("[WorkspaceSelection] Response type:", typeof response);
-      console.log("[WorkspaceSelection] Response keys:", response ? Object.keys(response) : "null");
 
       const data = response?.data || response;
-      console.log("[WorkspaceSelection] 📦 Extracted data:", data);
 
       if (data?.jwt) {
-        console.log("[WorkspaceSelection] ✅ JWT found, calling onWorkspaceSelected");
         onWorkspaceSelected(data);
       } else {
         console.error("[WorkspaceSelection] ❌ No JWT in response data:", data);
@@ -372,7 +357,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         name: newWorkspaceName.trim(),
         description: newWorkspaceDescription.trim(),
       });
-      console.log("[WorkspaceSelection] Create workspace response:", response);
 
       const data = response?.data || response;
       if (data?.workspace) {

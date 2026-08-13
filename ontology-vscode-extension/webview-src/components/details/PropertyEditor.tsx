@@ -370,7 +370,6 @@ const PropertyEditor: React.FC<{
 
         try {
             await ontologyMutationService.addPropertyChain(projectId, item.id, expression);
-            console.log("Property chain added:", expression);
         } catch (error) {
             console.error("Failed to add property chain:", error);
 

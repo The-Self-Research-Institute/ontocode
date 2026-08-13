@@ -112,7 +112,6 @@ function getUrlsForDeployment(deploymentType: 'self-hosted' | 'cloud'): { gatewa
 
 const defaultDeploymentType = (process.env.DEFAULT_DEPLOYMENT_TYPE || 'cloud') as 'self-hosted' | 'cloud';
 const defaultUrls = getUrlsForDeployment(defaultDeploymentType);
-console.log(defaultUrls, "default")
 let GATEWAY_URL = defaultUrls.gateway;
 let OWL_EDITOR_URL = defaultUrls.editor;
 let PLUGIN_SERVICE_URL = defaultUrls.plugin;
@@ -128,9 +127,7 @@ async function updateDeploymentUrls(context: vscode.ExtensionContext) {
 
             issueReportService.setEditorUrl(OWL_EDITOR_URL);
 
-            console.log(`[OntoCode] Using ${deploymentType} deployment URLs:`, urls);
         } else {
-            console.log('[OntoCode] No deployment type stored, using cloud (default)');
         }
     } catch (error) {
         console.error('[OntoCode] Error loading deployment type:', error);
@@ -143,9 +140,6 @@ function isWebExtensionContext(): boolean {
 
 function parseJwtToken(token: string): { userId?: string; username?: string; sub?: string; email?: string; isAdmin?: boolean; workspaceId?: string; subscriptionPlan?: string } | null {
     try {
-        console.log('[OntoCode] 🔍 Parsing JWT token...');
-        console.log('[OntoCode] Token length:', token?.length || 0);
-        console.log('[OntoCode] Token preview:', token?.substring(0, 50) + '...');
 
         if (!token || typeof token !== 'string') {
             console.error('[OntoCode] ❌ Token is null or not a string');
@@ -153,7 +147,6 @@ function parseJwtToken(token: string): { userId?: string; username?: string; sub
         }
 
         const parts = token.split('.');
-        console.log('[OntoCode] Token parts count:', parts.length);
 
         if (parts.length !== 3) {
             console.error('[OntoCode] ❌ Invalid JWT token format - expected 3 parts, got', parts.length);
@@ -162,13 +155,10 @@ function parseJwtToken(token: string): { userId?: string; username?: string; sub
         }
 
         const payload = parts[1];
-        console.log('[OntoCode] Payload part length:', payload.length);
 
         const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
         const jsonPayload = atob(base64);
         const decoded = JSON.parse(jsonPayload);
-
-        console.log('[OntoCode] ✅ JWT Token Decoded Successfully:', JSON.stringify(decoded, null, 2));
 
         return decoded;
     } catch (error) {
@@ -264,13 +254,10 @@ type DuplicatePromptAction = 'open_existing' | 'replace' | 'create_copy' | 'canc
 type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string };
 
 export async function activate(context: vscode.ExtensionContext) {
-    console.log('OntoCode extension is now active!');
-    console.log('[OntoCode] Extension can handle URIs like: vscode://self.ontocode-extension/invite?token=xxx');
 
     issueReportService.setEditorUrl(OWL_EDITOR_URL);
 
     await updateDeploymentUrls(context);
-    console.log('[OntoCode] Deployment URLs loaded');
 
     const sidebarProvider = new OntoCodeSidebarProvider(context);
     context.subscriptions.push(
@@ -283,7 +270,6 @@ export async function activate(context: vscode.ExtensionContext) {
         const inviteToken = urlParams.get('token');
 
         if (inviteToken) {
-            console.log('[OntoCode] Found invitation token in URL:', inviteToken.substring(0, 20) + '...');
 
             setTimeout(async () => {
                 vscode.window.showInformationMessage('Opening invitation in OntoCode...');
@@ -304,21 +290,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const uriHandler = vscode.window.registerUriHandler({
         handleUri: async (uri: vscode.Uri) => {
-            console.log('[OntoCode] ========== URI HANDLER TRIGGERED ==========');
-            console.log('[OntoCode] Full URI:', uri.toString());
-            console.log('[OntoCode] URI path:', uri.path);
-            console.log('[OntoCode] URI query:', uri.query);
 
             const path = uri.path;
             const query = new URLSearchParams(uri.query);
             const token = query.get('token');
 
-            console.log('[OntoCode] Checking path:', path);
-            console.log('[OntoCode] Token present:', !!token);
-
             if (path === '/invite' || path === '/invitation') {
                 if (token) {
-                    console.log('[OntoCode] Processing invitation token:', token.substring(0, 20) + '...');
 
                     vscode.window.showInformationMessage('Opening invitation in OntoCode...');
 
@@ -327,7 +305,6 @@ export async function activate(context: vscode.ExtensionContext) {
                     panel._pendingInvitationToken = token;
 
                     if (panel.isWebviewReady()) {
-                        console.log('[OntoCode] Webview ready, sending token immediately');
 
                         panel.postMessage({ type: 'clearInvitationState' });
                         setTimeout(() => {
@@ -338,28 +315,22 @@ export async function activate(context: vscode.ExtensionContext) {
                             panel._pendingInvitationToken = null;
                         }, 100);
                     } else {
-                        console.log('[OntoCode] Webview not ready, token stored for later delivery');
                     }
 
-                    console.log('[OntoCode] Invitation processing complete');
                 } else {
                     console.error('[OntoCode] No token in URI!');
                     vscode.window.showErrorMessage('Invalid invitation link: missing token');
                 }
             } else {
-                console.log('[OntoCode] Unrecognized path:', path);
             }
-            console.log('[OntoCode] ========== URI HANDLER COMPLETE ==========');
         }
     });
 
     context.subscriptions.push(uriHandler);
 
     if (vscode.window.registerWebviewPanelSerializer) {
-        console.log('[OntoCode] Registering WebviewPanelSerializer for ontocodeEditor');
         vscode.window.registerWebviewPanelSerializer('ontocodeEditor', {
             async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, state: any) {
-                console.log('[OntoCode] Reviving webview panel from serialized state');
 
                 webviewPanel.webview.options = {
                     enableScripts: true,
@@ -375,7 +346,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
         vscode.commands.registerCommand('ontocode.edit', async () => {
             const isWeb = isWebExtensionContext();
-            console.log(`[OntoCode] Edit command triggered (Web mode: ${isWeb})`);
 
             const activeEditor = vscode.window.activeTextEditor;
             const fileName = activeEditor?.document.fileName.toLowerCase() || '';
@@ -388,7 +358,6 @@ export async function activate(context: vscode.ExtensionContext) {
                 panel.setPendingUpload(true);
             } else {
 
-                console.log('[OntoCode] No active ontology file, prompting user to select one...');
                 const fileUri = await vscode.window.showOpenDialog({
                     canSelectMany: false,
                     openLabel: 'Open Ontology File',
@@ -400,11 +369,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
                 if (fileUri && fileUri[0]) {
                     const selectedUri = fileUri[0];
-                    console.log('[OntoCode] User selected file:', selectedUri.toString());
-                    console.log('[OntoCode] File URI scheme:', selectedUri.scheme);
                     panel.setPendingUpload(false, selectedUri);
                 } else {
-                    console.log('[OntoCode] User cancelled file selection');
 
                     if (!isWeb) {
                         vscode.window.showInformationMessage('Please select an ontology file or package (.owl, .ttl, .rdf, .zip) to edit.');
@@ -433,17 +399,14 @@ export async function activate(context: vscode.ExtensionContext) {
             sidebarProvider.refresh();
         }),
         vscode.commands.registerCommand('ontocode.showCollaborationStatus', async () => {
-            console.log('[OntoCode] 📊 Showing collaboration status...');
             const token = await (context as any).secrets.get(TOKEN_KEY);
 
             if (!token) {
                 const msg = '❌ Not logged in - No authentication token found';
                 vscode.window.showWarningMessage(msg);
-                console.log('[OntoCode]', msg);
                 return;
             }
 
-            console.log('[OntoCode] Token retrieved from secrets');
             const tokenData = parseJwtToken(token);
 
             if (!tokenData) {
@@ -461,10 +424,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
             const message = `✅ USERNAME: ${username}\n📝 User ID: ${userId}\n🔌 Connected: ${isConnected}`;
             vscode.window.showInformationMessage(message, { modal: true });
-            console.log('[OntoCode] Collaboration Status:');
-            console.log('  Username:', username);
-            console.log('  User ID:', userId);
-            console.log('  Connected:', isConnected);
         }),
         vscode.commands.registerCommand('ontocode.insertCitation', () => insertCitationCommand(context, GATEWAY_URL)),
 
@@ -512,24 +471,21 @@ export async function activate(context: vscode.ExtensionContext) {
 
     return {
         getZoteroLibrary: async (): Promise<any[]> => {
-            console.log('[OntoCode] getZoteroLibrary called');
             return await zoteroApiService.fetchLibrary(10000);
         },
         getZoteroItem: async (key: string): Promise<any | null> => {
-            console.log('[OntoCode] getZoteroItem called for key:', key);
-            if (!zoteroApiService.isConfigured()) return null;
+            if (!zoteroApiService.isConfigured()) {return null;}
             const item = await zoteroApiService.fetchItem(key);
             return item ? item.data : null;
         },
         formatCitationForOntology: async (key: string, format?: 'turtle' | 'rdfxml' | 'jsonld', overrideDoi?: string): Promise<string> => {
-            console.log('[OntoCode] formatCitationForOntology called for key:', key, 'format:', format);
 
             let data: { title: string; creators: Array<{ firstName: string; lastName: string }>; date?: string; DOI?: string; doi?: string; extra?: string; url?: string } | undefined;
             if (zoteroApiService.isConfigured()) {
                 const realItem = await zoteroApiService.fetchItem(key);
-                if (realItem) data = realItem.data;
+                if (realItem) {data = realItem.data;}
             }
-            if (!data) return '';
+            if (!data) {return '';}
 
             const escapeTurtle = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
             const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -552,9 +508,9 @@ export async function activate(context: vscode.ExtensionContext) {
                 xml += `    <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
                 xml += `    <dc:title>${escapeXml(data.title)}</dc:title>\n`;
                 xml += `    <dc:creator>${escapeXml(authors)}</dc:creator>\n`;
-                if (year) xml += `    <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
-                if (resolvedDoi) xml += `    <dc:identifier>doi:${escapeXml(resolvedDoi)}</dc:identifier>\n`;
-                if (data.url) xml += `    <foaf:homepage rdf:resource="${escapeXml(data.url)}"/>\n`;
+                if (year) {xml += `    <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;}
+                if (resolvedDoi) {xml += `    <dc:identifier>doi:${escapeXml(resolvedDoi)}</dc:identifier>\n`;}
+                if (data.url) {xml += `    <foaf:homepage rdf:resource="${escapeXml(data.url)}"/>\n`;}
                 xml += `    <rdfs:comment>Zotero citation</rdfs:comment>\n`;
                 xml += `</owl:NamedIndividual>`;
                 return xml;
@@ -572,16 +528,15 @@ export async function activate(context: vscode.ExtensionContext) {
             ttl += `         prov:Entity ;\n`;
             ttl += `    dc:title "${escapeTurtle(data.title)}" ;\n`;
             ttl += `    dc:creator "${escapeTurtle(authors)}" ;\n`;
-            if (year) ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;
-            if (resolvedDoi) ttl += `    dc:identifier "doi:${escapeTurtle(resolvedDoi)}" ;\n`;
-            if (data.url) ttl += `    foaf:homepage <${data.url}> ;\n`;
+            if (year) {ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;}
+            if (resolvedDoi) {ttl += `    dc:identifier "doi:${escapeTurtle(resolvedDoi)}" ;\n`;}
+            if (data.url) {ttl += `    foaf:homepage <${data.url}> ;\n`;}
             ttl += `    rdfs:comment "Zotero citation" .\n`;
             return ttl;
         },
         getCitationMetadata: async (key: string): Promise<any | null> => {
-            console.log('[OntoCode] getCitationMetadata called for key:', key);
 
-            if (!zoteroApiService.isConfigured()) return null;
+            if (!zoteroApiService.isConfigured()) {return null;}
             const item = await zoteroApiService.fetchItem(key);
             return item ? item.data : null;
         },
@@ -593,7 +548,6 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-    console.log('OntoCode extension is now deactivated');
 }
 
 class OntoCodePanel {
@@ -643,7 +597,6 @@ class OntoCodePanel {
 
     private async shouldUseWorkspaceFlow(tokenData?: { workspaceId?: string | null; isAdmin?: boolean }): Promise<boolean> {
         const deploymentType = await this.getStoredDeploymentType();
-        console.log(tokenData, "token");
         if (deploymentType === 'self-hosted') {
             return false;
         }
@@ -705,11 +658,9 @@ class OntoCodePanel {
                 switch (message.type) {
 
                     case 'webviewReady':
-                        console.log('[OntoCode] Received webviewReady message.');
                         this._isWebviewReady = true;
 
                         if (this._pendingInvitationToken) {
-                            console.log('[OntoCode] Sending pending invitation token to webview');
                             this.postMessage({
                                 type: 'invitationToken',
                                 token: this._pendingInvitationToken
@@ -718,7 +669,6 @@ class OntoCodePanel {
                         }
 
                         if (this._lastProjectId) {
-                            console.log('[OntoCode] Restoring last project:', this._lastProjectId);
                             this.postMessage({ type: 'fileReady', projectId: this._lastProjectId });
                         }
                         this.triggerPendingUpload(); // Trigger any upload that was waiting
@@ -788,13 +738,10 @@ class OntoCodePanel {
                         break;
                     case 'fileLoaded':
 
-                        console.log('[OntoCode] 📂 File loaded from menu:', message.projectId);
-                        console.log('[OntoCode] 🔄 Posting fileReady message to webview');
                         this.postMessage({ type: 'fileReady', projectId: message.projectId });
 
                         const fileToken = await (this._context as any).secrets.get(TOKEN_KEY);
                         if (fileToken) {
-                            console.log('[OntoCode] 🤝 Initializing collaboration for project:', message.projectId);
                             await this.initializeCollaborationForProject(message.projectId, fileToken);
                         } else {
                             console.warn('[OntoCode] ⚠️ No auth token found, cannot initialize collaboration');
@@ -803,14 +750,10 @@ class OntoCodePanel {
                     case 'requestCollaborationStatus':
 
                         const isConnected = this.collaborationManager?.isConnected() ?? false;
-                        console.log('[OntoCode] 📊 Collaboration status requested');
-                        console.log('[OntoCode]   - Manager exists:', !!this.collaborationManager);
-                        console.log('[OntoCode]   - Is connected:', isConnected);
                         this.postMessage({
                             type: 'collaborationStatus',
                             connected: isConnected
                         });
-                        console.log('[OntoCode] Status response sent:', isConnected);
                         break;
                     case 'showNotification':
                         this.handleNotification(message.notification);
@@ -818,7 +761,6 @@ class OntoCodePanel {
                     case 'cursorMoved':
 
                         if (this.editCapture && this.currentProjectId) {
-                            console.log('[OntoCode] 👆 Cursor moved to node:', message.nodeName);
                             const selectedNodes = message.nodeId ? [message.nodeId] : [];
                             this.editCapture.captureCursorMoved(
                                 this.currentProjectId,
@@ -844,7 +786,6 @@ class OntoCodePanel {
                         break;
                     case 'uploadOntology':
 
-                        console.log('[OntoCode] 📤 Upload ontology request received:', message.projectId, message.fileName);
                         this.handleUploadOntologyFromWebview(
                             message.projectId,
                             message.fileName,
@@ -857,17 +798,14 @@ class OntoCodePanel {
                         break;
                     case 'uploadFileToProject':
 
-                        console.log('[OntoCode] 📤 Upload file to project request:', message.projectId, message.fileName);
                         this.handleUploadFileToProject(message.projectId, message.fileName, message.fileContent, message.fileSize);
                         break;
                     case 'showSubscriptionPlans':
 
-                        console.log('[OntoCode] 📋 Showing subscription plans');
                         this.postMessage({ type: 'showSubscriptionPlans' });
                         break;
                     case 'setApiBaseUrl':
 
-                        console.log('[OntoCode] 🔧 Setting API base URL:', message.url);
                         const deploymentType = (message as any).deploymentType ||
                             (message.url.includes('localhost') ? 'self-hosted' : 'cloud');
 
@@ -875,11 +813,8 @@ class OntoCodePanel {
                         GATEWAY_URL = urls.gateway;
                         OWL_EDITOR_URL = urls.editor;
                         PLUGIN_SERVICE_URL = urls.plugin;
-                        console.log('[OntoCode] ✅ URLs updated immediately for', deploymentType, ':', urls);
-                        console.log('[OntoCode] 📍 GATEWAY_URL is now:', GATEWAY_URL);
 
                         (this._context as any).secrets.store(DEPLOYMENT_TYPE_KEY, deploymentType).then(() => {
-                            console.log('[OntoCode] ✅ Deployment type saved to secrets:', deploymentType);
                         }).catch((err: any) => {
                             console.error('[OntoCode] ❌ Failed to save deployment type:', err);
                         });
@@ -937,14 +872,12 @@ class OntoCodePanel {
     private triggerPendingUpload() {
         if (this._isPendingRegularUpload) {
             this._isPendingRegularUpload = false;
-            console.log('[OntoCode] Webview is ready, triggering pending regular file upload.');
             this.triggerFileUpload();
         } else if (this._pendingFileUri) {
             const uri = this._pendingFileUri;
             const options = this._pendingImportOptions;
             this._pendingFileUri = null;
             this._pendingImportOptions = null;
-            console.log('[OntoCode] Webview is ready, triggering pending large file upload.');
             this.triggerLargeFileUpload(uri, options?.importMode, options?.partition);
         }
     }
@@ -1023,7 +956,6 @@ class OntoCodePanel {
         const useWorkspaceFlow = await this.shouldUseWorkspaceFlow(tokenData || undefined);
 
         if (useWorkspaceFlow) {
-            console.log('[OntoCode] Workspace flow detected, sending pending file for project selection.');
             const base64Content = uint8ArrayToBase64(pending.fileData);
             this.postMessage({
                 type: 'pendingFileUpload',
@@ -1034,7 +966,6 @@ class OntoCodePanel {
                 partition: pending.partition
             });
         } else {
-            console.log('[OntoCode] Auth restored, uploading pending file directly.');
             await this._uploadOntology(
                 pending.projectId,
                 pending.fileName,
@@ -1050,7 +981,6 @@ class OntoCodePanel {
 
     private async handleOpenLocalFile(projectId?: string | null, importMode?: string, partition?: string) {
         const isWeb = isWebExtensionContext();
-        console.log(`[OntoCode] Opening file dialog... (Web mode: ${isWeb})`);
 
         const fileUri = await vscode.window.showOpenDialog({
             canSelectMany: false,
@@ -1063,8 +993,6 @@ class OntoCodePanel {
 
         if (fileUri && fileUri[0]) {
             const selectedUri = fileUri[0];
-            console.log('[OntoCode] User selected local file from webview:', selectedUri.toString());
-            console.log('[OntoCode] File URI scheme:', selectedUri.scheme);
             if (!projectId) {
                 this.setPendingUpload(false, selectedUri, importMode, partition);
                 return;
@@ -1078,18 +1006,15 @@ class OntoCodePanel {
             }
 
             const perfStart = Date.now();
-            console.log(`[OntoCode] [PERF] ⏱️ Starting file open pipeline at ${new Date().toISOString()}`);
 
             const readStart = Date.now();
             const fileData = await (vscode.workspace as any).fs.readFile(selectedUri);
-            console.log(`[OntoCode] [PERF] File read from disk: ${Date.now() - readStart}ms (${(fileData.length / (1024 * 1024)).toFixed(2)}MB)`);
 
             const fileName = selectedUri.path.substring(selectedUri.path.lastIndexOf('/') + 1);
             const fileSize = fileData.length;
 
             const base64Start = Date.now();
             const base64Content = uint8ArrayToBase64(fileData);
-            console.log(`[OntoCode] [PERF] Base64 encoding: ${Date.now() - base64Start}ms (base64 size: ${(base64Content.length / (1024 * 1024)).toFixed(2)}MB)`);
 
             const deploymentType = await this.getStoredDeploymentType();
             const isCloudDeployment = deploymentType === 'cloud';
@@ -1099,7 +1024,6 @@ class OntoCodePanel {
             let skipDuplicateCheck = false;
 
             if (isCloudDeployment) {
-                console.log('[OntoCode] ☁️ Cloud deployment: skipping duplicate check');
                 skipDuplicateCheck = true;
             } else {
 
@@ -1160,7 +1084,7 @@ class OntoCodePanel {
                                         ignoreFocusOut: true,
                                         validateInput: (value) => {
                                             const trimmed = value.trim();
-                                            if (!trimmed) return 'Name is required.';
+                                            if (!trimmed) {return 'Name is required.';}
                                             const normalized = normalizeCopyName(trimmed, originalExt);
                                             if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
                                                 return `Name must end with ${originalExt}`;
@@ -1252,20 +1176,16 @@ class OntoCodePanel {
                 openAfterUpload: true
             });
 
-            console.log(`[OntoCode] [PERF] ⏱️ Total file open pipeline: ${Date.now() - perfStart}ms`);
-
             if (!uploadResult) {
                 return;
             }
         } else {
-            console.log('[OntoCode] User cancelled local file selection from webview');
             // Don't show intrusive message when user cancels - they know what they did
         }
     }
 
     private async handleCreateNewFileWithName(fileName: string, projectId?: string | null, importMode?: string, partition?: string): Promise<void> {
         const isWeb = isWebExtensionContext();
-        console.log(`[OntoCode] 📝 Creating new file with name: ${fileName} (Web mode: ${isWeb}, Project ID: ${projectId || 'none'})`);
 
         if (!fileName || !isSupportedNewOntologyExtension(fileName)) {
             console.error('[OntoCode] ❌ Invalid filename provided:', fileName);
@@ -1273,10 +1193,7 @@ class OntoCodePanel {
             return;
         }
 
-        console.log(`[OntoCode] ✅ File name validated: ${fileName}`);
-
         const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.[^/.]+$/, '')}`;
-        console.log(`[OntoCode] 🔗 Generated ontology IRI: ${ontologyIRI}`);
 
         const emptyOntologyContent = `<?xml version="1.0"?>
 <rdf:RDF xmlns="${ontologyIRI}#"
@@ -1295,10 +1212,8 @@ class OntoCodePanel {
         const fileContent = Buffer.from(emptyOntologyContent, 'utf-8');
         const fileSize = fileContent.length;
         const base64Content = uint8ArrayToBase64(fileContent);
-        console.log(`[OntoCode] 📄 Created ontology content (${fileSize} bytes)`);
 
         if (!projectId) {
-            console.log('[OntoCode] 💾 No project context - saving to local filesystem');
             const saveUri = await vscode.window.showSaveDialog({
                 defaultUri: vscode.Uri.file(fileName),
                 saveLabel: 'Save New Ontology File',
@@ -1310,16 +1225,12 @@ class OntoCodePanel {
 
             if (saveUri) {
                 await vscode.workspace.fs.writeFile(saveUri, fileContent);
-                console.log('[OntoCode] ✅ New file saved to:', saveUri.toString());
                 this.setPendingUpload(false, saveUri, importMode, partition);
                 vscode.window.showInformationMessage(`File "${fileName}" created successfully!`);
             } else {
-                console.log('[OntoCode] ❌ User cancelled save dialog');
             }
             return;
         }
-
-        console.log(`[OntoCode] 📤 Workspace mode - uploading to project: ${projectId}`);
 
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
         if (!token) {
@@ -1331,48 +1242,39 @@ class OntoCodePanel {
 
         const deploymentType = await this.getStoredDeploymentType();
         const isCloudDeployment = deploymentType === 'cloud';
-        console.log(`[OntoCode] 🔍 Deployment type: ${deploymentType}`);
 
         if (!isCloudDeployment) {
 
             try {
                 const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
-                console.log(`[OntoCode] 🔍 Checking for duplicates: ${checkUrl}`);
 
                 const checkResponse = await axios.get(checkUrl, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
 
                 if (checkResponse.data?.exists) {
-                    console.log(`[OntoCode] ⚠️ Duplicate file detected: ${fileName}`);
 
                     const timestamp = new Date().getTime();
                     const baseName = fileName.replace(/\.[^/.]+$/, '');
                     const extension = fileName.substring(fileName.lastIndexOf('.'));
                     const newFileName = `${baseName}-${timestamp}${extension}`;
 
-                    console.log(`[OntoCode] 🔄 Auto-renaming to avoid duplicate: ${newFileName}`);
-
                     return this.handleCreateNewFileWithName(newFileName, projectId, importMode, partition);
                 }
 
-                console.log('[OntoCode] ✅ No duplicate found - proceeding with upload');
             } catch (checkError: any) {
                 console.warn('[OntoCode] ⚠️ Failed to check for duplicate file:', checkError?.message || checkError);
                 // Continue with upload if check fails
             }
         } else {
-            console.log('[OntoCode] ☁️ Cloud deployment - skipping duplicate check');
         }
 
-        console.log(`[OntoCode] 📤 Uploading new file to project...`);
         const uploadResult = await this.handleUploadFileToProject(projectId, fileName, base64Content, fileSize, {
             skipDuplicateCheck: isCloudDeployment,
             openAfterUpload: true
         });
 
         if (uploadResult) {
-            console.log(`[OntoCode] ✅ New file "${fileName}" created and uploaded successfully!`);
             vscode.window.showInformationMessage(`New file "${fileName}" created successfully!`);
         } else {
             console.error(`[OntoCode] ❌ Failed to upload new file "${fileName}"`);
@@ -1381,14 +1283,13 @@ class OntoCodePanel {
 
     private async handleCreateNewFile(projectId?: string | null, importMode?: string, partition?: string): Promise<void> {
         const isWeb = isWebExtensionContext();
-        console.log(`[OntoCode] 📝 Starting new file creation flow... (Web mode: ${isWeb}, Project ID: ${projectId || 'none'})`);
 
         const fileName = await vscode.window.showInputBox({
             prompt: 'Enter a name for the new ontology file',
             placeHolder: 'my-ontology.owl',
             validateInput: (value) => {
                 const trimmed = value.trim();
-                if (!trimmed) return 'File name is required.';
+                if (!trimmed) {return 'File name is required.';}
                 if (!isSupportedNewOntologyExtension(trimmed)) {
                     return 'File must have a valid ontology extension (.owl, .rdf, .ttl, .n3, .nt, .jsonld)';
                 }
@@ -1397,14 +1298,10 @@ class OntoCodePanel {
         });
 
         if (!fileName) {
-            console.log('[OntoCode] ❌ User cancelled new file creation');
             return;
         }
 
-        console.log(`[OntoCode] ✅ File name validated: ${fileName}`);
-
         const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.[^/.]+$/, '')}`;
-        console.log(`[OntoCode] 🔗 Generated ontology IRI: ${ontologyIRI}`);
 
         const emptyOntologyContent = `<?xml version="1.0"?>
 <rdf:RDF xmlns="${ontologyIRI}#"
@@ -1423,10 +1320,8 @@ class OntoCodePanel {
         const fileContent = Buffer.from(emptyOntologyContent, 'utf-8');
         const fileSize = fileContent.length;
         const base64Content = uint8ArrayToBase64(fileContent);
-        console.log(`[OntoCode] 📄 Created ontology content (${fileSize} bytes)`);
 
         if (!projectId) {
-            console.log('[OntoCode] 💾 No project context - saving to local filesystem');
             const saveUri = await vscode.window.showSaveDialog({
                 defaultUri: vscode.Uri.file(fileName),
                 saveLabel: 'Save New Ontology File',
@@ -1438,16 +1333,12 @@ class OntoCodePanel {
 
             if (saveUri) {
                 await vscode.workspace.fs.writeFile(saveUri, fileContent);
-                console.log('[OntoCode] ✅ New file saved to:', saveUri.toString());
                 this.setPendingUpload(false, saveUri, importMode, partition);
                 vscode.window.showInformationMessage(`File "${fileName}" created successfully!`);
             } else {
-                console.log('[OntoCode] ❌ User cancelled save dialog');
             }
             return;
         }
-
-        console.log(`[OntoCode] 📤 Workspace mode - uploading to project: ${projectId}`);
 
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
         if (!token) {
@@ -1459,20 +1350,17 @@ class OntoCodePanel {
 
         const deploymentType = await this.getStoredDeploymentType();
         const isCloudDeployment = deploymentType === 'cloud';
-        console.log(`[OntoCode] 🔍 Deployment type: ${deploymentType}`);
 
         if (!isCloudDeployment) {
 
             try {
                 const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
-                console.log(`[OntoCode] 🔍 Checking for duplicates: ${checkUrl}`);
 
                 const checkResponse = await axios.get(checkUrl, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
 
                 if (checkResponse.data?.exists) {
-                    console.log(`[OntoCode] ⚠️ Duplicate file detected: ${fileName}`);
 
                     const choice = await vscode.window.showWarningMessage(
                         `A file named "${fileName}" already exists in this project.`,
@@ -1482,32 +1370,25 @@ class OntoCodePanel {
                     );
 
                     if (choice !== 'Choose Different Name') {
-                        console.log('[OntoCode] ❌ User chose to cancel');
                         return;
                     }
-
-                    console.log('[OntoCode] 🔄 User chose to pick different name - restarting flow');
 
                     return this.handleCreateNewFile(projectId, importMode, partition);
                 }
 
-                console.log('[OntoCode] ✅ No duplicate found - proceeding with upload');
             } catch (checkError: any) {
                 console.warn('[OntoCode] ⚠️ Failed to check for duplicate file:', checkError?.message || checkError);
                 // Continue with upload if check fails
             }
         } else {
-            console.log('[OntoCode] ☁️ Cloud deployment - skipping duplicate check');
         }
 
-        console.log(`[OntoCode] 📤 Uploading new file to project...`);
         const uploadResult = await this.handleUploadFileToProject(projectId, fileName, base64Content, fileSize, {
             skipDuplicateCheck: isCloudDeployment,
             openAfterUpload: true
         });
 
         if (uploadResult) {
-            console.log(`[OntoCode] ✅ New file "${fileName}" created and uploaded successfully!`);
             vscode.window.showInformationMessage(`New file "${fileName}" created successfully!`);
         } else {
             console.error(`[OntoCode] ❌ Failed to upload new file "${fileName}"`);
@@ -1530,7 +1411,6 @@ class OntoCodePanel {
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
 
         if (!token && !isPublicEndpoint) {
-            console.log('[Proxy] Request to', url, 'requires authentication');
             this.postMessage({ type: 'apiResponse', requestId, error: { message: 'User is not authenticated.', status: 401 } });
             return;
         }
@@ -1548,7 +1428,6 @@ class OntoCodePanel {
         try {
             let response;
             const fullUrl = `${GATEWAY_URL}${url}`;
-            console.log(`[Proxy] ${type.replace('api', '').toUpperCase()}: ${fullUrl}`, isPublicEndpoint ? '(public)' : '(authenticated)');
 
             const requestTimeoutMs = url.includes('/api/ontology/upload/') || /\/api\/projects\/[^/]+\/files/.test(url)
                 ? 7_200_000
@@ -1557,9 +1436,9 @@ class OntoCodePanel {
 
             const extractUploadProjectId = (requestUrl: string): string | undefined => {
                 const uploadMatch = requestUrl.match(/\/api\/ontology\/upload\/([^/?]+)/);
-                if (uploadMatch) return decodeURIComponent(uploadMatch[1]);
+                if (uploadMatch) {return decodeURIComponent(uploadMatch[1]);}
                 const filesMatch = requestUrl.match(/\/api\/projects\/([^/]+)\/files/);
-                if (filesMatch) return decodeURIComponent(filesMatch[1]);
+                if (filesMatch) {return decodeURIComponent(filesMatch[1]);}
                 return undefined;
             };
 
@@ -1594,7 +1473,6 @@ class OntoCodePanel {
                     const buf = body._fileBase64
                         ? Buffer.from(body._fileBase64, 'base64')
                         : Buffer.from(body._fileBuffer);
-                    console.log(`[Proxy] Reconstructing FormData: file=${body._originalFileName}, size=${buf.length}, type=${body.fileType}, encoding=${body._fileBase64 ? 'base64' : 'array'}`);
                     form.append(body._fileFieldName, buf, {
                         filename: body._originalFileName || 'upload',
                         contentType: body.fileType || 'application/octet-stream',
@@ -1602,13 +1480,12 @@ class OntoCodePanel {
                 }
 
                 for (const [k, v] of Object.entries(body)) {
-                    if (k.startsWith('_') || k === 'file' || k === 'fileType') continue;
+                    if (k.startsWith('_') || k === 'file' || k === 'fileType') {continue;}
                     form.append(k, String(v));
                 }
                 postBody = form;
 
                 const formHeaders = form.getHeaders();
-                console.log(`[Proxy] FormData headers:`, formHeaders);
                 axiosConfig.headers = { ...headers, ...formHeaders };
                 axiosConfig.maxContentLength = Infinity;
                 axiosConfig.maxBodyLength = Infinity;
@@ -1633,7 +1510,6 @@ class OntoCodePanel {
             }
 
             this.postMessage({ type: 'apiResponse', requestId, response: response.data });
-            console.log(`[Proxy] ${type.replace('api', '').toUpperCase()} ${fullUrl} - Success (${response.status})`);
         } catch (e: unknown) {
             const fullUrl = `${GATEWAY_URL}${url}`; // Redeclare for error logging
 
@@ -1686,7 +1562,6 @@ class OntoCodePanel {
 
         try {
             const fullUrl = config.url.startsWith('http') ? config.url : `${GATEWAY_URL}${config.url}`;
-            console.log(`[Proxy] ${config.method}: ${fullUrl}`);
 
             const response = await axios({
                 method: config.method,
@@ -1738,8 +1613,6 @@ class OntoCodePanel {
     }
 
     public async triggerLargeFileUpload(fileUri: vscode.Uri, importMode?: string, partition?: string) {
-        console.log(`[OntoCode] Triggering large file upload for: ${fileUri.toString()}`);
-        console.log(`[OntoCode] URI scheme: ${fileUri.scheme}, path: ${fileUri.path}`);
         const fullPath = fileUri.path;
         const fileName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
 
@@ -1747,7 +1620,6 @@ class OntoCodePanel {
 
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
         if (!token) {
-            console.log('[OntoCode] Not logged in, uploading directly to GraphDB');
             const ext = path.extname(fileName);
             const projectId = ['.owl', '.ttl', '.rdf'].includes(ext.toLowerCase()) ? fileName.slice(0, -ext.length) : fileName;
             this._uploadOntology(projectId, fileName, fileData, undefined, undefined, undefined, importMode, partition);
@@ -1755,11 +1627,9 @@ class OntoCodePanel {
         }
 
         const tokenData = parseJwtToken(token);
-        console.log(tokenData, "token===========================================>")
         const useWorkspaceFlow = await this.shouldUseWorkspaceFlow(tokenData || undefined);
 
         if (useWorkspaceFlow) {
-            console.log('[OntoCode] Workspace flow detected, sending file for project selection');
 
             const base64Content = uint8ArrayToBase64(fileData);
             this.postMessage({
@@ -1769,7 +1639,6 @@ class OntoCodePanel {
                 fileSize: fileData.length
             });
         } else {
-            console.log('[OntoCode] Non-admin user without workspace, uploading directly to GraphDB');
             const ext = path.extname(fileName);
             const projectId = ['.owl', '.ttl', '.rdf'].includes(ext.toLowerCase()) ? fileName.slice(0, -ext.length) : fileName;
             this._uploadOntology(projectId, fileName, fileData, undefined, undefined, undefined, importMode, partition);
@@ -1787,7 +1656,6 @@ class OntoCodePanel {
             const checkInterval = setInterval(() => {
                 if (this._isWebviewReady || Date.now() - startTime > timeout) {
                     clearInterval(checkInterval);
-                    console.log(`[OntoCode] Webview ready check complete. isReady: ${this._isWebviewReady}`);
                     resolve();
                 }
             }, 100);
@@ -1795,7 +1663,6 @@ class OntoCodePanel {
     }
 
     public async triggerFileUpload() {
-        console.log('[OntoCode] Triggering active editor file upload...');
         const targetEditor = this.findBestOwlEditor();
 
         if (!targetEditor) {
@@ -1811,14 +1678,12 @@ class OntoCodePanel {
 
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
         if (!token) {
-            console.log('[OntoCode] Not logged in, uploading directly to GraphDB');
             const ext = path.extname(fileName);
             const projectId = ['.owl', '.ttl', '.rdf'].includes(ext.toLowerCase()) ? fileName.slice(0, -ext.length) : fileName;
             this._uploadOntology(projectId, fileName, fileData);
             return;
         }
 
-        console.log('[OntoCode] Sending active file to webview for upload');
         const base64Content = uint8ArrayToBase64(fileData);
         this.postMessage({
             type: 'pendingFileUpload',
@@ -1839,7 +1704,6 @@ class OntoCodePanel {
         partition?: string,
         preserveProjectId?: boolean
     ): Promise<void> {
-        console.log(`[OntoCode] Starting upload for project: ${projectId}, file: ${fileName}, action: ${action || 'none'}`);
 
         const token = await (this._context as any).secrets.get(TOKEN_KEY);
         if (!token) {
@@ -1866,7 +1730,6 @@ class OntoCodePanel {
                 userRoles = payload.roles || [];
                 workspaceId = payload.workspaceId || '';
                 userId = payload.userId || payload.id || '';
-                console.log(`[OntoCode] User info - email: ${ownerEmail}, roles: ${userRoles.join(',')}, workspaceId: ${workspaceId}, userId: ${userId}`);
             }
         } catch (tokenError) {
             console.error('[OntoCode] Could not extract user info from token:', tokenError);
@@ -1878,27 +1741,23 @@ class OntoCodePanel {
         if (!preserveProjectId) {
             projectId = fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld|zip)$/i, '');
         }
-        console.log(`[OntoCode] Using projectId: ${projectId} (preserved: ${!!preserveProjectId})`);
 
         const resolvedOwnerEmail = ownerEmailOverride || ownerEmail;
         const authHeaders = { 'Authorization': `Bearer ${token}` };
         let duplicateCheckResult: 'duplicate' | 'unique' | 'failed' | 'skipped' = 'skipped';
 
         if (isCloudDeployment) {
-            console.log(`[OntoCode] ☁️ Cloud deployment: skipping duplicate check, proceeding with upload`);
             duplicateCheckResult = 'skipped';
         }
 
         const isWorkspaceFile = projectId.includes('--');
         if (!isCloudDeployment && !action && !skipDuplicateCheck && !isWorkspaceFile && resolvedOwnerEmail) {
-            console.log(`[OntoCode] Checking for duplicate file: ${fileName}`);
             try {
                 const checkUrl = `${GATEWAY_URL}/api/ontology/check-duplicate?filename=${encodeURIComponent(fileName)}&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}`;
                 const checkResponse = await axios.get(checkUrl, { headers: authHeaders });
 
                 if (checkResponse.data.isDuplicate) {
                     duplicateCheckResult = 'duplicate';
-                    console.log(`[OntoCode] Duplicate file detected:`, checkResponse.data);
 
                     const detail = `Status: ${checkResponse.data.status || 'Unknown'}\nLast Updated: ${checkResponse.data.lastUpdated ? new Date(checkResponse.data.lastUpdated).toLocaleString() : 'Unknown'}\n\nWhat would you like to do?`;
                     const defaultCopyName = buildDefaultCopyName(fileName, 1);
@@ -1928,7 +1787,6 @@ class OntoCodePanel {
                         if (choice === 'Open Existing') {
                             const existingProjectId = checkResponse.data.projectId;
                             if (existingProjectId) {
-                                console.log('[OntoCode] Opening existing project:', existingProjectId);
                                 this._lastProjectId = existingProjectId;
                                 try {
                                     await this.initializeCollaborationForProject(existingProjectId, token);
@@ -1938,7 +1796,6 @@ class OntoCodePanel {
                                 if (this._isWebviewReady) {
 
                                     if (checkResponse.data.graphEmpty && checkResponse.data.reloadTriggered) {
-                                        console.log('[OntoCode] Existing project graph was empty, reimport triggered. Showing loading state.');
                                         this.postMessage({ type: 'showLoading', projectId: existingProjectId, fileName });
                                     }
                                     this.postMessage({ type: 'fileReady', projectId: existingProjectId });
@@ -1950,7 +1807,6 @@ class OntoCodePanel {
                         }
 
                         if (choice === 'Cancel' || !choice) {
-                            console.log('[OntoCode] User cancelled upload');
                             return;
                         }
 
@@ -1966,7 +1822,7 @@ class OntoCodePanel {
                                     ignoreFocusOut: true,
                                     validateInput: (value) => {
                                         const trimmed = value.trim();
-                                        if (!trimmed) return 'Name is required.';
+                                        if (!trimmed) {return 'Name is required.';}
                                         const normalized = normalizeCopyName(trimmed, originalExt);
                                         if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
                                             return `Name must end with ${originalExt}`;
@@ -1999,13 +1855,11 @@ class OntoCodePanel {
 
                                 const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
                                 const copyProjectId = candidateBase;
-                                console.log(`[OntoCode] Creating copy with filename: ${candidateName}`);
                                 return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail, undefined, importMode, partition);
                             }
                         }
 
                         if (choice === 'Replace') {
-                            console.log(`[OntoCode] 🔄 User chose: ${choice} -> Calling _uploadOntology with action: replace`);
                             return this._uploadOntology(projectId, fileName, fileData, 'replace', resolvedOwnerEmail, undefined, importMode, partition);
                         }
                         return;
@@ -2015,7 +1869,6 @@ class OntoCodePanel {
                     if (action === 'open_existing') {
                         const existingProjectId = checkResponse.data.projectId;
                         if (existingProjectId) {
-                            console.log('[OntoCode] Opening existing project:', existingProjectId);
                             this._lastProjectId = existingProjectId;
                             try {
                                 await this.initializeCollaborationForProject(existingProjectId, token);
@@ -2025,7 +1878,6 @@ class OntoCodePanel {
                             if (this._isWebviewReady) {
 
                                 if (checkResponse.data.graphEmpty && checkResponse.data.reloadTriggered) {
-                                    console.log('[OntoCode] Existing project graph was empty, reimport triggered. Showing loading state.');
                                     this.postMessage({ type: 'showLoading', projectId: existingProjectId, fileName });
                                 }
                                 this.postMessage({ type: 'fileReady', projectId: existingProjectId });
@@ -2037,7 +1889,6 @@ class OntoCodePanel {
                     }
 
                     if (action === 'cancel') {
-                        console.log('[OntoCode] User cancelled upload');
                         return;
                     }
 
@@ -2050,12 +1901,10 @@ class OntoCodePanel {
                         }
                         const candidateBase = normalizeCopyName(candidateName, '').replace(/\.[^/.]+$/, '');
                         const copyProjectId = candidateBase;
-                        console.log(`[OntoCode] Creating copy with filename: ${candidateName}`);
                         return this._uploadOntology(copyProjectId, candidateName, fileData, 'create_copy', resolvedOwnerEmail, undefined, importMode, partition);
                     }
 
                     if (action === 'replace') {
-                        console.log(`[OntoCode] 🔄 User chose: replace -> Calling _uploadOntology with action: replace`);
                         return this._uploadOntology(projectId, fileName, fileData, 'replace', resolvedOwnerEmail, undefined, importMode, partition);
                     }
                     return;
@@ -2130,7 +1979,7 @@ class OntoCodePanel {
                                     ignoreFocusOut: true,
                                     validateInput: (value) => {
                                         const trimmed = value.trim();
-                                        if (!trimmed) return 'Name is required.';
+                                        if (!trimmed) {return 'Name is required.';}
                                         const normalized = normalizeCopyName(trimmed, originalExt);
                                         if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
                                             return `Name must end with ${originalExt}`;
@@ -2199,16 +2048,12 @@ class OntoCodePanel {
             }
         }
 
-        console.log(`[OntoCode] Initializing WebSocket before upload...`);
         try {
             await this.initializeCollaborationForProject(projectId, token);
-            console.log(`[OntoCode] ✅ WebSocket initialized, proceeding with upload`);
         } catch (error) {
             console.error('[OntoCode] Failed to initialize WebSocket:', error);
             // Continue with upload anyway - collaboration is optional
         }
-
-        console.log(`[OntoCode] 📢 Sending showLoading message to webview for project: ${projectId}`);
 
         const fileSizeMB = fileData.length / (1024 * 1024);
         if (fileSizeMB > 50) {
@@ -2220,7 +2065,6 @@ class OntoCodePanel {
         }
 
         const showLoadingResult = this.postMessage({ type: 'showLoading', projectId, fileName });
-        console.log(`[OntoCode] 📢 showLoading message sent, result:`, showLoadingResult);
 
         try {
 
@@ -2228,7 +2072,6 @@ class OntoCodePanel {
             buffer.set(new Uint8Array(fileData.buffer));
 
             if (fileName.toLowerCase().endsWith('.rdf')) {
-                console.log('[OntoCode] Preprocessing RDF/XML file for namespace declarations...');
                 try {
                     const fileContent = new TextDecoder('utf-8').decode(buffer);
 
@@ -2237,12 +2080,9 @@ class OntoCodePanel {
                     const hasBiboNamespace = /xmlns:bibo=/i.test(fileContent);
 
                     if (!hasRdfRoot || !hasDcNamespace || !hasBiboNamespace) {
-                        console.log('[OntoCode] Adding missing namespace declarations to RDF/XML file');
                         const wrappedContent = this.wrapRdfXml(fileContent);
                         buffer = new Uint8Array(new TextEncoder().encode(wrappedContent));
-                        console.log('[OntoCode] ✅ RDF/XML file preprocessed with namespace declarations');
                     } else {
-                        console.log('[OntoCode] RDF/XML file already has proper namespace declarations');
                     }
                 } catch (preprocessError) {
                     console.error('[OntoCode] Failed to preprocess RDF/XML file:', preprocessError);
@@ -2255,7 +2095,6 @@ class OntoCodePanel {
             const enableCompression = !isLocalUpload && shouldCompressFile(fileName) && buffer.length > 1024 * 1024;
 
             if (enableCompression) {
-                console.log(`[OntoCode] File is ${(buffer.length / (1024 * 1024)).toFixed(2)}MB, attempting compression...`);
                 try {
 
                     if (typeof (globalThis as any).CompressionStream !== 'undefined') {
@@ -2267,9 +2106,7 @@ class OntoCodePanel {
 
                         const compressionTime = Date.now() - startTime;
                         const compressionRatio = ((1 - dataToUpload.length / buffer.length) * 100).toFixed(1);
-                        console.log(`[OntoCode] ✅ Compressed from ${buffer.length} to ${dataToUpload.length} bytes (${compressionRatio}% reduction) in ${compressionTime}ms`);
                     } else {
-                        console.log(`[OntoCode] ⚠️ CompressionStream not available, uploading uncompressed`);
                     }
                 } catch (compressionError) {
                     console.error(`[OntoCode] ⚠️ Compression failed, uploading uncompressed:`, compressionError);
@@ -2296,7 +2133,6 @@ class OntoCodePanel {
                         const payload = JSON.parse(atob(base64));
                         if (payload.email) {
                             finalOwnerEmail = payload.email;
-                            console.log(`[OntoCode] ✅ Resolved owner email from token: ${payload.email}`);
                         }
                     }
                 } catch (tokenError) {
@@ -2315,7 +2151,6 @@ class OntoCodePanel {
             };
 
             if (dataToUpload.length > CHUNK_UPLOAD_THRESHOLD) {
-                console.log(`[OntoCode] File is ${(dataToUpload.length / (1024 * 1024)).toFixed(1)}MB (post-compression), using chunked upload`);
                 response = await this.uploadOntologyInChunks(projectId, dataToUpload, fileName, {
                     ownerEmail: finalOwnerEmail,
                     action,
@@ -2329,21 +2164,16 @@ class OntoCodePanel {
 
                 if (action) {
                     formData.append('action', action);
-                    console.log(`[OntoCode] ✅ Added action parameter to FormData: ${action}`);
                 } else {
-                    console.log(`[OntoCode] ⚠️ No action parameter specified, backend will check for duplicates`);
                 }
 
                 if (finalOwnerEmail) {
                     formData.append('ownerEmail', finalOwnerEmail);
-                    console.log(`[OntoCode] ✅ Adding owner email: ${finalOwnerEmail}`);
                 }
 
                 if (workspaceId) {
                     formData.append('workspaceId', workspaceId);
-                    console.log(`[OntoCode] ✅ Adding workspaceId: ${workspaceId}`);
                 } else {
-                    console.log(`[OntoCode] ⚠️ No workspaceId - user not in workspace mode`);
                 }
 
                 const query = new URLSearchParams();
@@ -2360,15 +2190,9 @@ class OntoCodePanel {
                 const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${encodeURIComponent(projectId)}${queryString ? `?${queryString}` : ''}`;
                 const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
 
-                console.log(`[OntoCode] Uploading to: ${uploadUrl}`);
-                console.log(`[OntoCode] Upload parameters - fileName: ${fileName}, action: ${action || 'none'}, projectId: ${projectId}`);
-                console.log(`[OntoCode] File size: ${fileData.length} bytes (${fileSizeMB} MB)`);
-
                 const baseTimeout = 10 * 60 * 1000; // 10 minutes
                 const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000; // 1 min per 10MB
                 const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000); // Max 2 hours for uploads up to 1GB
-
-                console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes (includes GraphDB processing time)`);
 
                 const MAX_RETRIES = 3;
 
@@ -2376,7 +2200,6 @@ class OntoCodePanel {
                     try {
                         if (attempt > 0) {
                             const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s
-                            console.log(`[OntoCode] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms delay...`);
                             await new Promise(resolve => setTimeout(resolve, delay));
                         }
 
@@ -2394,7 +2217,6 @@ class OntoCodePanel {
                                 const statusMsg = percentCompleted === 100
                                     ? `Upload complete. Processing in GraphDB... (this may take several minutes for large files)`
                                     : `Uploading: ${percentCompleted}%`;
-                                console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total ?? 0} bytes)`);
 
                                 this.postMessage({
                                     type: 'uploadProgress',
@@ -2407,7 +2229,6 @@ class OntoCodePanel {
                             }
                         });
 
-                        console.log(`[OntoCode] ✅ Upload successful on attempt ${attempt + 1}`);
                         break;
 
                     } catch (error: any) {
@@ -2432,15 +2253,9 @@ class OntoCodePanel {
                 throw lastError || new Error('Upload failed with no response');
             }
 
-            console.log(`[OntoCode] Upload response status: ${response.status}`);
-            console.log(`[OntoCode] Upload response data:`, response.data);
-
             if (response.status === 200 || response.status === 201) {
-                console.log(`[OntoCode] Upload successful for project: ${projectId}`);
                 const uploadProjectId = response.data?.projectId || projectId;
                 this._lastProjectId = uploadProjectId; // Remember this project
-
-                console.log(`[OntoCode] Upload successful, WebSocket listening for IMPORT_COMPLETED`);
 
                 const isReplacement = response.data?.isReplacement || false;
                 const finalFileName = response.data?.filename || fileName;
@@ -2451,7 +2266,6 @@ class OntoCodePanel {
                 if (response.data?.projectId && response.data?.projectName) {
 
                     message = `Ontology "${finalFileName}" ${uploadAction} successfully to project "${response.data.projectName}" (ID: ${response.data.projectId}). Processing...`;
-                    console.log(`[OntoCode] Admin upload - Project: ${response.data.projectName}, Workspace: ${response.data.workspaceId}`);
                 } else {
 
                     message = `Ontology "${finalFileName}" ${uploadAction} successfully. Processing...`;
@@ -2466,7 +2280,6 @@ class OntoCodePanel {
                 const fileSizeMB = fileData.length / (1024 * 1024);
                 const estimatedMinutes = Math.max(15, Math.ceil(fileSizeMB / 10)); // At least 15 min, ~10MB per minute
                 const maxAttempts = Math.max(60, Math.ceil(estimatedMinutes * 60 / 5)); // At least 60 attempts
-                console.log(`[OntoCode] File size: ${fileSizeMB.toFixed(1)}MB, estimated time: ${estimatedMinutes} minutes, max attempts: ${maxAttempts}`);
 
                 this.postMessage({
                     type: 'updateLoadingStatus',
@@ -2478,21 +2291,19 @@ class OntoCodePanel {
                 const scheduleStatusCheck = (attempt: number) => {
 
                     const getDelay = (att: number) => {
-                        if (att === 1) return 250;        // 250ms — catches small/fast imports
-                        if (att <= 3) return 1000;        // 1s x 2 attempts = 2s
-                        if (att <= 6) return 3000;        // 3s x 3 attempts = 9s
-                        if (att <= 10) return 10000;      // 10s x 4 attempts = 40s
-                        if (att <= 15) return 20000;      // 20s x 5 attempts = 100s
+                        if (att === 1) {return 250;}        // 250ms — catches small/fast imports
+                        if (att <= 3) {return 1000;}        // 1s x 2 attempts = 2s
+                        if (att <= 6) {return 3000;}        // 3s x 3 attempts = 9s
+                        if (att <= 10) {return 10000;}      // 10s x 4 attempts = 40s
+                        if (att <= 15) {return 20000;}      // 20s x 5 attempts = 100s
                         return 30000;                     // 30s x remaining attempts
                     };
                     const delay = getDelay(attempt);
-                    console.log(`[OntoCode] Scheduling fallback status check (attempt ${attempt}/${maxAttempts}) in ${delay}ms for ${uploadProjectId}`);
                     setTimeout(async () => {
                         try {
                             const encodedProjectId = encodeURIComponent(uploadProjectId);
                             const statusUrl = `${GATEWAY_URL}/api/ontology/status/${encodedProjectId}`;
                             const statusResp = await axios.get(statusUrl, { headers });
-                            console.log(`[OntoCode] Fallback status check for ${uploadProjectId}:`, statusResp.data);
 
                             const statusPayload = statusResp.data?.data || statusResp.data;
                             const status = statusPayload?.status;
@@ -2512,8 +2323,6 @@ class OntoCodePanel {
                             }
 
                             if (status === 'COMPLETED') {
-                                console.log(`[OntoCode] ✅ File completed via fallback status check, sending fileReady to webview`);
-                                console.log(`[OntoCode] Webview ready state: ${this._isWebviewReady}`);
                                 this.postMessage({ type: 'fileReady', projectId: uploadProjectId });
                                 return;
                             }
@@ -2583,7 +2392,7 @@ class OntoCodePanel {
                             ignoreFocusOut: true,
                             validateInput: (value) => {
                                 const trimmed = value.trim();
-                                if (!trimmed) return 'Name is required.';
+                                if (!trimmed) {return 'Name is required.';}
                                 const normalized = normalizeCopyName(trimmed, originalExt);
                                 if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
                                     return `Name must end with ${originalExt}`;
@@ -2692,8 +2501,6 @@ class OntoCodePanel {
         const totalChunks = chunks.length;
         const totalBytes = data.length;
 
-        console.log(`[OntoCode] Chunked upload starting: uploadId=${uploadId}, ${totalChunks} chunks of ~${(CHUNK_SIZE / (1024 * 1024)).toFixed(0)}MB, ${(totalBytes / (1024 * 1024)).toFixed(1)}MB total`);
-
         let uploadedBytes = 0;
         let finalResponseData: any = null;
 
@@ -2709,7 +2516,6 @@ class OntoCodePanel {
                 try {
                     if (attempt > 0) {
                         const delay = Math.pow(2, attempt) * 1000;
-                        console.log(`[OntoCode] Retrying chunk ${i + 1}/${totalChunks} after ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES_PER_CHUNK})`);
                         await new Promise(resolve => setTimeout(resolve, delay));
                     }
 
@@ -2720,11 +2526,11 @@ class OntoCodePanel {
                     form.append('totalChunks', String(totalChunks));
                     form.append('chunkHash', chunkHash);
                     form.append('fileName', fileName);
-                    if (opts.ownerEmail) form.append('ownerEmail', opts.ownerEmail);
-                    if (opts.action) form.append('action', opts.action);
-                    if (opts.importMode) form.append('importMode', opts.importMode);
-                    if (opts.partition) form.append('partition', opts.partition);
-                    if (opts.workspaceId) form.append('workspaceId', opts.workspaceId);
+                    if (opts.ownerEmail) {form.append('ownerEmail', opts.ownerEmail);}
+                    if (opts.action) {form.append('action', opts.action);}
+                    if (opts.importMode) {form.append('importMode', opts.importMode);}
+                    if (opts.partition) {form.append('partition', opts.partition);}
+                    if (opts.workspaceId) {form.append('workspaceId', opts.workspaceId);}
                     form.append('compressed', String(opts.compressed));
 
                     const chunkResp = await axios.post(
@@ -2795,7 +2601,6 @@ class OntoCodePanel {
         importMode?: string,
         partition?: string
     ) {
-        console.log(`[OntoCode] 📤 Handling webview upload for project: ${projectId}, file: ${fileName}`);
 
         try {
 
@@ -2809,7 +2614,6 @@ class OntoCodePanel {
                     });
                     const status = statusResp?.data?.data?.status || statusResp?.data?.status;
                     if (status === 'COMPLETED') {
-                        console.log(`[OntoCode] ✅ File already exists in GraphDB, sending fileReady directly: ${projectId}`);
                         this._lastProjectId = projectId;
                         try {
                             await this.initializeCollaborationForProject(projectId, token);
@@ -2822,13 +2626,10 @@ class OntoCodePanel {
                         return;
                     }
                 } catch (checkErr) {
-                    console.log('[OntoCode] Status check failed, proceeding with upload:', checkErr);
                 }
             }
 
             const fileData = base64ToUint8Array(base64Content);
-
-            console.log(`[OntoCode] 📦 Converted base64 to binary, size: ${fileData.length} bytes`);
 
             await this._uploadOntology(projectId, fileName, fileData, undefined, ownerEmail, skipDuplicateCheck, importMode, partition, true);
 
@@ -2846,7 +2647,6 @@ class OntoCodePanel {
         fileSize: number,
         options?: { skipDuplicateCheck?: boolean; replaceFileId?: string | null; openAfterUpload?: boolean }
     ): Promise<{ fileId: string; fileName: string } | null> {
-        console.log(`[OntoCode] 📤 Uploading file to project: ${projectId}, file: ${fileName}, size: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`);
         const uploadPerfStart = Date.now();
 
         try {
@@ -2857,7 +2657,6 @@ class OntoCodePanel {
             }
 
             const checkUrl = `${GATEWAY_URL}/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(fileName)}`;
-            console.log(`[OntoCode] Checking for duplicate file: ${checkUrl}`);
 
             let replaceFileId: string | null = options?.replaceFileId ?? null;
             let finalFileName = fileName;
@@ -2866,7 +2665,6 @@ class OntoCodePanel {
             const isCloudDeployment = deploymentType === 'cloud';
 
             if (isCloudDeployment) {
-                console.log('[OntoCode] ☁️ Cloud deployment: skipping duplicate file check');
             }
 
             if (!options?.skipDuplicateCheck && !isCloudDeployment) {
@@ -2879,7 +2677,6 @@ class OntoCodePanel {
                     });
 
                     if (checkResponse.data.exists) {
-                        console.log(`[OntoCode] ⚠️ File "${fileName}" already exists in project`);
 
                         const choice = await vscode.window.showWarningMessage(
                             `A file named "${fileName}" already exists in this project.`,
@@ -2910,7 +2707,6 @@ class OntoCodePanel {
                         } else if (choice === 'Replace') {
 
                             replaceFileId = checkResponse.data.existingFile?.fileId || checkResponse.data.existingFile?.id || null;
-                            console.log(`[OntoCode] User chose to replace file. Old file ID: ${replaceFileId}`);
                         } else if (choice === 'Create Copy') {
                             const originalExt = extractExtension(fileName);
                             let copyIndex = 1;
@@ -2923,7 +2719,7 @@ class OntoCodePanel {
                                     ignoreFocusOut: true,
                                     validateInput: (value) => {
                                         const trimmed = value.trim();
-                                        if (!trimmed) return 'Name is required.';
+                                        if (!trimmed) {return 'Name is required.';}
                                         const normalized = normalizeCopyName(trimmed, originalExt);
                                         if (originalExt && !normalized.toLowerCase().endsWith(originalExt.toLowerCase())) {
                                             return `Name must end with ${originalExt}`;
@@ -2959,7 +2755,6 @@ class OntoCodePanel {
                             }
                         } else {
 
-                            console.log('[OntoCode] User cancelled upload');
                             return null;
                         }
                     }
@@ -2976,9 +2771,6 @@ class OntoCodePanel {
             }
 
             const uploadUrl = `${GATEWAY_URL}/api/projects/${projectId}/files`;
-            console.log(`[OntoCode] Upload URL: ${uploadUrl}`);
-
-            console.log(`[OntoCode] [PERF] Pre-upload checks (duplicate, deployment): ${Date.now() - uploadPerfStart}ms`);
 
             const httpUploadStart = Date.now();
             const response = await vscode.window.withProgress({
@@ -3021,10 +2813,7 @@ class OntoCodePanel {
                 return uploadResponse;
             });
 
-            console.log(`[OntoCode] [PERF] HTTP upload (POST to gateway): ${Date.now() - httpUploadStart}ms`);
-
             if (response.status === 200 || response.status === 201) {
-                console.log('[OntoCode] ✅ File uploaded to project successfully');
 
                 const actionTaken = replaceFileId ? 'replaced' : (finalFileName !== fileName ? 'uploaded as copy' : 'uploaded');
 
@@ -3037,20 +2826,14 @@ class OntoCodePanel {
                 const uploadedFileId = response.data?.fileId || response.data?.id;
                 const uploadedFileName = response.data?.filename || finalFileName;
 
-                console.log(`[OntoCode] 📋 File uploaded - ID: ${uploadedFileId}, Name: ${uploadedFileName}`);
-
-                console.log(`[OntoCode] ⏳ Waiting 1 second for database commit...`);
                 await new Promise(resolve => setTimeout(resolve, 1000));
 
                 this.postMessage({ type: 'fileReady', projectId: projectId, uploadedFileId, uploadedFileName });
-                console.log(`[OntoCode] 📤 Sent fileReady message for project: ${projectId}, fileId: ${uploadedFileId}`);
 
                 if (options?.openAfterUpload && uploadedFileId) {
 
-                    console.log(`[OntoCode] ⏳ Waiting 500ms before opening file...`);
                     await new Promise(resolve => setTimeout(resolve, 500));
 
-                    console.log(`[OntoCode] 📂 Opening newly created file: ${uploadedFileName}`);
                     this.postMessage({
                         type: 'openProjectFile',
                         projectId,
@@ -3078,7 +2861,6 @@ class OntoCodePanel {
             } else if (error.status === 413) {
 
                 const responseData = error.data;
-                console.log('[OntoCode] Storage limit response data:', responseData);
                 if (responseData?.message) {
                     errorMessage = responseData.message;
                 } else if (responseData?.error) {
@@ -3094,7 +2876,6 @@ class OntoCodePanel {
                 errorMessage += `: ${error.message}`;
             }
 
-            console.log('[OntoCode] Final error message:', errorMessage);
             vscode.window.showErrorMessage(errorMessage);
             return null;
         }
@@ -3107,7 +2888,6 @@ class OntoCodePanel {
 
     private async handleDownload(projectId: string, format: string, filename: string, requestId?: number) {
         try {
-            console.log(`[OntoCode] Downloading export for project: ${projectId}, format: ${format}`);
 
             const token = await (this._context as any).secrets.get(TOKEN_KEY);
             if (!token) {
@@ -3168,9 +2948,6 @@ class OntoCodePanel {
                 );
                 throwIfCancelled();
 
-                console.log(`[OntoCode] Response status: ${response.status}`);
-                console.log(`[OntoCode] Response data length: ${response.data.byteLength} bytes`);
-
                 const saveUri = await vscode.window.showSaveDialog({
                     defaultUri: vscode.Uri.file(filename),
                     filters: {
@@ -3180,12 +2957,10 @@ class OntoCodePanel {
                 });
 
                 if (saveUri) {
-                    console.log(`[OntoCode] Saving to: ${saveUri.fsPath}`);
                     await (vscode.workspace as any).fs.writeFile(saveUri, new Uint8Array(response.data));
                     vscode.window.showInformationMessage(`File saved successfully to ${saveUri.fsPath}`);
                     this.postMessage({ type: 'downloadOntologyComplete', requestId });
                 } else {
-                    console.log(`[OntoCode] User cancelled save dialog`);
                     this.postMessage({ type: 'downloadOntologyFailed', requestId, cancelled: true });
                 }
             });
@@ -3193,7 +2968,6 @@ class OntoCodePanel {
 
             if ((error as Error)?.message === 'EXPORT_CANCELLED' || axios.isCancel(error)
                 || (error as Error)?.name === 'CanceledError') {
-                console.log('[OntoCode] Export cancelled by user');
                 vscode.window.showInformationMessage(`Export of ${filename} cancelled.`);
                 this.postMessage({ type: 'downloadOntologyFailed', requestId, cancelled: true });
                 return;
@@ -3257,7 +3031,6 @@ class OntoCodePanel {
 
     private async handleDownloadFile(content: string, filename: string) {
         try {
-            console.log(`[OntoCode] Downloading file: ${filename}, content length: ${content.length}`);
 
             const saveUri = await vscode.window.showSaveDialog({
                 defaultUri: vscode.Uri.file(filename),
@@ -3268,16 +3041,13 @@ class OntoCodePanel {
             });
 
             if (saveUri) {
-                console.log(`[OntoCode] Saving to: ${saveUri.fsPath}`);
 
                 await vscode.workspace.fs.writeFile(
                     saveUri,
                     new TextEncoder().encode(content)
                 );
                 vscode.window.showInformationMessage(`File saved successfully to ${saveUri.fsPath}`);
-                console.log(`[OntoCode] File saved: ${saveUri.fsPath}, size: ${content.length} bytes`);
             } else {
-                console.log(`[OntoCode] User cancelled save dialog`);
             }
         } catch (error) {
             console.error('[OntoCode] Download file error:', error);
@@ -3287,9 +3057,6 @@ class OntoCodePanel {
 
     private async handleImportLocalFile(filePath: string, currentProjectId: string) {
         try {
-            console.log('[OntoCode] === IMPORT LOCAL FILE START ===');
-            console.log('[OntoCode] Original file path:', filePath);
-            console.log('[OntoCode] Current project ID:', currentProjectId);
 
             let normalizedPath = filePath.replace(/^file:\/\/\//, '').replace(/^file:\/\//, '');
 
@@ -3298,45 +3065,32 @@ class OntoCodePanel {
                 normalizedPath = normalizedPath.replace(/\//g, '\\');
             }
 
-            console.log('[OntoCode] Normalized path:', normalizedPath);
-
             const fileUri = vscode.Uri.file(normalizedPath);
-            console.log('[OntoCode] File URI:', fileUri.toString());
 
             let fileExists = false;
             try {
                 await (vscode.workspace as any).fs.stat(fileUri);
                 fileExists = true;
-                console.log('[OntoCode] ✅ File exists at path');
             } catch (e) {
-                console.log('[OntoCode] ❌ File not found:', e);
                 vscode.window.showErrorMessage(`Could not find file at: ${normalizedPath}`);
                 return;
             }
 
-            console.log('[OntoCode] Reading file content...');
-
             const fileData = await (vscode.workspace as any).fs.readFile(fileUri);
             const fileName = normalizedPath.substring(normalizedPath.lastIndexOf('\\') + 1).substring(normalizedPath.lastIndexOf('/') + 1);
-            console.log('[OntoCode] File name:', fileName);
-            console.log('[OntoCode] File size:', fileData.length, 'bytes');
 
             const token = await (this._context as any).secrets.get(TOKEN_KEY);
             if (!token) {
-                console.log('[OntoCode] ❌ No auth token found');
                 vscode.window.showErrorMessage('Not authenticated. Please log in first.');
                 return;
             }
-            console.log('[OntoCode] ✅ Auth token retrieved');
 
             const uploadProjectId = `imported-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-            console.log('[OntoCode] Generated upload project ID:', uploadProjectId);
 
             let dataToUpload = fileData;
             const enableCompression = shouldCompressFile(fileName) && fileData.length > 1024 * 1024;
 
             if (enableCompression) {
-                console.log(`[OntoCode] File is ${(fileData.length / (1024 * 1024)).toFixed(2)}MB, attempting compression...`);
                 try {
                     if (typeof (globalThis as any).CompressionStream !== 'undefined') {
                         const startTime = Date.now();
@@ -3347,7 +3101,6 @@ class OntoCodePanel {
 
                         const compressionTime = Date.now() - startTime;
                         const compressionRatio = ((1 - dataToUpload.length / fileData.length) * 100).toFixed(1);
-                        console.log(`[OntoCode] ✅ Compressed from ${fileData.length} to ${dataToUpload.length} bytes (${compressionRatio}% reduction) in ${compressionTime}ms`);
                     }
                 } catch (compressionError) {
                     console.error(`[OntoCode] ⚠️ Compression failed:`, compressionError);
@@ -3362,7 +3115,6 @@ class OntoCodePanel {
             let response: any = null;
 
             if (dataToUpload.length > CHUNK_UPLOAD_THRESHOLD) {
-                console.log(`[OntoCode] File is ${(dataToUpload.length / (1024 * 1024)).toFixed(1)}MB (post-compression), using chunked upload`);
                 response = await this.uploadOntologyInChunks(uploadProjectId, dataToUpload, fileName, {
                     compressed: wasActuallyCompressed,
                     token,
@@ -3380,9 +3132,6 @@ class OntoCodePanel {
                 const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${uploadProjectId}`;
                 const fileSizeMB = (fileData.length / (1024 * 1024)).toFixed(2);
 
-                console.log('[OntoCode] Upload URL:', uploadUrl);
-                console.log(`[OntoCode] Uploading file... Size: ${fileSizeMB}MB`);
-
                 if (fileData.length > 50 * 1024 * 1024) {
                     const estimatedMinutes = Math.ceil(fileData.length / (10 * 1024 * 1024));
                     vscode.window.showInformationMessage(
@@ -3395,15 +3144,12 @@ class OntoCodePanel {
                 const additionalTimeout = Math.ceil(fileData.length / (10 * 1024 * 1024)) * 60 * 1000;
                 const uploadTimeout = Math.min(baseTimeout + additionalTimeout, 7_200_000);
 
-                console.log(`[OntoCode] Calculated timeout: ${(uploadTimeout / 60000).toFixed(1)} minutes`);
-
                 const MAX_RETRIES = 3;
 
                 for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                     try {
                         if (attempt > 0) {
                             const delay = Math.pow(2, attempt) * 1000;
-                            console.log(`[OntoCode] Retry attempt ${attempt + 1}/${MAX_RETRIES} after ${delay}ms...`);
                             await new Promise(resolve => setTimeout(resolve, delay));
                         }
 
@@ -3421,11 +3167,9 @@ class OntoCodePanel {
                                 const statusMsg = percentCompleted === 100
                                     ? `Upload complete. Processing in GraphDB...`
                                     : `Uploading: ${percentCompleted}%`;
-                                console.log(`[OntoCode] ${statusMsg} (${progressEvent.loaded} / ${progressEvent.total} bytes)`);
                             }
                         });
 
-                        console.log(`[OntoCode] ✅ Upload successful on attempt ${attempt + 1}`);
                         break;
 
                     } catch (error: any) {
@@ -3450,20 +3194,13 @@ class OntoCodePanel {
                 throw lastError || new Error('Upload failed with no response');
             }
 
-            console.log('[OntoCode] Upload response status:', response.status);
-            console.log('[OntoCode] Upload response data:', response.data);
-
             if (response.status === 200 || response.status === 201) {
-                console.log('[OntoCode] ✅ Import file uploaded successfully');
                 vscode.window.showInformationMessage(`Imported file "${fileName}" uploaded to your files.`);
 
                 this._lastProjectId = uploadProjectId;
 
-                console.log('[OntoCode] Sending fileReady message to webview');
                 this.postMessage({ type: 'fileReady', projectId: uploadProjectId });
-                console.log('[OntoCode] === IMPORT LOCAL FILE END (SUCCESS) ===');
             } else {
-                console.log('[OntoCode] ❌ Upload failed with status:', response.status);
                 vscode.window.showErrorMessage(`Failed to upload file. Status: ${response.status}`);
             }
         } catch (error) {
@@ -3605,7 +3342,6 @@ class OntoCodePanel {
     }
 
     public dispose() {
-        console.log('[OntoCode] Disposing panel');
 
         if (this.collaborationManager) {
             this.collaborationManager.disconnect().catch(err => {
@@ -3646,11 +3382,6 @@ class OntoCodePanel {
             const userEmail = tokenData.email || '';
             const subscriptionPlan = tokenData.subscriptionPlan || 'free';
 
-            console.log(`[OntoCode] Extracted user info - userId: ${userId}, username: ${username}, email: ${userEmail}, plan: ${subscriptionPlan}`);
-            console.log(`[OntoCode] Token data keys:`, Object.keys(tokenData));
-
-            console.log(`[OntoCode] ✅ WebSocket enabled for import notifications`);
-
             await this.initializeCollaboration(projectId, userId, username, userEmail);
         } catch (error) {
             console.error('[OntoCode] Error initializing collaboration for project:', error);
@@ -3660,13 +3391,6 @@ class OntoCodePanel {
 
     private async initializeCollaboration(projectId: string, userId: string, username: string, userEmail?: string): Promise<void> {
         try {
-            console.log('[OntoCode] ========================================');
-            console.log('[OntoCode] Initializing Collaboration');
-            console.log('[OntoCode] Project ID:', projectId);
-            console.log('[OntoCode] User ID:', userId);
-            console.log('[OntoCode] USERNAME:', username);
-            console.log('[OntoCode] WebSocket URL:', OWL_EDITOR_URL);
-            console.log('[OntoCode] ========================================');
 
             this.collaborationManager = new CollaborationManager(
                 OWL_EDITOR_URL,
@@ -3678,7 +3402,6 @@ class OntoCodePanel {
 
             this.collaborationManager.setHandlers({
                 onEditReceived: async (edit) => {
-                    console.log('[OntoCode] Received remote edit:', edit);
                     this.editCapture.setApplyingRemoteEdit(true);
                     await this.remoteEditApplier.applyRemoteEdit(edit);
                     this.editCapture.setApplyingRemoteEdit(false);
@@ -3690,7 +3413,6 @@ class OntoCodePanel {
                 },
 
                 onPresenceUpdate: (presence) => {
-                    console.log('[OntoCode] Presence update:', presence);
 
                     this.postMessage({
                         type: 'presenceUpdate',
@@ -3699,14 +3421,12 @@ class OntoCodePanel {
                 },
 
                 onImportStatusUpdate: (status) => {
-                    console.log(`[OntoCode] 📨 Import status update - Type: ${status.type}, Project: ${status.projectId}, Status: ${status.status}`);
 
                     if (status.type === 'IMPORT_FAILED') {
                         console.error(`[OntoCode] ❌ Import failed for ${status.projectId}:`, status.statusMessage || status.metadata?.error);
                     }
 
                     if (status.type === 'IMPORT_COMPLETED') {
-                        console.log(`[OntoCode] ✅ Import completed via WebSocket for ${status.projectId}, sending fileReady to webview`);
                         this.postMessage({ type: 'fileReady', projectId: status.projectId });
                     }
 
@@ -3717,7 +3437,6 @@ class OntoCodePanel {
                 },
 
                 onLockUpdate: (lock) => {
-                    console.log('[OntoCode] Lock update:', lock);
 
                     this.postMessage({
                         type: 'lockUpdate',
@@ -3726,15 +3445,11 @@ class OntoCodePanel {
                 },
 
                 onConnectionChange: (connected) => {
-                    console.log('[OntoCode] 🔄 Connection status changed:', connected);
-                    console.log('[OntoCode] Sending collaborationStatus message to webview...');
 
                     this.postMessage({
                         type: 'collaborationStatus',
                         connected
                     });
-
-                    console.log('[OntoCode] ✅ collaborationStatus message sent to webview');
 
                     // vscode.window.showInformationMessage(
                     //     connected ? 'Connected to collaborative editing' : 'Disconnected from collaborative editing'
@@ -3747,7 +3462,6 @@ class OntoCodePanel {
                 },
 
                 onShareNotification: (notification) => {
-                    console.log('[OntoCode] 📨 Share notification received:', notification);
 
                     vscode.window.showInformationMessage(
                         `${notification.sharedByUsername} shared "${notification.fileName}" with you (${notification.permission} access)`
@@ -3760,7 +3474,6 @@ class OntoCodePanel {
                 },
 
                 onCursorUpdate: (cursor) => {
-                    console.log('[OntoCode] 🖱️  Cursor update received:', cursor.userName);
 
                     this.postMessage({
                         type: 'cursorUpdate',
@@ -3774,7 +3487,6 @@ class OntoCodePanel {
 
             this.remoteEditApplier.setEditHandler(async (edit) => {
 
-                console.log('[OntoCode] Applying remote edit to state:', edit.type);
             });
 
             this.remoteEditApplier.setConflictHandler((edit, reason) => {
@@ -3787,15 +3499,12 @@ class OntoCodePanel {
             await this.collaborationManager.joinProject(projectId);
 
             if (userEmail) {
-                console.log(`[OntoCode] Subscribing to share notifications for: ${userEmail}`);
                 this.collaborationManager.subscribeToShareNotifications(userEmail);
             } else {
                 console.warn('[OntoCode] No user email available, share notifications will not work');
             }
 
             this.currentProjectId = projectId;
-
-            console.log('[OntoCode] Collaboration initialized successfully');
 
         } catch (error) {
             console.error('[OntoCode] Failed to initialize collaboration:', error);
@@ -3809,7 +3518,6 @@ class OntoCodePanel {
                 await this.collaborationManager.disconnect();
                 this.collaborationManager = null;
                 this.currentProjectId = null;
-                console.log('[OntoCode] Disconnected from collaboration');
             } catch (error) {
                 console.error('[OntoCode] Error disconnecting:', error);
             }
@@ -3821,16 +3529,13 @@ class OntoCodePanel {
         const sid = ++this._zoteroLibrarySessionSeq;
 
         try {
-            console.log('[OntoCode] Handling Zotero library request', trimmed ? `(q="${trimmed}")` : '(full library)');
 
             if (!zoteroApiService.isConfigured()) {
-                console.log('[OntoCode] Zotero not configured, prompting for credentials');
 
                 const configured = await zoteroApiService.promptForCredentials();
 
                 if (!configured) {
 
-                    console.log('[OntoCode] User cancelled Zotero configuration');
                     this.postMessage({
                         type: 'zoteroLibraryError',
                         error: 'Zotero configuration cancelled. Please configure Zotero to use citations.',
@@ -3943,7 +3648,7 @@ class OntoCodePanel {
             }
         } catch (error) {
             const sidErr = this._zoteroPaging?.sessionId;
-            if (this._zoteroPaging) this._zoteroPaging.loading = false;
+            if (this._zoteroPaging) {this._zoteroPaging.loading = false;}
             console.error('[OntoCode] Failed to load more Zotero items:', error);
             this.postMessage({
                 type: 'zoteroLibraryError',
@@ -3957,10 +3662,8 @@ class OntoCodePanel {
         try {
             const token = await (this._context as any).secrets.get(TOKEN_KEY);
             if (token) {
-                console.log('[OntoCode] JWT token retrieved from secure storage');
                 return token;
             }
-            console.log('[OntoCode] No JWT token found in secure storage');
             return null;
         } catch (error) {
             console.error('[OntoCode] Error retrieving JWT token:', error);
@@ -3970,7 +3673,6 @@ class OntoCodePanel {
 
     private async handleInsertCitation(citationKey: string, format: 'turtle' | 'rdfxml', projectId: string, lineNumber: number = 0): Promise<void> {
         try {
-            console.log('[OntoCode] Inserting citation:', citationKey);
 
             let formattedCitation = await sci2CodeService.formatCitationForOntology(citationKey, format);
             if (!formattedCitation) {
@@ -3979,16 +3681,13 @@ class OntoCodePanel {
             }
 
             if (format === 'rdfxml' && !formattedCitation.includes('<rdf:RDF')) {
-                console.log('[OntoCode] Wrapping RDF/XML fragment with proper namespace declarations');
                 formattedCitation = this.wrapRdfXml(formattedCitation);
-                console.log('[OntoCode] Wrapped RDF/XML preview:', formattedCitation.substring(0, 500));
             }
 
             const metadata = await sci2CodeService.getCitationMetadata(citationKey);
 
             let backendSuccess = false;
             try {
-                console.log('[OntoCode] Calling backend API:', `${GATEWAY_URL}/api/citations/${projectId}/insert`);
 
                 const response = await axios.post(
                     `${GATEWAY_URL}/api/citations/${projectId}/insert`,
@@ -4005,8 +3704,6 @@ class OntoCodePanel {
                     }
                 );
 
-                console.log('[OntoCode] Citation inserted into GraphDB successfully');
-                console.log('[OntoCode] Backend response:', response.data);
                 backendSuccess = true;
             } catch (backendError) {
                 console.error('[OntoCode] Backend citation insertion failed:', backendError);
@@ -4039,14 +3736,11 @@ class OntoCodePanel {
 
     private async handleInsertManualCitation(citation: any, format: 'turtle' | 'rdfxml', projectId: string, lineNumber: number = 0): Promise<void> {
         try {
-            console.log('[OntoCode] Inserting manual citation:', citation.title);
 
             const formattedCitation = sci2CodeService.formatManualCitation(citation, format);
 
             let backendSuccess = false;
             try {
-                console.log('[OntoCode] Calling backend API:', `${GATEWAY_URL}/api/citations/${projectId}/insert`);
-                console.log('[OntoCode] Citation content preview:', formattedCitation.substring(0, 200));
 
                 const response = await axios.post(
                     `${GATEWAY_URL}/api/citations/${projectId}/insert`,
@@ -4063,8 +3757,6 @@ class OntoCodePanel {
                     }
                 );
 
-                console.log('[OntoCode] Manual citation inserted into GraphDB successfully');
-                console.log('[OntoCode] Backend response:', response.data);
                 backendSuccess = true;
             } catch (backendError) {
                 console.error('[OntoCode] Backend citation insertion failed:', backendError);
@@ -4096,11 +3788,6 @@ class OntoCodePanel {
     private async handleInsertCitationToGraphDB(citation: string, format: string, projectId: string, metadata: any): Promise<void> {
         try {
             const url = `${GATEWAY_URL}/api/citations/${projectId}/insert`;
-            console.log('[OntoCode] Inserting citation directly to GraphDB for persistence');
-            console.log('[OntoCode] Gateway URL:', GATEWAY_URL);
-            console.log('[OntoCode] Full URL:', url);
-            console.log('[OntoCode] Project:', projectId);
-            console.log('[OntoCode] Citation preview:', citation.substring(0, 300));
 
             const response = await axios.post(
                 url,
@@ -4116,9 +3803,6 @@ class OntoCodePanel {
                     }
                 }
             );
-
-            console.log('[OntoCode] Citation triples inserted into GraphDB successfully');
-            console.log('[OntoCode] Backend response:', response.data);
 
         } catch (error) {
             console.error('[OntoCode] Failed to insert citation to GraphDB:', error);
@@ -4140,9 +3824,6 @@ class OntoCodePanel {
 
     private async handleRemoveCitationFromGraphDB(citationUri: string, projectId: string): Promise<void> {
         try {
-            console.log('[OntoCode] Removing citation from GraphDB');
-            console.log('[OntoCode] Project:', projectId);
-            console.log('[OntoCode] Citation URI:', citationUri);
 
             const encodedCitationUri = encodeURIComponent(citationUri);
 
@@ -4154,9 +3835,6 @@ class OntoCodePanel {
                     }
                 }
             );
-
-            console.log('[OntoCode] Citation removed from GraphDB successfully');
-            console.log('[OntoCode] Backend response:', response.data);
 
         } catch (error) {
             console.error('[OntoCode] Failed to remove citation from GraphDB:', error);
@@ -4170,9 +3848,6 @@ class OntoCodePanel {
 
     private async handleUploadOntologyContent(content: string, format: string, projectId: string): Promise<void> {
         try {
-            console.log('[OntoCode] Uploading modified ontology content for project:', projectId);
-            console.log('[OntoCode] Content length:', content.length, 'bytes');
-            console.log('[OntoCode] First 200 chars:', content.substring(0, 200));
 
             const token = await this.getValidJWTToken();
             if (!token) {
@@ -4191,7 +3866,6 @@ class OntoCodePanel {
             const tempFilePath = path.join(tmpDir, tempFileName);
 
             fs.writeFileSync(tempFilePath, content, 'utf8');
-            console.log('[OntoCode] Temp file created:', tempFilePath);
 
             const fileStream = fs.createReadStream(tempFilePath);
             const fileSizeBytes = fs.statSync(tempFilePath).size;
@@ -4201,7 +3875,6 @@ class OntoCodePanel {
             formData.append('file', fileStream, tempFileName);
 
             const uploadUrl = `${GATEWAY_URL}/api/ontology/upload/${projectId}`;
-            console.log('[OntoCode] Uploading to:', uploadUrl, 'File size:', fileSizeBytes, 'bytes');
 
             const headers = {
                 'Authorization': `Bearer ${token}`,
@@ -4219,10 +3892,6 @@ class OntoCodePanel {
                 }
             );
 
-            console.log('[OntoCode] Ontology content uploaded successfully');
-            console.log('[OntoCode] Backend response status:', response.status);
-            console.log('[OntoCode] Backend response data:', JSON.stringify(response.data).substring(0, 200));
-
             vscode.window.showInformationMessage('✓ Citation marker saved at specified line');
 
             this.postMessage({
@@ -4233,7 +3902,6 @@ class OntoCodePanel {
 
             try {
                 fs.unlinkSync(tempFilePath);
-                console.log('[OntoCode] Temp file cleaned up');
             } catch (cleanupError) {
                 console.warn('[OntoCode] Failed to cleanup temp file:', cleanupError);
             }
@@ -4312,15 +3980,15 @@ class OntoCodePanel {
             const allDeclaredPrefixes = new Set<string>();
 
             const declaredMatch = (existingAttrs + newAttrs).matchAll(/xmlns:([a-zA-Z][a-zA-Z0-9_-]*)\s*=/gi);
-            for (const m of declaredMatch) allDeclaredPrefixes.add(m[1]);
+            for (const m of declaredMatch) {allDeclaredPrefixes.add(m[1]);}
 
             const usedPrefixRegex = /(?:<|\s)([a-zA-Z][a-zA-Z0-9_-]*):[a-zA-Z]/g;
             let usedMatch;
             const undeclaredPrefixes = new Set<string>();
             while ((usedMatch = usedPrefixRegex.exec(fragment)) !== null) {
                 const p = usedMatch[1];
-                if (p === 'xmlns' || p === 'xml') continue;
-                if (!allDeclaredPrefixes.has(p)) undeclaredPrefixes.add(p);
+                if (p === 'xmlns' || p === 'xml') {continue;}
+                if (!allDeclaredPrefixes.has(p)) {undeclaredPrefixes.add(p);}
             }
 
             if (undeclaredPrefixes.size > 0) {
@@ -4339,7 +4007,7 @@ class OntoCodePanel {
                     const localNames: string[] = [];
                     let lnMatch;
                     while ((lnMatch = localNameRegex.exec(fragment)) !== null) {
-                        if (!localNames.includes(lnMatch[1])) localNames.push(lnMatch[1]);
+                        if (!localNames.includes(lnMatch[1])) {localNames.push(lnMatch[1]);}
                     }
                     for (const localName of localNames) {
                         const escaped = localName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -4360,7 +4028,6 @@ class OntoCodePanel {
 
                     if (resolvedUri) {
                         newAttrs += `\n         xmlns:${prefix}="${resolvedUri}"`;
-                        console.log(`[wrapRdfXml] Dynamically resolved custom prefix '${prefix}' → '${resolvedUri}'`);
                     } else {
                         console.warn(`[wrapRdfXml] Cannot resolve custom prefix '${prefix}' — no matching URIs or document base found`);
                     }
@@ -4397,9 +4064,9 @@ class OntoCodePanel {
             let usedMatch;
             while ((usedMatch = usedPrefixRegex.exec(fragment)) !== null) {
                 const p = usedMatch[1];
-                if (p === 'xmlns' || p === 'xml' || declaredPrefixNames.has(p)) continue;
+                if (p === 'xmlns' || p === 'xml' || declaredPrefixNames.has(p)) {continue;}
 
-                if (defaultNs[`xmlns:${p}`]) continue;
+                if (defaultNs[`xmlns:${p}`]) {continue;}
 
                 let resolvedUri: string | null = null;
 
@@ -4407,7 +4074,7 @@ class OntoCodePanel {
                 const localNames: string[] = [];
                 let lnMatch;
                 while ((lnMatch = localNameRegex.exec(fragment)) !== null) {
-                    if (!localNames.includes(lnMatch[1])) localNames.push(lnMatch[1]);
+                    if (!localNames.includes(lnMatch[1])) {localNames.push(lnMatch[1]);}
                 }
                 for (const localName of localNames) {
                     const escaped = localName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -4421,7 +4088,6 @@ class OntoCodePanel {
 
                 if (resolvedUri) {
                     defaultNs[`xmlns:${p}`] = resolvedUri;
-                    console.log(`[wrapRdfXml] Dynamically resolved custom prefix '${p}' → '${resolvedUri}'`);
                 } else {
                     console.warn(`[wrapRdfXml] Cannot resolve custom prefix '${p}' in bare fragment`);
                 }
@@ -4444,7 +4110,6 @@ class OntoCodePanel {
         try {
             const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
             if (!workspaceFolder) {
-                console.log('[OntoCode] No workspace folder for citation files');
                 return;
             }
 
@@ -4462,7 +4127,6 @@ class OntoCodePanel {
             if (!bibContent.includes(citation.title)) {
                 bibContent += '\n' + bibSnippet + '\n';
                 await vscode.workspace.fs.writeFile(bibPath, new TextEncoder().encode(bibContent));
-                console.log('[OntoCode] Updated references.bib');
             }
 
             const cffPath = vscode.Uri.joinPath(workspaceFolder.uri, 'CITATION.cff');
@@ -4493,7 +4157,6 @@ class OntoCodePanel {
 
                 cffContent += refString;
                 await vscode.workspace.fs.writeFile(cffPath, new TextEncoder().encode(cffContent));
-                console.log('[OntoCode] Updated CITATION.cff');
             }
 
         } catch (error) {

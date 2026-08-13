@@ -66,10 +66,8 @@ export const useRouter = (
             isInitialMount.current = false;
 
             const parsedRoute = parseUrlPath();
-            console.log('[Router] Parsed URL route:', parsedRoute);
 
             const persistedHistory = loadRouteHistory();
-            console.log('[Router] Loaded persisted route history:', persistedHistory.length, 'entries');
 
             if (persistedHistory.length > 0) {
 
@@ -95,7 +93,6 @@ export const useRouter = (
 
                 const lastPersistedRoute = restoredHistory[restoredHistory.length - 1];
                 if (hasRouteChanged(currentRoute, lastPersistedRoute)) {
-                    console.log('[Router] Current route differs from last persisted, restoring...');
                     onRouteChange(lastPersistedRoute, false); // From initialization, not browser nav
                 } else {
 
@@ -103,10 +100,8 @@ export const useRouter = (
                     window.history.replaceState(currentRoute, '', url);
                 }
 
-                console.log('[Router] Restored', persistedHistory.length, 'history entries');
             } else if (parsedRoute) {
 
-                console.log('[Router] Initializing from URL route');
                 const mergedRoute = { ...currentRoute, ...parsedRoute };
                 const url = generateUrlPath(mergedRoute as RouteState);
                 window.history.replaceState(mergedRoute, '', url);
@@ -118,7 +113,6 @@ export const useRouter = (
                 }
             } else {
 
-                console.log('[Router] No persisted history, initializing with current route');
                 const url = generateUrlPath(currentRoute);
                 window.history.replaceState(currentRoute, '', url);
                 historyStackRef.current = [currentRoute];
@@ -129,10 +123,8 @@ export const useRouter = (
 
     useEffect(() => {
         const handlePopState = (event: PopStateEvent) => {
-            console.log('[Router] Browser back/forward detected');
 
             if (currentRoute.view === 'workspace') {
-                console.log('[Router] Workspace back navigation blocked');
                 const url = generateUrlPath(currentRoute);
                 window.history.pushState(currentRoute, '', url);
                 return;
@@ -141,14 +133,12 @@ export const useRouter = (
             const route = event.state as RouteState | null;
 
             if (route?.view === 'workspace') {
-                console.log('[Router] Back navigation to workspace — navigating to workspace selection');
                 onRouteChange({ view: 'workspace' }, true);
                 return;
             }
 
             if (route) {
                 isPopStateNavigation.current = true;
-                console.log('[Router] Restoring route:', route);
                 onRouteChange(route, true); // From browser navigation
 
                 setTimeout(() => {
@@ -159,7 +149,6 @@ export const useRouter = (
                 const parsedRoute = parseUrlPath();
                 if (parsedRoute) {
                     isPopStateNavigation.current = true;
-                    console.log('[Router] Restoring from URL:', parsedRoute);
                     onRouteChange(parsedRoute as RouteState, true); // From browser navigation
                     setTimeout(() => {
                         isPopStateNavigation.current = false;
@@ -183,8 +172,6 @@ export const useRouter = (
             return;
         }
 
-        console.log('[Router] Pushing new route to history:', currentRoute.view);
-
         const url = generateUrlPath(currentRoute);
 
         if (currentRoute.view === 'workspace') {
@@ -206,11 +193,9 @@ export const useRouter = (
             saveRouteHistory(newStack);
         }
 
-        console.log('[Router] Route history size:', historyStackRef.current.length);
     }, [currentRoute, hasRouteChanged, saveRouteHistory]);
 
     const goBack = useCallback(() => {
-        console.log('[Router] Programmatic back navigation, stack size:', historyStackRef.current.length);
         if (historyStackRef.current.length > 1) {
             window.history.back();
         } else {
@@ -220,13 +205,11 @@ export const useRouter = (
     }, [onRouteChange]);
 
     const goForward = useCallback(() => {
-        console.log('[Router] Programmatic forward navigation');
         window.history.forward();
     }, []);
 
     const navigateTo = useCallback((route: Partial<RouteState> & { replace?: boolean }) => {
         const { replace, ...routeUpdate } = route;
-        console.log('[Router] Navigating to:', routeUpdate, replace ? '(replace)' : '');
         const newRoute = { ...currentRoute, ...routeUpdate } as RouteState;
         onRouteChange(newRoute, false); // Not from browser navigation
 
@@ -242,7 +225,6 @@ export const useRouter = (
     }, [currentRoute, onRouteChange, saveRouteHistory]);
 
     const clearHistory = useCallback(() => {
-        console.log('[Router] Clearing route history');
         try {
             sessionStorage.removeItem(ROUTE_HISTORY_KEY);
             historyStackRef.current = [];

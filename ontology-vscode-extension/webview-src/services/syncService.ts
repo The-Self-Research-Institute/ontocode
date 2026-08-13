@@ -14,7 +14,6 @@ class SyncService {
     private ignoreNextUpdate: Map<string, boolean> = new Map();
 
     startMonitoring(projectId: string, callback: SyncCallback, initialTimestamp?: number) {
-        console.log('[SyncService] Starting monitoring for project:', projectId);
 
         if (initialTimestamp) {
             this.lastKnownTimestamps.set(projectId, initialTimestamp);
@@ -34,12 +33,10 @@ class SyncService {
         this.activePolling.set(projectId, intervalId);
 
         const timeoutId = setTimeout(() => {
-            console.log('[SyncService] ⏱️ Monitoring timeout reached (30s), stopping polling');
             this.stopPolling(projectId);
         }, this.monitoringDuration);
 
         this.monitoringTimeouts.set(projectId, timeoutId);
-        console.log('[SyncService] 🔄 Started polling every 5 seconds for 30 seconds');
     }
 
     stopMonitoring(projectId: string, callback?: SyncCallback) {
@@ -61,17 +58,14 @@ class SyncService {
     }
 
     notifyLocalSave(projectId: string) {
-        console.log('[SyncService] ⚠️ Local save notification for:', projectId);
         this.ignoreNextUpdate.set(projectId, true);
 
         setTimeout(() => {
             this.ignoreNextUpdate.delete(projectId);
-            console.log('[SyncService] ✓ Local save ignore flag cleared for:', projectId);
         }, 15000); // 15 seconds should be enough
     }
 
     updateTimestamp(projectId: string, timestamp: number) {
-        console.log('[SyncService] Updating timestamp for:', projectId, 'to:', new Date(timestamp).toISOString());
         this.lastKnownTimestamps.set(projectId, timestamp);
     }
 
@@ -86,19 +80,12 @@ class SyncService {
                 if (lastKnown && serverTimestamp > lastKnown) {
 
                     if (this.ignoreNextUpdate.get(projectId)) {
-                        console.log('[SyncService] ⏭️ Ignoring update (local save in progress)');
                         this.lastKnownTimestamps.set(projectId, serverTimestamp);
                         this.ignoreNextUpdate.delete(projectId);
                         return;
                     }
 
-                    console.log('[SyncService] 🔄 Change detected for project:', projectId);
-                    console.log('[SyncService] Last known:', new Date(lastKnown).toISOString());
-                    console.log('[SyncService] Server:', new Date(serverTimestamp).toISOString());
-
                     this.lastKnownTimestamps.set(projectId, serverTimestamp);
-
-                    console.log('[SyncService] ✅ Change detected, continuing to monitor...');
 
                     const callbacks = this.callbacks.get(projectId);
                     if (callbacks) {
@@ -146,7 +133,6 @@ class SyncService {
     }
 
     cleanup() {
-        console.log('[SyncService] Cleaning up all monitoring');
         this.activePolling.forEach((intervalId) => clearInterval(intervalId));
         this.activePolling.clear();
         this.monitoringTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));

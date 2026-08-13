@@ -17,7 +17,7 @@ export class EditCapture {
     }
 
     captureClassAdded(projectId: string, classUri: string, className: string, metadata?: Record<string, any>): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: OperationType.CLASS_ADDED,
@@ -39,7 +39,7 @@ export class EditCapture {
         previousValue?: any,
         metadata?: Record<string, any>
     ): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: OperationType.CLASS_MODIFIED,
@@ -55,7 +55,7 @@ export class EditCapture {
     }
 
     captureClassDeleted(projectId: string, classUri: string, metadata?: Record<string, any>): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: OperationType.CLASS_DELETED,
@@ -73,7 +73,7 @@ export class EditCapture {
         propertyName: string,
         metadata?: Record<string, any>
     ): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: OperationType.PROPERTY_ADDED,
@@ -95,7 +95,7 @@ export class EditCapture {
         previousValue?: any,
         metadata?: Record<string, any>
     ): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: OperationType.PROPERTY_MODIFIED,
@@ -111,7 +111,7 @@ export class EditCapture {
     }
 
     capturePropertyDeleted(projectId: string, propertyUri: string, metadata?: Record<string, any>): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: OperationType.PROPERTY_DELETED,
@@ -131,7 +131,7 @@ export class EditCapture {
         language?: string,
         previousValue?: string
     ): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: previousValue ? OperationType.ANNOTATION_MODIFIED : OperationType.ANNOTATION_ADDED,
@@ -147,7 +147,7 @@ export class EditCapture {
     }
 
     captureSubclassAdded(projectId: string, childUri: string, parentUri: string, metadata?: Record<string, any>): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: OperationType.SUBCLASS_ADDED,
@@ -162,7 +162,7 @@ export class EditCapture {
     }
 
     captureSubclassRemoved(projectId: string, childUri: string, parentUri: string, metadata?: Record<string, any>): void {
-        if (this.isApplyingRemoteEdit || !this.collaborationManager) return;
+        if (this.isApplyingRemoteEdit || !this.collaborationManager) {return;}
 
         const operation: Omit<EditOperation, 'userId' | 'username' | 'timestamp'> = {
             type: OperationType.SUBCLASS_REMOVED,
@@ -177,7 +177,7 @@ export class EditCapture {
     }
 
     captureCursorMoved(projectId: string, nodeUri?: string, selectedNodes?: string[]): void {
-        if (!this.collaborationManager) return;
+        if (!this.collaborationManager) {return;}
 
         this.collaborationManager.sendPresence(PresenceType.CURSOR_MOVED, {
             cursorPosition: nodeUri,

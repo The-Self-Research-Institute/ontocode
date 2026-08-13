@@ -169,7 +169,6 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const oldColors = localStorage.getItem('ontocode-theme-colors');
     if (oldColors) {
       localStorage.removeItem('ontocode-theme-colors');
-      console.log('Migrated from old theme color storage');
     }
 
     if (savedMode) {
