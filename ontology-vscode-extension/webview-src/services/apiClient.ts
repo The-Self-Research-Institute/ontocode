@@ -18,7 +18,6 @@ export const updateBaseUrl = (deploymentType: DeploymentType) => {
   }
 
   ApiClient.getInstance().updateAxiosBaseUrl(BASE_URL);
-  console.log('[ApiClient] Base URL updated to:', BASE_URL);
 };
 
 export const getBaseUrl = () => BASE_URL;
@@ -122,21 +121,16 @@ class ApiClient {
   updateAxiosBaseUrl(newBaseUrl: string) {
     if (this.axiosClient) {
       this.axiosClient.defaults.baseURL = newBaseUrl;
-      console.log('[ApiClient] Axios baseURL updated to:', newBaseUrl);
     }
   }
 
   private constructor() {
-    console.log('[ApiClient] Initializing - isVSCode:', this.isVSCode,
-      'IS_WEB_EXTENSION:', (window as any).__ONTOCODE_CONFIG__?.IS_WEB_EXTENSION);
 
     if (this.isVSCode) {
 
-      console.log('[ApiClient] Using VS Code extension proxy for API requests');
       this.attachVSCodeListener();
     } else {
 
-      console.log('[ApiClient] Using direct axios for API requests (baseURL:', BASE_URL, ')');
       this.setupAxios();
     }
   }
@@ -155,13 +149,11 @@ class ApiClient {
       if (error) {
 
         if (error.status === 401 && this.onUnauthorized) {
-          console.log('[ApiClient] 401 Unauthorized - Token expired');
           this.onUnauthorized();
         }
 
         if (error.status === 503 && (error.data?.maintenance === true || error.maintenance === true) && this.onMaintenance) {
           const msg = error.data?.message || error.data?.error || error.message || 'System is under maintenance.';
-          console.log('[ApiClient] 503 Maintenance mode - redirecting');
           this.onMaintenance(msg);
         }
         p.reject(new ApiError(error.message || 'API request failed via proxy', error.status, error.data, error.code));
@@ -249,7 +241,6 @@ class ApiClient {
 
         if (status === 503 && (data?.maintenance === true) && this.onMaintenance) {
           const maintenanceMsg = data?.message || data?.error || 'System is under maintenance.';
-          console.log('[ApiClient] 503 Maintenance mode - redirecting');
           this.onMaintenance(maintenanceMsg);
         }
 
@@ -262,7 +253,6 @@ class ApiClient {
         }
 
         if (status === 401 && this.onUnauthorized) {
-          console.log('[ApiClient] 401 Unauthorized - Token expired');
           this.onUnauthorized();
         }
 
@@ -315,7 +305,6 @@ class ApiClient {
             else contentType = 'application/octet-stream';
           }
           msgBody.fileType = contentType;
-          console.log(`[ApiClient] FormData bridge: file=${fileEntry.name}, size=${buf.byteLength}, type=${contentType}`);
         }
         msgBody._isMultipart = true;
         data = await this.postViaVSCode<T>({ type: 'apiPost', url, body: msgBody, params: config?.params, headers: config?.headers });
@@ -365,39 +354,33 @@ class ApiClient {
   async put<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
     let data: T;
     if (this.isVSCode) {
-      console.log(url, 'put via vs');
       data = await this.postViaVSCode<T>({ type: 'apiPut', url, body, params: config?.params, headers: config?.headers });
     } else {
       const resp = await this.axiosClient!.put(url, body, config);
       data = resp.data as T;
     }
-    console.log(data, url);
     return data;
   }
 
   async patch<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
     let data: T;
     if (this.isVSCode) {
-      console.log(url, 'patch via vs');
       data = await this.postViaVSCode<T>({ type: 'apiPatch', url, body, params: config?.params, headers: config?.headers });
     } else {
       const resp = await this.axiosClient!.patch(url, body, config);
       data = resp.data as T;
     }
-    console.log(data, url);
     return data;
   }
 
   async delete<T = any>(url: string, params?: any, config?: AxiosRequestConfig): Promise<T> {
     let data: T;
     if (this.isVSCode) {
-      console.log(url, 'delete via vs');
       data = await this.postViaVSCode<T>({ type: 'apiDelete', url, params, headers: config?.headers });
     } else {
       const resp = await this.axiosClient!.delete(url, { ...config, params });
       data = resp.data as T;
     }
-    console.log(data, url);
     return data;
   }
 }

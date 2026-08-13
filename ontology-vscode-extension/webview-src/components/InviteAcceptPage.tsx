@@ -37,7 +37,6 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     const token = propToken || urlToken;
 
     useEffect(() => {
-        console.log('[InviteAcceptPage] Component mounted, token:', token);
         if (token) {
             fetchInvitationDetails();
         } else {
@@ -47,10 +46,8 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     }, [token]);
 
     const fetchInvitationDetails = async () => {
-        console.log('[InviteAcceptPage] Fetching invitation details for token:', token);
         try {
             const response = await apiClient.get(`/api/invitations/details/${token}`);
-            console.log('[InviteAcceptPage] Invitation details loaded:', response);
 
             if (!response) {
                 throw new Error('No response from server');
@@ -66,7 +63,6 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
             if (response?.alreadyAccepted) {
 
-                console.log('[InviteAcceptPage] Invitation already accepted, redirecting to workspace');
                 if (onAccepted) {
                     onAccepted({
                         workspaceId: invData.workspaceId,
@@ -98,11 +94,9 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     };
 
     const handleAcceptInvitation = async () => {
-        console.log('[InviteAcceptPage] Accept button clicked, user:', user ? 'logged in' : 'not logged in');
 
         if (!user) {
 
-            console.log('[InviteAcceptPage] User not logged in, showing signup form');
             if (onSignupRequired) {
                 onSignupRequired(invitation?.inviteeEmail || '');
             } else if (onLoginRequired) {
@@ -114,16 +108,11 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
         try {
             setAccepting(true);
-            console.log('[InviteAcceptPage] Accepting invitation with token:', token);
             const response = await apiClient.post(`/api/invitations/accept/${token}`);
 
-            console.log('[InviteAcceptPage] Invitation accepted successfully:', response);
-
             const workspaceId = response.workspaceId || invitation?.workspaceId;
-            console.log('[InviteAcceptPage] Selecting workspace to get JWT:', workspaceId);
 
             const selectResponse = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
-            console.log('[InviteAcceptPage] Workspace selected, got JWT:', !!selectResponse.jwt);
 
             if (onAccepted) {
                 onAccepted({
@@ -140,11 +129,9 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             const errorMessage = err?.error || err?.data?.error || err?.message || 'Failed to accept invitation';
 
             if (errorMessage.toLowerCase().includes('already a member')) {
-                console.log('[InviteAcceptPage] User is already a member, treating as success');
 
                 const workspaceId = invitation?.workspaceId;
                 try {
-                    console.log('[InviteAcceptPage] Getting workspace JWT for existing member:', workspaceId);
                     const selectResponse = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
 
                     const successResponse = {

@@ -209,7 +209,6 @@ export function scheduleSilentDesktopFusekiSync(projectId: string): void {
             const encoded = encodeURIComponent(projectId);
             await apiClient.post(`/api/desktop/schedule-fuseki-sync/${encoded}`, {});
         } catch (e) {
-            console.debug('[desktop] silent Fuseki sync schedule failed (will retry on mutation)', e);
         }
     })();
 }
@@ -217,6 +216,6 @@ export function scheduleSilentDesktopFusekiSync(projectId: string): void {
 export function prewarmDesktopReasoningServices(): void {
     if (!isDesktop()) return;
     const api = (window as any).electronAPI;
-    api?.ensureFuseki?.().catch((e: unknown) => console.debug('[desktop] Fuseki prewarm failed', e));
-    api?.ensureSwrl?.().catch((e: unknown) => console.debug('[desktop] SWRL prewarm failed', e));
+    api?.ensureFuseki?.().catch(() => {});
+    api?.ensureSwrl?.().catch(() => {});
 }

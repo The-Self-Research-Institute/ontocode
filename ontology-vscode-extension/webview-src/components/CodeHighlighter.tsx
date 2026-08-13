@@ -194,7 +194,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       onExportProAction?.();
       return;
     }
-    console.log("[CodeHighlighter] Download initiated - Format:", format, "Content length:", currentContent?.length);
 
     const extensionMap: Record<typeof format, string> = {
       turtle: "ttl",
@@ -209,8 +208,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     const extension = extensionMap[format] || "txt";
     const filename = `ontology_${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`;
 
-    console.log("[CodeHighlighter] Creating file:", filename);
-
     if (window.vscode) {
       window.vscode.postMessage({
         type: "downloadFile",
@@ -218,7 +215,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         filename: filename,
         format: format,
       });
-      console.log("[CodeHighlighter] Download request sent to extension:", filename);
     } else {
 
       try {
@@ -231,7 +227,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        console.log("[CodeHighlighter] Downloaded file via blob:", filename, "Size:", blob.size, "bytes");
       } catch (error) {
         console.error("[CodeHighlighter] Download failed:", error);
         alert("Download failed: " + (error instanceof Error ? error.message : "Unknown error"));
@@ -240,8 +235,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   };
 
   const handleAddDoi = () => {
-    console.log("[CodeHighlighter] Add DOI button clicked");
-    console.log("[CodeHighlighter] readOnly:", readOnly, "onContentChange:", !!onContentChange);
 
     if (readOnly) {
       console.warn("[CodeHighlighter] Cannot add DOI - component is readOnly");
@@ -253,14 +246,10 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       return;
     }
 
-    console.log("[CodeHighlighter] Opening Add DOI dialog");
     setShowAddDoiDialog(true);
   };
 
   const handleAddDoiConfirm = () => {
-    console.log("[CodeHighlighter] Add DOI confirm clicked");
-    console.log("[CodeHighlighter] DOI input value:", doiInputValue);
-    console.log("[CodeHighlighter] Current format:", format);
 
     if (!doiInputValue.trim()) {
       console.warn("[CodeHighlighter] DOI input is empty");
@@ -285,7 +274,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     }
 
     const lines = currentContent.split(/\r?\n/);
-    console.log("[CodeHighlighter] Current content has", lines.length, "lines");
 
     const indent = "    ";
     let doiLine = "";
@@ -299,17 +287,13 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       doiLine = `${indent}bibo:doi "${doiInputValue}" ;`;
     }
 
-    console.log("[CodeHighlighter] Adding DOI line:", doiLine);
-
     lines.push("", doiLine);
     const newContent = lines.join("\n");
 
-    console.log("[CodeHighlighter] New content has", newContent.split(/\r?\n/).length, "lines");
     handleContentEdit(newContent);
 
     setShowAddDoiDialog(false);
     setDoiInputValue("");
-    console.log("[CodeHighlighter] DOI added successfully");
   };
 
   useEffect(() => {
@@ -719,13 +703,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   const highlightedContent = useMemo(() => {
     if (!content || skipHighlighting) return "";
 
-    console.log("🎨 useMemo: Re-rendering highlighted content", {
-      contentLength: content.length,
-      format,
-      hasDOI: content.includes("bibo:doi") || content.includes("dc:identifier"),
-      doiCount: (content.match(/bibo:doi/g) || []).length,
-    });
-
     const lines = content.split(/\r?\n/);
     const linesToShow = lines.slice(0, displayedLines);
 
@@ -813,11 +790,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
 
     const doiLines = linesToShow.filter((l) => l.includes("bibo:doi") || l.includes("dc:identifier"));
     if (doiLines.length > 0) {
-      console.log("📊 Rendering content with DOI lines:", {
-        format,
-        count: doiLines.length,
-        samples: doiLines.slice(0, 2),
-      });
     }
 
     let skipUntilLine = -1;
@@ -1152,7 +1124,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       const target = e.target as HTMLElement;
 
       if (target.tagName === "A" || target.closest("a")) {
-        console.log("[CodeHighlighter] DOI link clicked, allowing default behavior");
         return; // Allow the link to function normally
       }
 
@@ -1174,7 +1145,6 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         if (lineIndexAttr !== null) {
           e.preventDefault();
           const lineIndex = parseInt(lineIndexAttr);
-          console.log("[CodeHighlighter] Citation insertion click detected at line index:", lineIndex);
           onInsertCitationAt?.(lineIndex);
           return;
         }
@@ -1189,20 +1159,15 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
           const parentDiv = lineElement.closest(".code-line");
           const isCitationLine = parentDiv?.getAttribute("data-is-citation") === "true";
 
-          console.log("[CodeHighlighter] Citation removal click detected at line index:", lineIndex);
-          console.log("[CodeHighlighter] Is citation line:", isCitationLine);
-
           onRemoveCitationAt?.(lineIndex);
           return;
         }
       }
     };
 
-    console.log("[CodeHighlighter] Attaching mousedown listener for citation mode");
     codeElement.addEventListener("mousedown", handleMouseDown);
 
     return () => {
-      console.log("[CodeHighlighter] Removing mousedown listener");
       codeElement.removeEventListener("mousedown", handleMouseDown);
     };
   }, [citationInsertionMode, citationRemovalMode, onInsertCitationAt, onRemoveCitationAt, isEditMode, toggleFold]);
@@ -1653,7 +1618,6 @@ CodeHighlighter.displayName = "CodeHighlighter";
 function highlightTurtleLine(line: string): string {
 
   if (line.includes("bibo:doi") || line.includes("dc:identifier")) {
-    console.log("🐢 highlightTurtleLine called with DOI line:", { line, escaped: escapeHtml(line) });
   }
 
   if (line.trimStart().startsWith("#")) {
@@ -1686,14 +1650,12 @@ function highlightTurtleLine(line: string): string {
     )
     // Special highlighting for DOI values - make them clickable hyperlinks
     .replace(/(bibo:doi\s+)&quot;(.+?)&quot;/gi, (_match, property, doiValue) => {
-      console.log("🔗 DOI PATTERN MATCHED in Turtle:", { doiValue, fullMatch: _match });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">bibo</span>`)}:${store(`<span style="color:#dcdcaa">doi</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI'),2000);" title="Click to open DOI: ${doiUrl}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(dc:identifier\s+)&quot;doi:(.+?)&quot;/gi, (_match, property, doiValue) => {
-      console.log("🔗 DOI PATTERN MATCHED in dc:identifier:", { doiValue, fullMatch: _match });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
       const displayValue = doiUrl; // Show full URL
@@ -1734,7 +1696,6 @@ function highlightRDFXMLLine(line: string): string {
     .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
     // Special highlighting for DOI elements - handle tags with or without xmlns attributes
     .replace(/(&lt;bibo:doi(?:\s+[^&gt;]*)?&gt;)([^&lt;]+)(&lt;\/bibo:doi&gt;)/gi, (_match, open, doiValue, close) => {
-      console.log("🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi:", { doiValue, fullMatch: _match });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
@@ -1749,7 +1710,6 @@ function highlightRDFXMLLine(line: string): string {
     })
     // Special handling for dc:identifier with doi: prefix
     .replace(/(&lt;dc:identifier&gt;)doi:([^&lt;]+)(&lt;\/dc:identifier&gt;)/gi, (_match, open, doiValue, close) => {
-      console.log("🔗 DOI PATTERN MATCHED in RDF/XML dc:identifier:", { doiValue, fullMatch: _match });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
       const displayValue = doiUrl; // Show full URL
@@ -1758,7 +1718,6 @@ function highlightRDFXMLLine(line: string): string {
       return `${openTag}${store(`<span style="color:#ce9178">doi:</span>`)}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeTag}`;
     })
     .replace(/(bibo:doi)=(&quot;)([^&quot;]+)(&quot;)/gi, (_match, attr, openQuote, doiValue, closeQuote) => {
-      console.log("🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi attribute:", { doiValue, fullMatch: _match });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
@@ -1793,7 +1752,6 @@ function highlightRDFXMLLine(line: string): string {
 function highlightOWLXMLLine(line: string): string {
 
   if (line.includes("bibo") || line.includes("doi") || line.includes("identifier") || line.includes("Literal")) {
-    console.log("🦉📄 highlightOWLXMLLine called:", { line, escaped: escapeHtml(line) });
   }
 
   if (line.trimStart().startsWith("<!--")) {
@@ -1817,7 +1775,6 @@ function highlightOWLXMLLine(line: string): string {
     .replace(
       /(&lt;Literal(?:\s+[^&gt;]*)?)&gt;(doi:)?(\d+\.\d+\/[^&lt;]+)(&lt;\/Literal&gt;)/gi,
       (_match, openTag, doiPrefix, doiValue, closeTag) => {
-        console.log("🔗 DOI PATTERN MATCHED in OWL/XML Literal:", { doiPrefix, doiValue, fullMatch: _match });
         const fullDoiValue = (doiPrefix || "") + doiValue;
         const doiUrl = fullDoiValue.startsWith("http") ? fullDoiValue : `https://doi.org/${doiValue}`;
         const displayValue = doiUrl; // Show full URL
@@ -1831,7 +1788,6 @@ function highlightOWLXMLLine(line: string): string {
     .replace(
       /(&lt;AnnotationProperty\s+IRI=&quot;[^&quot;]*(?:bibo\/doi|identifier)[^&quot;]*&quot;\s*\/&gt;)/gi,
       (match) => {
-        console.log("🔗 DOI AnnotationProperty detected in OWL/XML:", { match });
         return store(`<span style="color:#4ec9b0;font-weight:bold">${match}</span>`);
       },
     )
@@ -1863,7 +1819,6 @@ function highlightOWLXMLLine(line: string): string {
 function highlightNTriplesLine(line: string): string {
 
   if (line.includes("bibo") || line.includes("doi") || line.includes("identifier")) {
-    console.log("📊 highlightNTriplesLine called:", { line, escaped: escapeHtml(line) });
   }
 
   if (line.trimStart().startsWith("#")) {
@@ -1886,7 +1841,6 @@ function highlightNTriplesLine(line: string): string {
   let result = escaped
     // Handle Turtle-style prefixed names (which sometimes appear in N-Triples files)
     .replace(/(bibo:doi)\s+&quot;(.+?)&quot;/gi, (_match, predicate, doiValue) => {
-      console.log("🔗 DOI PATTERN MATCHED in N-Triples (Turtle style) bibo:doi:", { doiValue, fullMatch: _match });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
@@ -1900,12 +1854,6 @@ function highlightNTriplesLine(line: string): string {
     })
     // Handle true N-Triples format with full URIs (complete triple: subject predicate object)
     .replace(/(&lt;.+?&gt;)\s+(&lt;.+?bibo\/doi&gt;)\s+&quot;(.+?)&quot;/g, (_match, subject, predicate, doiValue) => {
-      console.log("🔗 DOI PATTERN MATCHED in N-Triples (URI style) bibo:doi:", {
-        subject,
-        predicate,
-        doiValue,
-        fullMatch: _match,
-      });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
@@ -1914,12 +1862,6 @@ function highlightNTriplesLine(line: string): string {
     .replace(
       /(&lt;.+?&gt;)\s+(&lt;.+?\/identifier&gt;)\s+&quot;doi:(.+?)&quot;/g,
       (_match, subject, predicate, doiValue) => {
-        console.log("🔗 DOI PATTERN MATCHED in N-Triples (URI style) dc:identifier:", {
-          subject,
-          predicate,
-          doiValue,
-          fullMatch: _match,
-        });
 
         const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
         const displayValue = doiUrl; // Show full URL
@@ -1951,7 +1893,6 @@ function highlightOWLLine(line: string): string {
     line.includes("identifier") ||
     line.includes("AnnotationAssertion")
   ) {
-    console.log("🦉 highlightOWLLine called (Manchester/Functional):", { line, escaped: escapeHtml(line) });
   }
 
   let escaped = escapeHtml(line);
@@ -1974,12 +1915,6 @@ function highlightOWLLine(line: string): string {
     .replace(
       /(AnnotationAssertion\()(&lt;.+?bibo\/doi&gt;)\s+(&lt;.+?&gt;)\s+&quot;(.+?)&quot;\)/gi,
       (_match, funcOpen, predicate, subject, doiValue) => {
-        console.log("🔗 DOI PATTERN MATCHED in Functional syntax bibo/doi:", {
-          predicate,
-          subject,
-          doiValue,
-          fullMatch: _match,
-        });
         const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
         const displayValue = doiUrl; // Show full URL
         return `${store(`<span style="color:#dcdcaa">${funcOpen}</span>`)}${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}${store(`<span style="color:#dcdcaa">)</span>`)}`;
@@ -1989,12 +1924,6 @@ function highlightOWLLine(line: string): string {
     .replace(
       /(AnnotationAssertion\()(&lt;.+?\/identifier&gt;)\s+(&lt;.+?&gt;)\s+&quot;doi:(.+?)&quot;\)/gi,
       (_match, funcOpen, predicate, subject, doiValue) => {
-        console.log("🔗 DOI PATTERN MATCHED in Functional syntax identifier:", {
-          predicate,
-          subject,
-          doiValue,
-          fullMatch: _match,
-        });
         const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
         const displayValue = doiUrl; // Show full URL
         return `${store(`<span style="color:#dcdcaa">${funcOpen}</span>`)}${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#ce9178">&quot;doi:</span>`)}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${store(`<span style="color:#ce9178">&quot;</span>`)}${store(`<span style="color:#dcdcaa">)</span>`)}`;
@@ -2002,14 +1931,12 @@ function highlightOWLLine(line: string): string {
     )
     // Manchester/Functional syntax DOI handling (prefixed names)
     .replace(/(bibo:doi\s+)&quot;(.+?)&quot;/gi, (_match, property, doiValue) => {
-      console.log("🔗 DOI PATTERN MATCHED in Manchester/Functional bibo:doi:", { doiValue, fullMatch: _match });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">bibo</span>`)}:${store(`<span style="color:#dcdcaa">doi</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(dc:identifier\s+)&quot;doi:(.+?)&quot;/gi, (_match, property, doiValue) => {
-      console.log("🔗 DOI PATTERN MATCHED in Manchester/Functional dc:identifier:", { doiValue, fullMatch: _match });
 
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
       const displayValue = doiUrl; // Show full URL

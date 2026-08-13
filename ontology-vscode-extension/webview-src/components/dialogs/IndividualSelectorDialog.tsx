@@ -51,7 +51,6 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
           const response = await apiClient.get<any>(`/api/ontology/individuals/${projectId}?classIri=${encodeURIComponent(classIri)}`);
           const loadedIndividuals = response?.data?.individuals || response?.individuals || [];
 
-          console.log('[IndividualSelectorDialog] Loaded individuals for class:', classIri, 'count:', loadedIndividuals.length);
         } catch (error) {
           console.error('[IndividualSelectorDialog] Failed to load individuals:', error);
         }
@@ -108,7 +107,6 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
   const handleInlineCreate = async () => {
     if (!inlineIndividualName.trim() || !onAddIndividual) return;
 
-    console.log('[IndividualSelectorDialog] Creating individual:', inlineIndividualName);
     setIsCreating(true);
     try {
       await onAddIndividual(inlineIndividualName.trim());

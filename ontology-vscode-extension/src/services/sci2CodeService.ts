@@ -30,7 +30,7 @@ interface Sci2CodeAPI {
 
 class Sci2CodeService {
   private api: Sci2CodeAPI | null = null;
-  private extensionId = 'self.ontocode-extension'; // Use OntoCode's own extension ID
+  private extensionId = 'SelfResearchInstitute.ontocode'; // Use OntoCode's own extension ID
   private initializationAttempted = false;
 
   private async ensureApi(): Promise<boolean> {
@@ -38,7 +38,6 @@ class Sci2CodeService {
       this.initializationAttempted = true;
 
       try {
-        console.log('Looking for Sci2Code extension with ID:', this.extensionId);
 
         const extension = vscode.extensions.getExtension(this.extensionId);
 
@@ -48,7 +47,6 @@ class Sci2CodeService {
           const allExtensions = vscode.extensions.all
             .filter(ext => !ext.id.startsWith('vscode.'))
             .map(ext => ext.id);
-          console.log('Installed extensions:', allExtensions);
 
           const install = await vscode.window.showWarningMessage(
             `Sci2Code extension (${this.extensionId}) is required for citation features. Please ensure it's installed.`,
@@ -61,10 +59,7 @@ class Sci2CodeService {
           return false;
         }
 
-        console.log('Sci2Code extension found, checking activation...');
-
         if (!extension.isActive) {
-          console.log('Activating Sci2Code extension...');
           await extension.activate();
         }
 
@@ -78,8 +73,6 @@ class Sci2CodeService {
           return false;
         }
 
-        console.log('Sci2Code API initialized successfully');
-        console.log('Available API methods:', Object.keys(this.api));
       } catch (error) {
         console.error('Failed to initialize Sci2Code:', error);
 
@@ -96,11 +89,10 @@ class Sci2CodeService {
 
   async initialize(): Promise<boolean> {
     const ok = await this.ensureApi();
-    if (!ok || !this.api) return false;
+    if (!ok || !this.api) {return false;}
 
     if (typeof this.api.isAuthenticated === 'function') {
       const isAuth = await this.api.isAuthenticated();
-      console.log('Zotero configured:', isAuth);
 
       if (!isAuth) {
 
@@ -113,13 +105,12 @@ class Sci2CodeService {
           await vscode.commands.executeCommand('ontocode.configureZotero');
 
           const nowAuth = await this.api.isAuthenticated();
-          if (!nowAuth) return false;
+          if (!nowAuth) {return false;}
         } else {
           return false;
         }
       }
     } else {
-      console.log('isAuthenticated method not available, skipping auth check');
     }
 
     return true;
@@ -127,9 +118,9 @@ class Sci2CodeService {
 
   async getConnectionStatus(): Promise<'connected' | 'not-configured' | 'unavailable'> {
     const ok = await this.ensureApi();
-    if (!ok || !this.api) return 'unavailable';
+    if (!ok || !this.api) {return 'unavailable';}
 
-    if (typeof this.api.isAuthenticated !== 'function') return 'unavailable';
+    if (typeof this.api.isAuthenticated !== 'function') {return 'unavailable';}
 
     try {
       const isAuth = await this.api.isAuthenticated();
@@ -148,9 +139,7 @@ class Sci2CodeService {
     }
 
     try {
-      console.log('Fetching Zotero library...');
       const items = await this.api.getZoteroLibrary();
-      console.log(`Fetched ${items?.length || 0} items from Zotero`);
       return items || [];
     } catch (error) {
       console.error('Failed to get Zotero library:', error);
@@ -183,10 +172,10 @@ class Sci2CodeService {
     let bib = `@${item.itemType === 'journalArticle' ? 'article' : 'misc'}{${key}${year},\n`;
     bib += `  title = {${item.title}},\n`;
     bib += `  author = {${authors}},\n`;
-    if (year) bib += `  year = {${year}},\n`;
-    if (item.publicationTitle) bib += `  journal = {${item.publicationTitle}},\n`;
-    if (item.doi) bib += `  doi = {${item.doi}},\n`;
-    if (item.url) bib += `  url = {${item.url}},\n`;
+    if (year) {bib += `  year = {${year}},\n`;}
+    if (item.publicationTitle) {bib += `  journal = {${item.publicationTitle}},\n`;}
+    if (item.doi) {bib += `  doi = {${item.doi}},\n`;}
+    if (item.url) {bib += `  url = {${item.url}},\n`;}
     bib += `}\n`;
     return bib;
   }
@@ -245,9 +234,9 @@ class Sci2CodeService {
       ttl += `         prov:Entity ;\n`;
       ttl += `    dc:title "${this.escapeTurtle(item.title)}" ;\n`;
       ttl += `    dc:creator "${this.escapeTurtle(authors)}" ;\n`;
-      if (year) ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;
-      if (item.doi) ttl += `    dc:identifier "doi:${this.escapeTurtle(item.doi)}" ;\n`;
-      if (item.url) ttl += `    foaf:homepage <${item.url}> ;\n`;
+      if (year) {ttl += `    dc:date "${year}"^^xsd:gYear ;\n`;}
+      if (item.doi) {ttl += `    dc:identifier "doi:${this.escapeTurtle(item.doi)}" ;\n`;}
+      if (item.url) {ttl += `    foaf:homepage <${item.url}> ;\n`;}
       ttl += `    rdfs:comment "Manually added citation" .\n`;
       return ttl;
     } else {
@@ -257,9 +246,9 @@ class Sci2CodeService {
       xml += `    <rdf:type rdf:resource="http://www.w3.org/ns/prov#Entity"/>\n`;
       xml += `    <dc:title>${this.escapeXml(item.title)}</dc:title>\n`;
       xml += `    <dc:creator>${this.escapeXml(authors)}</dc:creator>\n`;
-      if (year) xml += `    <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;
-      if (item.doi) xml += `    <dc:identifier>doi:${this.escapeXml(item.doi)}</dc:identifier>\n`;
-      if (item.url) xml += `    <foaf:homepage rdf:resource="${this.escapeXml(item.url)}"/>\n`;
+      if (year) {xml += `    <dc:date rdf:datatype="http://www.w3.org/2001/XMLSchema#gYear">${year}</dc:date>\n`;}
+      if (item.doi) {xml += `    <dc:identifier>doi:${this.escapeXml(item.doi)}</dc:identifier>\n`;}
+      if (item.url) {xml += `    <foaf:homepage rdf:resource="${this.escapeXml(item.url)}"/>\n`;}
       xml += `    <rdfs:comment>Manually added citation</rdfs:comment>\n`;
       xml += `</owl:NamedIndividual>`;
       return xml;
@@ -293,7 +282,6 @@ class Sci2CodeService {
 
     for (const ext of allExtensions) {
       if (ext.id.toLowerCase().includes('sci2code')) {
-        console.log('Found potential Sci2Code extension:', ext.id);
         return ext.id;
       }
     }
@@ -311,7 +299,6 @@ export async function detectSci2CodeExtension(): Promise<void> {
     vscode.window.showInformationMessage(
       `Found Sci2Code extension: ${extensionId}. Please update your configuration with this ID.`
     );
-    console.log('Sci2Code Extension ID:', extensionId);
   } else {
     vscode.window.showWarningMessage(
       'Sci2Code extension not found. Please install it from the marketplace.'

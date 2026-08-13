@@ -150,7 +150,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
     const handleSave = async () => {
         try {
             setSaving(true);
-            console.log('Saving settings:', settings);
 
             if (activeTab === 'workspace') {
                 if (!user.workspaceId) {
@@ -180,7 +179,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     email: settings.email
                 });
             } catch (profileError: any) {
-                console.log('Profile endpoint not available, saving locally');
             }
 
             try {
@@ -191,7 +189,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     language: settings.language
                 });
             } catch (prefError: any) {
-                console.log('Preferences endpoint not available, saving locally');
             }
 
             localStorage.setItem('userSettings', JSON.stringify(settings));
@@ -224,7 +221,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
 
         const prevCallback = (apiClient as any).onUnauthorized;
         apiClient.setUnauthorizedCallback(() => {
-            console.log('[SettingsModal] Suppressed 401 redirect during change-password');
         });
 
         try {

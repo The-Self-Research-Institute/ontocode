@@ -107,8 +107,6 @@ class PluginLoaderService {
 
       if (isBuiltIn) {
 
-        console.log(`[PluginLoader] Installing built-in plugin: ${pluginId}`);
-
         const token = this.getAuthToken();
         const headers: HeadersInit = { 'Content-Type': 'application/json' };
         if (token) {
@@ -151,8 +149,6 @@ class PluginLoaderService {
           };
         }
       } else {
-
-        console.log(`[PluginLoader] Downloading external plugin: ${pluginId}`);
 
         const token = this.getAuthToken();
         const headers: HeadersInit = {};
@@ -223,7 +219,6 @@ class PluginLoaderService {
 
       this.notifyListeners();
 
-      console.log(`[PluginLoader] ✅ Installed plugin: ${pluginId}`);
     } catch (error) {
       console.error(`[PluginLoader] ❌ Failed to install plugin ${pluginId}:`, error);
       throw error;
@@ -251,7 +246,6 @@ class PluginLoaderService {
       }
 
       this.notifyListeners();
-      console.log(`[PluginLoader] Uninstalled plugin: ${pluginId}`);
     }
   }
 
@@ -276,7 +270,6 @@ class PluginLoaderService {
 
       for (let attempt = 0; attempt < maxAttempts && !loaded; attempt++) {
         const bundleUrl = attempt > 0 ? `${baseUrl}?_t=${Date.now()}` : baseUrl;
-        console.log(`[PluginLoader] 📥 Loading ${pluginId} (attempt ${attempt + 1}/${maxAttempts}) from ${bundleUrl}`);
         try {
 
           if (isDesktop()) {
@@ -285,7 +278,6 @@ class PluginLoaderService {
             if (token) headers['Authorization'] = `Bearer ${token}`;
             const probe = await fetch(bundleUrl, { method: 'HEAD', headers }).catch(() => ({ ok: false, status: 0 }));
             if (!probe.ok) {
-              console.log(`[PluginLoader] ℹ️ ${pluginId} not available on desktop backend (${probe.status}) — skipping`);
               return null;
             }
           }
@@ -322,8 +314,6 @@ class PluginLoaderService {
 
       plugin.component = component;
       plugin.loaded = true;
-
-      console.log(`[PluginLoader] ✅ Successfully loaded plugin ${pluginId}`);
 
       this.notifyListeners();
 
@@ -414,7 +404,6 @@ class PluginLoaderService {
         recommended
       });
 
-      console.log(`[PluginLoader] Successfully rated plugin ${pluginId} with ${stars} stars`);
     } catch (error: any) {
       console.error('[PluginLoader] Failed to rate plugin:', error);
 

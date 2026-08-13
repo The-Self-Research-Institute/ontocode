@@ -1,9 +1,9 @@
 {
-  "name": "ontocode-extension",
+  "name": "ontocode",
   "displayName": "OntoCode OWL Editor",
   "description": "Edit OWL files with authentication and web-based interface",
-  "version": "1.1.0-beta.18",
-  "publisher": "self",
+  "version": "1.1.0",
+  "publisher": "SelfResearchInstitute",
   "license": "AGPL-3.0-only",
   "icon": "images/icon.png",
   "engines": {

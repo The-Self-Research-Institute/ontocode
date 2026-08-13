@@ -48,9 +48,9 @@ export async function validateDoiOnline(
     try {
         const url = `${gatewayUrl}/api/citations/validate-doi`;
         const params: Record<string, string> = { doi: norm };
-        if (input.title?.trim()) params.title = input.title.trim();
-        if (input.publicationTitle?.trim()) params.publicationTitle = input.publicationTitle.trim();
-        if (input.year?.trim()) params.year = input.year.trim();
+        if (input.title?.trim()) {params.title = input.title.trim();}
+        if (input.publicationTitle?.trim()) {params.publicationTitle = input.publicationTitle.trim();}
+        if (input.year?.trim()) {params.year = input.year.trim();}
 
         const response = await axios.get(url, {
             params,

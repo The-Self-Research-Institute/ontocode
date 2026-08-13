@@ -15,7 +15,6 @@ const lucide = LucideIcons;
 if (typeof window !== 'undefined' && lucide) {
 
   const iconKeys = Object.keys(lucide);
-  console.log(`[Globals] Exposed ${iconKeys.length} Lucide exports to window.LucideReact`);
 
   const testIcons = ['Check', 'X', 'AlertCircle', 'Loader2', 'Play', 'Save'];
   const missing = testIcons.filter(icon => !(lucide as any)[icon]);

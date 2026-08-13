@@ -92,14 +92,6 @@ const AppContent = () => {
     resendVerification,
     verifyEmailAndLogin,
   } = useAuth();
-  console.log(
-    "[App] 🔄 AppContent render - user:",
-    user?.email,
-    "workspaceId:",
-    user?.workspaceId,
-    "needsWorkspaceSelection:",
-    needsWorkspaceSelection,
-  );
 
   const initialInvitation = getInitialInvitationFromLocation();
 
@@ -195,31 +187,19 @@ const AppContent = () => {
       return false;
     }
 
-    console.log("[App] shouldShowWorkspaceSelection check:", {
-      hasUser: !!user,
-      userWorkspaceId: user?.workspaceId,
-      needsWorkspaceSelection,
-      forceShowWorkspace,
-      deploymentType: localStorage.getItem("deploymentType"),
-    });
-
     if (forceShowWorkspace) {
-      console.log("[App] Returning true - forceShowWorkspace is set");
       return true;
     }
 
     if (!user) {
-      console.log("[App] Returning false - no user");
       return false;
     }
 
     if (skipWorkspaceRequested) {
-      console.log("[App] Returning false - skipWorkspaceRequested is set");
       return false;
     }
 
     if (user.workspaceId) {
-      console.log("[App] Returning false - user already has workspace");
       return false;
     }
 
@@ -230,7 +210,6 @@ const AppContent = () => {
     }
 
     if (!needsWorkspaceSelection) {
-      console.log("[App] Returning false - needsWorkspaceSelection is false");
       return false;
     }
 
@@ -403,7 +382,6 @@ const AppContent = () => {
     sessionStorage.setItem("ontocode_tab_active", "true");
 
     if (/^\/projects\/[^/]+\/files\/[^/]+/.test(initialUrlRef.current)) {
-      console.log("[App] Initial URL is file editor, skipping auto-restore:", initialUrlRef.current);
       return;
     }
 
@@ -421,16 +399,13 @@ const AppContent = () => {
       }
 
       if (autoRestoreCancelledRef.current) {
-        console.log("[App] Auto-restore cancelled — user navigated away, skipping restore navigation");
         return;
       }
       if (fileId && fileName && wasRecentlyEditing && isFreshTab) {
 
-        console.log("[App] Tab-switch restore: reopening last file in editor:", fileId);
         navigateTo({ view: "dashboard", projectId, projectName, fileId, fileName });
       } else {
 
-        console.log("[App] Auto-restoring last project to library:", projectId);
         navigateTo({ view: "projectLibrary", projectId, projectName, fileId: null, fileName: "" });
       }
     };
@@ -475,7 +450,6 @@ const AppContent = () => {
 
     urlResolvedRef.current = true;
     let cancelled = false;
-    console.log("[App] Resolving initial URL to IDs:", projectNameFromUrl, "/", fileNameFromUrl);
 
     apiClient.get<any>(`/api/projects/my`)
       .then((resp: any) => {
@@ -497,7 +471,6 @@ const AppContent = () => {
             if (!cancelled) navigateTo({ view: "projectLibrary", projectId: project.projectId, projectName: projectNameFromUrl, fileId: null, fileName: "" });
             return;
           }
-          console.log("[App] ✅ URL resolved to:", project.projectId, file.id);
           if (!cancelled) navigateTo({ view: "dashboard", projectId: project.projectId, projectName: projectNameFromUrl, fileId: file.id, fileName: fileNameFromUrl });
         });
       })
@@ -519,7 +492,6 @@ const AppContent = () => {
     }
 
     if (restoredRoute) {
-      console.log("[App] Using restored route:", restoredRoute.view);
       return restoredRoute;
     }
 
@@ -591,7 +563,6 @@ const AppContent = () => {
   ]);
 
   const handleRouteChange = useCallback((route: RouteState, fromBrowserNav: boolean = false) => {
-    console.log("[App] Handling route change:", route.view, "fromBrowserNav:", fromBrowserNav);
 
     const updatedRoute = { ...route };
 
@@ -601,7 +572,6 @@ const AppContent = () => {
         const projectId = cachedMappings[updatedRoute.projectName];
         if (projectId) {
           updatedRoute.projectId = projectId;
-          console.log("[App] Restored projectId from cache:", projectId);
         }
       }
       if (updatedRoute.fileName && !updatedRoute.fileId) {
@@ -609,7 +579,6 @@ const AppContent = () => {
         const fileId = cachedMappings[updatedRoute.fileName];
         if (fileId) {
           updatedRoute.fileId = fileId;
-          console.log("[App] Restored fileId from cache:", fileId);
         }
       }
     } catch (e) {
@@ -808,7 +777,6 @@ const AppContent = () => {
     if (restoredRoute) {
 
       const timer = setTimeout(() => {
-        console.log("[App] Clearing restored route after processing");
         setRestoredRoute(null);
       }, 100);
       return () => clearTimeout(timer);
@@ -816,7 +784,6 @@ const AppContent = () => {
   }, [restoredRoute]);
 
   useEffect(() => {
-    console.log("[App] Webview mounted, sending webviewReady signal");
     if (window.vscode) {
       window.vscode.postMessage({ type: "webviewReady" });
     }
@@ -863,7 +830,6 @@ const AppContent = () => {
     const pathname = window.location.pathname;
 
     if (pathname.startsWith("/verify-email") || pathname.startsWith("/reset-password")) {
-      console.log("[App] Skipping invitation detection for path:", pathname);
       return;
     }
 
@@ -874,7 +840,6 @@ const AppContent = () => {
     if (pathname.startsWith("/invitation") || pathname.startsWith("/invite")) {
       token = token || params.get("token") || params.get("invite");
       email = email || params.get("email");
-      console.log("[App] Found invitation in pathname route:", !!token, "email:", !!email);
     }
 
     if (window.location.hash) {
@@ -885,7 +850,6 @@ const AppContent = () => {
         const hashParams = new URLSearchParams(queryString);
         token = token || hashParams.get("token") || hashParams.get("invite");
         email = email || hashParams.get("email");
-        console.log("[App] Found invitation in hash route:", !!token, "email:", !!email);
       }
     }
 
@@ -896,58 +860,42 @@ const AppContent = () => {
         const parentParams = new URLSearchParams(window.parent.location.search);
         parentToken = parentParams.get("token") || parentParams.get("invite");
         parentEmail = parentParams.get("email");
-        console.log("[App] Checked parent window for token:", !!parentToken, "email:", !!parentEmail);
       }
     } catch (e) {
 
-      console.log("[App] Cannot access parent window (cross-origin)");
     }
 
     const finalToken = token || parentToken;
     const finalEmail = email || parentEmail;
 
     if (finalToken) {
-      console.log("[App] 📧 Found invitation token in URL, setting state");
       setInviteToken(finalToken);
       if (finalEmail) {
         setInviteEmail(finalEmail);
       }
     } else {
-      console.log("[App] No invitation token found in URL parameters, search, hash, or parent window");
     }
   }, []);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      console.log("[App] Received message from extension:", message.type, message);
 
       if (message.type === "pendingFileUpload") {
-        console.log("[App] 📎 Received pending file upload:", message.fileName);
         setPendingFile({
           fileName: message.fileName,
           fileContent: message.fileContent,
           fileSize: message.fileSize,
         });
       } else if (message.type === "clearInvitationState") {
-        console.log("[App] 🧹 Clearing existing invitation state for new invitation");
         setInviteToken(null);
         setInviteEmail(null);
         setShowAuthForInvitation(false);
       } else if (message.type === "invitationToken") {
-        console.log("[App] 📧 Received invitation token from extension:", message.token?.substring(0, 20) + "...");
-        console.log(
-          "[App] Current state - inviteToken:",
-          !!inviteToken,
-          "showAuthForInvitation:",
-          showAuthForInvitation,
-        );
 
         setShowAuthForInvitation(false);
         setInviteToken(message.token);
-        console.log("[App] 📧 Invitation token state updated, page should show now");
       } else if (message.type === "showSubscriptionPlans") {
-        console.log("[App] 📋 Showing subscription plans page");
         openAccountSubscription();
       }
     };
@@ -1000,7 +948,6 @@ const AppContent = () => {
           fileSize,
           fileType: "owl",
         });
-        console.log("[App] ✅ Browser upload complete:", fileName);
       } catch (err) {
         console.error("[App] ❌ Browser upload failed:", err);
       }
@@ -1014,7 +961,6 @@ const AppContent = () => {
     if (fileData.filePath && (await tryFocusExistingDesktopFile(fileData.filePath, fileData.fileName))) {
       return;
     }
-    console.log("[App] 📂 File picked:", fileData.fileName);
     pendingDesktopFilePathRef.current = fileData.filePath || null;
     setPendingFile(fileData);
     setSelectedProjectId(null);
@@ -1099,7 +1045,6 @@ const AppContent = () => {
 
   useEffect(() => {
     if (user && !user.workspaceId && pendingFile) {
-      console.log("[App] 🚀 Auto-uploading file for self-hosted user:", pendingFile.fileName);
       const projectId = pendingFile.fileName.replace(/\.(owl|rdf|ttl|n3|nt|jsonld)$/i, "");
 
       if (window.vscode) {
@@ -1153,7 +1098,6 @@ const AppContent = () => {
   };
 
   const handleProjectSelected = (projectId: string, projectName: string) => {
-    console.log("[App] Project selected:", projectId, projectName);
 
     try {
       localStorage.setItem("ontocode_lastWorkspaceProjectId", projectId);
@@ -1166,7 +1110,6 @@ const AppContent = () => {
       .catch(() => { /* non-critical */ });
 
     if (pendingFile) {
-      console.log("[App] Uploading pending file to project:", pendingFile.fileName);
       if (window.vscode) {
         window.vscode.postMessage({
           type: "uploadFileToProject",
@@ -1205,7 +1148,6 @@ const AppContent = () => {
   };
 
   const handleFileSelected = (fileId: string, fileName: string) => {
-    console.log("[App] File selected:", fileId, fileName);
 
     if (isDesktop() && pendingDesktopFilePathRef.current) {
       saveDesktopActiveFile({
@@ -1342,7 +1284,6 @@ const AppContent = () => {
   };
 
   const handlePlanSelected = async (planId: string, interval: "monthly" | "annual") => {
-    console.log("Selected plan:", planId, "interval:", interval);
     setSubscriptionPaymentError(null);
     try {
       if (planId.toUpperCase() === "FREE") {
@@ -1498,13 +1439,11 @@ const AppContent = () => {
   }, [user?.token]);
 
   const handleDeploymentSelected = async (type: "self-hosted" | "cloud") => {
-    console.log("[App] Deployment selected:", type);
     setDeploymentType(type);
 
     localStorage.setItem("deploymentType", type);
 
     updateBaseUrl(type);
-    console.log("[App] API client base URL updated for deployment type:", type);
 
     const baseUrl = getGatewayUrl(type);
 
@@ -1519,7 +1458,6 @@ const AppContent = () => {
     if (user) {
       try {
         await updateUserRole(type);
-        console.log("[App] User role updated successfully");
       } catch (error) {
         console.error("[App] Failed to update user role:", error);
       }
@@ -1578,7 +1516,6 @@ const AppContent = () => {
   };
 
   const handleInvitationAccepted = (workspaceData?: any) => {
-    console.log("[App] ✅ Invitation accepted, workspace data:", workspaceData);
 
     setInviteToken(null);
     setInviteEmail(null);
@@ -1586,7 +1523,6 @@ const AppContent = () => {
     clearLastOpenedProjectState();
 
     if (workspaceData) {
-      console.log("[App] Successfully joined workspace:", workspaceData.workspaceId || workspaceData.workspace?.id);
 
       if (workspaceData.workspaceId) {
 
@@ -1595,25 +1531,20 @@ const AppContent = () => {
           workspaceName: workspaceData.workspaceName,
           jwt: workspaceData.jwt || workspaceData.workspace?.jwt,
         });
-        console.log("[App] Workspace selected, navigating to Project Dashboard...");
       }
     }
   };
 
   const handleInvitationLoginRequired = (email: string) => {
-    console.log("[App] ⚠️  Login required for invitation, email:", email);
 
     const currentToken = inviteToken;
     setInviteEmail(email);
-
-    console.log("[App] Keeping invitation token for post-login acceptance:", currentToken);
 
     setShowAuthForInvitation(true);
     setIsLoginView(true);
   };
 
   const handleInvitationSignupRequired = (email: string) => {
-    console.log("[App] 📝 Signup required for invitation, email:", email);
     setInviteEmail(email);
 
     setShowAuthForInvitation(true);
@@ -1621,7 +1552,6 @@ const AppContent = () => {
   };
 
   const handleInvitationError = () => {
-    console.log("[App] ❌ Invitation error, clearing state and showing login");
 
     setInviteToken(null);
     setInviteEmail(null);
@@ -1631,7 +1561,6 @@ const AppContent = () => {
 
   useEffect(() => {
     if (user && showAuthForInvitation && inviteToken) {
-      console.log("[App] User logged in with pending invitation, returning to invitation page");
       setShowAuthForInvitation(false); // Show invitation page again now that user is logged in
     }
   }, [user, showAuthForInvitation, inviteToken]);
@@ -1820,7 +1749,6 @@ const AppContent = () => {
   }
 
   if (inviteToken && !showAuthForInvitation) {
-    console.log("[App] 🎫 Rendering InviteAcceptPage with token:", inviteToken.substring(0, 20) + "...");
     return (
       <InviteAcceptPage
         token={inviteToken}
@@ -1833,10 +1761,6 @@ const AppContent = () => {
   }
 
   if (inviteToken) {
-    console.log(
-      "[App] ⚠️ Have invite token but not showing InviteAcceptPage. showAuthForInvitation:",
-      showAuthForInvitation,
-    );
   }
 
   if (!user && authSubView === "resetPassword" && resetToken) {
@@ -1865,7 +1789,6 @@ const AppContent = () => {
   }
 
   if (user && showBillingPage && !isDesktop()) {
-    console.log("[App] 🎨 Rendering BillingManagement page (account-level)");
     return (
       <Suspense fallback={
         <div className="min-h-screen flex items-center justify-center bg-[#0f172a]">
@@ -1960,10 +1883,8 @@ const AppContent = () => {
 
   const showWorkspaceSelectionScreen =
     !isDesktop() && user && (shouldShowWorkspaceSelection() || isWorkspacePaymentPending) && !selectedFileId;
-  console.log("[App] Render decision - showWorkspaceSelectionScreen:", showWorkspaceSelectionScreen);
 
   if (showWorkspaceSelectionScreen) {
-    console.log("[App] 🎨 Rendering WorkspaceSelection component");
     return (
         <WorkspaceSelection
           username={user.username}
@@ -1972,9 +1893,6 @@ const AppContent = () => {
           onUpgradeAccountPlan={(isDesktop() || user.enterpriseDomainBypass) ? undefined : openAccountSubscription}
           onWorkspaceSelected={handleWorkspaceSelected}
           onSkipWorkspace={() => {
-            console.log("[App] 🚀 User chose to continue without workspace");
-            console.log("[App] Current needsWorkspaceSelection:", needsWorkspaceSelection);
-            console.log("[App] Current user:", { email: user?.email, workspaceId: user?.workspaceId });
             setSkipWorkspaceRequested(true);
             selectWorkspace({ skipWorkspace: true });
             setForceShowWorkspace(false);
@@ -1990,7 +1908,6 @@ const AppContent = () => {
               fileId: "__editor__",
               fileName: "",
             });
-            console.log("[App] ✅ Continue without workspace now routes to editor");
           }}
           onLogout={handleLogout}
         />
@@ -1999,27 +1916,8 @@ const AppContent = () => {
 
   const showProjectDashboard =
     user && user.workspaceId && !showSubscriptionPlan && !selectedFileId && (!selectedProjectId || pendingFile);
-  console.log("[App] ProjectDashboard check:", {
-    hasUser: !!user,
-    hasWorkspaceId: !!user?.workspaceId,
-    showSubscriptionPlan,
-    selectedFileId,
-    selectedProjectId,
-    hasPendingFile: !!pendingFile,
-    shouldShow: showProjectDashboard,
-  });
 
   if (showProjectDashboard) {
-    console.log(
-      "[App] 🎨 Routing to ProjectDashboard - isAdmin:",
-      user.isAdmin,
-      "selectedFileId:",
-      selectedFileId,
-      "selectedProjectId:",
-      selectedProjectId,
-      "pendingFile:",
-      !!pendingFile,
-    );
     const workspacePlan = (user.subscriptionPlan || "FREE").toUpperCase();
     const isEnterpriseDomainBypass = user.enterpriseDomainBypass || false;
     const hasPaidPlan = !isEnterpriseDomainBypass && (workspacePlan === "PRO" || workspacePlan === "ENTERPRISE");
@@ -2041,7 +1939,6 @@ const AppContent = () => {
   }
 
   if (user && user.workspaceId && selectedProjectId && !selectedFileId) {
-    console.log("[App] Routing to ProjectLibrary - isAdmin:", user.isAdmin, "projectId:", selectedProjectId);
     return (
       <ProjectLibrary
         projectId={selectedProjectId}
@@ -2049,7 +1946,6 @@ const AppContent = () => {
         onBack={handleBackToProjects}
         onFileSelect={handleFileSelected}
         onOpenEditor={() => {
-          console.log("[App] Opening editor without file for project:", selectedProjectId);
           setSelectedFileId("__editor__");
           setSelectedFileName("");
         }}
@@ -2058,16 +1954,6 @@ const AppContent = () => {
   }
 
   if (user) {
-    console.log(
-      "[App] Routing to Dashboard - isAdmin:",
-      user.isAdmin,
-      "workspaceId:",
-      user.workspaceId,
-      "selectedFileId:",
-      selectedFileId,
-      "selectedProjectId:",
-      selectedProjectId,
-    );
     return (
       <Dashboard
         onBackToProjects={

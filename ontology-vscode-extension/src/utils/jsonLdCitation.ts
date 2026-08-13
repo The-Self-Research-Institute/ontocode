@@ -28,12 +28,12 @@ export function buildZoteroCitationNode(fields: ZoteroCitationFields): Record<st
     "dc:title": fields.title,
     "dc:creator": fields.authors,
   };
-  if (fields.year) node["dc:date"] = { "@value": fields.year, "@type": "xsd:gYear" };
+  if (fields.year) {node["dc:date"] = { "@value": fields.year, "@type": "xsd:gYear" };}
   if (fields.doi) {
     node["dc:identifier"] = `doi:${fields.doi}`;
     node["bibo:doi"] = fields.doi;
   }
-  if (fields.url) node["foaf:homepage"] = { "@id": fields.url };
+  if (fields.url) {node["foaf:homepage"] = { "@id": fields.url };}
   node["rdfs:comment"] = "Zotero citation";
   return node;
 }

@@ -52,43 +52,43 @@ module.exports = {
     if (typeof options === 'function') {
       callback = options;
     }
-    if (callback) callback(null, Buffer.alloc(0));
+    if (callback) {callback(null, Buffer.alloc(0));}
   },
   inflate: (data, options, callback) => {
     if (typeof options === 'function') {
       callback = options;
     }
-    if (callback) callback(null, Buffer.alloc(0));
+    if (callback) {callback(null, Buffer.alloc(0));}
   },
   gzip: (data, options, callback) => {
     if (typeof options === 'function') {
       callback = options;
     }
-    if (callback) callback(null, Buffer.alloc(0));
+    if (callback) {callback(null, Buffer.alloc(0));}
   },
   gunzip: (data, options, callback) => {
     if (typeof options === 'function') {
       callback = options;
     }
-    if (callback) callback(null, Buffer.alloc(0));
+    if (callback) {callback(null, Buffer.alloc(0));}
   },
   deflateRaw: (data, options, callback) => {
     if (typeof options === 'function') {
       callback = options;
     }
-    if (callback) callback(null, Buffer.alloc(0));
+    if (callback) {callback(null, Buffer.alloc(0));}
   },
   inflateRaw: (data, options, callback) => {
     if (typeof options === 'function') {
       callback = options;
     }
-    if (callback) callback(null, Buffer.alloc(0));
+    if (callback) {callback(null, Buffer.alloc(0));}
   },
   unzip: (data, options, callback) => {
     if (typeof options === 'function') {
       callback = options;
     }
-    if (callback) callback(null, Buffer.alloc(0));
+    if (callback) {callback(null, Buffer.alloc(0));}
   },
 
   deflateSync: () => Buffer.alloc(0),

@@ -34,7 +34,6 @@ function resolveUseDraft(draft?: boolean): boolean {
 export const ontologyMutationService = {
   setRealTimeSync(enabled: boolean) {
     realTimeSyncEnabled = enabled;
-    console.log(`[MutationService] Real-time sync ${enabled ? 'ENABLED' : 'DISABLED'}`);
   },
 
   setDraftRequired(blocked: boolean, onBlocked?: () => void) {
@@ -57,13 +56,6 @@ export const ontologyMutationService = {
       (e as any).reason = 'draftRequired';
       throw e;
     }
-
-    console.log(`[MutationService] 🔄 Applying mutations to ${projectId}`,ops, {
-      opsCount: ops.length,
-      draft: useDraft,
-      realTimeSyncEnabled,
-      ops: ops.map(o => o.type)
-    });
 
     try {
       await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, {
@@ -750,9 +742,7 @@ export const ontologyMutationService = {
   },
 
   async addDisjointUnion(projectId: string, classIri: string, memberClassIris: string[]): Promise<void> {
-    console.log('[MutationService] addDisjointUnion called:', { projectId, classIri, memberClassIris });
     const valueStr = memberClassIris.join(',');
-    console.log('[MutationService] DisjointUnion value string:', valueStr);
 
     await this.applyMutations(projectId, [{
       type: 'addDisjointUnion',
@@ -760,7 +750,6 @@ export const ontologyMutationService = {
       value: valueStr
     }], undefined);
 
-    console.log('[MutationService] addDisjointUnion completed');
   },
 
   async deleteDisjointUnion(projectId: string, classIri: string, listNodeId: string): Promise<void> {

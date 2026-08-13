@@ -13,7 +13,6 @@ export class RemoteEditApplier {
     }
 
     async applyRemoteEdit(edit: EditOperation): Promise<boolean> {
-        console.log('[RemoteEditApplier] Applying edit:', edit);
 
         if (!this.onApplyEdit) {
             console.warn('[RemoteEditApplier] No edit handler set');
@@ -29,7 +28,6 @@ export class RemoteEditApplier {
 
             await this.onApplyEdit(edit);
 
-            console.log('[RemoteEditApplier] Successfully applied edit:', edit.type);
             return true;
 
         } catch (error) {

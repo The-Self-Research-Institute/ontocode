@@ -244,8 +244,6 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
 
       if (targetMode === "newFile" && tempProjectId && initialProjectId) {
 
-        console.log("[MergeWizard] Downloading merged file from temp project:", tempProjectId);
-
         const downloadRes = await fetch(
           `${getBaseUrl()}/api/ontology/files/${encodeURIComponent(tempProjectId)}/download`,
           {
@@ -270,9 +268,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
         uploadFormData.append("fileName", uploadName);
         uploadFormData.append("fileType", "application/rdf+xml");
 
-        console.log("[MergeWizard] Uploading merged file to project:", initialProjectId, "as:", uploadName);
         await apiClient.post(`/api/projects/${initialProjectId}/files`, uploadFormData);
-        console.log("[MergeWizard] Upload complete — new file added to project");
 
         if (onMergeComplete) {
           await onMergeComplete(projectId, true);

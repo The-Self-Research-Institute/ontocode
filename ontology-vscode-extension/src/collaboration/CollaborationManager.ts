@@ -61,15 +61,11 @@ export class CollaborationManager implements ICollaborationManager {
                     heartbeatOutgoing: 4000,
 
                     onConnect: () => {
-                        console.log('[CollaborationManager] ✅ WebSocket connected successfully');
                         this.state.connected = true;
                         this.reconnectAttempts = 0;
                         this.reconnectDelay = 1000;
 
-                        console.log('[CollaborationManager] Connection state updated to:', this.state.connected);
-
                         if (this.onConnectionChange) {
-                            console.log('[CollaborationManager] Calling onConnectionChange(true) callback');
                             this.onConnectionChange(true);
                         } else {
                             console.warn('[CollaborationManager] ⚠️  No onConnectionChange callback registered!');
@@ -98,7 +94,6 @@ export class CollaborationManager implements ICollaborationManager {
                     },
 
                     onDisconnect: () => {
-                        console.log('WebSocket disconnected');
                         this.state.connected = false;
 
                         if (this.onConnectionChange) {
@@ -162,7 +157,7 @@ export class CollaborationManager implements ICollaborationManager {
             const headers: Record<string, string> = {};
             if (this.getAuthToken) {
                 const token = await Promise.resolve(this.getAuthToken());
-                if (token) headers['Authorization'] = `Bearer ${token}`;
+                if (token) {headers['Authorization'] = `Bearer ${token}`;}
             }
             const response = await fetch(`${this.serverUrl}/api/collab-graph/${projectId}/active-users`, { headers });
             if (response.ok) {
@@ -183,7 +178,6 @@ export class CollaborationManager implements ICollaborationManager {
                             });
                         }
                     });
-                    console.log(`Loaded ${data.users.length - 1} existing active users`);
 
                     if (this.onPresenceUpdate) {
                         data.users.forEach((user: any) => {
@@ -206,11 +200,10 @@ export class CollaborationManager implements ICollaborationManager {
             console.error('Failed to fetch active users:', error);
         }
 
-        console.log(`Joined project: ${projectId}`);
     }
 
     async leaveProject(): Promise<void> {
-        if (!this.state.projectId) return;
+        if (!this.state.projectId) {return;}
 
         await this.sendPresence(PresenceType.USER_LEFT);
 
@@ -221,7 +214,6 @@ export class CollaborationManager implements ICollaborationManager {
         this.state.activeUsers.clear();
         this.state.locks.clear();
 
-        console.log('Left project');
     }
 
     async sendEdit(edit: Omit<EditOperation, 'userId' | 'username' | 'timestamp'>): Promise<void> {
@@ -343,7 +335,7 @@ export class CollaborationManager implements ICollaborationManager {
     }
 
     private subscribeToEdit(projectId: string): void {
-        if (!this.client) return;
+        if (!this.client) {return;}
 
         const subscription = this.client.subscribe(
             `/topic/ontology/${projectId}`,
@@ -351,9 +343,7 @@ export class CollaborationManager implements ICollaborationManager {
                 try {
                     const edit: EditOperation = JSON.parse(message.body);
 
-                    if (edit.userId === this.userId) return;
-
-                    console.log('Received edit:', edit);
+                    if (edit.userId === this.userId) {return;}
 
                     if (this.onEditReceived) {
                         this.onEditReceived(edit);
@@ -368,15 +358,13 @@ export class CollaborationManager implements ICollaborationManager {
     }
 
     private subscribeToPresence(projectId: string): void {
-        if (!this.client) return;
+        if (!this.client) {return;}
 
         const subscription = this.client.subscribe(
             `/topic/presence/${projectId}`,
             (message: IMessage) => {
                 try {
                     const presence: PresenceMessage = JSON.parse(message.body);
-
-                    console.log('Presence update:', presence);
 
                     if (presence.type === PresenceType.USER_JOINED) {
                         this.state.activeUsers.set(presence.userId, {
@@ -413,15 +401,13 @@ export class CollaborationManager implements ICollaborationManager {
     }
 
     private subscribeToLocks(projectId: string): void {
-        if (!this.client) return;
+        if (!this.client) {return;}
 
         const subscription = this.client.subscribe(
             `/topic/locks/${projectId}`,
             (message: IMessage) => {
                 try {
                     const lock: LockMessage = JSON.parse(message.body);
-
-                    console.log('Lock update:', lock);
 
                     if (lock.type === LockType.LOCK_ACQUIRED) {
                         this.state.locks.set(lock.nodeId, lock);
@@ -447,19 +433,13 @@ export class CollaborationManager implements ICollaborationManager {
             return;
         }
 
-        console.log(`[CollaborationManager] 📡 Subscribing to /topic/import/${projectId}`);
-
         const subscription = this.client.subscribe(
             `/topic/import/${projectId}`,
             (message: IMessage) => {
-                console.log('[CollaborationManager] 📨 Received import status message:', message.body);
                 try {
                     const importStatus = JSON.parse(message.body);
 
-                    console.log('[CollaborationManager] ✅ Parsed import status:', importStatus);
-
                     if (this.onImportStatusUpdate) {
-                        console.log('[CollaborationManager] 📤 Calling onImportStatusUpdate handler');
                         this.onImportStatusUpdate(importStatus);
                     } else {
                         console.warn('[CollaborationManager] ⚠️  No onImportStatusUpdate handler registered!');
@@ -471,7 +451,6 @@ export class CollaborationManager implements ICollaborationManager {
         );
 
         this.subscriptions.set(`import-${projectId}`, subscription);
-        console.log(`[CollaborationManager] ✅ Subscribed to import status for project: ${projectId}`);
     }
 
     subscribeToShareNotifications(userEmail: string): void {
@@ -480,19 +459,13 @@ export class CollaborationManager implements ICollaborationManager {
             return;
         }
 
-        console.log(`[CollaborationManager] 📡 Subscribing to /topic/shares/${userEmail}`);
-
         const subscription = this.client.subscribe(
             `/topic/shares/${userEmail}`,
             (message: IMessage) => {
-                console.log('[CollaborationManager] 📨 Received share notification:', message.body);
                 try {
                     const shareNotification = JSON.parse(message.body);
 
-                    console.log('[CollaborationManager] ✅ Parsed share notification:', shareNotification);
-
                     if (this.onShareNotification) {
-                        console.log('[CollaborationManager] 📤 Calling onShareNotification handler');
                         this.onShareNotification(shareNotification);
                     } else {
                         console.warn('[CollaborationManager] ⚠️  No onShareNotification handler registered!');
@@ -504,13 +477,10 @@ export class CollaborationManager implements ICollaborationManager {
         );
 
         this.subscriptions.set(`shares-${userEmail}`, subscription);
-        console.log(`[CollaborationManager] ✅ Subscribed to share notifications for: ${userEmail}`);
     }
 
     private processPendingEdits(): void {
-        if (this.state.pendingEdits.length === 0) return;
-
-        console.log(`Processing ${this.state.pendingEdits.length} pending edits`);
+        if (this.state.pendingEdits.length === 0) {return;}
 
         const edits = [...this.state.pendingEdits];
         this.state.pendingEdits = [];
@@ -535,8 +505,6 @@ export class CollaborationManager implements ICollaborationManager {
 
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000); // Max 30 seconds
 
-        console.log(`Reconnecting in ${this.reconnectDelay}ms (attempt ${this.reconnectAttempts})`);
-
         setTimeout(() => {
             if (this.client) {
                 this.client.activate();
@@ -546,6 +514,5 @@ export class CollaborationManager implements ICollaborationManager {
 
     broadcastCursorPosition(projectId: string, userId: string, userName: string, position: { x: number; y: number }): void {
 
-        console.log('[CollaborationManager] broadcastCursorPosition called (Node.js stub)');
     }
 }
