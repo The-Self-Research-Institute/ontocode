@@ -219,7 +219,7 @@ function createMainWindow() {
         height: 900,
         minWidth:  960,
         minHeight: 600,
-        title: 'OntoCode',
+        title: 'OntoCode Studio',
         show: false,
         // Hide the native menu bar — the React app has its own internal menu.
         // The native menu is still accessible via Alt key on Windows.
@@ -372,7 +372,7 @@ app.whenReady().then(async () => {
             await dialog.showMessageBox({
                 type: 'error',
                 title: 'Java not found',
-                message: 'OntoCode Desktop requires Java 17 or newer.\n\nPlease install the Java Development Kit (JDK 17+) and restart OntoCode.',
+                message: 'OntoCode Studio requires Java 17 or newer.\n\nPlease install the Java Development Kit (JDK 17+) and restart OntoCode Studio.',
                 buttons: ['Open Download Page', 'Quit'],
             }).then(({ response }) => {
                 if (response === 0) shell.openExternal('https://adoptium.net/');
@@ -627,9 +627,9 @@ function setupTray() {
     if (!fs.existsSync(iconFile)) return;   // skip if icon not bundled yet
 
     tray = new Tray(iconFile);
-    tray.setToolTip('OntoCode');
+    tray.setToolTip('OntoCode Studio');
     tray.setContextMenu(Menu.buildFromTemplate([
-        { label: 'Open OntoCode', click: () => { focusExistingWindow(); if (!mainWindow) createMainWindow(); } },
+        { label: 'Open OntoCode Studio', click: () => { focusExistingWindow(); if (!mainWindow) createMainWindow(); } },
         { type: 'separator' },
         { label: 'Open Logs…', click: () => shell.openPath(path.join(app.getPath('userData'), 'logs')) },
         { type: 'separator' },
@@ -709,12 +709,12 @@ function setupMenu(win) {
                 },
                 { type: 'separator' },
                 {
-                    label: 'About OntoCode',
+                    label: 'About OntoCode Studio',
                     click: () => {
                         dialog.showMessageBox(win, {
-                            title: 'About OntoCode',
-                            message: 'OntoCode Desktop',
-                            detail: `Version ${app.getVersion()}\n\nOWL ontology editor — offline capable.\n\nUninstall via Windows Settings → Apps → OntoCode.`,
+                            title: 'About OntoCode Studio',
+                            message: 'OntoCode Studio',
+                            detail: `Version ${app.getVersion()}\n\nOWL ontology editor — offline capable.\n\nUninstall via Windows Settings → Apps → OntoCode Studio.`,
                             buttons: ['OK'],
                         });
                     },
@@ -734,7 +734,7 @@ function setupMenu(win) {
                         if (result.status === 'up-to-date') {
                             dialog.showMessageBox(win, {
                                 title: 'No updates',
-                                message: `OntoCode ${app.getVersion()} is up to date.`,
+                                message: `OntoCode Studio ${app.getVersion()} is up to date.`,
                                 buttons: ['OK'],
                             });
                         }

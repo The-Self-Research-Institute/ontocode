@@ -128,7 +128,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           setReleases({
             "windows-x64": {
               version: "1.1.0",
-              filename: "OntoCode-Setup.exe",
+              filename: "OntoCode Studio-Setup.exe",
               size: 0,
               releaseNotes: "",
               publishedAt: "",
@@ -227,7 +227,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             <Cpu size={14} /> Desktop Edition — Free Download ({PLATFORM_META[platform].label})
           </div>
           <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-            OntoCode Desktop
+            OntoCode Studio
           </h1>
           <p className="text-lg text-white/60 max-w-2xl mx-auto">
             Full OWL ontology editor — works completely offline. No account required.

@@ -1813,7 +1813,7 @@ const AppContent = () => {
                 onClick={handleGoToLogin}
                 className="w-full py-3 px-4 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white rounded-lg text-sm font-medium transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
               >
-                Login to OntoCode
+                Login to OntoCode Studio
               </button>
             </>
           )}
@@ -1884,7 +1884,7 @@ const AppContent = () => {
             <Loader2 size={40} className="text-white animate-spin" />
           </div>
           <h2 className="text-2xl font-bold mb-3" style={{ color: "var(--color-text)" }}>
-            Initializing OntoCode
+            Initializing OntoCode Studio
           </h2>
           <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
             Connecting to your workspace...
@@ -1914,7 +1914,7 @@ const AppContent = () => {
             License expired
           </h2>
           <p className="text-sm mb-6" style={{ color: "var(--color-text-secondary)" }}>
-            Your {expiredPlan} license has expired. Renew it on the web to continue using OntoCode Desktop,
+            Your {expiredPlan} license has expired. Renew it on the web to continue using OntoCode Studio,
             then import the updated license file.
           </p>
           <button

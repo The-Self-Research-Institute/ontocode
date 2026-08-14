@@ -1,9 +1,9 @@
 {
   "name": "ontocode-desktop",
   "version": "1.1.0-beta.18",
-  "description": "OntoCode Ontology Editor – Desktop (Electron + bundled backend)",
+  "description": "OntoCode Studio Ontology Editor – Desktop (Electron + bundled backend)",
   "homepage": "https://ontocode.selfresearch.org",
-  "author": "OntoCode",
+  "author": "OntoCode Studio",
   "main": "main.js",
   "scripts": {
     "start": "electron .",

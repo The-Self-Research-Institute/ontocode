@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, Eye, EyeOff, Wrench, Clock } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../custom-hook/useAuth';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { OntoCodeLogo } from './OntoCodeLogo';
 import { getAppVersion } from '../utils/appVersion';
@@ -13,7 +13,7 @@ const MaintenancePage: React.FC = () => (
             </div>
             <h1 className="text-3xl font-bold text-white mb-3">Under Maintenance</h1>
             <p className="text-slate-300 text-lg mb-2">
-                OntoCode is currently undergoing scheduled maintenance.
+                OntoCode Studio is currently undergoing scheduled maintenance.
             </p>
             <p className="text-slate-400 mb-8">
                 We're working hard to improve your experience. The system will be back online shortly.
@@ -118,7 +118,7 @@ const Login: React.FC = () => {
                         <OntoCodeLogo size={64} rounded className="shadow-lg" />
                     </div>
                     <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                        {inviteToken ? 'Join OntoCode' : 'OntoCode Editor'}
+                        {inviteToken ? 'Join OntoCode Studio' : 'OntoCode Studio Editor'}
                     </h1>
                     <p className="text-gray-600">
                         {inviteToken 
@@ -232,7 +232,7 @@ const Login: React.FC = () => {
 
                 {/* Footer */}
                 <p className="text-center text-xs text-gray-500 mt-6">
-                    {appVersion ? `OntoCode v${appVersion}` : 'OntoCode'}
+                    {appVersion ? `OntoCode Studio v${appVersion}` : 'OntoCode Studio'}
                     <span className="mx-2">·</span>
                     By continuing, you agree to our Terms of Service and Privacy Policy
                 </p>

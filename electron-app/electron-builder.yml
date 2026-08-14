@@ -1,10 +1,10 @@
-# electron-builder configuration for OntoCode Desktop
+# electron-builder configuration for OntoCode Studio
 # Run: npm run dist  (builds for current platform)
 #      npm run dist:win / dist:mac / dist:linux
 
 appId: com.ontocode.desktop
-productName: OntoCode
-copyright: "Copyright © 2026 OntoCode / Coretopia"
+productName: OntoCode Studio
+copyright: "Copyright © 2026 OntoCode Studio / Coretopia"
 
 # ── Directories ────────────────────────────────────────────────────────────────
 directories:
@@ -60,7 +60,7 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   allowElevation: true
-  uninstallDisplayName: OntoCode
+  uninstallDisplayName: OntoCode Studio
   deleteAppDataOnUninstall: false
   runAfterFinish: true
   installerIcon: build-assets/icon.ico
@@ -68,7 +68,7 @@ nsis:
   installerHeaderIcon: build-assets/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: OntoCode
+  shortcutName: OntoCode Studio
 
 # Open .owl / RDF files in the existing app instance (second launch focuses window).
 fileAssociations:
@@ -122,10 +122,10 @@ linux:
         - x64
   icon: build-assets/icon-512.png
   category: Development
-  maintainer: "OntoCode <pranesh@coretopia.com>"
-  description: "OntoCode — OWL Ontology Editor for Desktop"
+  maintainer: "OntoCode Studio <pranesh@coretopia.com>"
+  description: "OntoCode Studio — OWL Ontology Editor for Desktop"
   desktop:
-    Name: OntoCode
+    Name: OntoCode Studio
     Comment: OWL Ontology Editor
     Categories: Development;Science;
 

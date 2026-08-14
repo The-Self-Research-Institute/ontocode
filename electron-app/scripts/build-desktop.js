@@ -31,7 +31,7 @@ const PLUGIN_BUNDLES_DIR = path.join(ELECTRON_APP, 'resources', 'backend', 'plug
 const PLUGINS_MANIFEST_SRC = path.join(__dirname, 'plugins-manifest.json');
 
 const HELP = `
-OntoCode desktop build
+OntoCode Studio desktop build
 
 Flags (combine as needed):
   --full              Java + web + resources + copy renderer (recommended for releases)
@@ -214,7 +214,7 @@ function unlinkWithRetry(filePath, retries = 8) {
 function portableLockHint(portableDir) {
     return (
         `\nPortable folder is locked: ${portableDir}\n` +
-        '  • Quit OntoCode Desktop if it was started from that folder\n' +
+        '  • Quit OntoCode Studio if it was started from that folder\n' +
         '  • End stray java.exe / mongod.exe from an old portable run (Task Manager)\n' +
         '  • Or use a fresh output path: --portable-dir=E:\\tmp\\ontocode-portable-2\n' +
         'Then retry packaging only:\n' +
@@ -270,7 +270,7 @@ function patchPortableJarOnly(opts) {
     fs.copyFileSync(DESKTOP_JAR_DEST, jarDest);
     console.log(`\n→ Patch desktop.jar only`);
     console.log(`  ✓  ${jarDest}`);
-    console.log('\n  Quit OntoCode completely (Task Manager: end java.exe), then restart the portable exe.');
+    console.log('\n  Quit OntoCode Studio completely (Task Manager: end java.exe), then restart the portable exe.');
 }
 
 function buildPlugins() {
@@ -383,7 +383,7 @@ function syncPortableStaging(opts) {
 }
 
 function ensurePortableShell(portableDir) {
-    const exeName = process.platform === 'win32' ? 'OntoCode.exe' : 'OntoCode';
+    const exeName = process.platform === 'win32' ? 'OntoCode Studio.exe' : 'OntoCode Studio';
     const portableExe = path.join(portableDir, exeName);
     if (fs.existsSync(portableExe)) {
         return;
@@ -476,7 +476,7 @@ function packPortable(opts) {
     }
 
     console.log(`\n✓  Portable build ready: ${portable}`);
-    console.log(`   Run: ${path.join(portable, process.platform === 'win32' ? 'OntoCode.exe' : 'OntoCode')}`);
+    console.log(`   Run: ${path.join(portable, process.platform === 'win32' ? 'OntoCode Studio.exe' : 'OntoCode Studio')}`);
 }
 
 function runInstaller(platform) {
@@ -521,7 +521,7 @@ async function main() {
         process.exit(1);
     }
 
-    console.log('\n=== OntoCode build-desktop ===');
+    console.log('\n=== OntoCode Studio build-desktop ===');
     console.log(JSON.stringify(opts, null, 2));
 
     if (opts.java) {

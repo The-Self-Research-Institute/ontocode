@@ -1677,7 +1677,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </div>
             <div className="px-6 pb-5">
               <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
-                The workspace owner must import this file first by opening it in the OntoCode editor.
+                The workspace owner must import this file first by opening it in the OntoCode Studio editor.
               </div>
               <div className="flex items-start gap-2.5 text-sm text-gray-600">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">

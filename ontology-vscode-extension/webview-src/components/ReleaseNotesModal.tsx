@@ -33,7 +33,7 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({ isOpen, on
             </div>
             <div>
               <h2 className="text-2xl font-bold text-white">Release Notes</h2>
-              <p className="text-purple-100 text-sm mt-1">What&apos;s new in OntoCode</p>
+              <p className="text-purple-100 text-sm mt-1">What&apos;s new in OntoCode Studio</p>
             </div>
           </div>
           <button

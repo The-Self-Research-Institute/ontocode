@@ -58,7 +58,7 @@ const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => 
 
                 <div>
                   <h3 className="text-xl font-semibold text-white mb-2">Self-Hosted</h3>
-                  <p className="text-sm text-gray-300 mb-3">Connect to your local OntoCode instance</p>
+                  <p className="text-sm text-gray-300 mb-3">Connect to your local OntoCode Studio instance</p>
                   <div className="text-xs text-gray-400 space-y-1">
                     <div className="flex items-center justify-center gap-1">
                       <Check size={14} className="text-green-400" />
@@ -105,7 +105,7 @@ const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => 
 
                 <div>
                   <h3 className="text-xl font-semibold text-white mb-2">Cloud</h3>
-                  <p className="text-sm text-gray-300 mb-3">Connect to hosted OntoCode on AWS</p>
+                  <p className="text-sm text-gray-300 mb-3">Connect to hosted OntoCode Studio on AWS</p>
                   <div className="text-xs text-gray-400 space-y-1">
                     <div className="flex items-center justify-center gap-1">
                       <Check size={14} className="text-green-400" />
