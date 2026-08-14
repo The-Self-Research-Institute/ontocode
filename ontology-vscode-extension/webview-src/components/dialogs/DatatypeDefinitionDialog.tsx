@@ -7,6 +7,7 @@ interface DatatypeDefinitionDialogProps {
   onConfirm: (expression: string, type: 'builtin' | 'expression') => void;
 }
 
+// Standard XSD built-in datatypes
 const XSD_DATATYPES = [
   { name: 'xsd:decimal', description: 'Arbitrary-precision decimal numbers' },
   { name: 'xsd:integer', description: 'Arbitrary-size integer numbers' },
@@ -47,11 +48,13 @@ const XSD_DATATYPES = [
   { name: 'xsd:gDay', description: 'Gregorian calendar day' },
 ];
 
+// OWL built-in datatypes
 const OWL_DATATYPES = [
   { name: 'owl:rational', description: 'Rational numbers' },
   { name: 'owl:real', description: 'Real numbers' },
 ];
 
+// RDF/RDFS datatypes
 const RDF_DATATYPES = [
   { name: 'rdf:langString', description: 'Language-tagged strings' },
   { name: 'rdf:PlainLiteral', description: 'Plain literals' },
@@ -111,7 +114,7 @@ const DatatypeDefinitionDialog: React.FC<DatatypeDefinitionDialogProps> = ({
       }}
     >
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
-        {}
+        {/* Header */}
         <div className="p-4 border-b border-gray-200 flex-shrink-0">
           <h3 className="text-lg font-semibold text-black">Add Datatype Definition</h3>
           <p className="text-xs text-gray-500 mt-1">
@@ -119,7 +122,7 @@ const DatatypeDefinitionDialog: React.FC<DatatypeDefinitionDialogProps> = ({
           </p>
         </div>
 
-        {}
+        {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50 flex-shrink-0">
           <button
             onClick={() => setActiveTab('builtin')}
@@ -143,11 +146,11 @@ const DatatypeDefinitionDialog: React.FC<DatatypeDefinitionDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Tab Content */}
         <div className="flex-1 overflow-hidden flex flex-col min-h-0">
           {activeTab === 'builtin' && (
             <div className="flex flex-col h-full">
-              {}
+              {/* Search */}
               <div className="p-3 border-b border-gray-200 flex-shrink-0">
                 <input
                   type="text"
@@ -158,7 +161,7 @@ const DatatypeDefinitionDialog: React.FC<DatatypeDefinitionDialogProps> = ({
                 />
               </div>
 
-              {}
+              {/* Datatype List */}
               <div className="flex-1 overflow-y-auto p-3 space-y-1">
                 {filteredDatatypes.map((dt) => (
                   <button
@@ -189,7 +192,7 @@ const DatatypeDefinitionDialog: React.FC<DatatypeDefinitionDialogProps> = ({
                 ))}
               </div>
 
-              {}
+              {/* Info Box */}
               <div className="p-3 bg-blue-50 border-t border-blue-200 text-xs text-gray-700 flex-shrink-0">
                 <p className="font-semibold mb-1">💡 Tip:</p>
                 <p>Select a built-in datatype to use as-is, or switch to "Data range expression" tab to create restrictions like <code className="bg-white px-1 rounded">xsd:integer[&gt;= 0, &lt;= 100]</code></p>
@@ -212,7 +215,7 @@ const DatatypeDefinitionDialog: React.FC<DatatypeDefinitionDialogProps> = ({
                 />
               </div>
 
-              {}
+              {/* Examples */}
               <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md text-xs space-y-2">
                 <p className="font-semibold text-gray-800">Examples:</p>
                 <div className="space-y-1.5">
@@ -250,7 +253,7 @@ const DatatypeDefinitionDialog: React.FC<DatatypeDefinitionDialogProps> = ({
           )}
         </div>
 
-        {}
+        {/* Footer */}
         <div className="p-4 border-t border-gray-200 flex justify-between items-center flex-shrink-0">
           <div className="text-xs text-gray-500">
             {activeTab === 'builtin' && selectedBuiltin && (

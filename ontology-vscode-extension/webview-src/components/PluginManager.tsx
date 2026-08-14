@@ -126,7 +126,7 @@ const PluginManager: React.FC = () => {
               <Package size={32} className="text-indigo-600" />
               Plugin Manager
             </h1>
-            <p className="text-gray-600 mt-1">Extend OntoCode with plugins</p>
+            <p className="text-gray-600 mt-1">Extend OntoCode Studio with plugins</p>
           </div>
 
           <button

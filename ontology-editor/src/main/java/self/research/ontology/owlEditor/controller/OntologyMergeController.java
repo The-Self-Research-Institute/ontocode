@@ -18,6 +18,9 @@ import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * REST controller for ontology merging operations 
+ */
 @RestController
 @CrossOrigin(originPatterns = "*")
 @RequestMapping("/api/projects/{projectId}/merge")
@@ -35,39 +38,50 @@ public class OntologyMergeController {
         this.metadataService = metadataService;
     }
 
+    /**
+     * Analyze a source ontology for merge conflicts with the target project
+     * 
+     * POST /api/projects/{projectId}/merge/analyze
+     * 
+     * Request body: multipart/form-data with 'file' parameter
+     * 
+     * Response: MergeAnalysisResult with list of conflicts
+     */
     @PostMapping("/analyze")
     public ResponseEntity<?> analyzeMerge(
             @PathVariable String projectId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "targetProjectId", required = false) String targetProjectId,
             @RequestParam(value = "targetFileName", required = false) String targetFileName) {
-
+        
         log.info("[MERGE] Analyzing merge for project {}, file: {}", projectId, file.getOriginalFilename());
-
+        
         Path tempFile = null;
         try {
-
+            // Validate file
             if (file.isEmpty()) {
                 return ResponseEntity.badRequest()
                         .body(Map.of("error", "No file uploaded"));
             }
-
+            
+            // Save uploaded file temporarily
             tempFile = Files.createTempFile("merge-source-", ".owl");
             log.info("[MERGE] Saving uploaded file to: {}", tempFile);
             file.transferTo(tempFile.toFile());
-
+            
+            // Analyze for conflicts
             String effectiveTargetProjectId = resolveEffectiveTargetProjectId(projectId, targetProjectId, targetFileName);
             MergeAnalysisResult result = mergeService.analyzeOntologies(
-                projectId + "_source",
+                projectId + "_source",  // source project ID (not used, just for logging)
                 tempFile,
                 effectiveTargetProjectId,
                 targetFileName
             );
-
+            
             log.info("[MERGE] Analysis complete: {} conflicts found", result.getTotalConflicts());
-
+            
             return ResponseEntity.ok(result);
-
+            
         } catch (OWLOntologyCreationException e) {
             log.error("[MERGE] Error loading ontologies", e);
             String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
@@ -81,18 +95,18 @@ public class OntologyMergeController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to analyze ontologies: " + errorMsg, "details", e.toString()));
         } finally {
-
+            // Clean up temp file
             if (tempFile != null) {
                 try {
-
+                    // Try to delete immediately first
                     boolean deleted = Files.deleteIfExists(tempFile);
                     if (!deleted) {
-
+                        // If deletion fails (Windows file locking), mark for deletion on JVM exit
                         tempFile.toFile().deleteOnExit();
                         log.debug("[MERGE] Temp file marked for deletion on exit: {}", tempFile);
                     }
                 } catch (Exception e) {
-
+                    // On Windows, file may still be locked by OWL API - mark for deletion on exit
                     tempFile.toFile().deleteOnExit();
                     log.debug("[MERGE] Temp file locked, marked for deletion on exit: {}", tempFile);
                 }
@@ -100,6 +114,17 @@ public class OntologyMergeController {
         }
     }
 
+    /**
+     * Perform the merge operation with specified options
+     * 
+     * POST /api/projects/{projectId}/merge/execute
+     * 
+     * Request body: multipart form with:
+     *   - file: source ontology file
+     *   - options: JSON string with merge options
+     * 
+     * Response: MergeResult with statistics
+     */
     @PostMapping("/execute")
     public ResponseEntity<?> executeMerge(
             @PathVariable String projectId,
@@ -110,15 +135,16 @@ public class OntologyMergeController {
             @RequestParam(value = "targetFileName", required = false) String targetFileName,
             @RequestParam(value = "outputFileName", required = false) String outputFileName,
             @RequestParam(value = "conflictResolutions", required = false) String conflictResolutionsJson) {
-
+        
         log.info("[MERGE] Executing merge for project {}", projectId);
         log.info("[MERGE] Strategy: {}, Rename suffix: {}", strategy, renameSuffix);
-
+        
         try {
-
+            // Save uploaded file temporarily
             Path tempFile = Files.createTempFile("merge-source-", ".owl");
             file.transferTo(tempFile.toFile());
-
+            
+            // Create merge options
             MergeOptions options = new MergeOptions();
             options.setStrategy(strategy);
             if (renameSuffix != null) {
@@ -131,7 +157,8 @@ public class OntologyMergeController {
                 );
                 options.setConflictResolutions(parsed);
             }
-
+            
+            // Execute merge
             long startTime = System.currentTimeMillis();
             String effectiveTargetProjectId = resolveEffectiveTargetProjectId(projectId, targetProjectId, targetFileName);
             MergeResult result = mergeService.mergeOntologies(
@@ -144,7 +171,8 @@ public class OntologyMergeController {
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);
-
+            
+            // Clean up temp file (handle Windows file locking)
             try {
                 boolean deleted = Files.deleteIfExists(tempFile);
                 if (!deleted) {
@@ -154,11 +182,11 @@ public class OntologyMergeController {
                 tempFile.toFile().deleteOnExit();
                 log.debug("[MERGE] Temp file locked, marked for deletion on exit: {}", tempFile);
             }
-
+            
             log.info("[MERGE] Merge complete in {}ms", duration);
-
+            
             return ResponseEntity.ok(result);
-
+            
         } catch (StackOverflowError soe) {
             log.error("[MERGE] Stack overflow during merge — ontology may be too large or circular", soe);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -170,6 +198,13 @@ public class OntologyMergeController {
         }
     }
 
+    /**
+     * Execute merge with manual conflict resolution
+     * 
+     * POST /api/projects/{projectId}/merge/execute-with-resolutions
+     * 
+     * Request: multipart with file and JSON options
+     */
     @PostMapping("/execute-with-resolutions")
     public ResponseEntity<?> executeMergeWithResolutions(
             @PathVariable String projectId,
@@ -177,15 +212,16 @@ public class OntologyMergeController {
             @RequestParam(value = "targetFileName", required = false) String targetFileName,
             @RequestParam(value = "outputFileName", required = false) String outputFileName,
             @RequestBody MergeOptions options) {
-
+        
         log.info("[MERGE] Executing merge with manual resolutions for project {}", projectId);
         log.info("[MERGE] Resolutions provided: {}", options.getConflictResolutions().size());
-
+        
         try {
-
+            // Save uploaded file temporarily
             Path tempFile = Files.createTempFile("merge-source-", ".owl");
             file.transferTo(tempFile.toFile());
-
+            
+            // Execute merge with resolutions
             long startTime = System.currentTimeMillis();
             MergeResult result = mergeService.mergeOntologies(
                 projectId + "_source",
@@ -197,7 +233,8 @@ public class OntologyMergeController {
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);
-
+            
+            // Clean up temp file (handle Windows file locking)
             try {
                 boolean deleted = Files.deleteIfExists(tempFile);
                 if (!deleted) {
@@ -207,11 +244,11 @@ public class OntologyMergeController {
                 tempFile.toFile().deleteOnExit();
                 log.debug("[MERGE] Temp file locked, marked for deletion on exit: {}", tempFile);
             }
-
+            
             log.info("[MERGE] Merge with resolutions complete in {}ms", duration);
-
+            
             return ResponseEntity.ok(result);
-
+            
         } catch (StackOverflowError soe) {
             log.error("[MERGE] Stack overflow during merge-with-resolutions — ontology may be too large or circular", soe);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -223,6 +260,11 @@ public class OntologyMergeController {
         }
     }
 
+    /**
+     * Get merge strategies available
+     * 
+     * GET /api/projects/{projectId}/merge/strategies
+     */
     @GetMapping("/strategies")
     public ResponseEntity<?> getMergeStrategies() {
         Map<String, String> strategies = new HashMap<>();
@@ -230,10 +272,15 @@ public class OntologyMergeController {
         strategies.put("REPLACE_DUPLICATES", "Source overwrites target for conflicts");
         strategies.put("KEEP_BOTH", "Rename conflicting source entities");
         strategies.put("MANUAL_RESOLUTION", "Specify resolution for each conflict");
-
+        
         return ResponseEntity.ok(strategies);
     }
 
+    /**
+     * Get resolution actions available
+     * 
+     * GET /api/projects/{projectId}/merge/resolution-actions
+     */
     @GetMapping("/resolution-actions")
     public ResponseEntity<?> getResolutionActions() {
         Map<String, String> actions = new HashMap<>();
@@ -242,7 +289,7 @@ public class OntologyMergeController {
         actions.put("RENAME_SOURCE", "Rename source and keep both");
         actions.put("MERGE", "Merge both versions (keep all axioms)");
         actions.put("SKIP", "Skip this entity");
-
+        
         return ResponseEntity.ok(actions);
     }
 
@@ -269,9 +316,14 @@ public class OntologyMergeController {
         return defaultProjectId;
     }
 
+    /**
+     * Get merge operation status/history
+     * 
+     * GET /api/projects/{projectId}/merge/history
+     */
     @GetMapping("/history")
     public ResponseEntity<?> getMergeHistory(@PathVariable String projectId) {
-
+        // TODO: Implement merge history tracking
         return ResponseEntity.ok(Map.of("message", "Merge history not yet implemented"));
     }
 }

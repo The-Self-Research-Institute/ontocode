@@ -3,6 +3,7 @@ import { Plus, Trash2, Play, Save, Check, X, AlertCircle, Loader2, Eye, EyeOff, 
 import apiClient from './apiClient';
 import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, PagedResponse, BuiltInCategory, InferredAxiom } from './types';
 
+// SWRL Built-in reference based on SWRLAPI (https://github.com/protegeproject/swrlapi)
 const SWRL_BUILTINS: BuiltInCategory[] = [
   {
     prefix: 'swrlb',
@@ -127,6 +128,7 @@ const RULE_TEMPLATES = [
   { name: 'Temporal Relation', template: 'Event(?e1) ^ Event(?e2) ^ hasTime(?e1, ?t1) ^ hasTime(?e2, ?t2) ^ temporal:before(?t1, ?t2) -> Precedes(?e1, ?e2)', description: 'Infer temporal order of events' },
 ];
 
+// Debounce hook to prevent excessive validation API calls
 function useDebounce(value: string, delay: number) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => { 
@@ -136,6 +138,7 @@ function useDebounce(value: string, delay: number) {
   return debounced;
 }
 
+// Resizable Section Component with drag handle
 const ResizableSection: React.FC<{
   title: string;
   defaultOpen?: boolean;
@@ -191,7 +194,7 @@ const ResizableSection: React.FC<{
 
   return (
     <div ref={containerRef} className="border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
-      {}
+      {/* Header */}
       <div className="w-full px-4 py-2.5 flex items-center justify-between bg-gradient-to-r from-gray-100 to-gray-50 border-b border-gray-200">
         <button
           onClick={() => setIsOpen(!isOpen)}
@@ -213,8 +216,8 @@ const ResizableSection: React.FC<{
           )}
         </div>
       </div>
-
-      {}
+      
+      {/* Content */}
       {isOpen && (
         <div className="relative">
           <div 
@@ -223,8 +226,8 @@ const ResizableSection: React.FC<{
           >
             {children}
           </div>
-
-          {}
+          
+          {/* Resize Handle */}
           <div
             onMouseDown={handleMouseDown}
             className={`absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize flex items-center justify-center group hover:bg-purple-50 transition-colors ${isResizing ? 'bg-purple-100' : 'bg-gray-50'}`}
@@ -238,6 +241,7 @@ const ResizableSection: React.FC<{
   );
 };
 
+// Simple Collapsible Section (non-resizable)
 const CollapsibleSection: React.FC<{
   title: string;
   defaultOpen?: boolean;
@@ -247,7 +251,7 @@ const CollapsibleSection: React.FC<{
   isMaximized?: boolean;
 }> = ({ title, defaultOpen = true, children, headerExtra, onMaximize, isMaximized }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
-
+  
   return (
     <div className="border-2 border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
       <div className="w-full px-4 py-2.5 flex items-center justify-between bg-gradient-to-r from-gray-100 to-gray-50 border-b border-gray-200">
@@ -276,6 +280,7 @@ const CollapsibleSection: React.FC<{
   );
 };
 
+// Resizable Panel Hook (for bottom panel)
 function useResizable(initialHeight: number, minHeight: number = 100, maxHeight: number = 600) {
   const [height, setHeight] = useState(initialHeight);
   const [isResizing, setIsResizing] = useState(false);
@@ -353,6 +358,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
     } finally { setLoading(false); }
   }, [projectId, query]);
 
+  // SQWRL query examples
   const queryExamples = [
     { label: 'All Persons with Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)' },
     { label: 'Adults (age > 18)', query: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> sqwrl:select(?p, ?age) ^ sqwrl:orderBy(?age)' },
@@ -365,7 +371,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
     <div className="flex flex-col h-full bg-gray-50">
       <div className="p-4 border-b border-gray-300 flex justify-between items-center">
         <h3 className="text-lg font-semibold text-gray-800">SQWRL Query</h3>
-        {}
+        {/* Example dropdown */}
         <select 
           onChange={(e) => e.target.value && setQuery(e.target.value)}
           className="text-sm border border-gray-300 rounded px-2 py-1 bg-white"
@@ -387,8 +393,8 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
         <button onClick={execute} disabled={loading} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-purple-300 text-sm">
           {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />} Execute Query
         </button>
-
-        {}
+        
+        {/* Results Section */}
         <div className="flex-grow overflow-auto border-2 border-gray-300 rounded-lg bg-white">
           {!results ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-500 p-4">
@@ -446,9 +452,10 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
   );
 };
 
+// Helper function to extract local name from URI
 const extractLocalName = (uri: string): string => {
   if (!uri) return uri;
-
+  // Handle full URIs like <http://example.org/swrl-test#Alice>
   const cleanUri = uri.replace(/^<|>$/g, '');
   const hashIndex = cleanUri.lastIndexOf('#');
   if (hashIndex !== -1) return cleanUri.substring(hashIndex + 1);
@@ -457,6 +464,7 @@ const extractLocalName = (uri: string): string => {
   return uri;
 };
 
+// Custom Confirmation Dialog Component (replaces window.confirm which is blocked in sandboxed webviews)
 const ConfirmDialog: React.FC<{
   isOpen: boolean;
   title: string;
@@ -465,7 +473,7 @@ const ConfirmDialog: React.FC<{
   onCancel: () => void;
 }> = ({ isOpen, title, message, onConfirm, onCancel }) => {
   if (!isOpen) return null;
-
+  
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
@@ -494,11 +502,14 @@ const ConfirmDialog: React.FC<{
   );
 };
 
+// Helper function to parse and format axioms for better readability
 const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: string; predicate?: string; object?: string; formatted: string } => {
   const readable = axiom.readable || '';
-
+  
+  // Helper to clean up regex matches
   const clean = (s: string) => extractLocalName(s);
-
+  
+  // Parse ClassAssertion: ClassAssertion(<http://...#Adult> <http://...#Alice>)
   const classAssertionMatch = readable.match(/ClassAssertion\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (classAssertionMatch) {
     const className = clean(classAssertionMatch[1]);
@@ -510,7 +521,8 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
       formatted: `${individual} → ${className}`
     };
   }
-
+  
+  // Parse ObjectPropertyAssertion: ObjectPropertyAssertion(<prop> <subj> <obj>)
   const objPropMatch = readable.match(/ObjectPropertyAssertion\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (objPropMatch) {
     const prop = clean(objPropMatch[1]);
@@ -524,13 +536,14 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
       formatted: `${subject} ${prop} ${object}`
     };
   }
-
+  
+  // Parse DataPropertyAssertion: DataPropertyAssertion(<prop> <subj> "value"^^type)
   const dataPropMatch = readable.match(/DataPropertyAssertion\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s+(.+)\s*\)/i);
   if (dataPropMatch) {
     const prop = clean(dataPropMatch[1]);
     const subject = clean(dataPropMatch[2]);
     let value = dataPropMatch[3];
-
+    // Clean up typed literals
     value = value.replace(/"\^\^.*$/, '').replace(/^"|"$/g, '');
     return {
       type: 'DataPropertyAssertion',
@@ -541,6 +554,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse SubClassOf: SubClassOf(<subClass> <superClass>)
   const subClassMatch = readable.match(/SubClassOf\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (subClassMatch) {
     const subClass = clean(subClassMatch[1]);
@@ -553,6 +567,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse EquivalentClasses: EquivalentClasses(<class1> <class2> ...)
   const equivClassMatch = readable.match(/EquivalentClasses\s*\(\s*<?([^>\s]+)>?/i);
   if (equivClassMatch) {
     const cls = clean(equivClassMatch[1]);
@@ -563,6 +578,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse SameIndividual: SameIndividual(<ind1> <ind2> ...)
   const sameIndMatch = readable.match(/SameIndividual\s*\(\s*<?([^>\s]+)>?/i);
   if (sameIndMatch) {
     const ind = clean(sameIndMatch[1]);
@@ -573,6 +589,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse Domain/Range - handles both ObjectPropertyDomain/Range and DataPropertyDomain/Range
   const domainRangeMatch = readable.match(/(Data|Object)Property(Domain|Range)\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (domainRangeMatch) {
     const propType = domainRangeMatch[1]; // Data or Object
@@ -587,6 +604,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse EquivalentObjectProperties: EquivalentObjectProperties(<prop1> <prop2> ...)
   const equivObjPropsMatch = readable.match(/EquivalentObjectProperties\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?/i);
   if (equivObjPropsMatch) {
     const prop1 = clean(equivObjPropsMatch[1]);
@@ -599,6 +617,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse EquivalentDataProperties: EquivalentDataProperties(<prop1> <prop2> ...)
   const equivDataPropsMatch = readable.match(/EquivalentDataProperties\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?/i);
   if (equivDataPropsMatch) {
     const prop1 = clean(equivDataPropsMatch[1]);
@@ -611,6 +630,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse SubObjectPropertyOf: SubObjectPropertyOf(<subProp> <superProp>)
   const subObjPropMatch = readable.match(/SubObjectPropertyOf\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (subObjPropMatch) {
     const subProp = clean(subObjPropMatch[1]);
@@ -623,6 +643,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse SubDataPropertyOf: SubDataPropertyOf(<subProp> <superProp>)
   const subDataPropMatch = readable.match(/SubDataPropertyOf\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (subDataPropMatch) {
     const subProp = clean(subDataPropMatch[1]);
@@ -635,6 +656,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse Declaration: Declaration(Class(<class>)) or Declaration(ObjectProperty(<prop>)) etc.
   const declarationMatch = readable.match(/Declaration\s*\(\s*(Class|ObjectProperty|DataProperty|NamedIndividual|AnnotationProperty)\s*\(\s*<?([^>\s)]+)>?\s*\)\s*\)/i);
   if (declarationMatch) {
     const entityType = declarationMatch[1];
@@ -647,6 +669,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse InverseObjectProperties: InverseObjectProperties(<prop1> <prop2>)
   const inversePropsMatch = readable.match(/InverseObjectProperties\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?\s*\)/i);
   if (inversePropsMatch) {
     const prop1 = clean(inversePropsMatch[1]);
@@ -659,6 +682,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse FunctionalObjectProperty: FunctionalObjectProperty(<prop>)
   const funcObjPropMatch = readable.match(/FunctionalObjectProperty\s*\(\s*<?([^>\s]+)>?\s*\)/i);
   if (funcObjPropMatch) {
     const prop = clean(funcObjPropMatch[1]);
@@ -669,6 +693,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse TransitiveObjectProperty: TransitiveObjectProperty(<prop>)
   const transitiveMatch = readable.match(/TransitiveObjectProperty\s*\(\s*<?([^>\s]+)>?\s*\)/i);
   if (transitiveMatch) {
     const prop = clean(transitiveMatch[1]);
@@ -679,6 +704,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse SymmetricObjectProperty: SymmetricObjectProperty(<prop>)
   const symmetricMatch = readable.match(/SymmetricObjectProperty\s*\(\s*<?([^>\s]+)>?\s*\)/i);
   if (symmetricMatch) {
     const prop = clean(symmetricMatch[1]);
@@ -689,6 +715,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
     };
   }
 
+  // Parse DisjointClasses: DisjointClasses(<class1> <class2> ...)
   const disjointMatch = readable.match(/DisjointClasses\s*\(\s*<?([^>\s]+)>?\s+<?([^>\s]+)>?/i);
   if (disjointMatch) {
     const cls1 = clean(disjointMatch[1]);
@@ -700,7 +727,8 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
       formatted: `${cls1} ⊥ ${cls2}`
     };
   }
-
+  
+  // Fallback: just extract local names from any URIs in the readable string
   const simplified = readable.replace(/<[^>]+#([^>]+)>/g, '$1').replace(/<[^>]+\/([^>/]+)>/g, '$1');
   return {
     type: axiom.axiomType || 'Unknown',
@@ -709,6 +737,8 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
   };
 };
 
+// Group axioms by type for better organization
+// Enhanced grouping with raw axiom data preserved for tooltips
 interface GroupedAxiomItem {
   formatted: string;
   subject: string;
@@ -719,7 +749,7 @@ interface GroupedAxiomItem {
 
 const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomItem[]> => {
   const groups = new Map<string, GroupedAxiomItem[]>();
-
+  
   axioms.forEach(axiom => {
     const parsed = formatInferredAxiom(axiom);
     const type = parsed.type;
@@ -734,10 +764,11 @@ const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomIte
       axiomType: axiom.axiomType || type
     });
   });
-
+  
   return groups;
 };
 
+// Axiom type icons and colors for better visual distinction
 const getAxiomTypeStyle = (type: string): { icon: string; bgColor: string; textColor: string; borderColor: string } => {
   const styles: Record<string, { icon: string; bgColor: string; textColor: string; borderColor: string }> = {
     'ClassAssertion': { icon: '🏷️', bgColor: 'bg-blue-50', textColor: 'text-blue-800', borderColor: 'border-blue-200' },
@@ -757,10 +788,11 @@ const getAxiomTypeStyle = (type: string): { icon: string; bgColor: string; textC
   return styles[type] || { icon: '📄', bgColor: 'bg-gray-50', textColor: 'text-gray-800', borderColor: 'border-gray-200' };
 };
 
+// Individual axiom card component with enhanced display
 const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, index }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const displaySubject = item.subject || item.formatted || `Item ${index + 1}`;
-
+  
   return (
     <div 
       className="relative group"
@@ -780,7 +812,7 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, 
           </>
         )}
       </div>
-      {}
+      {/* Tooltip with full axiom */}
       {showTooltip && item.rawReadable && (
         <div className="absolute z-50 bottom-full left-0 mb-2 p-3 bg-gray-900 text-white text-xs rounded-lg shadow-xl max-w-md whitespace-pre-wrap break-all">
           <div className="font-semibold mb-1 text-purple-300">{item.axiomType}</div>
@@ -827,6 +859,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
     </div>
   );
 
+  // Filter axioms by search term
   const filteredAxioms = searchFilter.trim() 
     ? results.inferredAxioms.filter(ax => {
         const searchLower = searchFilter.toLowerCase();
@@ -840,17 +873,18 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
     : results.inferredAxioms;
 
   const groupedAxioms = groupAxiomsByType(filteredAxioms);
-
+  
+  // Highlight SWRL-specific inferences (ClassAssertion = individuals classified by rules)
   const classAssertions = results.inferredAxioms.filter(ax => {
     const parsed = formatInferredAxiom(ax);
     return parsed.type === 'ClassAssertion';
   });
-
+  
   const hasSwrlResults = classAssertions.length > 0;
 
   return (
     <div className="p-4 space-y-4">
-      {}
+      {/* Execution Summary Card */}
       <div className="bg-gradient-to-r from-white to-gray-50 rounded-xl border-2 border-gray-200 p-5 shadow-sm">
         <h3 className="font-bold text-gray-800 mb-4 text-lg flex items-center gap-2">
           <BarChart2 size={20} className="text-purple-600" />
@@ -882,8 +916,8 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
             <div className="text-lg font-bold text-purple-600">{results.inferredAxiomsCount}</div>
           </div>
         </div>
-
-        {}
+        
+        {/* Show executed rule names if available */}
         {results.executedRuleNames && results.executedRuleNames.length > 0 && (
           <div className="mt-4 pt-4 border-t border-gray-200">
             <div className="text-xs text-gray-500 uppercase tracking-wide mb-2">Executed Rules</div>
@@ -899,7 +933,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
         )}
       </div>
 
-      {}
+      {/* SWRL Rule Results - ClassAssertions (individuals classified by rules) */}
       {results.success && hasSwrlResults && (
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border-2 border-green-300 overflow-hidden shadow-md">
           <div className="p-4 border-b border-green-200 flex justify-between items-center">
@@ -930,7 +964,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
         </div>
       )}
 
-      {}
+      {/* No SWRL Results Warning */}
       {results.success && !hasSwrlResults && results.inferredAxioms.length > 0 && (
         <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4">
           <div className="flex items-start gap-3">
@@ -962,7 +996,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
         </div>
       )}
 
-      {}
+      {/* Error Message */}
       {!results.success && results.errorMessage && (
         <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4">
           <div className="flex items-start gap-3">
@@ -975,10 +1009,10 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
         </div>
       )}
 
-      {}
+      {/* Inferred Axioms Section */}
       {results.success && results.inferredAxioms.length > 0 && (
         <div className="bg-white rounded-xl border-2 border-gray-200 overflow-hidden shadow-sm">
-          {}
+          {/* Header with controls */}
           <div className="p-4 bg-gradient-to-r from-purple-50 to-white border-b-2 border-gray-100 flex flex-col gap-3">
             <div className="flex justify-between items-center">
               <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2">
@@ -989,7 +1023,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
                 </span>
               </h3>
               <div className="flex items-center gap-3">
-                {}
+                {/* View mode toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
                   <button
                     onClick={() => setViewMode('grouped')}
@@ -1013,7 +1047,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
                     📝 Raw
                   </button>
                 </div>
-                {}
+                {/* Expand/Collapse buttons for grouped view */}
                 {viewMode === 'grouped' && (
                   <div className="flex gap-1">
                     <button onClick={expandAll} className="px-2 py-1 text-xs text-purple-600 hover:bg-purple-50 rounded" title="Expand all">
@@ -1024,7 +1058,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
                     </button>
                   </div>
                 )}
-                {}
+                {/* Show/Hide toggle */}
                 <button
                   onClick={() => setShowInferredAxioms(!showInferredAxioms)}
                 className="flex items-center gap-1 px-3 py-1.5 text-sm text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
@@ -1034,7 +1068,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
               </button>
             </div>
           </div>
-          {}
+          {/* Search Filter */}
           {showInferredAxioms && (
             <div className="px-4 pb-3">
               <div className="relative">
@@ -1064,7 +1098,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
           )}
           </div>
 
-          {}
+          {/* Grouped View */}
           {showInferredAxioms && viewMode === 'grouped' && (
             <div className="max-h-[500px] overflow-y-auto">
               {Array.from(groupedAxioms.entries()).map(([type, items]) => {
@@ -1072,7 +1106,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
                 const isExpanded = expandedGroups.has(type);
                 return (
                   <div key={type} className="border-b border-gray-100 last:border-b-0">
-                    {}
+                    {/* Group header - clickable to expand/collapse */}
                     <button
                       onClick={() => toggleGroup(type)}
                       className={`w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors ${style.bgColor}`}
@@ -1088,7 +1122,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
                       </div>
                       <ChevronRight size={20} className={`text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                     </button>
-                    {}
+                    {/* Group content */}
                     {isExpanded && (
                       <div className="p-4 pt-2 bg-white">
                         <div className="flex flex-wrap gap-2">
@@ -1104,7 +1138,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
             </div>
           )}
 
-          {}
+          {/* Table View */}
           {showInferredAxioms && viewMode === 'table' && (
             <div className="max-h-[500px] overflow-auto">
               <table className="w-full text-sm">
@@ -1140,7 +1174,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
             </div>
           )}
 
-          {}
+          {/* Raw View */}
           {showInferredAxioms && viewMode === 'raw' && (
             <div className="max-h-[500px] overflow-y-auto">
               {filteredAxioms.map((ax, i) => {
@@ -1162,7 +1196,7 @@ const ExecutionResultsPanel: React.FC<{ results: ExecutionResponse | null }> = (
         </div>
       )}
 
-      {}
+      {/* No Results Message */}
       {results.success && results.inferredAxiomsCount === 0 && (
         <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200 rounded-xl p-6 text-center">
           <div className="text-4xl mb-3">🔍</div>
@@ -1189,7 +1223,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
     category: '',
     enabled: true
   });
-
+  
   const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [executedRulesInfo, setExecutedRulesInfo] = useState<{ count: number; names: string[] } | null>(null);
@@ -1200,13 +1234,15 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
   const [stats, setStats] = useState<any>(null);
   const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>('swrlb');
   const fileInputRef = useRef<HTMLInputElement>(null);
-
+  
+  // Panel visibility and maximize state
   const [editorCollapsed, setEditorCollapsed] = useState(false);
   const [resultsMaximized, setResultsMaximized] = useState(false);
   const [editorMaximized, setEditorMaximized] = useState(false);
   const [ruleDetailsMaximized, setRuleDetailsMaximized] = useState(false);
   const [ruleExpressionMaximized, setRuleExpressionMaximized] = useState(false);
-
+  
+  // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     ruleName: string;
@@ -1215,6 +1251,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
 
   const debouncedRuleText = useDebounce(editForm.ruleText, 500);
 
+  // Multi-select handlers
   const toggleRuleSelection = (ruleId: string) => {
     const newSelection = new Set(selectedRuleIds);
     if (newSelection.has(ruleId)) {
@@ -1237,12 +1274,13 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
     setSelectedRuleIds(new Set(rules.filter(r => r.enabled).map(r => r.id)));
   };
 
+  // Load rules on mount - handle both array and paginated responses
   const loadRules = useCallback(async () => {
     if (!projectId) return;
     setIsLoading(true);
     try {
       const response = await apiClient.get<SwrlRule[] | PagedResponse<SwrlRule>>(`/api/swrl/${projectId}/rules`);
-
+      // Handle both direct array and paginated response
       if (Array.isArray(response)) {
         setRules(response);
       } else if (response && typeof response === 'object' && 'content' in response) {
@@ -1262,6 +1300,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
     loadRules();
   }, [loadRules]);
 
+  // Validate debounced rule text
   useEffect(() => {
     const validate = async () => {
       if (!isEditing || !debouncedRuleText.trim()) {
@@ -1310,25 +1349,25 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
   const handleSave = async () => {
     try {
       if (selectedRule) {
-
+        // Update existing rule
         const response = await apiClient.put<SwrlRule>(
           `/api/swrl/${projectId}/rules/${selectedRule.id}`, //
           editForm
         );
-
+        
         setRules(rules.map(r => r.id === selectedRule.id ? response : r));
         setSelectedRule(response);
       } else {
-
+        // Create new rule
         const response = await apiClient.post<SwrlRule>(
           `/api/swrl/${projectId}/rules`, //
           editForm
         );
-
+        
         setRules([...rules, response]);
         setSelectedRule(response);
       }
-
+      
       setIsEditing(false);
       setValidationResult(null);
     } catch (error) {
@@ -1339,14 +1378,16 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
 
   const handleDelete = async () => {
     if (!selectedRule) return;
-
+    
+    // Show custom confirmation dialog instead of browser confirm
     setConfirmDialog({
       isOpen: true,
       ruleName: selectedRule.ruleName,
       ruleId: selectedRule.id
     });
   };
-
+  
+  // Actual delete handler called after confirmation
   const executeDelete = async (ruleId: string) => {
     try {
       await apiClient.delete(`/api/swrl/${projectId}/rules/${ruleId}`);
@@ -1368,9 +1409,9 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
         `/api/swrl/${projectId}/rules/${rule.id}`, //
         { enabled: !rule.enabled } // Send only the changed field
       );
-
+      
       setRules(rules.map(r => r.id === rule.id ? response : r));
-
+      
       if (selectedRule?.id === rule.id) {
         setSelectedRule(response);
         setEditForm(prev => ({ ...prev, enabled: response.enabled }));
@@ -1427,12 +1468,12 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
       try {
         const content = e.target?.result as string;
         const rulesToImport = JSON.parse(content);
-
+        
         await apiClient.post(
           `/api/swrl/${projectId}/rules/import`,
           rulesToImport
         );
-
+        
         loadRules();
         alert('Rules imported successfully');
       } catch (error) {
@@ -1459,7 +1500,8 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
       const text = editForm.ruleText;
       const newText = text.substring(0, start) + symbol + text.substring(end);
       setEditForm(prev => ({ ...prev, ruleText: newText }));
-
+      
+      // Restore focus and cursor position
       setTimeout(() => {
         textarea.focus();
         textarea.setSelectionRange(start + symbol.length, start + symbol.length);
@@ -1496,15 +1538,16 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
     }
   };
 
+  // Execute selected rules (multi-select)
   const handleExecuteSelectedRules = async () => {
     if (selectedRuleIds.size === 0) return;
     setIsExecuting(true);
     setExecutionResult(null);
-
+    
     try {
       const ruleIds = Array.from(selectedRuleIds);
       const selectedNames = rules.filter(r => selectedRuleIds.has(r.id)).map(r => r.ruleName);
-
+      
       const response = await apiClient.post<ExecutionResponse>(
         `/api/swrl/${projectId}/execute/selected`,
         { ruleIds }
@@ -1521,10 +1564,11 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
     }
   };
 
+  // Execute all enabled rules
   const handleExecuteAllRules = async () => {
     setIsExecuting(true);
     setExecutionResult(null);
-
+    
     try {
       const enabledNames = rules.filter(r => r.enabled).map(r => r.ruleName);
       const response = await apiClient.post<ExecutionResponse>(
@@ -1563,7 +1607,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                   : `${enabledCount} of ${rules.length} enabled`}
               </p>
             </div>
-
+            
             <div className="flex items-center gap-1 mr-2 border-r pr-2">
               <button onClick={loadStats} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg" title="Statistics">
                 <BarChart2 size={18} />
@@ -1583,7 +1627,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
               />
             </div>
 
-            {}
+            {/* Execute Selected Rules Button */}
             {selectedRuleIds.size > 0 && (
               <button
                 onClick={handleExecuteSelectedRules}
@@ -1605,7 +1649,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
               </button>
             )}
 
-            {}
+            {/* Execute All Enabled Rules Button */}
             <button
               onClick={handleExecuteAllRules}
               disabled={isExecuting || enabledCount === 0}
@@ -1629,9 +1673,9 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
       </header>
 
       <div className="flex flex-1 overflow-hidden p-4 gap-4">
-        {}
+        {/* Rules List */}
         <aside className="w-80 bg-white border border-gray-200 rounded-lg flex flex-col">
-          {}
+          {/* New Rule Button + Selection Controls */}
           <div className="p-2 border-b border-gray-200 space-y-2">
             <button
               onClick={handleNewRule}
@@ -1640,8 +1684,8 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
               <Plus size={16} />
               New Rule
             </button>
-
-            {}
+            
+            {/* Selection Controls */}
             {rules.length > 0 && (
               <div className="flex items-center gap-1 text-xs">
                 <button 
@@ -1697,7 +1741,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                   }`}
                 >
                   <div className="flex items-start gap-2 mb-1">
-                    {}
+                    {/* Checkbox for multi-select */}
                     <input
                       type="checkbox"
                       checked={selectedRuleIds.has(rule.id)}
@@ -1756,12 +1800,12 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
           </div>
         </aside>
 
-        {}
+        {/* Rule Editor & Panels - with maximize support */}
         <main className="flex-1 flex flex-col gap-3 overflow-hidden">
-          {}
+          {/* Rule editor surface with collapse/expand - only show if not collapsed and not results maximized */}
           {!editorCollapsed && !resultsMaximized && (
           <div className={`overflow-y-auto space-y-3 pr-1 ${editorMaximized ? 'flex-1' : ''}`}>
-            {}
+            {/* Editor Header with controls */}
             <div className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-3 py-2">
               <span className="text-sm font-semibold text-gray-700">📝 Rule Editor</span>
               <div className="flex items-center gap-1">
@@ -1781,7 +1825,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                 </button>
               </div>
             </div>
-
+            
             {!selectedRule && !isEditing ? (
               <div className="flex items-center justify-center h-48 text-gray-500 bg-white border-2 border-gray-200 rounded-lg">
                 <div className="text-center">
@@ -1792,7 +1836,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
               </div>
             ) : (
               <>
-              {}
+              {/* Rule Name Section */}
               <CollapsibleSection 
                 title="Rule Details" 
                 defaultOpen={false}
@@ -1812,7 +1856,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                 }
               >
                 <div className="p-4 space-y-4">
-                  {}
+                  {/* Rule Name */}
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">Rule Name *</label>
                     <input
@@ -1825,7 +1869,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                     />
                   </div>
 
-                  {}
+                  {/* Category and Status Row */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1.5">Category</label>
@@ -1863,7 +1907,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                 </div>
               </CollapsibleSection>
 
-              {}
+              {/* Rule Text Section - Resizable */}
               <ResizableSection 
                 title="SWRL Rule Expression" 
                 defaultOpen={false}
@@ -1874,7 +1918,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                 isMaximized={ruleExpressionMaximized}
               >
                 <div className="p-4 h-full flex flex-col">
-                  {}
+                  {/* Toolbar */}
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <div className="relative group">
                       <button className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded flex items-center gap-1">
@@ -1895,9 +1939,9 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                         ))}
                       </div>
                     </div>
-
+                    
                     <div className="h-6 w-px bg-gray-300 mx-1"></div>
-
+                    
                     <button onClick={() => insertSymbol(' ^ ')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert AND">^</button>
                     <button onClick={() => insertSymbol(' -> ')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert IMPLIES">→</button>
                     <button onClick={() => insertSymbol('(?x)')} className="px-2 py-1 text-xs font-mono bg-gray-50 border border-gray-300 rounded hover:bg-gray-100" title="Insert Variable">(?x)</button>
@@ -1917,8 +1961,8 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                     <span>Use <kbd className="px-1.5 py-0.5 bg-gray-200 rounded font-mono">^</kbd> for AND, <kbd className="px-1.5 py-0.5 bg-gray-200 rounded font-mono">→</kbd> for THEN</span>
                     <span className="text-gray-400">{editForm.ruleText.length} chars</span>
                   </div>
-
-                  {}
+                  
+                  {/* Validation Result */}
                   {validationResult && (
                     <div className={`mt-3 p-3 rounded-lg flex items-start gap-3 ${
                       validationResult.valid
@@ -1942,7 +1986,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                 </div>
               </ResizableSection>
 
-              {}
+              {/* Description Section */}
               <ResizableSection 
                 title="Description / Notes" 
                 defaultOpen={false}
@@ -1961,7 +2005,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                 </div>
               </ResizableSection>
 
-              {}
+              {/* Action Buttons */}
               {isEditing && (
                 <div className="sticky bottom-0 p-4 bg-gradient-to-t from-gray-100 to-transparent pt-6">
                   <div className="flex items-center gap-3 p-4 bg-white border-2 border-gray-200 rounded-lg shadow-lg">
@@ -1973,9 +2017,9 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                       <Trash2 size={16} />
                       Delete
                     </button>
-
+                    
                     <div className="flex-grow" />
-
+                    
                     <button
                       onClick={handleTestRule}
                       disabled={!selectedRule || !editForm.ruleText.trim()}
@@ -1984,7 +2028,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                       <Play size={16} />
                       Test Rule
                     </button>
-
+                    
                     <button
                       onClick={() => {
                         setIsEditing(false);
@@ -1996,7 +2040,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
                     >
                       Cancel
                     </button>
-
+                    
                     <button
                       onClick={handleSave}
                       disabled={!editForm.ruleText.trim() || !editForm.ruleName.trim()}
@@ -2012,8 +2056,8 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
             )}
           </div>
           )}
-
-          {}
+          
+          {/* Collapsed Editor Bar */}
           {editorCollapsed && !resultsMaximized && (
             <div className="flex items-center justify-between bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
               <span className="text-sm font-medium text-gray-600">📝 Rule Editor (collapsed)</span>
@@ -2025,8 +2069,8 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
               </button>
             </div>
           )}
-
-          {}
+          
+          {/* Tabs for SQWRL/Results/Reference - ALWAYS visible */}
           <div className={`flex flex-col bg-white border border-gray-200 rounded-lg overflow-hidden ${editorMaximized ? 'hidden' : resultsMaximized ? 'fixed inset-4 z-50 shadow-2xl' : 'flex-1 min-h-[300px]'}`}>
             <div className="flex items-center gap-2 text-xs p-2 border-b bg-gray-50">
               <button onClick={() => setActiveTab('query')} className={`px-3 py-1.5 rounded ${activeTab === 'query' ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}>SQWRL Query</button>
@@ -2041,10 +2085,10 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
               <button onClick={() => setActiveTab('reference')} className={`px-3 py-1.5 rounded flex items-center gap-1 ${activeTab === 'reference' ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}>
                 <BookOpen size={12} /> Built-in Reference
               </button>
-
+              
               <div className="flex-1" />
-
-              {}
+              
+              {/* Results panel controls */}
               <button 
                 onClick={() => { setResultsMaximized(!resultsMaximized); setEditorMaximized(false); }} 
                 className={`p-1.5 rounded transition-colors ${resultsMaximized ? 'bg-purple-100 text-purple-700' : 'text-gray-500 hover:bg-gray-100'}`}
@@ -2111,7 +2155,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
         </main>
       </div>
 
-      {}
+      {/* Backdrop for maximized results panel */}
       {resultsMaximized && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-50 z-40"
@@ -2119,7 +2163,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
         />
       )}
 
-      {}
+      {/* Fullscreen modal for Rule Details */}
       {ruleDetailsMaximized && (
         <>
           <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setRuleDetailsMaximized(false)} />
@@ -2155,7 +2199,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
         </>
       )}
 
-      {}
+      {/* Fullscreen modal for Rule Expression */}
       {ruleExpressionMaximized && (
         <>
           <div className="fixed inset-0 bg-black bg-opacity-50 z-40" onClick={() => setRuleExpressionMaximized(false)} />
@@ -2221,7 +2265,7 @@ const SWRLEditor: React.FC<{ projectId: string; context: PluginContext }> = ({ p
         </div>
       )}
 
-      {}
+      {/* Delete Confirmation Dialog */}
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title="Delete Rule"

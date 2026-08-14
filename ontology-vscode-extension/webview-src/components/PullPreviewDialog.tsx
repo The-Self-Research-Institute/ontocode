@@ -95,7 +95,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {}
+        {/* Header */}
         <div
           className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
           style={{ borderColor: "var(--color-border)" }}
@@ -109,7 +109,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3 text-xs">
           {phase === "analyzing" && (
             <div className="flex flex-col items-center justify-center py-10 gap-2 opacity-70">
@@ -189,7 +189,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                 </div>
               )}
 
-              {}
+              {/* Conflict resolution cards */}
               {conflicts.length > 0 && (
                 <div className="flex flex-col gap-2">
                   {conflicts.map((c) => {
@@ -250,7 +250,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
           )}
         </div>
 
-        {}
+        {/* Footer */}
         <div
           className="flex justify-end gap-2 px-4 py-3 border-t flex-shrink-0"
           style={{ borderColor: "var(--color-border)" }}

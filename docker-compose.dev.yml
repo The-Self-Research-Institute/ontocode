@@ -38,10 +38,7 @@ services:
   # Admin UI: http://localhost:3030  (admin / admin)
   # SPARQL:   http://localhost:3030/ontocode/query
   fuseki:
-    build:
-      context: ./fuseki-docker
-      dockerfile: Dockerfile
-    image: ontocode-fuseki:6.1.0
+    image: ${DOCKER_REGISTRY:-sindhujacoretopia}/ontocode-fuseki:${FUSEKI_VERSION:-6.1.0}
     container_name: ontocode-fuseki
     restart: unless-stopped
     user: root

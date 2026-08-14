@@ -8,8 +8,17 @@ public class AnnotationPropertyDto {
     private String iri;
     private String label;
     private String description;
+    private List<String> ranges;
     private Map<String, List<String>> annotations;
     private List<String> superProperties;
+   
+    public List<String> getRanges() {
+        return ranges;
+    }
+
+    public void setRanges(List<String> ranges) {
+        this.ranges = ranges;
+    }
 
     public String getId() {
         return id;

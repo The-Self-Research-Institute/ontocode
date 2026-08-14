@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, Eye, EyeOff, Wrench, Clock } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../custom-hook/useAuth';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { OntoCodeLogo } from './OntoCodeLogo';
 import { getAppVersion } from '../utils/appVersion';
@@ -13,7 +13,7 @@ const MaintenancePage: React.FC = () => (
             </div>
             <h1 className="text-3xl font-bold text-white mb-3">Under Maintenance</h1>
             <p className="text-slate-300 text-lg mb-2">
-                OntoCode is currently undergoing scheduled maintenance.
+                OntoCode Studio is currently undergoing scheduled maintenance.
             </p>
             <p className="text-slate-400 mb-8">
                 We're working hard to improve your experience. The system will be back online shortly.
@@ -88,6 +88,7 @@ const Login: React.FC = () => {
 
             await login(payload.username, password);
 
+            // If there's an invite token, accept it after login
             if (inviteToken) {
                 navigate(`/invite?token=${inviteToken}`);
             } else {
@@ -111,13 +112,13 @@ const Login: React.FC = () => {
     return (
         <div className="min-h-screen overflow-y-auto flex items-center justify-center bg-gradient-to-br from-purple-50 via-blue-50 to-indigo-50 p-6">
             <div className="max-w-md w-full">
-                {}
+                {/* Header */}
                 <div className="text-center mb-8">
                     <div className="inline-flex items-center justify-center mb-4">
                         <OntoCodeLogo size={64} rounded className="shadow-lg" />
                     </div>
                     <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                        {inviteToken ? 'Join OntoCode' : 'OntoCode Editor'}
+                        {inviteToken ? 'Join OntoCode Studio' : 'OntoCode Studio Editor'}
                     </h1>
                     <p className="text-gray-600">
                         {inviteToken 
@@ -129,7 +130,7 @@ const Login: React.FC = () => {
                     </p>
                 </div>
 
-                {}
+                {/* Login/Signup Form */}
                 <div className="bg-white rounded-2xl shadow-xl p-8">
                     {error && (
                         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -229,9 +230,9 @@ const Login: React.FC = () => {
                     </div>
                 </div>
 
-                {}
+                {/* Footer */}
                 <p className="text-center text-xs text-gray-500 mt-6">
-                    {appVersion ? `OntoCode v${appVersion}` : 'OntoCode'}
+                    {appVersion ? `OntoCode Studio v${appVersion}` : 'OntoCode Studio'}
                     <span className="mx-2">·</span>
                     By continuing, you agree to our Terms of Service and Privacy Policy
                 </p>

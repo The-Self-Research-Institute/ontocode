@@ -584,7 +584,7 @@ function flattenSingleSubdir(targetDir) {
 }
 
 async function main() {
-    console.log('\n=== OntoCode Desktop — prepare-resources ===');
+    console.log('\n=== OntoCode Studio — prepare-resources ===');
     if (CROSS_BUILDING) {
         console.log(`    Cross-building for TARGET_PLATFORM=${TARGET_PLATFORM} (host is ${process.platform})`);
     }

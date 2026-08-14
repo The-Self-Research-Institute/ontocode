@@ -15,19 +15,19 @@ public class PluginStatsResponse {
 
     private String pluginId;
 
-    private Long totalInstalls;
+    private Long totalInstalls;  // Total installations across all users
 
-    private Long activeInstalls;
+    private Long activeInstalls;  // Currently active installations
 
-    private Long totalDownloads;
+    private Long totalDownloads;  // Download count
 
-    private Double averageRating;
+    private Double averageRating;  // Average star rating
 
-    private Integer totalRatings;
+    private Integer totalRatings;  // Number of ratings
 
-    private Map<Integer, Long> ratingDistribution;
+    private Map<Integer, Long> ratingDistribution;  // Star count -> number of ratings (1->10, 2->5, etc.)
 
-    private Long recommendedCount;
+    private Long recommendedCount;  // How many users recommended this
 
-    private Integer totalReviews;
+    private Integer totalReviews;  // Number of text reviews
 }

@@ -20,7 +20,7 @@ import java.util.Optional;
 public class ProjectMetadataService {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectMetadataService.class);
-
+    
     private final ProjectRepository projectRepository;
     private final MongoTemplate mongoTemplate;
 
@@ -68,6 +68,7 @@ public class ProjectMetadataService {
         mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
 
+    /** Persist import progress for polling clients (Project Library cards). */
     public void writeImportProgress(String projectId, int progress, String stage, String message) {
         Instant now = Instant.now();
         Map<String, Object> progressMeta = new HashMap<>();
@@ -87,7 +88,7 @@ public class ProjectMetadataService {
 
         mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
-
+    
     public void setOwnerEmail(String projectId, String ownerEmail) {
         Instant now = Instant.now();
         Update update = newProjectUpdate(projectId, now)
@@ -97,7 +98,7 @@ public class ProjectMetadataService {
 
         mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
-
+    
     public void setGridfsFileId(String projectId, String gridfsFileId) {
         Instant now = Instant.now();
         Update update = newProjectUpdate(projectId, now)
@@ -107,14 +108,14 @@ public class ProjectMetadataService {
 
         mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
     }
-
+    
     public boolean isDuplicateFilename(String filename, String ownerEmail) {
         if (filename == null || ownerEmail == null) {
             return false;
         }
         return !projectRepository.findByFilenameAndOwnerEmail(filename, ownerEmail).isEmpty();
     }
-
+    
     public Optional<String> getExistingProjectId(String filename, String ownerEmail) {
         if (filename == null || ownerEmail == null) {
             return Optional.empty();
@@ -122,7 +123,7 @@ public class ProjectMetadataService {
         return projectRepository.findFirstByFilenameAndOwnerEmailOrderByUpdatedAtDesc(filename, ownerEmail)
                 .map(ProjectDocument::getId);
     }
-
+    
     public Optional<String> getProjectIdByFilename(String filename) {
         if (filename == null) {
             return Optional.empty();
@@ -131,10 +132,15 @@ public class ProjectMetadataService {
                 .map(ProjectDocument::getId);
     }
 
+    /**
+     * FIX: Batch update project metadata in a single database operation
+     * Improves performance by avoiding 3 separate DB writes
+     * Creates MongoDB project document for both cloud and self-hosted deployments
+     */
     public void updateProjectMetadata(String projectId, ProjectStatus status, String gridfsFileId, String ownerEmail, String workspaceId, String parentProjectId) {
-        log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, workspace: {}, parentProject: {}, status: {}",
+        log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, workspace: {}, parentProject: {}, status: {}", 
             projectId, ownerEmail, workspaceId, parentProjectId, status.status());
-
+            
         Instant now = Instant.now();
         Update update = newProjectUpdate(projectId, now)
                 .set("status", status.status())
@@ -161,10 +167,10 @@ public class ProjectMetadataService {
         }
 
         mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
-        log.info("[ProjectMetadataService] ✓ Project saved to MongoDB - id: {}, owner: {}, filename: {}",
+        log.info("[ProjectMetadataService] ✓ Project saved to MongoDB - id: {}, owner: {}, filename: {}", 
             projectId, ownerEmail, status.filename());
     }
-
+    
     public Optional<String> getOwnerEmail(String projectId) {
         return projectRepository.findById(projectId)
                 .map(ProjectDocument::getOwnerEmail);
@@ -182,6 +188,9 @@ public class ProjectMetadataService {
         writeMeta(projectId, meta);
     }
 
+    /**
+     * Get the updatedAt timestamp for a project
+     */
     public Instant getUpdatedAt(String projectId) {
         return projectRepository.findById(projectId)
                 .map(ProjectDocument::getUpdatedAt)
@@ -195,6 +204,12 @@ public class ProjectMetadataService {
                 .orElse(0L);
     }
 
+    /**
+     * Synchronous version bump — must complete before mutation HTTP response returns
+     * so other users' reads never see a stale OWLAPI model with a matching version.
+     * Uses findAndModify so the returned value is the version THIS call wrote, not
+     * a later one that raced in between a write + separate read.
+     */
     public long incrementMutationVersion(String projectId) {
         Instant now = Instant.now();
         Update update = new Update()
@@ -209,6 +224,14 @@ public class ProjectMetadataService {
                 ? updated.getMutationVersion() : 0L;
     }
 
+    /**
+     * Atomic version bump for the main-graph revision counter, mirroring
+     * {@link #incrementMutationVersion}. {@code writeMeta} does a full read-then-replace
+     * of the whole "metadata" sub-document, so a concurrent writer (e.g. the hierarchy
+     * snapshot rebuild's mergeMetaIntoProject) reading in between this read and write
+     * would silently clobber the new revision on its own write-back. $inc on the nested
+     * field sidesteps that race entirely.
+     */
     public long incrementMainGraphRevision(String projectId) {
         Instant now = Instant.now();
         Update update = new Update()

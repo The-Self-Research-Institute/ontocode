@@ -17,7 +17,7 @@
 set -e
 
 if [ ! -f "$FUSEKI_BASE/shiro.ini" ] ; then
-
+  # First time
   echo "###################################"
   echo "Initializing Apache Jena Fuseki"
   echo ""
@@ -36,6 +36,8 @@ if [ -d "/fuseki-extra" ] && [ ! -d "$FUSEKI_BASE/extra" ] ; then
   ln -s "/fuseki-extra" "$FUSEKI_BASE/extra"
 fi
 
+# $ADMIN_PASSWORD only modifies if ${ADMIN_PASSWORD}
+# is in shiro.ini
 if [ -n "$ADMIN_PASSWORD" ] ; then
   export ADMIN_PASSWORD
   envsubst '${ADMIN_PASSWORD}' < "$FUSEKI_BASE/shiro.ini" > "$FUSEKI_BASE/shiro.ini.$$" && \
@@ -43,6 +45,7 @@ if [ -n "$ADMIN_PASSWORD" ] ; then
   export ADMIN_PASSWORD
 fi
 
+# fork
 exec "$@" &
 
 TDB_VERSION=''
@@ -52,11 +55,13 @@ else
   TDB_VERSION='tdb2'
 fi
 
+# Wait until server is up
 echo "Waiting for Fuseki to finish starting up..."
 until $(curl --output /dev/null --silent --head --fail http://localhost:3030); do
   sleep 1s
 done
 
+# Convert env to datasets
 printenv | grep "^FUSEKI_DATASET_" | while read env_var
 do
     dataset=$(echo $env_var | grep -o "=.*$" | sed 's/^=//g')
@@ -67,6 +72,7 @@ do
          --data "dbName=${dataset}&dbType=${TDB_VERSION}"
 done
 echo "Fuseki is available :-)"
-unset ADMIN_PASSWORD
+unset ADMIN_PASSWORD # Don't keep it in memory
 
+# rejoin our exec
 wait

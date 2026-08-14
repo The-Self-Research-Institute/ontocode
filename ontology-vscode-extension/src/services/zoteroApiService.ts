@@ -23,9 +23,9 @@ export interface ZoteroItem {
         }>;
         abstractNote?: string;
         date?: string;
-
+        /** Zotero canonical name. Lowercase variants exist in older translators. */
         DOI?: string;
-
+        /** Free-text field; users often stash "DOI: 10.x/y", "PMID: ..." etc. here. */
         extra?: string;
         url?: string;
         publicationTitle?: string;
@@ -40,6 +40,9 @@ export interface ZoteroItem {
 class ZoteroApiService {
     private baseUrl = 'https://api.zotero.org';
 
+    /**
+     * Get Zotero configuration from VS Code settings
+     */
     private getConfig(): ZoteroConfig | null {
         const config = vscode.workspace.getConfiguration('ontocode.zotero');
         const apiKey = config.get<string>('apiKey', '');
@@ -48,16 +51,23 @@ class ZoteroApiService {
         const groupId = config.get<string>('groupId', '');
 
         if (!apiKey || !userId) {
+            console.log('[ZoteroAPI] API key or user ID not configured');
             return null;
         }
 
         return { apiKey, userId, libraryType, groupId };
     }
 
+    /**
+     * Check if Zotero is configured
+     */
     isConfigured(): boolean {
         return this.getConfig() !== null;
     }
 
+    /**
+     * Fetch a single page of library items and return both the items and the total results.
+     */
     async fetchLibraryPage(
         start: number = 0,
         pageSize: number = 100,
@@ -74,6 +84,7 @@ class ZoteroApiService {
 
         const url = `${this.baseUrl}/${libraryPath}/items`;
         const qTrim = opts?.q?.trim();
+        console.log('[ZoteroAPI] Fetching from:', url, 'start:', start, 'limit:', pageSize, qTrim ? `q="${qTrim}"` : '(full library)');
 
         const params: Record<string, string | number> = {
                 limit: pageSize,
@@ -94,14 +105,19 @@ class ZoteroApiService {
             timeout: 20000
         });
 
+        console.log(`[ZoteroAPI] Fetched ${response.data.length} items`);
         const totalResults = parseInt(response.headers['total-results'] || '0', 10);
         return { items: response.data, totalResults };
     }
 
+    /**
+     * Fetch items from Zotero library
+     */
     async fetchLibrary(limit: number = 10000, start: number = 0, throwOnError: boolean = false): Promise<ZoteroItem[]> {
         const config = this.getConfig();
-
+        
         if (!config) {
+            console.log('[ZoteroAPI] Not configured, skipping fetch');
             return [];
         }
 
@@ -125,7 +141,7 @@ class ZoteroApiService {
                     break;
                 }
             } catch (error) {
-                if (throwOnError) {throw error;}
+                if (throwOnError) throw error;
                 return this.handleFetchError(error);
             }
         }
@@ -174,9 +190,12 @@ class ZoteroApiService {
         return [];
     }
 
+    /**
+     * Fetch a specific item by key
+     */
     async fetchItem(itemKey: string): Promise<ZoteroItem | null> {
         const config = this.getConfig();
-
+        
         if (!config) {
             return null;
         }
@@ -207,6 +226,12 @@ class ZoteroApiService {
         }
     }
 
+    /**
+     * Entry point for "Configure Zotero API Key" — branches on whether a key
+     * is already saved so the same command also covers changing the key and
+     * disconnecting, instead of always showing a "not configured" message
+     * that's wrong (and offers nothing useful) once you're already connected.
+     */
     async showConfigInstructions(): Promise<void> {
         if (this.isConfigured()) {
             const choice = await vscode.window.showInformationMessage(
@@ -248,6 +273,11 @@ class ZoteroApiService {
         }
     }
 
+    /**
+     * Resolve the numeric userID tied to an API key via GET /keys/{key}.
+     * Throws on failure so the caller can distinguish an actually-invalid key
+     * (HTTP 403/404) from a network/TLS/timeout failure reaching Zotero.
+     */
     private async fetchUserIdFromApiKey(apiKey: string): Promise<string | null> {
         const response = await axios.get(`${this.baseUrl}/keys/${encodeURIComponent(apiKey)}`, {
             headers: { 'Zotero-API-Version': '3', 'Accept': 'application/json' },
@@ -255,7 +285,9 @@ class ZoteroApiService {
         });
         const data = response.data;
         if (!data || typeof data !== 'object') {
-
+            // A non-JSON 200 (e.g. an HTML page) almost always means something between
+            // this Node process and Zotero rewrote the response — a corporate proxy/VPN
+            // or SSL-inspection appliance, not an invalid key.
             const preview = typeof data === 'string' ? data.slice(0, 200) : String(data);
             console.error(
                 `[ZoteroAPI] Unexpected /keys response — status ${response.status}, ` +
@@ -275,8 +307,11 @@ class ZoteroApiService {
         return String(data.userID);
     }
 
+    /**
+     * Prompt user to enter Zotero credentials
+     */
     async promptForCredentials(): Promise<boolean> {
-
+        // Step 1: Get API Key
         const apiKey = await vscode.window.showInputBox({
             prompt: 'Enter your Zotero API Key',
             placeHolder: 'Get it from https://www.zotero.org/settings/keys',
@@ -298,6 +333,7 @@ class ZoteroApiService {
             return false;
         }
 
+        // Step 2: Auto-resolve User ID from the API key
         let userId: string | null;
         try {
             userId = await vscode.window.withProgress({
@@ -325,6 +361,7 @@ class ZoteroApiService {
             return false;
         }
 
+        // Step 3: Save to settings
         try {
             const config = vscode.workspace.getConfiguration('ontocode.zotero');
             await config.update('apiKey', apiKey.trim(), vscode.ConfigurationTarget.Global);
@@ -346,10 +383,16 @@ class ZoteroApiService {
         }
     }
 
+    /**
+     * Expose config for the webview to read (e.g. populate ZoteroSettingsDialog)
+     */
     getPublicConfig(): ZoteroConfig | null {
         return this.getConfig();
     }
 
+    /**
+     * Save Zotero credentials to VS Code workspace settings (called from webview postMessage)
+     */
     async saveConfig(cfg: ZoteroConfig): Promise<void> {
         const config = vscode.workspace.getConfiguration('ontocode.zotero');
         await config.update('apiKey', cfg.apiKey, vscode.ConfigurationTarget.Global);
@@ -358,6 +401,9 @@ class ZoteroApiService {
         await config.update('groupId', cfg.groupId || '', vscode.ConfigurationTarget.Global);
     }
 
+    /**
+     * Clear Zotero credentials from VS Code workspace settings (called from webview postMessage)
+     */
     async clearConfig(): Promise<void> {
         const config = vscode.workspace.getConfiguration('ontocode.zotero');
         await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
@@ -366,6 +412,9 @@ class ZoteroApiService {
         await config.update('groupId', undefined, vscode.ConfigurationTarget.Global);
     }
 
+    /**
+     * Test the Zotero connection
+     */
     async testConnection(): Promise<void> {
         const config = this.getConfig();
         if (!config) {

@@ -1,4 +1,4 @@
-
+// ManualCitationDialog.tsx
 import React, { useCallback, useEffect, useState } from 'react';
 import { X, BookOpen, Save } from 'lucide-react';
 import { isValidDoiFormat, normalizeDoi as normalizeDoiUtil } from '../utils/doi';
@@ -62,6 +62,9 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
       return;
     }
 
+    // Validate DOI if provided. Both manual and Zotero-picker flows now go
+    // through the same `validateDoiOnline` service so behavior, caching,
+    // and error envelopes stay consistent.
     let cleanDoi: string | undefined = undefined;
     if (doi.trim()) {
       const normalized = normalizeDoiUtil(doi);
@@ -113,7 +116,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
       <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-        {}
+        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
             <BookOpen className="text-purple-600" size={24} />
@@ -127,10 +130,10 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Form */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="space-y-4">
-            {}
+            {/* Title */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Title <span className="text-red-500">*</span>
@@ -144,7 +147,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
               />
             </div>
 
-            {}
+            {/* Authors */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Authors <span className="text-red-500">*</span>
@@ -159,7 +162,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
               <p className="text-xs text-gray-500 mt-1">Separate multiple authors with commas</p>
             </div>
 
-            {}
+            {/* Year */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Year <span className="text-red-500">*</span>
@@ -173,7 +176,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
               />
             </div>
 
-            {}
+            {/* Item Type */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Publication Type
@@ -194,7 +197,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
               </select>
             </div>
 
-            {}
+            {/* Publication Title */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Publication/Journal Name
@@ -208,7 +211,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
               />
             </div>
 
-            {}
+            {/* DOI */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 DOI (optional)
@@ -231,7 +234,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
           <p className="text-xs text-gray-400 mt-1">You can paste a full DOI URL — it will be normalised automatically.</p>
             </div>
 
-            {}
+            {/* URL */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 URL (optional)
@@ -247,7 +250,7 @@ const ManualCitationDialog: React.FC<ManualCitationDialogProps> = ({
           </div>
         </div>
 
-        {}
+        {/* Footer */}
         <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
           <button
             onClick={handleClose}

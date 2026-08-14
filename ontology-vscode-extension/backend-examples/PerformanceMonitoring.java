@@ -1,4 +1,18 @@
-
+/**
+ * Performance Monitoring and Metrics Collection
+ *
+ * Why this is important:
+ * - Track performance over time
+ * - Identify bottlenecks
+ * - Alert on performance degradation
+ * - Collect data for optimization
+ *
+ * Features:
+ * - Real-time metrics collection
+ * - Performance alerts
+ * - Historical data tracking
+ * - Export to monitoring systems (Prometheus, Grafana, etc.)
+ */
 
 import java.time.Duration;
 import java.time.Instant;
@@ -17,14 +31,18 @@ public class PerformanceMonitoring {
     private final AtomicLong successfulImports = new AtomicLong(0);
     private final AtomicLong failedImports = new AtomicLong(0);
 
-    private static final double SLOW_IMPORT_THRESHOLD = 600.0;
-    private static final double VERY_SLOW_IMPORT_THRESHOLD = 1200.0;
-    private static final double POOR_PERFORMANCE_THRESHOLD = 5000.0;
+    // Thresholds for alerts
+    private static final double SLOW_IMPORT_THRESHOLD = 600.0; // 10 minutes
+    private static final double VERY_SLOW_IMPORT_THRESHOLD = 1200.0; // 20 minutes
+    private static final double POOR_PERFORMANCE_THRESHOLD = 5000.0; // < 5k triples/sec
 
     public static PerformanceMonitoring getInstance() {
         return INSTANCE;
     }
 
+    /**
+     * Start tracking an import
+     */
     public void startImport(String projectId, long fileSizeBytes, String fileName) {
         ImportMetrics metrics = new ImportMetrics(projectId, fileSizeBytes, fileName);
         activeImports.put(projectId, metrics);
@@ -33,15 +51,22 @@ public class PerformanceMonitoring {
         System.out.println("[Monitor] Started tracking: " + projectId);
     }
 
+    /**
+     * Update import progress
+     */
     public void updateProgress(String projectId, long processedTriples, String phase) {
         ImportMetrics metrics = activeImports.get(projectId);
         if (metrics != null) {
             metrics.updateProgress(processedTriples, phase);
 
+            // Check for performance issues
             checkPerformanceAlerts(metrics);
         }
     }
 
+    /**
+     * Complete an import
+     */
     public void completeImport(String projectId, boolean success,
                                long totalTriples, String error) {
         ImportMetrics metrics = activeImports.remove(projectId);
@@ -51,6 +76,7 @@ public class PerformanceMonitoring {
             synchronized (completedImports) {
                 completedImports.add(metrics);
 
+                // Keep only last 100 imports
                 if (completedImports.size() > 100) {
                     completedImports.remove(0);
                 }
@@ -68,10 +94,14 @@ public class PerformanceMonitoring {
         }
     }
 
+    /**
+     * Check for performance issues and alert
+     */
     private void checkPerformanceAlerts(ImportMetrics metrics) {
         double duration = metrics.getDurationSeconds();
         double triplesPerSec = metrics.getTriplesPerSecond();
 
+        // Alert on slow imports
         if (duration > VERY_SLOW_IMPORT_THRESHOLD) {
             System.err.println("[ALERT] Very slow import: " + metrics.projectId +
                              " has been running for " + duration + " seconds!");
@@ -80,12 +110,16 @@ public class PerformanceMonitoring {
                              " duration: " + duration + "s");
         }
 
+        // Alert on poor performance
         if (triplesPerSec > 0 && triplesPerSec < POOR_PERFORMANCE_THRESHOLD) {
             System.out.println("[WARNING] Poor performance: " + metrics.projectId +
                              " | " + String.format("%.0f", triplesPerSec) + " triples/sec");
         }
     }
 
+    /**
+     * Get overall statistics
+     */
     public OverallStats getOverallStats() {
         List<ImportMetrics> recentImports;
         synchronized (completedImports) {
@@ -96,6 +130,7 @@ public class PerformanceMonitoring {
             return new OverallStats();
         }
 
+        // Calculate averages from last 20 imports
         List<ImportMetrics> last20 = recentImports.stream()
             .filter(m -> m.success)
             .skip(Math.max(0, recentImports.size() - 20))
@@ -132,10 +167,16 @@ public class PerformanceMonitoring {
         );
     }
 
+    /**
+     * Get active imports
+     */
     public List<ImportMetrics> getActiveImports() {
         return new ArrayList<>(activeImports.values());
     }
 
+    /**
+     * Get recent import history
+     */
     public List<ImportMetrics> getRecentImports(int count) {
         synchronized (completedImports) {
             return completedImports.stream()
@@ -144,6 +185,9 @@ public class PerformanceMonitoring {
         }
     }
 
+    /**
+     * Export metrics in Prometheus format
+     */
     public String exportPrometheusMetrics() {
         OverallStats stats = getOverallStats();
 
@@ -176,6 +220,8 @@ public class PerformanceMonitoring {
 
         return sb.toString();
     }
+
+    // ==================== Supporting Classes ====================
 
     public static class ImportMetrics {
         public final String projectId;
@@ -290,25 +336,32 @@ public class PerformanceMonitoring {
         }
     }
 
+    // ==================== Usage Example ====================
+
     public static void main(String[] args) throws Exception {
         PerformanceMonitoring monitor = PerformanceMonitoring.getInstance();
 
+        // Simulate imports
         for (int i = 0; i < 5; i++) {
             String projectId = "project-" + i;
-            long fileSize = (50 + i * 20) * 1024 * 1024L;
+            long fileSize = (50 + i * 20) * 1024 * 1024L; // 50-130 MB
 
             monitor.startImport(projectId, fileSize, "ontology-" + i + ".owl");
 
+            // Simulate progress
             for (int j = 1; j <= 5; j++) {
                 Thread.sleep(1000);
                 monitor.updateProgress(projectId, j * 100000, "importing");
             }
 
+            // Complete
             monitor.completeImport(projectId, true, 500000, null);
         }
 
+        // Print stats
         System.out.println("\n" + monitor.getOverallStats());
 
+        // Export Prometheus metrics
         System.out.println("\n=== Prometheus Metrics ===");
         System.out.println(monitor.exportPrometheusMetrics());
     }

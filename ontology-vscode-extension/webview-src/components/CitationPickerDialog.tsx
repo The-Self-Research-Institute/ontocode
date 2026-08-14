@@ -1,4 +1,4 @@
-
+// CitationPickerDialog.tsx
 import React, { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import {
   normalizeDoi as normalizeDoiUtil,
@@ -41,11 +41,11 @@ interface CitationItem {
     title: string;
     creators: Array<{ firstName: string; lastName: string; creatorType: string }>;
     date: string;
-
+    /** Canonical item type name for journal articles, books, theses, etc. */
     DOI?: string;
-
+    /** Lowercase variant some translators / older exports emit. */
     doi?: string;
-
+    /** Free-text field; users often stash "DOI: 10.x/y" or "PMID: ..." here. */
     extra?: string;
     url?: string;
     itemType: string;
@@ -89,7 +89,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [showDoiWarning, setShowDoiWarning] = useState(false);
-
+  /** Server-reported library size when available */
   const [totalEstimated, setTotalEstimated] = useState<number | null>(null);
   const [openedFromDisk, setOpenedFromDisk] = useState(false);
 
@@ -97,15 +97,15 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
   const requestingMoreRef = useRef(false);
   const citationsRef = useRef<CitationItem[]>([]);
   const saveCacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  /** Shared with first-page handler — always await same promise so merge order is deterministic */
   const cacheLoadPromiseRef = useRef<Promise<Awaited<ReturnType<typeof loadCitationLibraryCache>>> | null>(null);
-
+  /** After opening the modal, first library request fires immediately; later query changes debounce */
   const skipNextLibraryFetchDebounceRef = useRef(true);
-
+  /** Ignore paging events from older extension sessions after a newer library request */
   const maxFirstPageSessionRef = useRef(0);
   const activePagingSessionRef = useRef<number | null>(null);
   const sessionBrowseModeRef = useRef<Map<number, "full" | "search">>(new Map());
-
+  /** Browse mode applied to the next issued request (`full` vs search `q=` scope) — snapshotted onto the session id in the first response */
   const pendingBrowseModeRef = useRef<"full" | "search">("full");
   const totalEstimatedRef = useRef<number | null>(null);
   const loadingRef = useRef(false);
@@ -178,6 +178,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     window.vscode.postMessage({ type: "requestZoteroLibraryMore" });
   }, []);
 
+  /** Gentle background paging so results become complete (full library or all search hits) */
   useEffect(() => {
     if (!isOpen || !hasMore || loadingMore) return;
     const stagger = searchQuery.trim() ? 70 : openedFromDisk ? 160 : 100;
@@ -225,6 +226,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     }
   }, [isOpen]);
 
+  /** Restore search text before passive effects — avoids an extra stale full-library fetch on open */
   useLayoutEffect(() => {
     if (!isOpen) return;
     try {
@@ -236,6 +238,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reopen only: compare against current `searchQuery` without subscribing to every keystroke
   }, [isOpen]);
 
+  /** Refetch whenever the typed query changes: search `q=` vs full-library paging */
   useEffect(() => {
     if (!isOpen || !window.vscode) return;
 
@@ -418,7 +421,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
   const onListScroll = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
-
+    // Trigger when within ~2 screens of the bottom for smooth paging.
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (distanceToBottom < el.clientHeight * 2) {
       requestMoreFire();
@@ -431,18 +434,26 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     return match ? match[0] : "";
   }, []);
 
+  /** Pull a normalized DOI from citation fields (DOI/doi/extra/url). */
   const extractDoiFromCitation = useCallback(
     (citation: CitationItem): string => extractDoiFromZoteroData(citation.data),
     []
   );
 
+  /** Open the resolver for the verified DOI, with safe fallback. */
   const buildDoiHref = (doi: string): string => toDoiUrl(doi) || "#";
 
+  /**
+   * Validate the DOI authoritatively (doi.org content negotiation) before
+   * inserting. We never block on the network — if validation fails we
+   * surface the result to the user but still allow override via the
+   * existing DOI prompt.
+   */
   const handleSelectCitation = async (citation: CitationItem) => {
     const norm = extractDoiFromCitation(citation);
 
     if (!norm) {
-
+      // Truly absent — open the manual-DOI prompt as before.
       setSelectedCitation(citation);
       setShowDoiWarning(true);
       setShowDoiPrompt(true);
@@ -463,7 +474,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     });
 
     if (result.valid && result.relevant) {
-
+      // Authoritative pass — insert with the registrar-canonical DOI.
       const finalDoi = result.normalizedDoi || norm;
       onSelectCitation({
         ...citation,
@@ -475,6 +486,8 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
       return;
     }
 
+    // DOI didn't resolve, or registrar metadata disagrees with the
+    // citation. Show the prompt so the user can fix or override.
     setManualDoiCheck({
       status: result.valid ? "warn" : "fail",
       result,
@@ -521,7 +534,8 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     }
 
     if (!result.relevant) {
-
+      // Resolves but registrar disagrees with the citation. Surface the
+      // mismatch and let the user override on a second click.
       if (manualDoiCheck.status !== "warn") {
         setManualDoiCheck({ status: "warn", result });
         return;
@@ -537,6 +551,10 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     onClose();
   };
 
+  /**
+   * Debounced background validation while the user types a DOI manually.
+   * We only fire when the shape is valid to avoid blasting the resolver.
+   */
   useEffect(() => {
     if (!showDoiPrompt) return;
     const trimmed = manualDoi.trim();
@@ -579,6 +597,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     onSelectCitation("manual");
   };
 
+  /** True while more pages are expected or a page request is in flight — list/search are not complete yet */
   const librarySyncPending = !error && (hasMore || loadingMore);
   const hasTypedSearch = searchQuery.trim().length > 0;
 
@@ -587,7 +606,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
       <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        {}
+        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-2 flex-wrap">
@@ -622,10 +641,21 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
           </div>
         </div>
 
-        {}
-        {}
+        {/* Manual Entry Option */}
+        {/* <div className="p-4 border-b border-gray-200 bg-blue-50">
+          <button
+            onClick={handleManualEntry}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus size={18} />
+            <span className="font-medium">Add Citation Manually</span>
+          </button>
+          <p className="text-xs text-gray-600 mt-2 text-center">
+            Enter citation details manually
+          </p>
+        </div> */}
 
-        {}
+        {/* Search Bar */}
         <div className="p-4 border-b border-gray-200 bg-gray-50">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
@@ -718,7 +748,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
           </div>
         )}
 
-        {}
+        {/* Citation List */}
         <div
           ref={listRef}
           onScroll={onListScroll}
@@ -849,7 +879,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
             </div>
           )}
 
-          {}
+          {/* Bottom loader (visible at end of list) */}
           {!loading && !error && (loadingMore || hasMore) && (
             <div className="flex items-center justify-center py-6">
               <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -864,7 +894,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
           )}
         </div>
 
-        {}
+        {/* Footer */}
         <div className="p-4 border-t border-gray-200 bg-gray-50">
           {librarySyncPending && (
             <p className="text-xs text-amber-900 font-medium mb-2 flex items-center gap-2">
@@ -896,7 +926,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
         </div>
       </div>
 
-      {}
+      {/* DOI Prompt Dialog */}
       {showDoiPrompt && selectedCitation && (
         <DoiPromptDialog
           citation={selectedCitation}
@@ -932,6 +962,11 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
 };
 
 export default CitationPickerDialog;
+
+// ─── DOI prompt dialog ─────────────────────────────────────────────────────
+//
+// Renders the manual-DOI / proceed-without-DOI prompt with live status
+// from the authoritative validator (doi.org -> Crossref/DataCite metadata).
 
 interface DoiPromptDialogProps {
   citation: CitationItem;
@@ -1047,7 +1082,7 @@ const DoiPromptDialog: React.FC<DoiPromptDialogProps> = ({
               Paste the full DOI (e.g. <code>10.1038/s41586-020-2649-2</code>) or a doi.org URL.
             </p>
 
-            {}
+            {/* Live validation status block */}
             {hasResult && (
               <DoiValidationStatus state={checkState} />
             )}
@@ -1142,6 +1177,7 @@ const DoiValidationStatus: React.FC<{ state: DoiCheckState }> = ({ state }) => {
   return null;
 };
 
+// Helper component for rendering class hierarchy tree
 interface ClassTreeNodeProps {
   nodes: TreeNode[];
   expandedNodes: Set<string>;
@@ -1201,7 +1237,7 @@ const ClassTreeNode: React.FC<ClassTreeNodeProps> = ({
             )}
           </div>
 
-          {}
+          {/* Render children if expanded */}
           {expandedNodes.has(node.id) && node.children && node.children.length > 0 && (
             <ClassTreeNode
               nodes={node.children}

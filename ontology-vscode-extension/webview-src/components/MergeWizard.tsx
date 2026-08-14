@@ -127,7 +127,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
 
   useEffect(() => {
     if (!isOpen) {
-
+      // Reset state when dialog closes
       setStep(1);
       setSelectedFile(null);
       setAnalysisResult(null);
@@ -143,7 +143,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
 
   const resolveTargetProjectId = () => {
     if (targetMode === "existingFile") {
-
+      // For "merge into existing file in this project", target project is current project
       return projectId;
     }
     return null;
@@ -236,13 +236,21 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
         url += `?${queryParams.toString()}`;
       }
 
+      // Manual resolution is sent to /execute with conflictResolutions form field.
+
       const result = await apiClient.post(url, formData);
       setMergeResult(result);
 
+      // Determine which project was actually modified by the merge.
       const resultData = result?.data || result;
       const tempProjectId = resultData?.targetProjectId;
 
       if (targetMode === "newFile" && tempProjectId && initialProjectId) {
+        // "Save as new file" mode: the backend saved the merged ontology to a
+        // temporary project on disk. Download it and upload as a new file in
+        // the current MongoDB project so it appears in the project file list.
+        // The current loaded file is NOT affected.
+        console.log("[MergeWizard] Downloading merged file from temp project:", tempProjectId);
 
         const downloadRes = await fetch(
           `${getBaseUrl()}/api/ontology/files/${encodeURIComponent(tempProjectId)}/download`,
@@ -258,7 +266,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
         }
 
         const blob = await downloadRes.blob();
-
+        // Ensure filename has a valid OWL extension
         let uploadName = outputFileName || "merged-output.owl";
         if (!/\.(owl|rdf|ttl|n3)$/i.test(uploadName)) {
           uploadName += ".owl";
@@ -268,13 +276,17 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
         uploadFormData.append("fileName", uploadName);
         uploadFormData.append("fileType", "application/rdf+xml");
 
+        console.log("[MergeWizard] Uploading merged file to project:", initialProjectId, "as:", uploadName);
         await apiClient.post(`/api/projects/${initialProjectId}/files`, uploadFormData);
+        console.log("[MergeWizard] Upload complete — new file added to project");
 
+        // Notify Dashboard to refresh the file list (isNewFile=true means don't switch files)
         if (onMergeComplete) {
           await onMergeComplete(projectId, true);
         }
       } else {
-
+        // "Merge into current file" or "merge into existing file" — signal
+        // Dashboard to poll GraphDB and refresh the loaded ontology data.
         const actualTargetProjectId = tempProjectId || targetProjectId || projectId;
         if (onMergeComplete) {
           await onMergeComplete(actualTargetProjectId, false);
@@ -297,6 +309,9 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
     }
   };
 
+  // Build a unique key for each conflict so that two conflicts sharing the
+  // same entityIRI (e.g. Class definition conflict + DisjointClasses axiom
+  // conflict for the same class) can be resolved independently.
   const conflictKey = (c: MergeConflict) => `${c.entityIRI}::${c.entityType}`;
 
   const setResolution = (conflict: MergeConflict, action: ResolutionAction) => {
@@ -304,12 +319,13 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
     const newResolutions = new Map(conflictResolutions);
     newResolutions.set(key, action);
 
+    // Cascade to all descendant subclass / sub-property conflicts
     if (analysisResult) {
       const hierarchy = {
         ...analysisResult.classHierarchy,
         ...analysisResult.propertyHierarchy,
       };
-
+      // Build set of child entityIRIs reachable from this entity
       const visited = new Set<string>();
       const queue = [conflict.entityIRI];
       while (queue.length > 0) {
@@ -324,7 +340,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
         }
       }
       visited.delete(conflict.entityIRI); // don't re-set self
-
+      // Set the same action on every conflict whose entityIRI is a descendant
       for (const c of analysisResult.conflicts) {
         if (visited.has(c.entityIRI)) {
           newResolutions.set(conflictKey(c), action);
@@ -338,7 +354,8 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
   const buildConflictResolutionsPayload = () => {
     const payload: Record<string, { action: ResolutionAction; renameSuffix?: string }> = {};
     conflictResolutions.forEach((action, compositeKey) => {
-
+      // Send each composite key (entityIRI::entityType) so the backend can
+      // handle per-conflict-type resolutions independently.
       payload[compositeKey] = {
         action,
         ...(action === "RENAME_SOURCE" ? { renameSuffix: renameSuffix || "_imported" } : {}),
@@ -351,7 +368,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
     setDownloading(true);
     try {
       const downloadProjectId = mergeResult?.targetProjectId || projectId;
-
+      // Use the existing download endpoint to get the merged ontology
       const response = await fetch(`${getBaseUrl()}/api/ontology/files/${downloadProjectId}/download`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("authToken")}`,
@@ -367,6 +384,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       const a = document.createElement("a");
       a.href = url;
 
+      // Get filename from Content-Disposition header or use default
       const contentDisposition = response.headers.get("Content-Disposition");
       const filenameMatch = contentDisposition?.match(/filename="?([^"]+)"?/);
       const filename = filenameMatch ? filenameMatch[1] : `${projectTitle}-merged.owl`;
@@ -389,7 +407,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        {}
+        {/* Header */}
         <div className="border-b p-4 bg-blue-50 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <GitMerge className="w-6 h-6 text-blue-600" />
@@ -417,7 +435,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Progress Steps */}
         <div className="border-b p-4 bg-gray-50">
           <div className="flex items-center justify-between max-w-2xl mx-auto">
             <div className={`flex items-center gap-2 ${step >= 1 ? "text-blue-600" : "text-gray-400"}`}>
@@ -461,9 +479,9 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
           </div>
         </div>
 
-        {}
+        {/* Content */}
         <div className="p-6">
-          {}
+          {/* Step 1: File Upload */}
           {step === 1 && (
             <div className="space-y-4">
               <div>
@@ -601,7 +619,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
             </div>
           )}
 
-          {}
+          {/* Step 2: Review Conflicts */}
           {step === 2 && analysisResult && (
             <div className="space-y-4">
               <div>
@@ -611,7 +629,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                 </p>
               </div>
 
-              {}
+              {/* Statistics */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <h4 className="font-semibold text-blue-900 mb-2">Source Ontology</h4>
@@ -655,7 +673,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                 </div>
               </div>
 
-              {}
+              {/* Conflicts Summary */}
               <div
                 className={`border rounded-lg p-4 ${analysisResult.conflicts.length > 0 ? "bg-yellow-50 border-yellow-200" : "bg-green-50 border-green-200"}`}
               >
@@ -684,7 +702,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                 </div>
               </div>
 
-              {}
+              {/* Special Warning: Duplicate File Upload */}
               {analysisResult.conflicts.some(
                 (c) => c.conflictType === "IDENTICAL_FILE_UPLOAD" || c.conflictType === "DUPLICATE_FILE_CONTENT",
               ) && (
@@ -706,7 +724,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                 </div>
               )}
 
-              {}
+              {/* Conflict List */}
               {analysisResult.conflicts.length > 0 && (
                 <div className="border rounded-lg overflow-hidden max-h-96 overflow-y-auto">
                   <table className="w-full text-sm">
@@ -763,7 +781,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
             </div>
           )}
 
-          {}
+          {/* Step 3: Configure Merge Strategy */}
           {step === 3 && (
             <div className="space-y-4">
               <div>
@@ -856,7 +874,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
 
               {mergeStrategy === "MANUAL_RESOLUTION" && analysisResult && analysisResult.conflicts.length > 0 && (
                 <div className="space-y-0 border border-gray-300 rounded-lg overflow-hidden">
-                  {}
+                  {/* Resolution progress bar */}
                   <div className="bg-gray-800 text-gray-200 px-4 py-2 flex items-center justify-between text-xs font-mono">
                     <span>
                       Merge Conflicts — {analysisResult.conflicts.length} conflict
@@ -876,7 +894,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                           key={`${conflict.entityIRI}-resolution-${index}`}
                           className={`border-b border-gray-300 last:border-b-0 ${isResolved ? "opacity-60" : ""}`}
                         >
-                          {}
+                          {/* VS Code-style action bar */}
                           <div className="bg-gray-100 border-b border-gray-200 px-3 py-1.5 flex items-center justify-between">
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="font-mono text-xs font-bold text-gray-800 truncate">
@@ -904,7 +922,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                             </div>
                           </div>
 
-                          {}
+                          {/* Action links — VS Code merge style */}
                           <div className="bg-gray-50 px-3 py-1 border-b border-gray-200 flex flex-wrap items-center gap-1 text-[11px]">
                             <button
                               type="button"
@@ -980,7 +998,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                             )}
                           </div>
 
-                          {}
+                          {/* Inline diff — Source (Incoming) */}
                           <div className="border-b border-gray-200">
                             <div className="bg-green-50 border-l-4 border-green-400">
                               <div className="px-3 py-1 text-[10px] font-bold text-green-800 bg-green-100 border-b border-green-200 font-mono">
@@ -992,12 +1010,12 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                             </div>
                           </div>
 
-                          {}
+                          {/* Separator */}
                           <div className="bg-gray-200 px-3 py-0.5 text-[10px] text-gray-600 font-mono text-center">
                             {"======="}
                           </div>
 
-                          {}
+                          {/* Inline diff — Target (Current) */}
                           <div>
                             <div className="bg-blue-50 border-l-4 border-blue-400">
                               <pre className="px-3 py-2 text-[11px] whitespace-pre-wrap break-words text-blue-900 font-mono leading-relaxed max-h-48 overflow-y-auto">
@@ -1048,7 +1066,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
             </div>
           )}
 
-          {}
+          {/* Step 4: Complete */}
           {step === 4 && mergeComplete && mergeResult && (
             <div className="space-y-4 text-center">
               <div className="flex justify-center">

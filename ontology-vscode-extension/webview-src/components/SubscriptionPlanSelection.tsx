@@ -169,12 +169,14 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
         }
     }, [normalizedCurrentPlanId]);
 
+
     const discountPercentages = availablePlans.filter(p => p.monthlyPrice > 0).map(getDiscountPercent);
     const maxDiscount = discountPercentages.length > 0 ? Math.max(...discountPercentages) : 0;
 
     const selectedPlanData = availablePlans.find(p => p.id === selectedPlan) ?? availablePlans[0];
     const selectedDiscount = selectedPlanData ? getDiscountPercent(selectedPlanData) : 0;
-
+    
+    // Ensure badgeDiscount uses live data and falls back to max discount if selected has none
     const badgeDiscount = selectedDiscount > 0 ? selectedDiscount : maxDiscount;
 
     const selectedRank = getPlanRank(selectedPlan);
@@ -212,7 +214,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
 
     return (
         <div className="dark-surface h-screen bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 relative overflow-hidden">
-            {}
+            {/* Background orbs */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute -top-32 -right-32 w-96 h-96 bg-violet-600 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" />
                 <div className="absolute -bottom-32 -left-32 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-3xl opacity-15 animate-pulse" style={{ animationDelay: '1s' }} />
@@ -221,14 +223,14 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
 
             <div className="relative z-10 h-full min-h-0 flex flex-col px-4 py-4 sm:px-6">
 
-                {}
+                {/* Top bar */}
                 <div className="flex items-center justify-between mb-3 shrink-0">
                     <div>
                         <div className="flex items-center gap-2 mb-1">
                             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
                                 <Star size={14} className="text-white" />
                             </div>
-                            <span className="text-violet-300 text-xs font-semibold uppercase tracking-widest">OntoCode</span>
+                            <span className="text-violet-300 text-xs font-semibold uppercase tracking-widest">OntoCode Studio</span>
                         </div>
                         <h1 className="text-xl sm:text-2xl font-bold text-white">
                             {isInactiveCurrentPlan ? 'Renew your subscription' : currentRank > 1 ? 'Manage your plan' : 'Choose your plan'}
@@ -246,7 +248,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </button>
                 </div>
 
-                {}
+                {/* Billing terms banner */}
                 <div className="mb-3 flex justify-center shrink-0">
                     <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
                         <Gift size={16} className="text-violet-300" />
@@ -266,7 +268,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </div>
                 </div>
 
-                {}
+                {/* Trial banner */}
                 <div className="hidden">
                     <div className="flex items-center gap-2.5 px-5 py-2.5 bg-gradient-to-r from-violet-600/30 to-indigo-600/30 border border-violet-500/40 rounded-full backdrop-blur-sm">
                         <Gift size={16} className="text-violet-300" />
@@ -282,7 +284,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </div>
                 </div>
 
-                {}
+                {/* No-Downgrade Heads-up */}
                 {isUpgrade && (
                     <div className="mb-3 flex justify-center shrink-0">
                         <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg backdrop-blur-sm">
@@ -294,7 +296,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </div>
                 )}
 
-                {}
+                {/* Billing toggle */}
                 <div className="flex justify-center mb-4 shrink-0">
                     <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-1">
                         <button
@@ -340,7 +342,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </p>
                 )}
 
-                {}
+                {/* Plan cards (scrollable region) */}
                 <div className="flex-1 min-h-0 flex items-start justify-center overflow-y-auto px-1 pb-3">
                     <div className={`w-full ${availablePlans.length <= 2 ? 'max-w-3xl' : 'max-w-5xl'}`}>
                         <div className="pb-2">
@@ -363,7 +365,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                         ${plan.popular ? 'ring-2 ring-violet-500/50' : ''}
                                     `}
                                 >
-                                    {}
+                                    {/* Badge */}
                                     {plan.badge && (
                                         <div className="absolute top-2 left-1/2 -translate-x-1/2">
                                             <span className={`bg-gradient-to-r ${plan.gradient} text-white px-3 py-0.5 rounded-full text-xs font-bold shadow-lg`}>
@@ -372,7 +374,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                         </div>
                                     )}
 
-                                    {}
+                                    {/* Selected checkmark */}
                                     {isSelected && (
                                         <div className="absolute top-3 right-3 w-6 h-6 rounded-full bg-violet-500 flex items-center justify-center">
                                             <Check size={13} className="text-white" />
@@ -380,7 +382,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                     )}
 
                                     <div className={`px-4 pb-4 ${plan.badge ? 'pt-8' : 'pt-4'} flex flex-col flex-1`}>
-                                        {}
+                                        {/* Header */}
                                         <div className="flex items-center gap-3 mb-2">
                                             <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${plan.gradient} flex items-center justify-center text-white shadow-lg flex-shrink-0`}>
                                                 {plan.icon}
@@ -391,7 +393,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                             </div>
                                         </div>
 
-                                        {}
+                                        {/* Price */}
                                         <div className="mb-1">
                                             <div className="flex items-baseline gap-1">
                                                 <span className="text-2xl font-extrabold text-white">${price}</span>
@@ -424,12 +426,12 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                             )}
                                         </div>
 
-                                        {}
+                                        {/* Tagline */}
                                         <p className="text-violet-200/70 text-[11px] mb-2 italic">{plan.tagline}</p>
 
                                         <hr className="border-white/10 mb-2" />
 
-                                        {}
+                                        {/* Features */}
                                         <div className="flex-1 space-y-1.5">
                                             {orderPlanFeatures(plan.features).map((f, i) => (
                                                 <div key={i} className="flex items-start gap-2">
@@ -445,7 +447,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                                             ))}
                                         </div>
 
-                                        {}
+                                        {/* Trial note */}
                                         {plan.monthlyPrice > 0 && (
                                             <div className="mt-2 pt-2 border-t border-white/10">
                                                 <div className="flex items-center gap-1.5 text-violet-300 text-xs">
@@ -475,7 +477,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                     </div>
                 </div>
 
-                {}
+                {/* CTA */}
                 <div className="shrink-0 flex flex-col items-center gap-2 pt-2 pb-1 bg-slate-950/30">
                     {selectedPlanData && selectedPlanData.monthlyPrice > 0 && (
                         <p className="text-slate-400 text-xs text-center">
@@ -555,7 +557,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                 </div>
             </div>
 
-            {}
+            {/* Report Issue */}
             <button
                 onClick={() => setIsReportIssueModalOpen(true)}
                 className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-slate-400 hover:text-white transition-colors backdrop-blur-sm z-50"

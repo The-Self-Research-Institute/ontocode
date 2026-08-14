@@ -42,21 +42,25 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [hasInitialized, setHasInitialized] = useState(false);
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null);
-
+  
+  // Inline class creation state
   const [showInlineClassCreate, setShowInlineClassCreate] = useState(false);
   const [inlineCreateType, setInlineCreateType] = useState<'subclass' | 'sibling'>('subclass');
   const [inlineClassName, setInlineClassName] = useState('');
   const [isCreatingClass, setIsCreatingClass] = useState(false);
 
   useEffect(() => {
+    console.log('[MultiClassSelectorDialog] Class hierarchy updated, nodes:', classHierarchy.length);
     setTreeData(classHierarchy);
   }, [classHierarchy]);
 
+  // Reset state when dialog opens and load initial selections
   useEffect(() => {
     if (isOpen && !hasInitialized) {
       setHasInitialized(true);
       setSearchQuery('');
-
+      
+      // Load initial selections if provided
       if (initialSelectedIds.length > 0) {
         const findNodesByIds = (nodes: TreeNode[], ids: string[]): TreeNode[] => {
           const result: TreeNode[] = [];
@@ -73,7 +77,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
           search(nodes);
           return result;
         };
-
+        
         const initialNodes = findNodesByIds(classHierarchy, initialSelectedIds);
         setSelectedClasses(initialNodes);
       } else {
@@ -82,6 +86,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     }
   }, [isOpen, hasInitialized, initialSelectedIds, classHierarchy]);
 
+  // Reset hasInitialized when dialog closes
   useEffect(() => {
     if (!isOpen) {
       setHasInitialized(false);
@@ -136,11 +141,13 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
   };
 
   const handleNodeSelect = (node: TreeNode) => {
-
+    // Don't allow selecting excluded classes
     if (excludeClassIds.includes(node.id)) return;
-
+    
+    // Set selected node for inline creation
     setSelectedNode(node);
-
+    
+    // Toggle selection for multi-select
     if (selectedClasses.find(n => n.id === node.id)) {
       setSelectedClasses(prev => prev.filter(n => n.id !== node.id));
     } else {
@@ -148,12 +155,13 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     }
   };
 
+  // Handle checkbox toggle for multi-select
   const handleToggleClass = (classId: string) => {
     if (excludeClassIds.includes(classId)) return;
-
+    
     const node = findNodeById(treeData, classId);
     if (!node) return;
-
+    
     if (selectedClasses.find(n => n.id === classId)) {
       setSelectedClasses(prev => prev.filter(n => n.id !== classId));
     } else {
@@ -161,6 +169,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     }
   };
 
+  // Helper to find node by ID
   const findNodeById = (nodes: TreeNode[], id: string): TreeNode | null => {
     for (const node of nodes) {
       if (node.id === id) return node;
@@ -172,45 +181,65 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     return null;
   };
 
+  // Get selected class IDs for EntityHierarchy
   const selectedClassIds = selectedClasses.map(c => c.id);
 
+  // Use external or local expanded nodes
   const effectiveExpandedNodes = externalExpandedNodes || expandedNodes;
 
+  // Inline class creation handlers
   const handleInlineAddClass = (type: 'subclass' | 'sibling' | 'individual') => {
-
+    console.log('[MultiClassSelectorDialog] handleInlineAddClass called with type:', type);
+    console.log('[MultiClassSelectorDialog] onAddClass exists:', !!onAddClass);
+    console.log('[MultiClassSelectorDialog] selectedNode:', selectedNode?.label);
+    
+    // EntityHierarchy can pass 'individual' but we only handle 'subclass' and 'sibling' for classes
     if (type === 'individual') {
+      console.log('[MultiClassSelectorDialog] Ignoring individual type');
       return;
     }
-
+    
     setInlineCreateType(type);
     setShowInlineClassCreate(true);
     setInlineClassName('');
+    console.log('[MultiClassSelectorDialog] Inline form should now be visible');
   };
 
   const handleInlineClassCreateSubmit = async () => {
     if (!inlineClassName.trim() || !onAddClass) return;
-
+    
+    console.log('[MultiClassSelectorDialog] Creating class:', inlineClassName);
     setIsCreatingClass(true);
     try {
       const parentId = selectedNode?.id;
       const type = selectedNode ? 'subclass' : 'sibling';
-
+      
+      console.log('[MultiClassSelectorDialog] Parent:', parentId, 'Type:', type);
+      
+      // Expand parent node to show new class
       if (parentId && !effectiveExpandedNodes.includes(parentId)) {
+        console.log('[MultiClassSelectorDialog] Expanding parent node:', parentId);
         await handleToggleNode(parentId);
       }
-
+      
+      // Also expand the top class node if creating at root
       const topNodeId = 'http://www.w3.org/2002/07/owl#Thing';
       if (!selectedNode && !effectiveExpandedNodes.includes(topNodeId)) {
+        console.log('[MultiClassSelectorDialog] Expanding top node:', topNodeId);
         await handleToggleNode(topNodeId);
       }
-
+      
+      // Call the class creation handler
+      console.log('[MultiClassSelectorDialog] Calling handler...');
       await onAddClass(type, parentId, inlineClassName.trim());
-
+      console.log('[MultiClassSelectorDialog] Handler completed');
+      
+      // Reset form
       setShowInlineClassCreate(false);
       setInlineClassName('');
     } catch (error) {
       console.error('[MultiClassSelectorDialog] Failed to create class:', error);
-
+      // Don't close the form on error so user can try again
       setShowInlineClassCreate(true);
     } finally {
       setIsCreatingClass(false);
@@ -232,6 +261,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
     onClose();
   };
 
+  // Early return AFTER all hooks to comply with React Rules of Hooks
   if (!isOpen) return null;
 
   return (
@@ -248,15 +278,15 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
             <X size={20} />
           </button>
         </div>
-
+        
         <div className="p-4 flex-1 overflow-hidden flex flex-col min-h-0">
-          {}
+          {/* Selected classes display */}
           <div className="mb-3">
             <div className="text-xs font-medium text-gray-500 uppercase mb-1">Selected Classes ({selectedClasses.length})</div>
             {selectedClasses.length > 0 ? (
               <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
                 {selectedClasses.map(c => (
-                  <span
+                  <span 
                     key={c.id}
                     className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs cursor-pointer hover:bg-purple-200"
                     onClick={() => handleNodeSelect(c)}
@@ -271,7 +301,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
             )}
           </div>
 
-          {}
+          {/* Search */}
           <input
             type="text"
             placeholder="Search classes..."
@@ -280,7 +310,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
             className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 mb-3"
           />
 
-          {}
+          {/* Inline Class Creation Form */}
           {showInlineClassCreate && (
             <div className="p-3 bg-amber-50 border border-amber-200 rounded mb-3">{!onAddClass && (
                 <div className="mb-2 p-2 bg-red-50 border border-red-200 rounded">
@@ -324,7 +354,7 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
             </div>
           )}
 
-          {}
+          {/* Class tree with EntityHierarchy component */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <EntityHierarchy
               entitiesTab="Classes"
@@ -347,16 +377,16 @@ const MultiClassSelectorDialog: React.FC<MultiClassSelectorDialogProps> = ({
 
         <div className="p-4 border-t bg-gray-50 flex justify-between items-center">
           <div className="text-xs text-gray-500">
-            {minSelection > 1
-              ? `Select at least ${minSelection} classes`
+            {minSelection > 1 
+              ? `Select at least ${minSelection} classes` 
               : 'Select one or more classes'}
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50">
               Cancel
             </button>
-            <button
-              onClick={handleConfirm}
+            <button 
+              onClick={handleConfirm} 
               disabled={selectedClasses.length < minSelection}
               className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >

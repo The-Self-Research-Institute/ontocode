@@ -90,7 +90,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col">
-        {}
+        {/* Header */}
         <div className="p-6 border-b shrink-0">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-gray-800">Project Library</h2>
@@ -113,7 +113,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
           </p>
         </div>
 
-        {}
+        {/* List */}
         <div className="p-6 overflow-y-auto flex-1">
           {projects.length === 0 ? (
             <div className="text-center py-12">
@@ -131,6 +131,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                 const progress = ws?.progress ?? project.progress ?? 0;
                 const label = ws ? stageLabel(ws.metadata) : undefined;
 
+                // Determine base MongoDB status for cards with no live WS event
                 const mongoProcessing = !ws && (project.status === 'PROCESSING' || project.status === 'UPLOADED');
 
                 const locked = importing || mongoProcessing;
@@ -149,7 +150,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                     }`}
                     onClick={() => !locked && !failed && onSelectProject(project.id)}
                   >
-                    {}
+                    {/* Progress bar — full-width bottom stripe */}
                     {(importing || mongoProcessing) && (
                       <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-100">
                         <div
@@ -161,7 +162,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
 
                     <div className="p-4">
                       <div className="flex items-start justify-between gap-4">
-                        {}
+                        {/* Left: name + meta */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <h3 className={`font-semibold text-lg truncate ${
@@ -173,7 +174,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                               {project.name}
                             </h3>
 
-                            {}
+                            {/* Status badge */}
                             {importing && (
                               <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 shrink-0">
                                 <Loader2 size={11} className="animate-spin" />
@@ -210,7 +211,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                             <p className="text-sm text-gray-500 mt-0.5 truncate">{project.filename}</p>
                           )}
 
-                          {}
+                          {/* Stage message during import */}
                           {importing && label && (
                             <p className="text-xs text-blue-600 mt-1">{label}</p>
                           )}
@@ -218,7 +219,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                           <p className="text-xs text-gray-400 mt-1">Updated: {formatDate(project.updatedAt)}</p>
                         </div>
 
-                        {}
+                        {/* Right: counts or CTA */}
                         <div className="shrink-0">
                           {freshDone ? (
                             <button

@@ -13,13 +13,13 @@ public class RatingRequest {
 
     private String pluginId;
 
-    private Integer stars;
+    private Integer stars;  // 1-5
 
-    private String review;
+    private String review;  // Optional full review
 
-    private String merits;
+    private String merits;  // Optional: What's good
 
-    private String demerits;
+    private String demerits;  // Optional: What's bad
 
-    private Boolean recommended;
+    private Boolean recommended;  // Optional: Would recommend
 }
