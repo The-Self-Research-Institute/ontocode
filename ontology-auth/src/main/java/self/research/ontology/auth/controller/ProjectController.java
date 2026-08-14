@@ -1,5 +1,5 @@
 package self.research.ontology.auth.controller;
-
+import org.springframework.data.mongodb.core.query.Update;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.gridfs.GridFsResource;
@@ -63,11 +64,12 @@ public class ProjectController {
     private final self.research.ontology.auth.service.WorkspaceService workspaceService;
     private final self.research.ontology.auth.repository.ProjectRepository projectRepository;
     private final GridFsTemplate gridFsTemplate;
+    private final MongoTemplate mongoTemplate;
     private final org.springframework.web.client.RestTemplate restTemplate;
     private final self.research.ontology.auth.service.EmailService emailService;
     private final self.research.ontology.auth.service.SystemSettingsService systemSettingsService;
 
-    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate, self.research.ontology.auth.service.EmailService emailService, self.research.ontology.auth.service.SystemSettingsService systemSettingsService) {
+    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate, self.research.ontology.auth.service.EmailService emailService, self.research.ontology.auth.service.SystemSettingsService systemSettingsService,MongoTemplate mongoTemplate) {
         this.projectService = projectService;
         this.userRepository = userRepository;
         this.fileMetadataRepository = fileMetadataRepository;
@@ -78,6 +80,7 @@ public class ProjectController {
         this.restTemplate = new org.springframework.web.client.RestTemplate();
         this.emailService = emailService;
         this.systemSettingsService = systemSettingsService;
+        this.mongoTemplate = mongoTemplate;
     }
 
     /**
@@ -1732,54 +1735,61 @@ public class ProjectController {
             log.error("Error deleting file", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to delete file"));
         }
-    }
-
-    /**
-     * Rename a file in a project. Only the base name changes — the extension is
-     * preserved regardless of what's submitted, since format detection elsewhere
-     * (content-type, parsing) depends on it.
-     */
-    @PatchMapping("/{projectId}/files/{fileId}/rename")
-    public ResponseEntity<?> renameFile(
-            @PathVariable String projectId,
-            @PathVariable String fileId,
-            @RequestBody Map<String, String> body) {
-        try {
-            String email = getCurrentUserEmail();
-            Optional<User> userOpt = userRepository.findByEmail(email);
-            if (userOpt.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
-            }
-            User user = userOpt.get();
-
-            String newFileName = body.get("fileName");
-            Project updated = projectService.renameFile(projectId, user.getId(), fileId, newFileName);
-
-            // Keep the standalone FileMetadata document (separate collection) in sync
-            // with the project's embedded copy — same two-writes pattern deleteFile uses.
-            Project.FileMetadataInfo renamedInfo = updated.getFile(fileId);
-            if (renamedInfo != null) {
-                fileMetadataRepository.findByFileId(fileId).ifPresent(meta -> {
-                    meta.setFileName(renamedInfo.getFileName());
-                    fileMetadataRepository.save(meta);
-                });
-            }
-
-            return ResponseEntity.ok(Map.of(
-                "message", "File renamed successfully",
-                "fileName", renamedInfo != null ? renamedInfo.getFileName() : ""
-            ));
-        } catch (SecurityException e) {
-            log.error("Security error renaming file", e);
-            return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            log.error("Error renaming file", e);
-            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to rename file"));
+    }@PatchMapping("/{projectId}/files/{fileId}/rename")
+public ResponseEntity<?> renameFile(
+        @PathVariable String projectId,
+        @PathVariable String fileId,
+        @RequestBody Map<String, String> body) {
+    try {
+        String email = getCurrentUserEmail();
+        Optional<User> userOpt = userRepository.findByEmail(email);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
         }
-    }
+        User user = userOpt.get();
 
+        String newFileName = body.get("fileName");
+        Project updated = projectService.renameFile(projectId, user.getId(), fileId, newFileName);
+
+        Project.FileMetadataInfo renamedInfo = updated.getFile(fileId);
+        if (renamedInfo != null) {
+            fileMetadataRepository.findByFileId(fileId).ifPresent(meta -> {
+                meta.setFileName(renamedInfo.getFileName());
+                fileMetadataRepository.save(meta);
+            });
+        }
+
+        // Also sync the composite-id ProjectDocument ("{projectId}--{fileId}", collection
+        // "projects") that the ontology editor's metadata endpoint reads its `filename`
+        // field from. That record's filename was previously only ever set once at import
+        // time, so renaming here left the editor's badge/export filename permanently
+        // stale even though the file was correctly renamed everywhere else.
+        if (renamedInfo != null) {
+            String compositeProjectId = projectId + "--" + fileId;
+            Query q = Query.query(Criteria.where("_id").is(compositeProjectId));
+            Update u = new Update()
+                    .set("filename", renamedInfo.getFileName())
+                    .set("updatedAt", java.time.Instant.now());
+            long matched = mongoTemplate.updateFirst(q, u, "projects").getMatchedCount();
+            if (matched == 0) {
+                log.debug("No ontology status record yet for {} — nothing to sync on rename", compositeProjectId);
+            }
+        }
+
+        return ResponseEntity.ok(Map.of(
+            "message", "File renamed successfully",
+            "fileName", renamedInfo != null ? renamedInfo.getFileName() : ""
+        ));
+    } catch (SecurityException e) {
+        log.error("Security error renaming file", e);
+        return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+    } catch (IllegalArgumentException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    } catch (Exception e) {
+        log.error("Error renaming file", e);
+        return ResponseEntity.internalServerError().body(Map.of("error", "Failed to rename file"));
+    }
+}
     /**
      * Restore a soft deleted file in a project
      */

@@ -3911,6 +3911,22 @@ const Dashboard: React.FC<DashboardProps> = ({
         setIsAnnotationPropertiesLoading(false);
         setIsDatatypesLoading(false);
         setLoadingStatusMessage("");
+        // Even when skipping the full reload, the filename may have changed
+        // (rename) since this project was last loaded — the guesses that used
+        // to paper over this were removed, so without this the badge/export
+        // name would stay stale forever for an already-loaded, renamed file.
+        // Cheap background check; doesn't block or affect anything else.
+        void apiClient
+          .get<any>(`/api/ontology/metadata/${encodeURIComponent(currentProjectId)}`)
+          .then((res: any) => {
+            const data = res?.data || res;
+            if (data?.filename && data.filename !== activeFileName) {
+              setActiveFileName(data.filename);
+            }
+          })
+          .catch(() => {
+            /* non-fatal — badge just won't refresh this time */
+          });
         return null;
       }
 
@@ -4049,6 +4065,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           const annotationsData = metadataData?.annotations || [];
           const imports = metadataData?.imports || [];
           const gciAxioms = metadataData?.axioms || [];
+          console.log("[Dashboard] 🏷️ metadataData.filename check:", metadataData?.filename, "full metadataData keys:", metadataData ? Object.keys(metadataData) : null);
           if (metadataData?.filename) setActiveFileName(metadataData.filename);
           setMetadata((prev) => ({
             ...metadataData,
@@ -6449,7 +6466,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     fetchProjects();
 
     // Desktop / non-workspace: auto-load the last opened ontology from localStorage
-    if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.current) {
+    // Desktop / non-workspace: auto-load the last opened ontology from localStorage.
+// Skip if the parent has already resolved a specific file to open from the URL
+// (selectedFileId/selectedFileName) — otherwise this always wins the race on a
+// fresh mount and silently loads the wrong (previously cached) file.
+const hasUrlResolvedFile = Boolean(selectedFileId && selectedFileId !== "__editor__");
+if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.current && !hasUrlResolvedFile) {
       console.log("[Dashboard] 🔄 Restoring last opened ontology:", storedProjectId);
       hasUserSelectedFileRef.current = true;
       setHasUserSelectedFile(true);
@@ -6457,7 +6479,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!initialProjectId) {
         setActiveFileId(storedProjectId);
       }
-      setActiveFileName(storedProjectId);
+      
       fetchData(storedProjectId, false)
         .then(() => {
           console.log("[Dashboard] ✅ Last file restored:", storedProjectId);
@@ -7056,12 +7078,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           // In free mode, projectId IS the file identifier, so set activeFileName for ACTIVE badge
           // Extract filename from projectId if it looks like a filename (has extension)
           const projId = message.projectId || "";
-          console.log("[Dashboard] Setting active file name for projectId:", projId);
-          if (projId.includes(".owl") || projId.includes(".rdf") || projId.includes(".ttl")) {
-            setActiveFileName(projId);
-          } else {
-            setActiveFileName(projId + ".owl"); // Default extension
-          }
           setActiveFileId(null); // In free mode, fileId is same as projectId
           setSelectedItem(null);
           console.log(message, "message=====>", projId);
@@ -7248,9 +7264,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                 setLoadingProjectName(message.status.filename || message.status.projectId);
                 // In free mode, mark the new file as active immediately
                 if (!initialProjectId) {
-                  const nextFileName = message.status.filename || `${message.status.projectId}.owl`;
                   setActiveFileId(message.status.projectId);
-                  setActiveFileName(nextFileName);
+                  // Only use it if it's a real filename from the backend — never
+                  // guess "<projectId>.owl". applyMetadataResponse (inside
+                  // fetchData) sets the real name once metadata loads.
+                  if (message.status.filename) {
+                    setActiveFileName(message.status.filename);
+                  }
                 }
               }
 
@@ -9426,7 +9446,7 @@ const updateItemInState = useCallback(
         setSelectedItem(null);
         setSearchQuery("");
         setActiveFileId(null);
-        setActiveFileName(newProjectId); // Use new project ID as file name if no explicit file ID Provided
+        setActiveFileName(null); // Use new project ID as file name if no explicit file ID Provided
         setHasUnsavedChanges(false);
         setDraftCount(0);
 
@@ -18360,33 +18380,11 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   )}
                 </button>
               )}
-              {/* {projectId && (
-                <button
-                  onClick={handleOpenProjectSelector}
-                  className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 p-2 rounded-md"
-                  title="Switch Project"
-                >
-                  <Database size={14} />
-                  <span className="max-w-[200px] truncate">{projectId}</span>
-                  {hasUnsavedChanges && (
-                    <span className="text-orange-600 ml-1" title="Unsaved changes">●</span>
-                  )}
-                  {isSaving && (
-                    <Loader2 size={12} className="animate-spin ml-1 text-blue-600" />
-                  )}
-                </button>
-              )} */}
-              <span className="text-xs text-gray-600 hidden md:inline truncate max-w-[12rem] lg:max-w-none">
-                Welcome, {user?.username || "Guest"}
-                {user?.workspaceName && (
-                  <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
-                    {user.workspaceName}
-                  </span>
-                )}
-              
-              {initialProjectName && activeFileName && (
+              < span className="text-xs text-gray-600 hidden md:inline truncate max-w-[12rem] lg:max-w-none">
+              Welcome, {user?.username || "Guest"}
+              { activeFileName && (
                 <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-medium">
-                  {`${initialProjectName} - ${activeFileName}`}
+                  {` ${activeFileName}`}
                 </span>
               )}
               </span>
@@ -18449,7 +18447,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   title="Back to Projects"
                 >
                   <GitBranch size={14} />
-                  Projects
+                  {initialProjectName}
                 </button>
               )}
 
