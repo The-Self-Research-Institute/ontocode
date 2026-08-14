@@ -16,6 +16,7 @@ import {
   Code2,
   Plus,
   Bug,
+  ListOrdered,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -86,7 +87,7 @@ const buildImportDisplayMessage = (
       graphSize && graphSize > 0
         ? `${formatTriples(graphSize)} loaded…`
         : sanitizeImportMessage(statusMessage) ||
-          (progress > 0 ? `Importing… (${progress}%)` : "Processing…");
+        (progress > 0 ? `Importing… (${progress}%)` : "Processing…");
     return `Processing now — ${base}`;
   }
 
@@ -152,7 +153,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [uploading, setUploading] = useState(false);
-  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [reportIssueModalType, setReportIssueModalType] = useState<"Bug" | "Task" | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingFile, setProcessingFile] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -254,9 +255,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           typeof data?.progress === "number"
             ? data.progress
             : (() => {
-                const m = String(data?.statusMessage || data?.message || "").match(/(\d+)%/);
-                return m ? parseInt(m[1], 10) : 0;
-              })();
+              const m = String(data?.statusMessage || data?.message || "").match(/(\d+)%/);
+              return m ? parseInt(m[1], 10) : 0;
+            })();
         const message =
           data?.statusMessage ||
           data?.message ||
@@ -991,13 +992,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 </div>
                 <div className="h-1.5 rounded-full bg-gray-200 overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${
-                      parseFloat(storageUsage.usagePercent) >= 90
+                    className={`h-full rounded-full transition-all ${parseFloat(storageUsage.usagePercent) >= 90
                         ? "bg-red-500"
                         : parseFloat(storageUsage.usagePercent) >= 70
                           ? "bg-amber-400"
                           : "bg-purple-500"
-                    }`}
+                      }`}
                     style={{ width: `${Math.min(100, parseFloat(storageUsage.usagePercent))}%` }}
                   />
                 </div>
@@ -1005,77 +1005,89 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             )}
 
             <div className="flex flex-col items-start sm:items-end gap-2 w-full sm:w-auto">
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
-              <button
-                onClick={handleCreateNewFile}
-                className={`px-2 sm:px-2.5 py-1.5 text-xs border rounded-md transition-colors flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap ${
-                  userProjectRole === "VIEWER"
-                    ? "text-gray-400 border-gray-200 bg-gray-50 cursor-not-allowed opacity-60"
-                    : "text-green-600 border-green-300 bg-green-50 hover:bg-green-100"
-                }`}
-                title={userProjectRole === "VIEWER" ? "Viewers cannot create files" : "Create a new ontology file"}
-                disabled={userProjectRole === "VIEWER"}
-              >
-                <Plus size={14} />
-                <span className="hidden sm:inline">New File</span>
-                <span className="sm:hidden">+</span>
-              </button>
-              {onOpenEditor && (
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
                 <button
-                  onClick={onOpenEditor}
-                  className="px-2.5 py-1.5 text-xs text-blue-600 border border-blue-300 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors flex items-center gap-1.5 font-medium"
+                  onClick={handleCreateNewFile}
+                  className={`px-2 sm:px-2.5 py-1.5 text-xs border rounded-md transition-colors flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap ${userProjectRole === "VIEWER"
+                      ? "text-gray-400 border-gray-200 bg-gray-50 cursor-not-allowed opacity-60"
+                      : "text-green-600 border-green-300 bg-green-50 hover:bg-green-100"
+                    }`}
+                  title={userProjectRole === "VIEWER" ? "Viewers cannot create files" : "Create a new ontology file"}
+                  disabled={userProjectRole === "VIEWER"}
                 >
-                  <Code2 size={14} />
-                  Editor
+                  <Plus size={14} />
+                  <span className="hidden sm:inline">New File</span>
+                  <span className="sm:hidden">+</span>
                 </button>
-              )}
-              <button
-                onClick={() => {
-                  if (!isAppOnline()) {
-                    showToast("Connect to the internet to report an issue.", "error");
-                    return;
-                  }
-                  setIsReportIssueModalOpen(true);
-                }}
-                className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
-                title="Report Issue"
-              >
-                <Bug size={14} />
-                Report Issue
-              </button>
-              <label
-                className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
-                  userProjectRole === "VIEWER"
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
-                    : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
-                }`}
-                title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
-              >
-                <Upload
-                  size={16}
-                  className={uploading ? "animate-bounce" : ""}
-                  style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}
-                />
-                <span className="hidden sm:inline" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
-                  {uploading ? "Uploading..." : "Upload File"}
-                </span>
-                <span className="sm:hidden" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
-                  {uploading ? "..." : "📤"}
-                </span>
-                {userProjectRole !== "VIEWER" && (
-                  <input
-                    type="file"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                    accept=".owl,.rdf,.ttl,.n3,.nt,.jsonld,.zip"
-                    disabled={uploading}
-                  />
+                {onOpenEditor && (
+                  <button
+                    onClick={onOpenEditor}
+                    className="px-2.5 py-1.5 text-xs text-blue-600 border border-blue-300 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors flex items-center gap-1.5 font-medium"
+                  >
+                    <Code2 size={14} />
+                    Editor
+                  </button>
                 )}
-              </label>
-            </div>
-            <p className="text-xs text-gray-500 max-w-xl text-left sm:text-right w-full sm:w-auto">
-              {FILE_UPLOAD_GUIDANCE}
-            </p>
+                <button
+                  onClick={() => {
+                    if (!isAppOnline()) {
+                      showToast("Connect to the internet to report an issue.", "error");
+                      return;
+                    }
+                    setReportIssueModalType("Bug");
+                  }}
+                  className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
+                  title="Report Issue"
+                >
+                  <Bug size={14} />
+                  Report Issue
+                </button>
+                <button
+                  onClick={() => {
+                    if (!isAppOnline()) {
+                      showToast("Connect to the internet to submit a feature request.", "error");
+                      return;
+                    }
+                    setReportIssueModalType("Task");
+                  }}
+                  className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
+                  title="Request a Feature"
+                >
+                  <ListOrdered size={14} />
+                  Feature Request
+                </button>
+                <label
+                  className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${userProjectRole === "VIEWER"
+                      ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
+                      : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
+                    }`}
+                  title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
+                >
+                  <Upload
+                    size={16}
+                    className={uploading ? "animate-bounce" : ""}
+                    style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}
+                  />
+                  <span className="hidden sm:inline" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
+                    {uploading ? "Uploading..." : "Upload File"}
+                  </span>
+                  <span className="sm:hidden" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
+                    {uploading ? "..." : "📤"}
+                  </span>
+                  {userProjectRole !== "VIEWER" && (
+                    <input
+                      type="file"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      accept=".owl,.rdf,.ttl,.n3,.nt,.jsonld,.zip"
+                      disabled={uploading}
+                    />
+                  )}
+                </label>
+              </div>
+              <p className="text-xs text-gray-500 max-w-xl text-left sm:text-right w-full sm:w-auto">
+                {FILE_UPLOAD_GUIDANCE}
+              </p>
             </div>
           </div>
 
@@ -1191,11 +1203,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             {!searchQuery && (
               <div className="flex flex-col items-center gap-4">
                 <label
-                  className={`group flex items-center gap-3 px-8 py-4 text-lg font-semibold rounded-xl transition-all ${
-                    userProjectRole === "VIEWER"
+                  className={`group flex items-center gap-3 px-8 py-4 text-lg font-semibold rounded-xl transition-all ${userProjectRole === "VIEWER"
                       ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
                       : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
-                  }`}
+                    }`}
                   title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
                 >
                   <Upload
@@ -1239,23 +1250,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 <div
                   key={file.id}
                   onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && renamingFileId !== file.id && handleFileClick(file)}
-                  className={`relative overflow-hidden bg-white rounded-lg border-2 p-4 transition-all hover:shadow-lg ${
-                    isImporting
+                  className={`relative overflow-hidden bg-white rounded-lg border-2 p-4 transition-all hover:shadow-lg ${isImporting
                       ? isQueued
                         ? "border-purple-300 cursor-default"
                         : "border-blue-300 cursor-default"
                       : isCheckingGraphDB
-                      ? 'border-purple-400 cursor-wait'
-                      : isAnotherFileLoading
-                      ? 'border-gray-200 cursor-wait opacity-60'
-                      : isImportDone
-                      ? 'border-green-400 cursor-pointer hover:border-green-500'
-                      : isImportFailed
-                      ? 'border-red-300 cursor-pointer'
-                      : selectedFile === file.id
-                      ? 'border-purple-500 shadow-lg cursor-pointer'
-                      : 'border-gray-200 cursor-pointer'
-                  }`}
+                        ? 'border-purple-400 cursor-wait'
+                        : isAnotherFileLoading
+                          ? 'border-gray-200 cursor-wait opacity-60'
+                          : isImportDone
+                            ? 'border-green-400 cursor-pointer hover:border-green-500'
+                            : isImportFailed
+                              ? 'border-red-300 cursor-pointer'
+                              : selectedFile === file.id
+                                ? 'border-purple-500 shadow-lg cursor-pointer'
+                                : 'border-gray-200 cursor-pointer'
+                    }`}
                 >
                   {/* Progress bar stripe at bottom */}
                   {(isImporting || isCheckingGraphDB) && (
@@ -1268,59 +1278,58 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   )}
 
                   <div className="flex items-start justify-between mb-3">
-                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                      isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
-                    }`}>
+                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
+                      }`}>
                       {isImporting
                         ? <Loader2 size={24} className="text-blue-600 animate-spin" />
                         : isCheckingGraphDB
-                        ? <Loader2 size={24} className="text-purple-500 animate-spin" />
-                        : isImportDone
-                        ? <CheckCircle2 size={24} className="text-green-600" />
-                        : isImportFailed
-                        ? <XCircle size={24} className="text-red-500" />
-                        : <FileText size={24} className="text-purple-600" />
+                          ? <Loader2 size={24} className="text-purple-500 animate-spin" />
+                          : isImportDone
+                            ? <CheckCircle2 size={24} className="text-green-600" />
+                            : isImportFailed
+                              ? <XCircle size={24} className="text-red-500" />
+                              : <FileText size={24} className="text-purple-600" />
                       }
                     </div>
                     {!isImporting && !isCheckingGraphDB && (userProjectRole === "OWNER" ||
                       userProjectRole === "ADMIN" ||
                       (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
-                      <div className="relative">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
-                          }}
-                          className="p-1 hover:bg-gray-100 rounded"
-                        >
-                          <MoreVertical size={16} className="text-gray-400" />
-                        </button>
-                        {openMenuFileId === file.id && (
-                          <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleRenameFile(file.id);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-2"
-                            >
-                              <Edit3 size={14} />
-                              Rename
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteFile(file.id, file.name);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
-                            >
-                              <Trash2 size={14} />
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                        <div className="relative">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
+                            }}
+                            className="p-1 hover:bg-gray-100 rounded"
+                          >
+                            <MoreVertical size={16} className="text-gray-400" />
+                          </button>
+                          {openMenuFileId === file.id && (
+                            <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRenameFile(file.id);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-2"
+                              >
+                                <Edit3 size={14} />
+                                Rename
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteFile(file.id, file.name);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
+                              >
+                                <Trash2 size={14} />
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                   </div>
 
                   {renamingFileId === file.id ? (
@@ -1332,9 +1341,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                       />
                     </div>
                   ) : (
-                    <h3 className={`font-semibold mb-1 truncate ${
-                      isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'
-                    }`} title={file.name}>
+                    <h3 className={`font-semibold mb-1 truncate ${isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'
+                      }`} title={file.name}>
                       {file.name}
                     </h3>
                   )}
@@ -1430,38 +1438,36 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                     <tr
                       key={file.id}
                       onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && renamingFileId !== file.id && handleFileClick(file)}
-                      className={`transition-colors ${
-                        isImporting
+                      className={`transition-colors ${isImporting
                           ? isQueued
                             ? "bg-purple-50 cursor-default"
                             : "bg-blue-50 cursor-default"
                           : isCheckingGraphDB
-                          ? 'bg-purple-50 cursor-wait'
-                          : isAnotherFileLoading
-                          ? 'cursor-wait opacity-60'
-                          : isImportDone
-                          ? 'bg-green-50 cursor-pointer hover:bg-green-100'
-                          : isImportFailed
-                          ? 'bg-red-50 cursor-pointer hover:bg-red-100'
-                          : selectedFile === file.id
-                          ? 'bg-purple-50 cursor-pointer hover:bg-gray-50'
-                          : 'cursor-pointer hover:bg-gray-50'
-                      }`}
+                            ? 'bg-purple-50 cursor-wait'
+                            : isAnotherFileLoading
+                              ? 'cursor-wait opacity-60'
+                              : isImportDone
+                                ? 'bg-green-50 cursor-pointer hover:bg-green-100'
+                                : isImportFailed
+                                  ? 'bg-red-50 cursor-pointer hover:bg-red-100'
+                                  : selectedFile === file.id
+                                    ? 'bg-purple-50 cursor-pointer hover:bg-gray-50'
+                                    : 'cursor-pointer hover:bg-gray-50'
+                        }`}
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded flex items-center justify-center ${
-                            isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
-                          }`}>
+                          <div className={`w-8 h-8 rounded flex items-center justify-center ${isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
+                            }`}>
                             {isImporting
                               ? <Loader2 size={16} className="text-blue-600 animate-spin" />
                               : isCheckingGraphDB
-                              ? <Loader2 size={16} className="text-purple-500 animate-spin" />
-                              : isImportDone
-                              ? <CheckCircle2 size={16} className="text-green-600" />
-                              : isImportFailed
-                              ? <XCircle size={16} className="text-red-500" />
-                              : <FileText size={16} className="text-purple-600" />
+                                ? <Loader2 size={16} className="text-purple-500 animate-spin" />
+                                : isImportDone
+                                  ? <CheckCircle2 size={16} className="text-green-600" />
+                                  : isImportFailed
+                                    ? <XCircle size={16} className="text-red-500" />
+                                    : <FileText size={16} className="text-purple-600" />
                             }
                           </div>
                           <div>
@@ -1599,9 +1605,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       {toast.show && (
         <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
           <div
-            className={`px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 text-white ${
-              toast.type === "success" ? "bg-green-600" : "bg-red-600"
-            }`}
+            className={`px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 text-white ${toast.type === "success" ? "bg-green-600" : "bg-red-600"
+              }`}
           >
             {toast.type === "success" ? (
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -1626,11 +1631,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       )}
 
       {/* Report Issue Modal */}
-      {isReportIssueModalOpen && (
+      {reportIssueModalType && (
         <ReportIssueModal
           projectName={projectName}
           projectId={projectId}
-          onClose={() => setIsReportIssueModalOpen(false)}
+          initialIssueType={reportIssueModalType}
+          onClose={() => setReportIssueModalType(null)}
         />
       )}
 
@@ -1648,9 +1654,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             <div className="px-6 pt-5 pb-4 flex items-start gap-4">
               <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                  <line x1="2" y1="2" x2="22" y2="22"/>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                  <line x1="2" y1="2" x2="22" y2="22" />
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
@@ -1665,7 +1671,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 aria-label="Close"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
@@ -1675,7 +1681,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               </div>
               <div className="flex items-start gap-2.5 text-sm text-gray-600">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
                 </svg>
                 <span>Ask the <span className="font-medium text-gray-800">workspace owner</span> to open this file once from the project library. After that, members can open it for viewing.</span>
               </div>
@@ -1709,9 +1715,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             <div className="px-6 pt-5 pb-4 flex items-start gap-4">
               <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                  <line x1="2" y1="2" x2="22" y2="22"/>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                  <line x1="2" y1="2" x2="22" y2="22" />
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
@@ -1726,7 +1732,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 aria-label="Close"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
@@ -1738,7 +1744,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
               </div>
               <div className="flex items-start gap-2.5 text-sm text-gray-600">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
                 </svg>
                 <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock file uploads for all members.</span>
               </div>

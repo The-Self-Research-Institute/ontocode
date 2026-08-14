@@ -11,6 +11,7 @@ import {
   Tag,
   Share2,
   List,
+  ListOrdered,
   Code,
   Loader2,
   Package,
@@ -99,7 +100,7 @@ import PropertyEditor from "./details/PropertyEditor";
 import IndividualEditor from "./details/IndividualEditor";
 import DatatypeEditor from "./details/DatatypeEditor";
 import AnnotationPropertyEditor from "./details/AnnotationPropertyEditor";
-import { Panel, AnnotationsDisplay } from "./details/common";
+import { Panel, AnnotationsDisplay, AxiomRow } from "./details/common";
 // SparqlQueryEditor moved to plugin: sparql-query-plugin
 import { ProjectSelector } from "./ProjectSelector";
 import CollaborationPanel, { CollaborationPanelRef } from "./CollaborationPanel";
@@ -207,7 +208,8 @@ const TopMenuBar = ({
   onOpenPluginMarketplace,
   hasPluginUpdates,
   onOpenHistory,
-  onReportIssue,
+  onReportBug,
+  onRequestFeature,
   onOpenUserGuide,
   onOpenReleaseNotes,
   onOpenLicenses,
@@ -266,7 +268,8 @@ const TopMenuBar = ({
   onOpenPluginMarketplace: () => void;
   hasPluginUpdates?: boolean;
   onOpenHistory: () => void;
-  onReportIssue: () => void;
+  onReportBug: () => void;
+  onRequestFeature: () => void;
   onOpenUserGuide: () => void;
   onOpenReleaseNotes: () => void;
   onOpenLicenses: () => void;
@@ -636,11 +639,10 @@ const TopMenuBar = ({
                         setOpenMenu(null);
                         if (onStartReasoner) await onStartReasoner();
                       }}
-                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${
-                        isReasonerRunning || isReasonerLoading
+                      className={`w-full text-left px-4 py-2 text-xs flex items-center gap-2 ${isReasonerRunning || isReasonerLoading
                           ? 'text-gray-400 cursor-not-allowed'
                           : 'hover:bg-gray-100'
-                      }`}
+                        }`}
                       disabled={isReasonerRunning || isReasonerLoading}
                     >
                       {isReasonerLoading ? <Loader2 size={12} className="animate-spin" /> : null}
@@ -716,9 +718,8 @@ const TopMenuBar = ({
                         setOpenMenu(null);
                         if (onSelectReasoner) onSelectReasoner('HermiT');
                       }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                        selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${selectedReasoner === 'HermiT' ? 'bg-blue-50 font-semibold' : ''
+                        }`}
                     >
                       {selectedReasoner === 'HermiT' ? '• ' : '  '}HermiT 1.4.5.519
                     </button>
@@ -727,9 +728,8 @@ const TopMenuBar = ({
                         setOpenMenu(null);
                         if (onSelectReasoner) onSelectReasoner('ELK');
                       }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${
-                        selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2 ${selectedReasoner === 'ELK' ? 'bg-blue-50 font-semibold' : ''
+                        }`}
                     >
                       {selectedReasoner === 'ELK' ? '• ' : '  '}ELK 0.4.3
                     </button>
@@ -738,9 +738,8 @@ const TopMenuBar = ({
                         setOpenMenu(null);
                         if (onSelectReasoner) onSelectReasoner('Pellet');
                       }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
+                        }`}
                     >
                       {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
                     </button>
@@ -749,9 +748,8 @@ const TopMenuBar = ({
                         setOpenMenu(null);
                         if (onSelectReasoner) onSelectReasoner('Openllet');
                       }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
+                        }`}
                     >
                       {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
                     </button>
@@ -760,9 +758,8 @@ const TopMenuBar = ({
                         setOpenMenu(null);
                         if (onSelectReasoner) onSelectReasoner('Structural');
                       }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${
-                        selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
-                      }`}
+                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
+                        }`}
                     >
                       {selectedReasoner === 'Structural' ? '• ' : '  '}Structural Reasoner
                     </button>
@@ -783,13 +780,23 @@ const TopMenuBar = ({
                     )}
                     <button
                       onClick={() => {
-                        onReportIssue();
+                        onReportBug();
                         setOpenMenu(null);
                       }}
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
                     >
                       <Bug size={14} />
-                      Report Issue
+                      Report Bug
+                    </button>
+                    <button
+                      onClick={() => {
+                        onRequestFeature();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <ListOrdered size={14} />
+                      Request Feature
                     </button>
                     <button
                       onClick={() => {
@@ -895,11 +902,11 @@ const TopMenuBar = ({
                               // is implied by hasExport on paid tiers but we
                               // keep both keys explicit so future tiers can
                               // diverge (e.g. a Starter plan with TTL-only).
-                              // if (isViewOnly || !subscription.canAccessFeature('hasExport')
-                              //     || !subscription.canAccessFeature('hasMultipleExportFormats')) {
-                              //   onExportProAction?.();
-                              //   return;
-                              // }
+                              if (isViewOnly || !subscription.canAccessFeature('hasExport')
+                                || !subscription.canAccessFeature('hasMultipleExportFormats')) {
+                                onExportProAction?.();
+                                return;
+                              }
                               setExportingFormat(format);
                               // Prefer the ontology's actual file name over the raw project id.
                               const baseName = (
@@ -1042,74 +1049,70 @@ const TopMenuBar = ({
           </span>
         ) : (
           <>
-        {autoDraftStatus === 'copying' && (
-          <span className="hidden sm:inline text-xs text-blue-500 italic animate-pulse" title="Setting up your private draft workspace…">
-            Setting up draft…
-          </span>
-        )}
-        {autoDraftStatus === 'ready' && (
-          <span className="hidden sm:inline text-xs text-green-600 font-medium">
-            Draft ready
-          </span>
-        )}
-        <span className={`hidden sm:inline text-xs font-medium ${
-          (requireDraftForMembers && !isProjectOwner || isDraftEditorRole) && syncMode === 'public'
-            ? "text-amber-600"
-            : syncMode === "public" ? "text-green-600" : "text-gray-500"
-        }`}>
-          {(requireDraftForMembers && !isProjectOwner) || isDraftEditorRole
-            ? (syncMode === 'public' ? "Public (View Only)" : "Draft Mode")
-            : syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
-        </span>
-        {((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'public' ? (
-          // Draft-only member in view-only mode: offer explicit switch to draft
-          <button
-            onClick={onSwitchToDraftMode}
-            className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
-            title="Start your private draft copy to make edits"
-          >
-            Switch to Draft Mode
-          </button>
-        ) : ((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'private' ? (
-          // Draft-only member in draft mode: allow switching back to view-only public
-          <button
-            onClick={onToggleSyncMode}
-            className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 bg-gray-300"
-            title="Switch back to Public view-only mode"
-          >
-            <span className="inline-block h-3 w-3 transform rounded-full bg-white transition-transform translate-x-1" />
-          </button>
-        ) : (
-          // Owner or non-requireDraft project: show the normal toggle
-          <button
-            onClick={onToggleSyncMode}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
-              syncMode === "public" ? "bg-green-500" : "bg-gray-300"
-            }`}
-            title={syncMode === "public" ? "Switch to Draft Mode" : "View Public (draft preserved)"}
-          >
-            <span
-              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                syncMode === "public" ? "translate-x-5" : "translate-x-1"
-              }`}
-            />
-          </button>
-        )}
-        {isProjectOwner && onToggleRequireDraftForMembers && (
-          <button
-            onClick={onToggleRequireDraftForMembers}
-            className={`ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${
-              requireDraftForMembers
-                ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
-                : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
-            }`}
-            title={requireDraftForMembers
-              ? 'Members are locked to Draft Mode — click to allow public editing'
-              : 'Allow members to edit publicly — click to require Draft Mode for members'}
-          >
-            {requireDraftForMembers ? '🔒 Draft required' : 'Allow public'}
-          </button>
-        )}
+            {autoDraftStatus === 'copying' && (
+              <span className="hidden sm:inline text-xs text-blue-500 italic animate-pulse" title="Setting up your private draft workspace…">
+                Setting up draft…
+              </span>
+            )}
+            {autoDraftStatus === 'ready' && (
+              <span className="hidden sm:inline text-xs text-green-600 font-medium">
+                Draft ready
+              </span>
+            )}
+            <span className={`hidden sm:inline text-xs font-medium ${(requireDraftForMembers && !isProjectOwner || isDraftEditorRole) && syncMode === 'public'
+                ? "text-amber-600"
+                : syncMode === "public" ? "text-green-600" : "text-gray-500"
+              }`}>
+              {(requireDraftForMembers && !isProjectOwner) || isDraftEditorRole
+                ? (syncMode === 'public' ? "Public (View Only)" : "Draft Mode")
+                : syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
+            </span>
+            {((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'public' ? (
+              // Draft-only member in view-only mode: offer explicit switch to draft
+              <button
+                onClick={onSwitchToDraftMode}
+                className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
+                title="Start your private draft copy to make edits"
+              >
+                Switch to Draft Mode
+              </button>
+            ) : ((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'private' ? (
+              // Draft-only member in draft mode: allow switching back to view-only public
+              <button
+                onClick={onToggleSyncMode}
+                className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 bg-gray-300"
+                title="Switch back to Public view-only mode"
+              >
+                <span className="inline-block h-3 w-3 transform rounded-full bg-white transition-transform translate-x-1" />
+              </button>
+            ) : (
+              // Owner or non-requireDraft project: show the normal toggle
+              <button
+                onClick={onToggleSyncMode}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${syncMode === "public" ? "bg-green-500" : "bg-gray-300"
+                  }`}
+                title={syncMode === "public" ? "Switch to Draft Mode" : "View Public (draft preserved)"}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${syncMode === "public" ? "translate-x-5" : "translate-x-1"
+                    }`}
+                />
+              </button>
+            )}
+            {isProjectOwner && onToggleRequireDraftForMembers && (
+              <button
+                onClick={onToggleRequireDraftForMembers}
+                className={`ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${requireDraftForMembers
+                    ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
+                    : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                  }`}
+                title={requireDraftForMembers
+                  ? 'Members are locked to Draft Mode — click to allow public editing'
+                  : 'Allow members to edit publicly — click to require Draft Mode for members'}
+              >
+                {requireDraftForMembers ? '🔒 Draft required' : 'Allow public'}
+              </button>
+            )}
           </>
         )}
       </div>
@@ -1390,13 +1393,12 @@ const OpenFileDialog = ({
                         }
                         onClose();
                       }}
-                      className={`flex items-center gap-3 p-2 px-3 rounded-md transition-all ${
-                        isPlanExpired
+                      className={`flex items-center gap-3 p-2 px-3 rounded-md transition-all ${isPlanExpired
                           ? "opacity-50 cursor-not-allowed"
                           : isActive
                             ? "selected cursor-pointer"
                             : "hover-overlay border border-transparent cursor-pointer"
-                      }`}
+                        }`}
                     >
                       <FileText size={18} className={isSharedFile ? "text-blue-500" : "text-accent"} />
                       <div className="flex-1 min-w-0">
@@ -1611,7 +1613,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           status !== "trialing"
         );
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   // If the workspace owner's paid plan expired, redirect owners back to workspace selection.
@@ -1629,7 +1631,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onGoToWorkspace?.();
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [user?.workspaceId, user?.workspaceRole]);
 
   const applyInstanceCountsToTree = useCallback(
@@ -2046,7 +2048,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       } else {
         beginCopy();
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   // Callback shared by the "Switch to Draft Mode" toolbar button and the draftRequired dialog button.
@@ -2200,7 +2202,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     title: "",
     message: "",
     conflicts: [],
-    onForce: () => {},
+    onForce: () => { },
   });
   // Per-conflict resolution choices: entityIRI → action ("KEEP_SOURCE" | "KEEP_TARGET" | "MERGE")
   const [conflictResolutions, setConflictResolutions] = useState<Record<string, string>>({});
@@ -2218,7 +2220,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     isOpen: false,
     title: "",
     message: "",
-    onConfirm: () => {},
+    onConfirm: () => { },
     onCancel: undefined,
     confirmLabel: undefined,
     cancelLabel: undefined,
@@ -2242,7 +2244,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     onLeave: () => void;
   }>({
     isOpen: false,
-    onLeave: () => {},
+    onLeave: () => { },
   });
 
   const [duplicatePrompt, setDuplicatePrompt] = useState<{
@@ -2367,6 +2369,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [reportIssueType, setReportIssueType] = useState<"Bug" | "Task">("Bug");
   const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
@@ -2608,20 +2611,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       count:
         hierarchyViewModes.ObjectProperties === "inferred"
           ? countNodes(
-              inferredObjectPropertyHierarchy.length > 0
-                ? inferredObjectPropertyHierarchy
-                : Array.isArray(reasonerResults?.objectPropertyHierarchy)
-                  ? reasonerResults.objectPropertyHierarchy
-                  : [],
-            )
+            inferredObjectPropertyHierarchy.length > 0
+              ? inferredObjectPropertyHierarchy
+              : Array.isArray(reasonerResults?.objectPropertyHierarchy)
+                ? reasonerResults.objectPropertyHierarchy
+                : [],
+          )
           : (() => {
-              const metaCount = Number((metadata as any)?.objectPropertyCount) || 0;
-              const treeCount =
-                !isPropertiesLoading && objectPropertyHierarchy.length > 0
-                  ? countNodes(objectPropertyHierarchy)
-                  : 0;
-              return Math.max(metaCount, treeCount);
-            })(),
+            const metaCount = Number((metadata as any)?.objectPropertyCount) || 0;
+            const treeCount =
+              !isPropertiesLoading && objectPropertyHierarchy.length > 0
+                ? countNodes(objectPropertyHierarchy)
+                : 0;
+            return Math.max(metaCount, treeCount);
+          })(),
       theme: "bg-gradient-to-b from-blue-300 to-blue-500 text-white border-blue-600",
     },
     {
@@ -2631,20 +2634,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       count:
         hierarchyViewModes.DataProperties === "inferred"
           ? countNodes(
-              inferredDataPropertyHierarchy.length > 0
-                ? inferredDataPropertyHierarchy
-                : Array.isArray(reasonerResults?.dataPropertyHierarchy)
-                  ? reasonerResults.dataPropertyHierarchy
-                  : [],
-            )
+            inferredDataPropertyHierarchy.length > 0
+              ? inferredDataPropertyHierarchy
+              : Array.isArray(reasonerResults?.dataPropertyHierarchy)
+                ? reasonerResults.dataPropertyHierarchy
+                : [],
+          )
           : (() => {
-              const metaCount = Number((metadata as any)?.dataPropertyCount) || 0;
-              const treeCount =
-                !isPropertiesLoading && dataPropertyHierarchy.length > 0
-                  ? countNodes(dataPropertyHierarchy)
-                  : 0;
-              return Math.max(metaCount, treeCount);
-            })(),
+            const metaCount = Number((metadata as any)?.dataPropertyCount) || 0;
+            const treeCount =
+              !isPropertiesLoading && dataPropertyHierarchy.length > 0
+                ? countNodes(dataPropertyHierarchy)
+                : 0;
+            return Math.max(metaCount, treeCount);
+          })(),
       theme: "bg-gradient-to-b from-green-300 to-green-500 text-white border-green-600",
     },
     {
@@ -2653,9 +2656,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       icon: Tag,
       count: !isAnnotationPropertiesLoading
         ? annotationProperties.length ||
-          (annotationPropertyHierarchy.length > 0 ? countNodes(annotationPropertyHierarchy) : 0) ||
-          (metadata as any)?.annotationPropertyCount ||
-          0
+        (annotationPropertyHierarchy.length > 0 ? countNodes(annotationPropertyHierarchy) : 0) ||
+        (metadata as any)?.annotationPropertyCount ||
+        0
         : (metadata as any)?.annotationPropertyCount ?? undefined,
       theme: "bg-gradient-to-b from-orange-300 to-orange-500 text-white border-orange-600",
     },
@@ -2853,8 +2856,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       const annotationBlob =
         searchOptions.searchAnnotations && (item as any).annotations
           ? Object.entries((item as any).annotations)
-              .map(([key, value]) => `${key} ${String(value)}`)
-              .join(" ")
+            .map(([key, value]) => `${key} ${String(value)}`)
+            .join(" ")
           : "";
       const haystack = `${item.label || ""} ${item.id || ""} ${annotationBlob}`;
       if (regex) return regex.test(haystack);
@@ -3152,7 +3155,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setInferredClassHierarchy([]);
         showNotification(
           payload?.message ||
-            "The ontology is inconsistent — reasoning cannot proceed. Use 'Explain inconsistency' to find the conflicting axioms.",
+          "The ontology is inconsistent — reasoning cannot proceed. Use 'Explain inconsistency' to find the conflicting axioms.",
           "error",
         );
         return;
@@ -3169,7 +3172,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (payload?.tooLargeForReasoner && effectiveReasoner !== 'STRUCTURAL') {
         const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
         applyPayload(fallbackPayload);
-      // Backend signals timeout — auto-retry with STRUCTURAL
+        // Backend signals timeout — auto-retry with STRUCTURAL
       } else if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
         const fallbackPayload = await fetchWithReasoner('STRUCTURAL');
         applyPayload(fallbackPayload);
@@ -3341,7 +3344,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (mainTab === "IndividualsByClass" && selectedClassForIndividuals) {
       loadClassInstances();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainTab]);
 
   const startReasoner = useCallback(async () => {
@@ -4081,14 +4084,14 @@ const Dashboard: React.FC<DashboardProps> = ({
           setGeneralClassAxioms(
             Array.isArray(gciAxioms)
               ? gciAxioms.map((axiom: any) => ({
-                  id: axiom.id,
-                  value: axiom.value,
-                  subClass: axiom.subClass || "",
-                  superClass: axiom.superClass || "",
-                  definition: axiom.subClass || axiom.definition || "",
-                  superClassIri: axiom.superClass || axiom.superClassIri || "",
-                  subExpression: axiom.subClass || axiom.subExpression || "",
-                }))
+                id: axiom.id,
+                value: axiom.value,
+                subClass: axiom.subClass || "",
+                superClass: axiom.superClass || "",
+                definition: axiom.subClass || axiom.definition || "",
+                superClassIri: axiom.superClass || axiom.superClassIri || "",
+                subExpression: axiom.subClass || axiom.subExpression || "",
+              }))
               : [],
           );
           setOntologyAnnotations(normalizeOntologyAnnotations(annotationsData));
@@ -4277,7 +4280,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         if (hierarchyBuilding && !isStaleLoad()) {
           setLoadingStatusMessage(
             topLevelClassesRes?.message ||
-              "Loading class tree…",
+            "Loading class tree…",
           );
           setIsHierarchyLoading(true);
         }
@@ -4668,7 +4671,8 @@ const Dashboard: React.FC<DashboardProps> = ({
           await desktopOwlApiGate;
           if (isStaleLoad()) return;
           try {
-            const fetchUrl = `/api/ontology/individuals/${encodedProjectId}${cacheBuster}${entityDraftScopeQuery}`;
+            const individualsBaseUrl = `/api/ontology/individuals/${encodedProjectId}${cacheBuster}${entityDraftScopeQuery}`;
+            const fetchUrl = `${individualsBaseUrl}${individualsBaseUrl.includes("?") ? "&" : "?"}limit=10000`;
             const res = isDesktop()
               ? await getOntologyListWithRetry<any>(fetchUrl, { signal, maxAttempts: 20, delayMs: 2000 })
               : await apiClient.get<any>(fetchUrl, undefined, { signal });
@@ -4821,6 +4825,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               shouldApplyDirectly = savedSyncMode === "public";
             } else if (isShared) {
               shouldApplyDirectly = true;
+            } else if (isDesktop()) {
+              // Desktop is always local draft-until-Save — never default to direct/public
+              // writes just because no saved preference exists for this project yet.
+              shouldApplyDirectly = false;
             } else if (projectId) {
               // First visit on this device: fetch from DB (one-time cost) for cross-device restore.
               const dbSyncMode = await userPreferencesService.getSyncMode(projectId);
@@ -5059,7 +5067,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           const data = res?.data || res;
           setMetadata({ ...(metadata || {}), ...data });
         })
-        .catch(() => {});
+        .catch(() => { });
     } catch (error) {
       console.error("[Dashboard] Failed to update ontology ID:", error);
       notificationService.error("Update Failed", "Could not update ontology IRI/version.");
@@ -5155,11 +5163,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         prev.map((ann) =>
           ann.propertyIri === propertyIri && ann.value === oldValue && ann.datatype === oldDatatype
             ? {
-                ...ann,
-                value: newValue,
-                datatype: payload.datatype || newDatatype,
-                language: payload.language || newLanguage,
-              }
+              ...ann,
+              value: newValue,
+              datatype: payload.datatype || newDatatype,
+              language: payload.language || newLanguage,
+            }
             : ann,
         ),
       );
@@ -5677,7 +5685,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const gciDeleteActorId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       await apiClient.delete(
         `/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}` +
-          `&draft=${ontologyMutationService.resolveUseDraft()}&userId=${encodeURIComponent(gciDeleteActorId)}`,
+        `&draft=${ontologyMutationService.resolveUseDraft()}&userId=${encodeURIComponent(gciDeleteActorId)}`,
       );
 
       // Immediately update UI
@@ -5703,14 +5711,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Map backend fields to frontend expected structure
       const mappedData = Array.isArray(data)
         ? data.map((axiom: any) => ({
-            id: axiom.id || axiom.subClass || "",
-            value: axiom.value,
-            subClass: axiom.subClass || "",
-            superClass: axiom.superClass || "",
-            definition: axiom.subClass || axiom.definition || "",
-            superClassIri: axiom.superClass || axiom.superClassIri || "",
-            subExpression: axiom.subClass || axiom.subExpression || "",
-          }))
+          id: axiom.id || axiom.subClass || "",
+          value: axiom.value,
+          subClass: axiom.subClass || "",
+          superClass: axiom.superClass || "",
+          definition: axiom.subClass || axiom.definition || "",
+          superClassIri: axiom.superClass || axiom.superClassIri || "",
+          subExpression: axiom.subClass || axiom.subExpression || "",
+        }))
         : [];
       setGeneralClassAxioms(mappedData);
     } catch (error) {
@@ -5909,7 +5917,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassIndividualSameDiffDialog({ mode });
       try {
         if (!projectId) return;
-        const response = await apiClient.get<any>(withDraftScope(`/api/ontology/individuals/${projectId}`));
+        const response = await apiClient.get<any>(withDraftScope(`/api/ontology/individuals/${projectId}?limit=10000`));
         const loadedIndividuals = Array.isArray(response?.data)
           ? response.data
           : response?.data?.individuals || response?.individuals || [];
@@ -6151,7 +6159,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     // Webapp: don't navigate to editor while import is still in progress
     const importState = projectImportStatuses[selectedProjectId];
     if (!isDesktop() && importState &&
-        importState.type !== "IMPORT_COMPLETED" && importState.type !== "IMPORT_FAILED") {
+      importState.type !== "IMPORT_COMPLETED" && importState.type !== "IMPORT_FAILED") {
       return;
     }
 
@@ -7422,7 +7430,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   return updated;
                 });
               },
-              message.status.type === "IMPORT_COMPLETED" ? 3000 : 10000,
+              message.status.type === "IMPORT_COMPLETED" ? 3000 : 100000,
             );
           }
           break;
@@ -7797,35 +7805,31 @@ const updateItemInState = useCallback(
       });
     };
 
-    setSelectedItem((prev) => {
-      if (prev?.id === matchId) {
-        return updatedItem;
+      switch (entitiesTab) {
+        case "Classes":
+          setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
+          break;
+        case "ObjectProperties":
+          setObjectProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setObjectPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
+          break;
+        case "DataProperties":
+          setDataProperties((prev: Property[]) => prev.map((p: Property) => (p.id === updatedItem.id ? (updatedItem as Property) : p)));
+          setDataPropertyHierarchy((prev: TreeNode[]) => updateRecursively(prev) as TreeNode[]);
+          break;
+        case "AnnotationProperties":
+          setAnnotationProperties((prev) =>
+            prev.map((p) => (p.id === updatedItem.id ? (updatedItem as AnnotationProperty) : p)),
+          );
+          break;
+        case "Individuals":
+          setIndividuals((prev) => prev.map((i) => (i.id === updatedItem.id ? (updatedItem as Individual) : i)));
+          break;
+        case "Datatypes":
+          setDatatypes((prev) => prev.map((d) => (d.id === updatedItem.id ? (updatedItem as Datatype) : d)));
+          break;
       }
-      return prev;
-    });
-
-    switch (entitiesTab) {
-
-  case "Classes":
-    setClassHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
-    break;
-  case "Objectproperties":
-    setObjectPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
-    break;
-  case "Dataproperties":
-    setDataPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
-    break;
-  case "Annotationproperties":
-    setAnnotationPropertyHierarchy((prev) => updateRecursively(prev) as TreeNode[]);
-    break;
-  case "Individuals":
-    setIndividuals((prev) => updateRecursively(prev) as Individual[]);
-    break;
-  case "Datatypes":
-    setDatatypes((prev) => updateRecursively(prev) as Datatype[]);
-    break;
-
-    }
+      
 
     if (markUnsaved && !isLiveWriteMode()) {
       setHasUnsavedChanges(true);
@@ -8019,7 +8023,7 @@ const updateItemInState = useCallback(
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "Classes") return;
     lastClassHierarchyRefreshAt.current = 0;
     refreshClassHierarchy();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hierarchyImportsScope]);
 
   useEffect(() => {
@@ -8518,7 +8522,7 @@ const updateItemInState = useCallback(
           console.log("[Dashboard] 👤 Refreshing individuals due to individual edit");
           // Trigger refresh of individuals
           apiClient
-            .get(withDraftScope(`/api/ontology/individuals/${projectId}`))
+            .get(withDraftScope(`/api/ontology/individuals/${projectId}?limit=10000`))
             .then((response) => {
               setIndividuals(response.data || []);
               console.log("[Dashboard] ✅ Individuals refreshed");
@@ -8631,8 +8635,7 @@ const updateItemInState = useCallback(
         case "SWRL_RULE_DELETED":
           console.log("[Dashboard] 📏 SWRL rule changed by remote user, notifying SWRL plugin");
           showNotification(
-            `${(edit as any).username || "Someone"} ${
-              edit.type === "SWRL_RULE_ADDED" ? "added" : edit.type === "SWRL_RULE_MODIFIED" ? "modified" : "deleted"
+            `${(edit as any).username || "Someone"} ${edit.type === "SWRL_RULE_ADDED" ? "added" : edit.type === "SWRL_RULE_MODIFIED" ? "modified" : "deleted"
             } a SWRL rule`,
             "info",
           );
@@ -8648,13 +8651,13 @@ const updateItemInState = useCallback(
               const raw = response?.data?.data || response?.data?.axioms || response?.axioms || response?.data || response;
               const gcis = Array.isArray(raw)
                 ? raw.map((axiom: any) => ({
-                    value: axiom.value,
-                    subClass: axiom.subClass || axiom.definition || "",
-                    superClass: axiom.superClass || axiom.superClassIri || "",
-                    definition: axiom.subClass || axiom.definition || "",
-                    superClassIri: axiom.superClass || axiom.superClassIri || "",
-                    subExpression: axiom.subClass || axiom.subExpression || "",
-                  }))
+                  value: axiom.value,
+                  subClass: axiom.subClass || axiom.definition || "",
+                  superClass: axiom.superClass || axiom.superClassIri || "",
+                  definition: axiom.subClass || axiom.definition || "",
+                  superClassIri: axiom.superClass || axiom.superClassIri || "",
+                  subExpression: axiom.subClass || axiom.subExpression || "",
+                }))
                 : [];
               setGeneralClassAxioms(gcis);
               console.log("[Dashboard] ✅ GCIs refreshed");
@@ -9050,16 +9053,16 @@ const updateItemInState = useCallback(
               ? inferredClasses
               : classHierarchy
             : entitiesTab === "Classes"
-            ? currentHierarchyViewMode === "inferred"
-              ? inferredClasses
-              : classHierarchy
-            : entitiesTab === "ObjectProperties"
-              ? hierarchyViewModes.ObjectProperties === "inferred"
-                ? inferredObjectPropertyHierarchy
-                : objectPropertyHierarchy
-              : hierarchyViewModes.DataProperties === "inferred"
-                ? inferredDataPropertyHierarchy
-                : dataPropertyHierarchy;
+              ? currentHierarchyViewMode === "inferred"
+                ? inferredClasses
+                : classHierarchy
+              : entitiesTab === "ObjectProperties"
+                ? hierarchyViewModes.ObjectProperties === "inferred"
+                  ? inferredObjectPropertyHierarchy
+                  : objectPropertyHierarchy
+                : hierarchyViewModes.DataProperties === "inferred"
+                  ? inferredDataPropertyHierarchy
+                  : dataPropertyHierarchy;
 
         // Primary search in the tab's own hierarchy; fall back to classHierarchy so
         // that domain/range/types dialogs (open while on a non-Classes tab) can still
@@ -9826,11 +9829,10 @@ const updateItemInState = useCallback(
         ? res.annotationProperties
         : [];
     console.log(
-  "[TRACE] Full rawProperties:",
-  rawProperties
-);
+      "[TRACE] Full rawProperties:",
+      rawProperties
+    );
     const merged = mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty));
-    console.log("[TRACE] merged properties:", merged.map(p => ({ id: p.id, superProperties: (p as any).superProperties })));
     setAnnotationProperties(merged);
     setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
     return merged;
@@ -10488,7 +10490,7 @@ const updateItemInState = useCallback(
       }
       setIsIndividualsLoading(true);
       apiClient
-        .get<any>(withDraftScope(`/api/ontology/individuals/${encodedProjectId}`))
+        .get<any>(withDraftScope(`/api/ontology/individuals/${encodedProjectId}?limit=10000`))
         .then((res) => {
           setIndividuals(
             Array.isArray(res?.data) ? res.data : Array.isArray(res?.individuals) ? res.individuals : [],
@@ -11368,7 +11370,6 @@ const updateItemInState = useCallback(
       try {
         const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
         const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
-        const parentIri = addPropertyType === "subproperty" ? selectedItem?.id : undefined;
 
         // Bug #45: support sub-annotation-properties. createAnnotationProperty now takes the
         // parent directly (matching createObjectProperty/createDataProperty) so the declaration
@@ -12191,6 +12192,17 @@ const updateItemInState = useCallback(
     window.addEventListener("graph-view:class-created", handleGraphClassCreated as EventListener);
     return () => window.removeEventListener("graph-view:class-created", handleGraphClassCreated as EventListener);
   }, [projectId, markAsUnsaved]);
+
+  useEffect(() => {
+    const handleGCAChanged = (event: Event) => {
+      const custom = event as CustomEvent<{ projectId?: string }>;
+      const detail = custom.detail;
+      if (detail?.projectId && projectId && detail.projectId !== projectId) return;
+      refreshGeneralClassAxioms();
+    };
+    window.addEventListener("gca:changed", handleGCAChanged as EventListener);
+    return () => window.removeEventListener("gca:changed", handleGCAChanged as EventListener);
+  }, [projectId, refreshGeneralClassAxioms]);
 
   useEffect(() => {
     const handleGraphDelete = (event: Event) => {
@@ -13822,12 +13834,12 @@ const updateItemInState = useCallback(
             // MEDIUM-HIGH PRIORITY (80-89): Prefixed name matches
             ...(prefix
               ? [
-                  {
-                    pattern: new RegExp(`\\b${safePrefix}:${safeLocalName}(?![a-zA-Z0-9_-])`),
-                    desc: "Exact prefixed name",
-                    priority: 88,
-                  },
-                ]
+                {
+                  pattern: new RegExp(`\\b${safePrefix}:${safeLocalName}(?![a-zA-Z0-9_-])`),
+                  desc: "Exact prefixed name",
+                  priority: 88,
+                },
+              ]
               : []),
             {
               pattern: new RegExp(`\\b[a-zA-Z_][a-zA-Z0-9_-]*:${safeLocalName}(?![a-zA-Z0-9_-])`),
@@ -13838,11 +13850,11 @@ const updateItemInState = useCallback(
             // MEDIUM PRIORITY (70-79): Fragment/path patterns for URIs
             ...(entity.includes("#") || entity.includes("/")
               ? [
-                  { pattern: `#${localName}>`, desc: "Fragment in angle brackets", priority: 78 },
-                  { pattern: `#${localName}`, desc: "Fragment reference", priority: 77 },
-                  { pattern: `/${localName}>`, desc: "Path in angle brackets", priority: 76 },
-                  { pattern: `/${localName}`, desc: "Path reference", priority: 75 },
-                ]
+                { pattern: `#${localName}>`, desc: "Fragment in angle brackets", priority: 78 },
+                { pattern: `#${localName}`, desc: "Fragment reference", priority: 77 },
+                { pattern: `/${localName}>`, desc: "Path in angle brackets", priority: 76 },
+                { pattern: `/${localName}`, desc: "Path reference", priority: 75 },
+              ]
               : []),
 
             // MEDIUM-LOW PRIORITY (60-69): Fragment/local name in attributes
@@ -13885,14 +13897,14 @@ const updateItemInState = useCallback(
             },
             ...(prefix
               ? [
-                  {
-                    pattern: new RegExp(
-                      `(?:Declaration|ClassAssertion|SubClassOf)\\s*\\([^)]*${safePrefix}:${safeLocalName}`,
-                    ),
-                    desc: "Functional with prefix",
-                    priority: 51,
-                  },
-                ]
+                {
+                  pattern: new RegExp(
+                    `(?:Declaration|ClassAssertion|SubClassOf)\\s*\\([^)]*${safePrefix}:${safeLocalName}`,
+                  ),
+                  desc: "Functional with prefix",
+                  priority: 51,
+                },
+              ]
               : []),
 
             // VERY LOW PRIORITY (20-39): N-Triples and word boundary
@@ -14983,11 +14995,10 @@ const updateItemInState = useCallback(
                       fetchCodeViewContent("turtle", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === "turtle"
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === "turtle"
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                      }`}
                   >
                     Turtle
                   </button>
@@ -14996,11 +15007,10 @@ const updateItemInState = useCallback(
                       fetchCodeViewContent("rdfxml", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === "rdfxml"
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === "rdfxml"
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                      }`}
                   >
                     RDF/XML
                   </button>
@@ -15009,11 +15019,10 @@ const updateItemInState = useCallback(
                       fetchCodeViewContent("ntriples", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === "ntriples"
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === "ntriples"
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                      }`}
                   >
                     N-Triples
                   </button>
@@ -15022,11 +15031,10 @@ const updateItemInState = useCallback(
                       fetchCodeViewContent("owlxml", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === "owlxml"
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === "owlxml"
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                      }`}
                   >
                     OWL/XML
                   </button>
@@ -15035,11 +15043,10 @@ const updateItemInState = useCallback(
                       fetchCodeViewContent("manchester", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === "manchester"
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === "manchester"
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                      }`}
                   >
                     Manchester
                   </button>
@@ -15048,11 +15055,10 @@ const updateItemInState = useCallback(
                       fetchCodeViewContent("functional", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === "functional"
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === "functional"
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                      }`}
                   >
                     Functional
                   </button>
@@ -15061,11 +15067,10 @@ const updateItemInState = useCallback(
                       fetchCodeViewContent("jsonld", false, citationJustInserted);
                       setCitationJustInserted(false);
                     }}
-                    className={`px-3 py-1 text-sm rounded-md ${
-                      codeViewFormat === "jsonld"
+                    className={`px-3 py-1 text-sm rounded-md ${codeViewFormat === "jsonld"
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                    }`}
+                      }`}
                   >
                     JSON-LD
                   </button>
@@ -15113,11 +15118,10 @@ const updateItemInState = useCallback(
                         setCitationJustInserted(false);
                       }
                     }}
-                    className={`px-3 py-1 text-sm rounded-md flex items-center gap-1 ${
-                      citationRemovalMode
+                    className={`px-3 py-1 text-sm rounded-md flex items-center gap-1 ${citationRemovalMode
                         ? "bg-red-700 text-white hover:bg-red-800"
                         : "bg-red-600 text-white hover:bg-red-700"
-                    }`}
+                      }`}
                     title="Click to enter removal mode, then click on a citation to remove it"
                   >
                     <Trash2 size={16} />
@@ -15148,162 +15152,162 @@ const updateItemInState = useCallback(
                   </button> */}
                 </div>
                 <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-                <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                  {citationInsertionMode && (
-                    <div className="bg-blue-900 border-b-2 border-blue-600 p-3 text-blue-100 text-sm flex items-center gap-2">
-                      <div className="flex-1">
-                        <strong>📍 Citation Insertion Mode Active</strong>
-                        <div className="text-xs mt-1">
-                          Search for the location in your ontology where you want to insert the citation "
-                          {pendingCitation?.title || "Citation"}", then click <strong>Insert Here</strong> on the
-                          matching line.
+                  <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                    {citationInsertionMode && (
+                      <div className="bg-blue-900 border-b-2 border-blue-600 p-3 text-blue-100 text-sm flex items-center gap-2">
+                        <div className="flex-1">
+                          <strong>📍 Citation Insertion Mode Active</strong>
+                          <div className="text-xs mt-1">
+                            Search for the location in your ontology where you want to insert the citation "
+                            {pendingCitation?.title || "Citation"}", then click <strong>Insert Here</strong> on the
+                            matching line.
+                          </div>
                         </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setCitationInsertionMode(false);
-                          setPendingCitation(null);
-                        }}
-                        className="px-2 py-1 text-xs bg-blue-700 hover:bg-blue-600 rounded flex-shrink-0"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                  {citationRemovalMode && (
-                    <div className="bg-red-900 border-b-2 border-red-600 p-3 text-red-100 text-sm flex items-center gap-2">
-                      <div className="flex-1">
-                        <strong>🗑️ Citation Removal Mode Active</strong>
-                        <div className="text-xs mt-1">
-                          Citation lines are highlighted in <span className="bg-red-800 px-1 rounded">red</span>. Click
-                          on any citation line to remove it. Search for "Citation" or "urn:citation" to find
-                          citations.
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setCitationRemovalMode(false);
-                        }}
-                        className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 rounded flex-shrink-0"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                  {!codeViewLoading && codeViewTruncation && !codeViewPage && (
-                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/30 text-amber-700 dark:text-amber-300 text-sm">
-                      <AlertTriangle size={14} className="flex-shrink-0" />
-                      <span>
-                        This ontology is {(codeViewTruncation.totalChars / (1024 * 1024)).toFixed(0)} MB in this
-                        format — too large to edit here
-                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
-                          ? "."
-                          : " (OWL/XML, Manchester, and Functional Syntax always require a full reparse to save, so they stay capped regardless of file size)."}
-                        {" "}Showing a read-only preview of the first{" "}
-                        {codeViewTruncation.previewLines.toLocaleString()} lines. Export the file to view or edit
-                        the full content
-                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
-                          ? "."
-                          : ", or switch to Turtle/RDF-XML/N-Triples/JSON-LD for a higher editable size limit."}
-                      </span>
-                      <button
-                        onClick={downloadFullCodeViewFile}
-                        disabled={isDownloadingCodeView}
-                        className="ml-auto px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-                      >
-                        Download full file
-                      </button>
-                    </div>
-                  )}
-                  {codeViewPage && (
-                    <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-400/30 text-amber-700 dark:text-amber-300 text-sm flex-wrap">
-                      <AlertTriangle size={14} className="flex-shrink-0" />
-                      <span>
-                        {(codeViewPage.totalBytes / (1024 * 1024)).toFixed(0)} MB — read-only. Showing lines{" "}
-                        {(codeViewPage.startLine + 1).toLocaleString()}–
-                        {(codeViewPage.startLine + codeViewPage.lineCount).toLocaleString()} of{" "}
-                        {codeViewPage.totalLines.toLocaleString()}. Export the file to edit it
-                        {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
-                          ? "."
-                          : ", or switch to Turtle/RDF-XML/N-Triples/JSON-LD for a higher editable size limit."}
-                      </span>
-                      <div className="flex items-center gap-2 ml-auto flex-shrink-0">
                         <button
-                          onClick={() => loadCodeViewPage(codeViewPage.startLine - CODE_VIEW_PAGE_LINES)}
-                          disabled={codeViewLoading || codeViewPage.startLine <= 0}
-                          className="px-2 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          ← Prev
-                        </button>
-                        <button
-                          onClick={() => loadCodeViewPage(codeViewPage.startLine + codeViewPage.lineCount)}
-                          disabled={
-                            codeViewLoading ||
-                            codeViewPage.startLine + codeViewPage.lineCount >= codeViewPage.totalLines
-                          }
-                          className="px-2 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          Next →
-                        </button>
-                        <input
-                          type="number"
-                          min={1}
-                          max={codeViewPage.totalLines}
-                          placeholder="Go to line…"
-                          disabled={codeViewLoading}
-                          className="w-28 px-2 py-1 rounded-md border border-amber-400/40 bg-transparent text-xs"
-                          onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-                            if (e.key !== "Enter") return;
-                            const line = parseInt((e.target as HTMLInputElement).value, 10);
-                            if (!Number.isFinite(line) || line < 1) return;
-                            // Align the window so the requested line is at its top.
-                            loadCodeViewPage(line - 1);
+                          onClick={() => {
+                            setCitationInsertionMode(false);
+                            setPendingCitation(null);
                           }}
-                        />
+                          className="px-2 py-1 text-xs bg-blue-700 hover:bg-blue-600 rounded flex-shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                    {citationRemovalMode && (
+                      <div className="bg-red-900 border-b-2 border-red-600 p-3 text-red-100 text-sm flex items-center gap-2">
+                        <div className="flex-1">
+                          <strong>🗑️ Citation Removal Mode Active</strong>
+                          <div className="text-xs mt-1">
+                            Citation lines are highlighted in <span className="bg-red-800 px-1 rounded">red</span>. Click
+                            on any citation line to remove it. Search for "Citation" or "urn:citation" to find
+                            citations.
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setCitationRemovalMode(false);
+                          }}
+                          className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 rounded flex-shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                    {!codeViewLoading && codeViewTruncation && !codeViewPage && (
+                      <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-400/30 text-amber-700 dark:text-amber-300 text-sm">
+                        <AlertTriangle size={14} className="flex-shrink-0" />
+                        <span>
+                          This ontology is {(codeViewTruncation.totalChars / (1024 * 1024)).toFixed(0)} MB in this
+                          format — too large to edit here
+                          {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                            ? "."
+                            : " (OWL/XML, Manchester, and Functional Syntax always require a full reparse to save, so they stay capped regardless of file size)."}
+                          {" "}Showing a read-only preview of the first{" "}
+                          {codeViewTruncation.previewLines.toLocaleString()} lines. Export the file to view or edit
+                          the full content
+                          {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                            ? "."
+                            : ", or switch to Turtle/RDF-XML/N-Triples/JSON-LD for a higher editable size limit."}
+                        </span>
                         <button
                           onClick={downloadFullCodeViewFile}
                           disabled={isDownloadingCodeView}
-                          className="px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="ml-auto px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
                         >
                           Download full file
                         </button>
                       </div>
-                    </div>
-                  )}
-                  {codeViewLoading ? (
-                    <div className="flex items-center justify-center h-64">
-                      <div className="text-gray-500">Loading ontology content...</div>
-                    </div>
-                  ) : (
-                    <CodeHighlighter
-                      ref={codeHighlighterRef}
-                      content={codeViewContent || "// No content available"}
-                      format={codeViewFormat}
-                      citationInsertionMode={citationInsertionMode}
-                      citationRemovalMode={citationRemovalMode}
-                      pendingCitation={pendingCitation}
-                      onInsertCitationAt={handleInsertCitationAtLocation}
-                      onRemoveCitationAt={handleRemoveCitationAtLocation}
-                      onRequestZoteroCitation={() => setShowCitationPicker(true)}
-                      onContentChange={handleCodeContentChange}
-                      onSaveContent={handleSaveCodeContent}
-                      syntaxError={codeViewSyntaxError}
-                      readOnly={isViewOnlyMember || !!codeViewTruncation || !!codeViewPage}
-                      canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
-                      onExportProAction={handleExportProAction}
-                    />
-                  )}
-                </div>
-                <LintProblemsPanel
-                  issues={codeViewLintIssues}
-                  onJumpToLine={(line) => codeHighlighterRef.current?.goToLine(line)}
-                  onSaveAnyway={() => {
-                    const pending = lastCodeViewSaveContentRef.current;
-                    setCodeViewLintIssues([]);
-                    void handleSaveCodeContent(pending, true);
-                  }}
-                  onDismiss={() => setCodeViewLintIssues([])}
-                />
+                    )}
+                    {codeViewPage && (
+                      <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-400/30 text-amber-700 dark:text-amber-300 text-sm flex-wrap">
+                        <AlertTriangle size={14} className="flex-shrink-0" />
+                        <span>
+                          {(codeViewPage.totalBytes / (1024 * 1024)).toFixed(0)} MB — read-only. Showing lines{" "}
+                          {(codeViewPage.startLine + 1).toLocaleString()}–
+                          {(codeViewPage.startLine + codeViewPage.lineCount).toLocaleString()} of{" "}
+                          {codeViewPage.totalLines.toLocaleString()}. Export the file to edit it
+                          {CODE_VIEW_STREAMING_FORMATS.has(codeViewFormat)
+                            ? "."
+                            : ", or switch to Turtle/RDF-XML/N-Triples/JSON-LD for a higher editable size limit."}
+                        </span>
+                        <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+                          <button
+                            onClick={() => loadCodeViewPage(codeViewPage.startLine - CODE_VIEW_PAGE_LINES)}
+                            disabled={codeViewLoading || codeViewPage.startLine <= 0}
+                            className="px-2 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            ← Prev
+                          </button>
+                          <button
+                            onClick={() => loadCodeViewPage(codeViewPage.startLine + codeViewPage.lineCount)}
+                            disabled={
+                              codeViewLoading ||
+                              codeViewPage.startLine + codeViewPage.lineCount >= codeViewPage.totalLines
+                            }
+                            className="px-2 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Next →
+                          </button>
+                          <input
+                            type="number"
+                            min={1}
+                            max={codeViewPage.totalLines}
+                            placeholder="Go to line…"
+                            disabled={codeViewLoading}
+                            className="w-28 px-2 py-1 rounded-md border border-amber-400/40 bg-transparent text-xs"
+                            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                              if (e.key !== "Enter") return;
+                              const line = parseInt((e.target as HTMLInputElement).value, 10);
+                              if (!Number.isFinite(line) || line < 1) return;
+                              // Align the window so the requested line is at its top.
+                              loadCodeViewPage(line - 1);
+                            }}
+                          />
+                          <button
+                            onClick={downloadFullCodeViewFile}
+                            disabled={isDownloadingCodeView}
+                            className="px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Download full file
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {codeViewLoading ? (
+                      <div className="flex items-center justify-center h-64">
+                        <div className="text-gray-500">Loading ontology content...</div>
+                      </div>
+                    ) : (
+                      <CodeHighlighter
+                        ref={codeHighlighterRef}
+                        content={codeViewContent || "// No content available"}
+                        format={codeViewFormat}
+                        citationInsertionMode={citationInsertionMode}
+                        citationRemovalMode={citationRemovalMode}
+                        pendingCitation={pendingCitation}
+                        onInsertCitationAt={handleInsertCitationAtLocation}
+                        onRemoveCitationAt={handleRemoveCitationAtLocation}
+                        onRequestZoteroCitation={() => setShowCitationPicker(true)}
+                        onContentChange={handleCodeContentChange}
+                        onSaveContent={handleSaveCodeContent}
+                        syntaxError={codeViewSyntaxError}
+                        readOnly={isViewOnlyMember || !!codeViewTruncation || !!codeViewPage}
+                        canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
+                        onExportProAction={handleExportProAction}
+                      />
+                    )}
+                  </div>
+                  <LintProblemsPanel
+                    issues={codeViewLintIssues}
+                    onJumpToLine={(line) => codeHighlighterRef.current?.goToLine(line)}
+                    onSaveAnyway={() => {
+                      const pending = lastCodeViewSaveContentRef.current;
+                      setCodeViewLintIssues([]);
+                      void handleSaveCodeContent(pending, true);
+                    }}
+                    onDismiss={() => setCodeViewLintIssues([])}
+                  />
                 </div>
               </div>
             </div>
@@ -15669,87 +15673,87 @@ const updateItemInState = useCallback(
                 {ontologyAnnotations.length > 0 ? (
                   <div className="space-y-2">
                     {ontologyAnnotations.map((annotation, idx) => {
-                        const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
-                        const propertyIri = annotation.propertyIri || "";
-                        const propertyLabel = propertyIri.includes("#")
-                          ? propertyIri.split("#").pop()
-                          : propertyIri.includes("/")
-                            ? propertyIri.split("/").pop()
-                            : propertyIri;
-                        return (
+                      const key = `${annotation.propertyIri}-${annotation.value}-${idx}`;
+                      const propertyIri = annotation.propertyIri || "";
+                      const propertyLabel = propertyIri.includes("#")
+                        ? propertyIri.split("#").pop()
+                        : propertyIri.includes("/")
+                          ? propertyIri.split("/").pop()
+                          : propertyIri;
+                      return (
+                        <div
+                          key={key}
+                          className="border rounded-md transition-colors"
+                          style={{ borderColor: "var(--border)" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
+                          onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+                        >
                           <div
-                            key={key}
-                            className="border rounded-md transition-colors"
-                            style={{ borderColor: "var(--border)" }}
-                            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
-                            onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+                            className="px-3 py-2 border-b flex items-center justify-between"
+                            style={{ backgroundColor: "var(--accent-tint)", borderColor: "var(--border)" }}
                           >
-                            <div
-                              className="px-3 py-2 border-b flex items-center justify-between"
-                              style={{ backgroundColor: "var(--accent-tint)", borderColor: "var(--border)" }}
-                            >
-                              <div>
-                                <div className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
-                                  {propertyLabel}
-                                </div>
-                                <div
-                                  className="text-[10px] font-mono truncate"
-                                  style={{ color: "var(--text-tertiary)" }}
-                                  title={annotation.propertyIri}
-                                >
-                                  {annotation.propertyIri}
-                                </div>
+                            <div>
+                              <div className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
+                                {propertyLabel}
                               </div>
-                              {!isViewOnlyMember && (
-                                <div className="flex gap-2">
-                                  <button
-                                    onClick={() => {
-                                      setOntologyAnnotationEditTarget({
-                                        propertyIri: annotation.propertyIri,
-                                        value: annotation.value,
-                                        datatype: annotation.datatype,
-                                      });
-                                      setIsOntologyAnnotationDialogOpen(true);
-                                    }}
-                                    className="px-2 py-1 text-[10px] rounded transition-colors"
-                                    style={{ backgroundColor: "var(--surface-2)", color: "var(--text-primary)" }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
-                                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-2)")}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      handleDeleteOntologyAnnotation(
-                                        annotation.propertyIri,
-                                        annotation.value,
-                                        annotation.datatype,
-                                      )
-                                    }
-                                    className="px-2 py-1 text-[10px] rounded transition-colors"
-                                    style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
-                                    onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              )}
+                              <div
+                                className="text-[10px] font-mono truncate"
+                                style={{ color: "var(--text-tertiary)" }}
+                                title={annotation.propertyIri}
+                              >
+                                {annotation.propertyIri}
+                              </div>
                             </div>
-                            <div
-                              className="px-3 py-2 text-xs"
-                              style={{ backgroundColor: "var(--bg)", color: "var(--text-primary)" }}
-                            >
-                              <div className="break-words">{annotation.value}</div>
-                              {annotation.datatype && (
-                                <div className="text-[10px] mt-1" style={{ color: "var(--text-tertiary)" }}>
-                                  Datatype: {shortenDatatype(annotation.datatype)}
-                                </div>
-                              )}
-                            </div>
+                            {!isViewOnlyMember && (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => {
+                                    setOntologyAnnotationEditTarget({
+                                      propertyIri: annotation.propertyIri,
+                                      value: annotation.value,
+                                      datatype: annotation.datatype,
+                                    });
+                                    setIsOntologyAnnotationDialogOpen(true);
+                                  }}
+                                  className="px-2 py-1 text-[10px] rounded transition-colors"
+                                  style={{ backgroundColor: "var(--surface-2)", color: "var(--text-primary)" }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "var(--surface-2)")}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    handleDeleteOntologyAnnotation(
+                                      annotation.propertyIri,
+                                      annotation.value,
+                                      annotation.datatype,
+                                    )
+                                  }
+                                  className="px-2 py-1 text-[10px] rounded transition-colors"
+                                  style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
                           </div>
-                        );
-                      })}
+                          <div
+                            className="px-3 py-2 text-xs"
+                            style={{ backgroundColor: "var(--bg)", color: "var(--text-primary)" }}
+                          >
+                            <div className="break-words">{annotation.value}</div>
+                            {annotation.datatype && (
+                              <div className="text-[10px] mt-1" style={{ color: "var(--text-tertiary)" }}>
+                                Datatype: {shortenDatatype(annotation.datatype)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div
@@ -16168,56 +16172,76 @@ const updateItemInState = useCallback(
                             No general class axioms detected
                           </div>
                         ) : (
-                          <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+                          <div style={{ borderColor: "var(--border)" }}>
                             {generalClassAxioms.map((axiom, idx) => (
-                              <div
-                                key={`${axiom.subExpression}-${idx}`}
-                                className="p-3"
-                                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
-                                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1">
-                                    <div
-                                      className="text-[10px] font-semibold mb-1"
-                                      style={{ color: "var(--text-secondary)" }}
-                                    >
-                                      Axiom #{idx + 1}
-                                    </div>
-                                    <div className="font-medium text-xs mb-1" style={{ color: "var(--text-primary)" }}>
-                                      {axiom.subExpression || axiom.definition || "Anonymous class expression"}
-                                    </div>
-                                    {axiom.superClassIri && (
-                                      <div
-                                        className="text-[10px] font-mono break-all"
-                                        style={{ color: "var(--text-tertiary)" }}
-                                      >
-                                        SubClassOf: {axiom.superClassIri}
-                                      </div>
-                                    )}
-                                  </div>
-                                  <div className="flex gap-1 flex-shrink-0">
-                                    <button
-                                      onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleEditAxiom(idx)}
-                                      className="p-1 rounded"
-                                      style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
-                                      title={isViewOnlyMember ? "View-only: upgrade to edit" : "Edit axiom"}
-                                    >
-                                      <Edit2 size={12} />
-                                    </button>
-                                    <button
-                                      onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeleteAxiom(idx)}
-                                      className="p-1 rounded"
-                                      style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
-                                      title={isViewOnlyMember ? "View-only: upgrade to edit" : "Delete axiom"}
-                                    >
-                                      <Trash2 size={12} />
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
+                              <AxiomRow
+                                key={axiom.id || `${axiom.subExpression}-${idx}`}
+                                axiom={{
+                                  id: axiom.id || `gci_${idx}`,
+                                  type: "SubClassOf",
+                                  definition: `${axiom.subExpression || axiom.definition || "Anonymous class expression"} SubClassOf ${axiom.superClassIri || axiom.superClass || ""}`,
+                                } as any}
+                                onEditClick={isViewOnlyMember ? undefined : () => handleEditAxiom(idx)}
+                                onDelete={isViewOnlyMember ? undefined : () => handleDeleteAxiom(idx)}
+                                isViewOnly={isViewOnlyMember}
+                                onViewOnlyAction={handleViewOnlyAction}
+                              />
                             ))}
                           </div>
+                          //   <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+                          //     {generalClassAxioms.map((axiom, idx) => {
+                          //       console.log("GCA:", axiom);
+                          //       return (
+                          //       <div
+                          //         key={`${axiom.subExpression}-${idx}`}
+                          //         className="p-3"
+                          //         onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
+                          //         onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+                          //       >
+                          //         <div className="flex items-start justify-between gap-2">
+                          //           <div className="flex-1">
+                          //             <div
+                          //               className="text-[10px] font-semibold mb-1"
+                          //               style={{ color: "var(--text-secondary)" }}
+                          //             >
+                          //               Axiom #{idx + 1}
+                          //             </div>
+                          //               <div className="font-medium text-xs mb-1" style={{ color: "var(--text-primary)" }}>
+                          //                 {axiom.value || axiom.subExpression || axiom.definition || "Anonymous class expression"}
+                          //               </div>
+                          //             {/* {axiom.superClassIri && (
+                          //               <div
+                          //                 className="text-[10px] font-mono break-all"
+                          //                 style={{ color: "var(--text-tertiary)" }}
+                          //               >
+                          //                 SubClassOf: {axiom.superClassIri}
+                          //               </div>
+                          //             )} */}
+                          //           </div>
+                          //           <div className="flex gap-1 flex-shrink-0">
+                          //             <button
+                          //               onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleEditAxiom(idx)}
+                          //               className="p-1 rounded"
+                          //               style={{ backgroundColor: "var(--surface-3)", color: "var(--text-primary)" }}
+                          //               title={isViewOnlyMember ? "View-only: upgrade to edit" : "Edit axiom"}
+                          //             >
+                          //               <Edit2 size={12} />
+                          //             </button>
+                          //             <button
+                          //               onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeleteAxiom(idx)}
+                          //               className="p-1 rounded"
+                          //               style={{ backgroundColor: "var(--error-tint)", color: "var(--error)" }}
+                          //               title={isViewOnlyMember ? "View-only: upgrade to edit" : "Delete axiom"}
+                          //             >
+                          //               <Trash2 size={12} />
+                          //             </button>
+                          //           </div>
+                          //         </div>
+                          //       </div>
+                          //     );
+                          //   })
+                          // }
+                          //   </div>
                         )}
                       </div>
                     </div>
@@ -16486,21 +16510,19 @@ const updateItemInState = useCallback(
                             <div className="flex bg-purple-50 border-b border-purple-200">
                               <button
                                 onClick={() => setClassIndividualInfoTab("annotations")}
-                                className={`px-3 py-1.5 text-[11px] font-semibold border-r border-purple-200 ${
-                                  classIndividualInfoTab === "annotations"
+                                className={`px-3 py-1.5 text-[11px] font-semibold border-r border-purple-200 ${classIndividualInfoTab === "annotations"
                                     ? "bg-white text-purple-800"
                                     : "text-purple-600 hover:bg-purple-100"
-                                }`}
+                                  }`}
                               >
                                 Annotations
                               </button>
                               <button
                                 onClick={() => setClassIndividualInfoTab("usage")}
-                                className={`px-3 py-1.5 text-[11px] font-semibold ${
-                                  classIndividualInfoTab === "usage"
+                                className={`px-3 py-1.5 text-[11px] font-semibold ${classIndividualInfoTab === "usage"
                                     ? "bg-white text-purple-800"
                                     : "text-purple-600 hover:bg-purple-100"
-                                }`}
+                                  }`}
                               >
                                 Usage
                               </button>
@@ -16508,7 +16530,7 @@ const updateItemInState = useCallback(
                             <div className="min-h-[110px] max-h-[180px] overflow-y-auto p-2">
                               {classIndividualInfoTab === "annotations" ? (
                                 selectedClassIndividualDetails.annotations &&
-                                Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
+                                  Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
                                   <div className="space-y-1">
                                     {Object.entries(selectedClassIndividualDetails.annotations).map(([key, value]) => (
                                       <div
@@ -16667,7 +16689,7 @@ const updateItemInState = useCallback(
                               </button>
                             </div>
                             {selectedClassIndividualDetails.annotations &&
-                            Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
+                              Object.keys(selectedClassIndividualDetails.annotations).length > 0 ? (
                               <div className="space-y-1">
                                 {Object.entries(selectedClassIndividualDetails.annotations).map(([key, value]) => (
                                   <div
@@ -16733,9 +16755,8 @@ const updateItemInState = useCallback(
                                 {selectedClassIndividualDetails.propertyAssertions.map((assertion) => (
                                   <div
                                     key={assertion.id}
-                                    className={`group flex items-center justify-between text-[11px] ${
-                                      assertion.isInferred ? "text-amber-800 bg-amber-50 border border-amber-100 rounded px-1" : "text-gray-600"
-                                    }`}
+                                    className={`group flex items-center justify-between text-[11px] ${assertion.isInferred ? "text-amber-800 bg-amber-50 border border-amber-100 rounded px-1" : "text-gray-600"
+                                      }`}
                                   >
                                     <span className="truncate">
                                       <span className="font-semibold">{assertion.propertyLabel}</span>
@@ -16746,60 +16767,60 @@ const updateItemInState = useCallback(
                                       )}
                                     </span>
                                     {!assertion.isInferred && (
-                                    <button
-                                      onClick={async () => {
-                                        if (!projectId || !selectedClassIndividualDetails) return;
-                                        try {
-                                          if (assertion.isObjectProperty) {
-                                            const target = assertion.targetIri || assertion.targetLabel;
-                                            if (!target) return;
-                                            if (assertion.isNegative) {
-                                              await ontologyMutationService.deleteNegativeObjectPropertyAssertion(
-                                                projectId,
-                                                selectedClassIndividualDetails.id,
-                                                assertion.propertyIri,
-                                                target,
-                                              );
+                                      <button
+                                        onClick={async () => {
+                                          if (!projectId || !selectedClassIndividualDetails) return;
+                                          try {
+                                            if (assertion.isObjectProperty) {
+                                              const target = assertion.targetIri || assertion.targetLabel;
+                                              if (!target) return;
+                                              if (assertion.isNegative) {
+                                                await ontologyMutationService.deleteNegativeObjectPropertyAssertion(
+                                                  projectId,
+                                                  selectedClassIndividualDetails.id,
+                                                  assertion.propertyIri,
+                                                  target,
+                                                );
+                                              } else {
+                                                await ontologyMutationService.deleteObjectPropertyAssertion(
+                                                  projectId,
+                                                  selectedClassIndividualDetails.id,
+                                                  assertion.propertyIri,
+                                                  target,
+                                                );
+                                              }
                                             } else {
-                                              await ontologyMutationService.deleteObjectPropertyAssertion(
-                                                projectId,
-                                                selectedClassIndividualDetails.id,
-                                                assertion.propertyIri,
-                                                target,
-                                              );
+                                              const value = assertion.targetLiteral;
+                                              if (!value) return;
+                                              if (assertion.isNegative) {
+                                                await ontologyMutationService.deleteNegativeDataPropertyAssertion(
+                                                  projectId,
+                                                  selectedClassIndividualDetails.id,
+                                                  assertion.propertyIri,
+                                                  value,
+                                                );
+                                              } else {
+                                                await ontologyMutationService.deleteDataPropertyAssertion(
+                                                  projectId,
+                                                  selectedClassIndividualDetails.id,
+                                                  assertion.propertyIri,
+                                                  value,
+                                                );
+                                              }
                                             }
-                                          } else {
-                                            const value = assertion.targetLiteral;
-                                            if (!value) return;
-                                            if (assertion.isNegative) {
-                                              await ontologyMutationService.deleteNegativeDataPropertyAssertion(
-                                                projectId,
-                                                selectedClassIndividualDetails.id,
-                                                assertion.propertyIri,
-                                                value,
-                                              );
-                                            } else {
-                                              await ontologyMutationService.deleteDataPropertyAssertion(
-                                                projectId,
-                                                selectedClassIndividualDetails.id,
-                                                assertion.propertyIri,
-                                                value,
-                                              );
-                                            }
+                                            await refreshSelectedClassIndividualDetails(true);
+                                          } catch (error) {
+                                            console.error("[Dashboard] Failed to remove property assertion:", error);
+                                            notificationService.error(
+                                              "Remove Failed",
+                                              "Could not remove property assertion.",
+                                            );
                                           }
-                                          await refreshSelectedClassIndividualDetails(true);
-                                        } catch (error) {
-                                          console.error("[Dashboard] Failed to remove property assertion:", error);
-                                          notificationService.error(
-                                            "Remove Failed",
-                                            "Could not remove property assertion.",
-                                          );
-                                        }
-                                      }}
-                                      className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
-                                    >
-                                      Remove
-                                    </button>
+                                        }}
+                                        className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[10px] bg-red-100 text-red-700 rounded hover:bg-red-200"
+                                      >
+                                        Remove
+                                      </button>
                                     )}
                                   </div>
                                 ))}
@@ -16874,78 +16895,78 @@ const updateItemInState = useCallback(
                 progress without blocking query authoring. */}
             {renderDesktopFusekiBanner()}
             <div className="flex-1 min-h-0">
-          <DLQueryPanel
-            projectId={projectId || ""}
-              classHierarchy={classHierarchy}
-              expandedClassNodeIds={expandedNodes}
-              onToggleClassNode={toggleNode}
-            classes={flattenClassHierarchy(classHierarchy)}
-            objectProperties={flattenPropertyHierarchy(objectPropertyHierarchy)}
-            dataProperties={flattenPropertyHierarchy(dataPropertyHierarchy)}
-            individuals={individuals.map((i) => ({ id: i.id, label: i.label }))}
-            metrics={{
-              classCount: (metadata as any)?.classCount,
-              objectPropertyCount: (metadata as any)?.objectPropertyCount,
-              dataPropertyCount: (metadata as any)?.dataPropertyCount,
-              individualCount: (metadata as any)?.individualCount,
-            }}
-            apiClient={apiClient}
-            onAddToOntology={async (expression, className) => {
-              try {
-                await ontologyMutationService.addDlQueryClass(projectId || "", expression, className, user?.email);
-                showToast(`Created class "${className}"`, "success");
-                await refreshClassHierarchy();
-                await fetchData(projectId, false);
-              } catch (e) {
-                const status = (e as any)?.status ?? (e as any)?.response?.status ?? (e as any)?.data?.status;
-                if (status !== 404) {
-                  console.warn("DL add failed:", e);
-                  showToast(`Failed to create class: ${className}`, "error");
-                  return;
-                }
+              <DLQueryPanel
+                projectId={projectId || ""}
+                classHierarchy={classHierarchy}
+                expandedClassNodeIds={expandedNodes}
+                onToggleClassNode={toggleNode}
+                classes={flattenClassHierarchy(classHierarchy)}
+                objectProperties={flattenPropertyHierarchy(objectPropertyHierarchy)}
+                dataProperties={flattenPropertyHierarchy(dataPropertyHierarchy)}
+                individuals={individuals.map((i) => ({ id: i.id, label: i.label }))}
+                metrics={{
+                  classCount: (metadata as any)?.classCount,
+                  objectPropertyCount: (metadata as any)?.objectPropertyCount,
+                  dataPropertyCount: (metadata as any)?.dataPropertyCount,
+                  individualCount: (metadata as any)?.individualCount,
+                }}
+                apiClient={apiClient}
+                onAddToOntology={async (expression, className) => {
+                  try {
+                    await ontologyMutationService.addDlQueryClass(projectId || "", expression, className, user?.email);
+                    showToast(`Created class "${className}"`, "success");
+                    await refreshClassHierarchy();
+                    await fetchData(projectId, false);
+                  } catch (e) {
+                    const status = (e as any)?.status ?? (e as any)?.response?.status ?? (e as any)?.data?.status;
+                    if (status !== 404) {
+                      console.warn("DL add failed:", e);
+                      showToast(`Failed to create class: ${className}`, "error");
+                      return;
+                    }
 
-                const normalizedExpr = (expression || "").trim();
-                const byIri = normalizedExpr.startsWith("http://") || normalizedExpr.startsWith("https://");
-                const target = byIri
-                  ? normalizedExpr
-                  : flattenClassHierarchy(classHierarchy).find(
-                      (c) => c.label?.toLowerCase() === normalizedExpr.toLowerCase(),
-                    )?.id;
+                    const normalizedExpr = (expression || "").trim();
+                    const byIri = normalizedExpr.startsWith("http://") || normalizedExpr.startsWith("https://");
+                    const target = byIri
+                      ? normalizedExpr
+                      : flattenClassHierarchy(classHierarchy).find(
+                        (c) => c.label?.toLowerCase() === normalizedExpr.toLowerCase(),
+                      )?.id;
 
-                if (!target) {
-                  showToast("Only simple class names are supported for Add to Ontology right now.", "warning");
-                  return;
-                }
+                    if (!target) {
+                      showToast("Only simple class names are supported for Add to Ontology right now.", "warning");
+                      return;
+                    }
 
-                const normalizedClassName = (className || "").trim().replace(/\s+/g, "_");
-                const base = target.includes("#")
-                  ? target.split("#")[0] + "#"
-                  : target.includes("/")
-                    ? target.substring(0, target.lastIndexOf("/") + 1)
-                    : "http://example.com/ont#";
+                    const normalizedClassName = (className || "").trim().replace(/\s+/g, "_");
+                    const base = target.includes("#")
+                      ? target.split("#")[0] + "#"
+                      : target.includes("/")
+                        ? target.substring(0, target.lastIndexOf("/") + 1)
+                        : "http://example.com/ont#";
 
-                const newIri = base + normalizedClassName;
+                    const newIri = base + normalizedClassName;
 
-                try {
-                  await ontologyMutationService.addDlQueryClassViaMutations(
-                    projectId || "",
-                    newIri,
-                    className,
-                    target,
-                    user?.email,
-                    user?.username || user?.email,
-                  );
-                  showToast(`Created class "${className}"`, "success");
-                  await refreshClassHierarchy();
-                  await fetchData(projectId, false);
-                } catch (e2) {
-                  console.warn("Mutation fallback failed:", e2);
-                  showToast(`Failed to create class: ${className}`, "error");
-                }
-              }
-            }}
-            showNotification={(message, type) => showToast(message, type)}
-          />
+                    try {
+                      await ontologyMutationService.addDlQueryClassViaMutations(
+                        projectId || "",
+                        newIri,
+                        className,
+                        target,
+                        user?.email,
+                        user?.username || user?.email,
+                      );
+                      showToast(`Created class "${className}"`, "success");
+                      await refreshClassHierarchy();
+                      await fetchData(projectId, false);
+                    } catch (e2) {
+                      console.warn("Mutation fallback failed:", e2);
+                      showToast(`Failed to create class: ${className}`, "error");
+                    }
+                  }
+                }}
+                showNotification={(message, type) => showToast(message, type)}
+              />
             </div>
           </div>
         );
@@ -17116,10 +17137,10 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           username: user?.username || "Anonymous",
         });
         const replace = (arr: string[] | undefined) => (arr || []).map(v => v === editing ? expression : v);
-        if (target === "subProperty")  updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
-        if (target === "inverse")      updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
-        if (target === "disjoint")     updateItemInState({ ...selectedItem, disjointProperties: replace(prop.disjointProperties) });
-        if (target === "equivalent")   updateItemInState({ ...selectedItem, equivalentProperties: replace(prop.equivalentProperties as string[] | undefined) });
+        if (target === "subProperty") updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
+        if (target === "inverse") updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
+        if (target === "disjoint") updateItemInState({ ...selectedItem, disjointProperties: replace(prop.disjointProperties) });
+        if (target === "equivalent") updateItemInState({ ...selectedItem, equivalentProperties: replace(prop.equivalentProperties as string[] | undefined) });
       } else {
         switch (target) {
           case "subProperty":
@@ -17178,10 +17199,10 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         const replace = (arr: string[] | undefined) =>
           (arr || []).map(v => v === editing ? finalExpression : v);
         const prop = selectedItem as Property;
-        if (target === "subProperty")  updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
-        if (target === "inverse")      updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
-        if (target === "disjoint")     updateItemInState({ ...selectedItem, disjointProperties: replace(prop.disjointProperties) });
-        if (target === "equivalent")   updateItemInState({ ...selectedItem, equivalentProperties: replace(prop.equivalentProperties as string[] | undefined) });
+        if (target === "subProperty") updateItemInState({ ...selectedItem, superProperties: replace(prop.superProperties) });
+        if (target === "inverse") updateItemInState({ ...selectedItem, inverseProperties: replace(prop.inverseProperties) });
+        if (target === "disjoint") updateItemInState({ ...selectedItem, disjointProperties: replace(prop.disjointProperties) });
+        if (target === "equivalent") updateItemInState({ ...selectedItem, equivalentProperties: replace(prop.equivalentProperties as string[] | undefined) });
       } else {
         switch (target) {
           case "subProperty":
@@ -17236,7 +17257,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
   };
 
   // Handlers for Annotation Property Description Dialogs
-  const [annotationEditingItem, setAnnotationEditingItem] = useState<{ rel: 'domain'|'range'|'subProperty'; iri: string } | null>(null);
+  const [annotationEditingItem, setAnnotationEditingItem] = useState<{ rel: 'domain' | 'range' | 'subProperty'; iri: string } | null>(null);
 
   const handleOpenAnnotationDomainDialog = (editingItem?: string) => {
     if (entitiesTab === "AnnotationProperties") {
@@ -17839,9 +17860,9 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         onRefresh={
           initialProjectId
             ? () => {
-                console.log("[Dashboard] 🔄 Refresh triggered from OpenFileDialog");
-                fetchProjectFiles(initialProjectId);
-              }
+              console.log("[Dashboard] 🔄 Refresh triggered from OpenFileDialog");
+              fetchProjectFiles(initialProjectId);
+            }
             : undefined
         }
         onCreateNewFile={() => { autoLoadNewFileRef.current = true; }}
@@ -17908,130 +17929,129 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         const resolvedCount = conflicts.filter((c) => conflictResolutions[c.entityIRI]).length;
         const allResolved = conflicts.length > 0 && resolvedCount === conflicts.length;
         return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9999] p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200">
-              <div className="flex-shrink-0 w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center">
-                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
+          <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9999] p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200">
+                <div className="flex-shrink-0 w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-semibold text-gray-900">{publishConflictDialog.title}</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{publishConflictDialog.message}</p>
+                </div>
+                {conflicts.length > 0 && (
+                  <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
+                    {resolvedCount}/{conflicts.length} resolved
+                  </span>
+                )}
               </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-base font-semibold text-gray-900">{publishConflictDialog.title}</h3>
-                <p className="text-xs text-gray-500 mt-0.5">{publishConflictDialog.message}</p>
+
+              {/* Conflict list */}
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                {conflicts.length === 0 ? (
+                  <p className="text-sm text-gray-500 text-center py-8">No per-entity conflicts detected. You can merge or force publish.</p>
+                ) : conflicts.map((c) => {
+                  const label = c.entityLabel || c.entityIRI.split(/[#/]/).pop() || c.entityIRI;
+                  const chosen = conflictResolutions[c.entityIRI];
+                  return (
+                    <div key={c.entityIRI} className={`border rounded-lg overflow-hidden transition-colors ${chosen ? "border-green-300 bg-green-50/30" : "border-gray-200"}`}>
+                      {/* Entity header */}
+                      <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                        </svg>
+                        <span className="text-sm font-medium text-gray-800 flex-1 truncate" title={c.entityIRI}>{label}</span>
+                        {c.changedBy && <span className="text-xs text-gray-400">changed by {c.changedBy}</span>}
+                        {chosen && (
+                          <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                            {chosen === "KEEP_TARGET" ? "Keeping theirs" : chosen === "KEEP_SOURCE" ? "Keeping mine" : "Keeping both"}
+                          </span>
+                        )}
+                      </div>
+                      {/* Left / Right axiom comparison */}
+                      <div className="grid grid-cols-2 divide-x divide-gray-200">
+                        <div className="p-3">
+                          <div className="text-xs font-semibold text-blue-700 mb-1.5 flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                            Public (theirs)
+                          </div>
+                          <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono leading-relaxed min-h-[40px]">
+                            {c.mainAxioms || <span className="text-gray-400 italic">No axioms</span>}
+                          </pre>
+                        </div>
+                        <div className="p-3">
+                          <div className="text-xs font-semibold text-purple-700 mb-1.5 flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span>
+                            Your draft
+                          </div>
+                          <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono leading-relaxed min-h-[40px]">
+                            {c.yourAxioms || <span className="text-gray-400 italic">No axioms</span>}
+                          </pre>
+                        </div>
+                      </div>
+                      {/* Resolution buttons */}
+                      <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-t border-gray-200">
+                        <span className="text-xs text-gray-500 mr-1">Use:</span>
+                        {(["KEEP_TARGET", "KEEP_SOURCE", "MERGE"] as const).map((action) => {
+                          const labels: Record<string, string> = { KEEP_TARGET: "Keep Theirs", KEEP_SOURCE: "Keep Mine", MERGE: "Keep Both" };
+                          const colors: Record<string, string> = {
+                            KEEP_TARGET: chosen === action ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-700 border-blue-300 hover:bg-blue-50",
+                            KEEP_SOURCE: chosen === action ? "bg-purple-600 text-white border-purple-600" : "bg-white text-purple-700 border-purple-300 hover:bg-purple-50",
+                            MERGE: chosen === action ? "bg-green-600 text-white border-green-600" : "bg-white text-green-700 border-green-300 hover:bg-green-50",
+                          };
+                          return (
+                            <button
+                              key={action}
+                              onClick={() => setConflictResolutions((prev) => ({ ...prev, [c.entityIRI]: action }))}
+                              className={`px-3 py-1 text-xs font-medium rounded border transition-colors ${colors[action]}`}
+                            >
+                              {labels[action]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              {conflicts.length > 0 && (
-                <span className="text-xs font-medium px-2 py-1 rounded-full bg-gray-100 text-gray-600 whitespace-nowrap">
-                  {resolvedCount}/{conflicts.length} resolved
-                </span>
-              )}
-            </div>
 
-            {/* Conflict list */}
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-              {conflicts.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center py-8">No per-entity conflicts detected. You can merge or force publish.</p>
-              ) : conflicts.map((c) => {
-                const label = c.entityLabel || c.entityIRI.split(/[#/]/).pop() || c.entityIRI;
-                const chosen = conflictResolutions[c.entityIRI];
-                return (
-                  <div key={c.entityIRI} className={`border rounded-lg overflow-hidden transition-colors ${chosen ? "border-green-300 bg-green-50/30" : "border-gray-200"}`}>
-                    {/* Entity header */}
-                    <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-200">
-                      <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                      </svg>
-                      <span className="text-sm font-medium text-gray-800 flex-1 truncate" title={c.entityIRI}>{label}</span>
-                      {c.changedBy && <span className="text-xs text-gray-400">changed by {c.changedBy}</span>}
-                      {chosen && (
-                        <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
-                          {chosen === "KEEP_TARGET" ? "Keeping theirs" : chosen === "KEEP_SOURCE" ? "Keeping mine" : "Keeping both"}
-                        </span>
-                      )}
-                    </div>
-                    {/* Left / Right axiom comparison */}
-                    <div className="grid grid-cols-2 divide-x divide-gray-200">
-                      <div className="p-3">
-                        <div className="text-xs font-semibold text-blue-700 mb-1.5 flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
-                          Public (theirs)
-                        </div>
-                        <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono leading-relaxed min-h-[40px]">
-                          {c.mainAxioms || <span className="text-gray-400 italic">No axioms</span>}
-                        </pre>
-                      </div>
-                      <div className="p-3">
-                        <div className="text-xs font-semibold text-purple-700 mb-1.5 flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span>
-                          Your draft
-                        </div>
-                        <pre className="text-xs text-gray-700 whitespace-pre-wrap break-all font-mono leading-relaxed min-h-[40px]">
-                          {c.yourAxioms || <span className="text-gray-400 italic">No axioms</span>}
-                        </pre>
-                      </div>
-                    </div>
-                    {/* Resolution buttons */}
-                    <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-t border-gray-200">
-                      <span className="text-xs text-gray-500 mr-1">Use:</span>
-                      {(["KEEP_TARGET", "KEEP_SOURCE", "MERGE"] as const).map((action) => {
-                        const labels: Record<string, string> = { KEEP_TARGET: "Keep Theirs", KEEP_SOURCE: "Keep Mine", MERGE: "Keep Both" };
-                        const colors: Record<string, string> = {
-                          KEEP_TARGET: chosen === action ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-700 border-blue-300 hover:bg-blue-50",
-                          KEEP_SOURCE: chosen === action ? "bg-purple-600 text-white border-purple-600" : "bg-white text-purple-700 border-purple-300 hover:bg-purple-50",
-                          MERGE: chosen === action ? "bg-green-600 text-white border-green-600" : "bg-white text-green-700 border-green-300 hover:bg-green-50",
-                        };
-                        return (
-                          <button
-                            key={action}
-                            onClick={() => setConflictResolutions((prev) => ({ ...prev, [c.entityIRI]: action }))}
-                            className={`px-3 py-1 text-xs font-medium rounded border transition-colors ${colors[action]}`}
-                          >
-                            {labels[action]}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
-              <button
-                onClick={publishConflictDialog.onForce}
-                className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100"
-              >
-                Overwrite (force publish)
-              </button>
-              <div className="flex gap-3">
+              {/* Footer */}
+              <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
                 <button
-                  onClick={() => setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }))}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  onClick={publishConflictDialog.onForce}
+                  className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100"
                 >
-                  Cancel
+                  Overwrite (force publish)
                 </button>
-                <button
-                  disabled={conflicts.length > 0 && !allResolved}
-                  onClick={() => {
-                    setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
-                    const resolutions: Record<string, { action: string }> = {};
-                    Object.entries(conflictResolutions).forEach(([iri, action]) => { resolutions[iri] = { action }; });
-                    void handleSave({ merge: true, resolutions: Object.keys(resolutions).length > 0 ? resolutions : undefined });
-                  }}
-                  className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                    conflicts.length > 0 && !allResolved
-                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                      : "bg-purple-600 text-white hover:bg-purple-700"
-                  }`}
-                >
-                  {allResolved || conflicts.length === 0 ? "Apply & Publish" : `Resolve ${conflicts.length - resolvedCount} more…`}
-                </button>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }))}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    disabled={conflicts.length > 0 && !allResolved}
+                    onClick={() => {
+                      setPublishConflictDialog((prev) => ({ ...prev, isOpen: false }));
+                      const resolutions: Record<string, { action: string }> = {};
+                      Object.entries(conflictResolutions).forEach(([iri, action]) => { resolutions[iri] = { action }; });
+                      void handleSave({ merge: true, resolutions: Object.keys(resolutions).length > 0 ? resolutions : undefined });
+                    }}
+                    className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${conflicts.length > 0 && !allResolved
+                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                        : "bg-purple-600 text-white hover:bg-purple-700"
+                      }`}
+                  >
+                    {allResolved || conflicts.length === 0 ? "Apply & Publish" : `Resolve ${conflicts.length - resolvedCount} more…`}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
         );
       })()}
       {/* Dedicated Unsaved Changes Warning Dialog */}
@@ -18153,7 +18173,14 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           hasPluginUpdates={hasPluginUpdates}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
-          onReportIssue={() => setIsReportIssueModalOpen(true)}
+           onReportBug={() => {
+            setReportIssueType("Bug");
+            setIsReportIssueModalOpen(true);
+          }}
+          onRequestFeature={() => {
+            setReportIssueType("Task");
+            setIsReportIssueModalOpen(true);
+          }}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
           onOpenReleaseNotes={() => setIsReleaseNotesOpen(true)}
           onOpenLicenses={() => setIsLicensesOpen(true)}
@@ -18300,19 +18327,18 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                       );
                       return;
                     }
-                    
+
                     setShowCollaborationPanel(!showCollaborationPanel);
                   }}
                   // disabled={isCloudDeployment && subscription.isFree}
-                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${
-                    isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')
+                  className={`flex items-center gap-1.5 px-2 py-1 text-xs rounded transition-colors ${isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')
                       ? "bg-gray-100 text-gray-400 cursor-not-allowed opacity-50"
                       : showCollaborationPanel
                         ? "bg-blue-600 text-white hover:bg-blue-700"
                         : isCurrentFileShared
                           ? "bg-green-100 text-green-700 hover:bg-green-200"
                           : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
+                    }`}
                   title={
                     isCloudDeployment && !subscription.canAccessFeature('hasAdvancedCollaboration')
                       ? "Collaboration is only available in Pro and Enterprise plans"
@@ -18370,7 +18396,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   title="You are viewing the published version of this ontology. Contact the project owner for edit access."
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
                   </svg>
                   Public View
                 </span>
@@ -18654,28 +18680,26 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
             onClick={(e) => e.stopPropagation()}
           >
             {/* Top accent bar */}
-            <div className={`h-1.5 w-full bg-gradient-to-r ${
-              showProPromptType === 'draftRequired'
+            <div className={`h-1.5 w-full bg-gradient-to-r ${showProPromptType === 'draftRequired'
                 ? 'from-purple-500 via-violet-500 to-indigo-500'
                 : 'from-violet-500 via-purple-500 to-indigo-500'
-            }`} />
+              }`} />
 
             {/* Header */}
             <div className="px-6 pt-5 pb-4 flex items-start gap-4">
-              <div className={`flex-shrink-0 w-11 h-11 rounded-xl flex items-center justify-center ${
-                showProPromptType === 'draftRequired'
+              <div className={`flex-shrink-0 w-11 h-11 rounded-xl flex items-center justify-center ${showProPromptType === 'draftRequired'
                   ? 'bg-purple-50 border border-purple-200'
                   : 'bg-amber-50 border border-amber-200'
-              }`}>
+                }`}>
                 {showProPromptType === 'draftRequired' ? (
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-purple-500">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
                 ) : (
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                    <line x1="2" y1="2" x2="22" y2="22"/>
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                    <line x1="2" y1="2" x2="22" y2="22" />
                   </svg>
                 )}
               </div>
@@ -18683,14 +18707,14 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                 <h3 className="text-[15px] font-semibold text-gray-900 leading-tight">
                   {showProPromptType === 'export' ? 'Pro Feature'
                     : showProPromptType === 'draftRequired' ? 'Draft Mode Required'
-                    : 'View-Only Access'}
+                      : 'View-Only Access'}
                 </h3>
                 <p className="text-xs text-gray-400 mt-0.5">
                   {showProPromptType === 'draftRequired'
                     ? 'This project requires Draft Mode for editing'
                     : showProPromptType === 'viewer'
-                    ? 'You are a viewer on this project'
-                    : <>Your account is on the <span className="font-medium text-gray-500">Free plan</span></>}
+                      ? 'You are a viewer on this project'
+                      : <>Your account is on the <span className="font-medium text-gray-500">Free plan</span></>}
                 </p>
               </div>
               <button
@@ -18699,7 +18723,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                 aria-label="Close"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
@@ -18720,7 +18744,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
 
               <div className="flex items-start gap-2.5 text-sm text-gray-600">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
                 </svg>
                 {showProPromptType === 'draftRequired' ? (
                   <span>Your edits will be saved to a <span className="font-medium text-gray-800">private copy</span> and won't affect others until you publish.</span>
@@ -19042,16 +19066,16 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           // Show files from the current project, not all user's projects
           projectFiles.length > 0
             ? projectFiles.map((f: any) => ({
-                id: f.id,
-                filename: f.filename,
-              }))
+              id: f.id,
+              filename: f.filename,
+            }))
             : // Fallback: show only the current file if projectFiles not loaded
-              [
-                {
-                  id: projectId || "",
-                  filename: activeFileName || "Current File",
-                },
-              ]
+            [
+              {
+                id: projectId || "",
+                filename: activeFileName || "Current File",
+              },
+            ]
         }
         onMergeComplete={async (targetProjectId: string, isNewFile?: boolean) => {
           try {
@@ -19229,6 +19253,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           projectName={projectId || undefined}
           projectId={projectId || undefined}
           ontologyFilePath={activeFileName || undefined}
+          initialIssueType={reportIssueType}
           onClose={() => setIsReportIssueModalOpen(false)}
         />
       )}

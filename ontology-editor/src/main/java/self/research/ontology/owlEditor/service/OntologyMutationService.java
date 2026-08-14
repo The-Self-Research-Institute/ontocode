@@ -373,7 +373,10 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
-        invalidateReasonerCaches(projectId);
+         invalidateReasonerCaches(projectId);
+        if (!draft && classDetailCacheService != null) {
+             classDetailCacheService.dropAll(projectId);
+        }
 
         if (!draft) {
             CompletableFuture.runAsync(() -> {
@@ -1547,7 +1550,7 @@ public class OntologyMutationService {
             // Blank node list head (legacy data) — filter by internal ID via STR()
             // STR(?bnode) behaviour is implementation-specific; in GraphDB it returns the blank node identifier.
             // Worst case this is a no-op (safer than deleting all has-key axioms).
-            String escapedId = listNodeId != null ? listNodeId.replace("\"", "\\\"") : "";
+            String propsCsv = listNodeId != null ? listNodeId.replace("hasKey_props_", "").replace("\"", "\\\"") : "";
             sparql = """
                 DELETE {
                   <%s> owl:hasKey ?list .
@@ -1555,13 +1558,21 @@ public class OntologyMutationService {
                   ?node rdf:rest ?rest .
                 }
                 WHERE {
-                  <%s> owl:hasKey ?list .
-                  FILTER(STR(?list) = "%s")
+                  {
+                    SELECT ?list (GROUP_CONCAT(?prop; separator=",") AS ?propsConcat)
+                    WHERE {
+                      <%s> owl:hasKey ?list .
+                      ?list rdf:rest* ?n .
+                      ?n rdf:first ?prop .
+                    }
+                    GROUP BY ?list
+                  }
+                  FILTER(?propsConcat = "%s")
                   ?list rdf:rest* ?node .
                   ?node rdf:first ?first .
                   ?node rdf:rest ?rest .
                 }
-                """.formatted(classIri, classIri, escapedId);
+                """.formatted(classIri, classIri, propsCsv);
         }
 
         log.info("[MUTATION]   Generated delete has key SPARQL: {}", sparql);

@@ -109,7 +109,11 @@ public class IssueReportService {
                         
                         return IssueReportResult.builder()
                             .success(true)
-                            .message("Issue reported successfully")
+                           .message(
+                                "Task".equalsIgnoreCase(issueType)
+                                    ? "Feature request submitted successfully"
+                                    : "Bug reported successfully"
+                           )
                             .issueReportId(saved.getId())
                             .jiraIssueKey(jiraResult.getIssueKey())
                             .jiraIssueUrl(jiraResult.getIssueUrl())
@@ -124,7 +128,11 @@ public class IssueReportService {
                         
                         return IssueReportResult.builder()
                             .success(true)
-                            .message("Issue saved locally but failed to create Jira ticket. Our team has been notified.")
+                            .message(
+                                 "Task".equalsIgnoreCase(issueType)
+                                     ? "Feature request saved locally but failed to create Jira ticket. Our team has been notified."
+                                     : "Issue saved locally but failed to create Jira ticket. Our team has been notified."
+                            )
                             .issueReportId(saved.getId())
                             .jiraFailureReason(jiraResult.getErrorMessage())
                             .build();
@@ -138,7 +146,11 @@ public class IssueReportService {
                     
                     return IssueReportResult.builder()
                         .success(true)
-                        .message("Issue saved locally but failed to create Jira ticket: " + e.getMessage())
+                         .message(
+                             "Task".equalsIgnoreCase(issueType)
+                                 ? "Feature request saved locally but failed to create Jira ticket: " + e.getMessage()
+                                 : "Issue saved locally but failed to create Jira ticket: " + e.getMessage()
+                               )
                         .issueReportId(saved.getId())
                         .jiraFailureReason(e.getMessage())
                         .build();
@@ -152,7 +164,11 @@ public class IssueReportService {
                 
                 return IssueReportResult.builder()
                     .success(true)
-                    .message("Issue logged locally. Please contact support@ontocode.com for assistance.")
+                    .message(
+                        "Task".equalsIgnoreCase(issueType)
+                            ? "Feature request logged locally. Please contact support@ontocode.com for assistance."
+                            : "Issue logged locally. Please contact support@ontocode.com for assistance."
+                    )
                     .issueReportId(saved.getId())
                     .build();
             }

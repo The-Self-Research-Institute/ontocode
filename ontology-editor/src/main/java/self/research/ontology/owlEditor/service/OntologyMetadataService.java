@@ -6,6 +6,9 @@ import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.model.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.model.parameters.Imports;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -33,18 +36,21 @@ public class OntologyMetadataService {
     private final OntologyMutationService mutationService;
     private final GeneralClassAxiomService generalClassAxiomService;
     private final ProjectImportService importService;
+    private final ManchesterExpressionService manchesterExpressionService;
     private final Map<String, String> ontologyIriCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public OntologyMetadataService(SparqlDatasetService datasetService,
                                    ProjectMetadataService projectMetadataService,
                                    @Lazy OntologyMutationService mutationService,
                                    GeneralClassAxiomService generalClassAxiomService,
-                                   @Lazy ProjectImportService importService) {
+                                    @Lazy ProjectImportService importService,
+                                   @Lazy ManchesterExpressionService manchesterExpressionService) {
         this.datasetService = datasetService;
         this.projectMetadataService = projectMetadataService;
         this.mutationService = mutationService;
         this.generalClassAxiomService = generalClassAxiomService;
-        this.importService = importService;
+         this.importService = importService;
+        this.manchesterExpressionService = manchesterExpressionService;
     }
 
     /**
@@ -652,30 +658,22 @@ public class OntologyMetadataService {
     public List<Map<String, Object>> getGeneralClassAxioms(String projectId) {
         migrateLegacyGciStrings(projectId);
 
-        String ontologyIri = getOntologyIri(projectId);
-        if (ontologyIri == null) return new ArrayList<>();
-
-        // Real OWL GCIs only: blank-node subjects in SubClassOf axioms
-        String query = PREFIXES + """
-            SELECT ?sub ?super WHERE {
-              ?sub rdfs:subClassOf ?super .
-              FILTER(isBlank(?sub))
-            }
-            """;
-
         List<Map<String, Object>> gcis = new ArrayList<>();
         try {
-            TupleQueryResult rs = datasetService.execSelect(projectId, query);
-            while (rs.hasNext()) {
-                BindingSet sol = rs.next();
-                if (!sol.hasBinding("sub") || !sol.hasBinding("super")) continue;
-                String subId = sol.getValue("sub").stringValue();
-                String superId = sol.getValue("super").stringValue();
+            OWLOntology ont = manchesterExpressionService.loadOntology(projectId);
+            for (OWLSubClassOfAxiom ax : ont.getAxioms(AxiomType.SUBCLASS_OF, Imports.INCLUDED)) {
+                OWLClassExpression subCls = ax.getSubClass();
+                if (!subCls.isAnonymous()) {
+                    continue; 
+            }
+            OWLClassExpression superCls = ax.getSuperClass();
+            String subText = OwlApiQuerySupport.classExpressionToManchester(ont, subCls);
+            String superText = OwlApiQuerySupport.classExpressionToManchester(ont, superCls);
                 Map<String, Object> gci = new LinkedHashMap<>();
-                gci.put("id", subId);
-                gci.put("subClass", subId);
-                gci.put("superClass", superId);
-                gci.put("value", subId + " SubClassOf " + superId);
+                gci.put("id", "gci_" + gcis.size());
+                gci.put("subClass", subText);
+                gci.put("superClass", superText);
+                gci.put("value", subText + " SubClassOf " + superText);
                 gcis.add(gci);
             }
         } catch (Exception e) {

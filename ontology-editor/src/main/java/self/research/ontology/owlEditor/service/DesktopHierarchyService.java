@@ -351,7 +351,6 @@ public class DesktopHierarchyService {
 
         // --- hasKey ---
         List<Map<String, Object>> hasKeyAxioms = new ArrayList<>();
-        int hasKeyIdx = 0;
         for (OWLHasKeyAxiom ax : ont.getAxioms(AxiomType.HAS_KEY, imp)) {
             if (!ax.getClassExpression().equals(cls)) {
                 continue;
@@ -370,7 +369,7 @@ public class DesktopHierarchyService {
                 continue;
             }
             Map<String, Object> axiom = new LinkedHashMap<>();
-            axiom.put("id", "hasKey_" + hasKeyIdx++);
+            axiom.put("id", "hasKey_props_" + String.join(",", keyProperties));
             axiom.put("type", "HasKey");
             axiom.put("properties", keyProperties);
             axiom.put("definition", keyProperties.stream()
@@ -399,7 +398,7 @@ public class DesktopHierarchyService {
             gci.put("id", subId);
             gci.put("type", "GCI");
             gci.put("definition", classExpressionToManchester(ont, ax.getSubClass()) + " SubClassOf "
-                    + getLabel(ont, cls.getIRI()));
+                    + classExpressionToManchester(ont, superCls));
             generalClassAxioms.add(gci);
         }
         details.put("generalClassAxioms", generalClassAxioms);

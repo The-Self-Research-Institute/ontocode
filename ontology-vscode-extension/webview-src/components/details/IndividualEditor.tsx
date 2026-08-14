@@ -389,7 +389,7 @@ const IndividualEditor: React.FC<{
       if (!projectId) return;
       const [propsRes, indsRes] = await Promise.all([
         apiClient.get<any>(`/api/ontology/${isObjectProperty ? 'object-properties' : 'data-properties'}/${projectId}`),
-        isObjectProperty ? apiClient.get<any>(`/api/ontology/individuals/${projectId}`) : Promise.resolve({ data: [] })
+        isObjectProperty ? apiClient.get<any>(`/api/ontology/individuals/${projectId}?limit=10000`) : Promise.resolve({ data: [] })
       ]);
 
       const props = Array.isArray(propsRes?.data) ? propsRes.data : (propsRes?.properties || propsRes?.data?.properties || []);
@@ -430,7 +430,7 @@ const IndividualEditor: React.FC<{
   const openSameDifferentDialog = async (mode: 'same' | 'different', editingIri?: string) => {
     setSameDiffDialog({ mode, editingIri });
     try {
-      const res = await apiClient.get<any>(`/api/ontology/individuals/${projectId}`);
+      const res = await apiClient.get<any>(`/api/ontology/individuals/${projectId}?limit=10000`);
       const inds = Array.isArray(res?.data) ? res.data : res?.data?.individuals || [];
       setAllIndividuals(inds);
     } catch (e) {

@@ -46,7 +46,7 @@ import ConfirmationModal from "./ConfirmationModal";
 const PlanDetailsModal = lazy(() => import("./PlanDetailsModal"));
 import { UserGuideModal } from "./UserGuideModal";
 import { ReportIssueModal } from "./ReportIssueModal";
-import { Bug } from "lucide-react";
+import { Bug, ListOrdered } from "lucide-react";
 import AdminSettingsModal from "./AdminSettingsModal";
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import { AppVersionBadge } from "./AppVersionBadge";
@@ -139,7 +139,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [appVersion, setAppVersion] = useState("");
   const [showPlanDetails, setShowPlanDetails] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
-  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [reportIssueModalType, setReportIssueModalType] = useState<"Bug" | "Task" | null>(null);
   const [renaming, setRenaming] = useState<{ projectId: string; currentName: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
@@ -926,15 +926,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       {/* Toast Notification */}
       {toast && (
         <div
-          className={`fixed top-4 right-4 z-[100] px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 max-w-md animate-in slide-in-from-top-2 ${
-            toast.type === "success"
+          className={`fixed top-4 right-4 z-[100] px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 max-w-md animate-in slide-in-from-top-2 ${toast.type === "success"
               ? "bg-green-500 text-white"
               : toast.type === "error"
                 ? "bg-red-500 text-white"
                 : toast.type === "warning"
                   ? "bg-amber-500 text-white"
                   : "bg-blue-500 text-white"
-          }`}
+            }`}
         >
           {toast.type === "success" && <CheckCircle size={18} />}
           {toast.type === "error" && <XCircle size={18} />}
@@ -1034,13 +1033,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               {!isDesktop() && (isWorkspaceOwner ? (
                 <button
                   onClick={() => setShowPlanDetails(true)}
-                  className={`h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer ${
-                    subscription.isEnterprise
+                  className={`h-9 inline-flex items-center justify-center gap-1.5 px-3 text-xs font-semibold rounded-lg transition-all hover:shadow-lg cursor-pointer ${subscription.isEnterprise
                       ? "bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600"
                       : subscription.isPro
                         ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
                         : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
+                    }`}
                   title={`Workspace Plan: ${subscription.plan.toUpperCase()} - Click for current plan details`}
                 >
                   {subscription.isEnterprise ? (
@@ -1102,11 +1100,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <HelpCircle size={20} />
               </button>
               <button
-                onClick={() => setIsReportIssueModalOpen(true)}
+                onClick={() => setReportIssueModalType("Bug")}
                 className="h-9 w-9 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
                 title="Report Issue"
               >
                 <Bug size={20} />
+              </button>
+              <button
+                onClick={() => setReportIssueModalType("Task")}
+                className="h-9 w-9 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
+                title="Request a Feature"
+              >
+                <ListOrdered size={20} />
               </button>
               {!isDesktop() && (
                 <button
@@ -1114,7 +1119,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   className="h-9 w-9 inline-flex items-center justify-center text-purple-600 hover:bg-purple-50 rounded-lg"
                   title="Download Desktop App"
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
                 </button>
               )}
               {isOwner && onManageSubscription && !user?.enterpriseDomainBypass && (
@@ -1229,8 +1234,8 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       className={`
                                         border rounded-lg p-4 transition-all flex
                                         ${project.isPrivateRestricted
-                                          ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-70"
-                                          : "border-gray-200 cursor-pointer hover:border-purple-400 hover:shadow-md"}
+                          ? "border-gray-200 bg-gray-50 cursor-not-allowed opacity-70"
+                          : "border-gray-200 cursor-pointer hover:border-purple-400 hover:shadow-md"}
                                         ${viewMode === "list" ? "items-center" : "items-start"}
                                     `}
                       title={project.isPrivateRestricted ? "Private project — you can rename or delete but cannot open it" : undefined}
@@ -1267,59 +1272,59 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                         <div className="relative">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setOpenMenuProjectId(
-                                  openMenuProjectId === project.projectId ? null : project.projectId,
-                                );
-                              }}
-                              className="p-1 hover:bg-gray-100 rounded"
-                            >
-                              <MoreVertical size={16} className="text-gray-400" />
-                            </button>
-                            {openMenuProjectId === project.projectId && (
-                              <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                                {!project.isPrivateRestricted && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuProjectId(
+                                openMenuProjectId === project.projectId ? null : project.projectId,
+                              );
+                            }}
+                            className="p-1 hover:bg-gray-100 rounded"
+                          >
+                            <MoreVertical size={16} className="text-gray-400" />
+                          </button>
+                          {openMenuProjectId === project.projectId && (
+                            <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                              {!project.isPrivateRestricted && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openProjectSettings(project);
+                                  }}
+                                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                >
+                                  <Settings size={14} />
+                                  Project Settings
+                                </button>
+                              )}
+                              {canManageProjectRow(project) && (
+                                <>
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      openProjectSettings(project);
+                                      startRename(project.projectId, project.name);
                                     }}
                                     className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                                   >
-                                    <Settings size={14} />
-                                    Project Settings
+                                    <Edit size={14} />
+                                    Rename
                                   </button>
-                                )}
-                                {canManageProjectRow(project) && (
-                                  <>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        startRename(project.projectId, project.name);
-                                      }}
-                                      className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                                    >
-                                      <Edit size={14} />
-                                      Rename
-                                    </button>
-                                    <div className="border-t border-gray-100 my-1"></div>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDeleteProject(project);
-                                      }}
-                                      className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                                    >
-                                      <Trash2 size={14} />
-                                      Delete Project
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                                  <div className="border-t border-gray-100 my-1"></div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteProject(project);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                  >
+                                    <Trash2 size={14} />
+                                    Delete Project
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
                         {viewMode === "list" && !project.isPrivateRestricted && <ChevronRight size={20} className="text-gray-400" />}
                       </div>
                     </div>
@@ -1331,158 +1336,156 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
           {/* Workspace Members — cloud collaboration only */}
           {!isDesktop() && (
-          <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                <Users size={24} className="text-purple-600" />
-                Workspace Members
-                <span className="text-sm font-normal text-gray-500">({teamMembers.length})</span>
-              </h2>
-              {!subscription.canAccessFeature("hasBasicCollaboration") ? (
-                isWorkspaceOwner && onOpenSubscriptionPlans ? (
+            <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                  <Users size={24} className="text-purple-600" />
+                  Workspace Members
+                  <span className="text-sm font-normal text-gray-500">({teamMembers.length})</span>
+                </h2>
+                {!subscription.canAccessFeature("hasBasicCollaboration") ? (
+                  isWorkspaceOwner && onOpenSubscriptionPlans ? (
+                    <button
+                      onClick={onOpenSubscriptionPlans}
+                      className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-purple-200 rounded-lg bg-purple-50 text-purple-600 hover:bg-purple-100 transition-colors"
+                      title="Upgrade to Professional to invite workspace members"
+                    >
+                      <UserPlus size={16} />
+                      Invite Member
+                      <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded">PRO</span>
+                    </button>
+                  ) : (
+                    <div
+                      className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-purple-200 rounded-lg bg-purple-50 text-purple-500 cursor-not-allowed"
+                      title="Only the workspace owner can upgrade to invite workspace members"
+                    >
+                      <UserPlus size={16} />
+                      Invite Member
+                      <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded">PRO</span>
+                    </div>
+                  )
+                ) : canInviteMembers ? (
                   <button
-                    onClick={onOpenSubscriptionPlans}
-                    className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-purple-200 rounded-lg bg-purple-50 text-purple-600 hover:bg-purple-100 transition-colors"
-                    title="Upgrade to Professional to invite workspace members"
+                    onClick={() => setShowInviteMember(true)}
+                    className={`h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 ${!subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
+                        ? "border-amber-300 bg-amber-50"
+                        : ""
+                      }`}
+                    title={
+                      !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
+                        ? `Limit reached (${subscription.limits.maxTeamMembers} members). Upgrade to add more.`
+                        : "Invite a new workspace member"
+                    }
                   >
                     <UserPlus size={16} />
                     Invite Member
-                    <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded">PRO</span>
+                    {!subscription.isWithinLimit(teamMembers.length, "maxTeamMembers") && (
+                      <span className="bg-amber-500 text-white text-[10px] px-1 py-0.5 rounded">LIMIT</span>
+                    )}
                   </button>
                 ) : (
                   <div
-                    className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-purple-200 rounded-lg bg-purple-50 text-purple-500 cursor-not-allowed"
-                    title="Only the workspace owner can upgrade to invite workspace members"
+                    className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-400 cursor-not-allowed"
+                    title="Only workspace owners and admins can invite members"
                   >
                     <UserPlus size={16} />
                     Invite Member
-                    <span className="bg-purple-500 text-white text-[10px] px-1.5 py-0.5 rounded">PRO</span>
+                    <Crown size={14} className="text-purple-400" />
                   </div>
-                )
-              ) : canInviteMembers ? (
-                <button
-                  onClick={() => setShowInviteMember(true)}
-                  className={`h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 ${
-                    !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
-                      ? "border-amber-300 bg-amber-50"
-                      : ""
-                  }`}
-                  title={
-                    !subscription.isWithinLimit(teamMembers.length, "maxTeamMembers")
-                      ? `Limit reached (${subscription.limits.maxTeamMembers} members). Upgrade to add more.`
-                      : "Invite a new workspace member"
-                  }
-                >
-                  <UserPlus size={16} />
-                  Invite Member
-                  {!subscription.isWithinLimit(teamMembers.length, "maxTeamMembers") && (
-                    <span className="bg-amber-500 text-white text-[10px] px-1 py-0.5 rounded">LIMIT</span>
-                  )}
-                </button>
-              ) : (
-                <div
-                  className="h-9 min-w-[150px] inline-flex items-center justify-center gap-2 px-3 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-400 cursor-not-allowed"
-                  title="Only workspace owners and admins can invite members"
-                >
-                  <UserPlus size={16} />
-                  Invite Member
-                  <Crown size={14} className="text-purple-400" />
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            <div className="pr-2 custom-scrollbar">
-              {teamMembers.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">No workspace members yet</div>
-              ) : (
-                <div className="space-y-2">
-                  {teamMembers.map((member) => (
-                    <div
-                      key={member.id}
-                      className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
-                            member.status === "PENDING"
-                              ? "bg-yellow-100 text-yellow-600"
-                              : "bg-purple-100 text-purple-600"
-                          }`}
-                        >
-                          {member.username.charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium text-gray-900">{member.username}</p>
-                            {member.status === "PENDING" && (
-                              <span className="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded-full">
-                                Pending
-                              </span>
-                            )}
+              <div className="pr-2 custom-scrollbar">
+                {teamMembers.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">No workspace members yet</div>
+                ) : (
+                  <div className="space-y-2">
+                    {teamMembers.map((member) => (
+                      <div
+                        key={member.id}
+                        className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${member.status === "PENDING"
+                                ? "bg-yellow-100 text-yellow-600"
+                                : "bg-purple-100 text-purple-600"
+                              }`}
+                          >
+                            {member.username.charAt(0).toUpperCase()}
                           </div>
-                          <p className="text-sm text-gray-500">{member.email}</p>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-gray-900">{member.username}</p>
+                              {member.status === "PENDING" && (
+                                <span className="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded-full">
+                                  Pending
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-500">{member.email}</p>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
                         <div className="flex items-center gap-2">
-                          {member.roles.map((role) => {
-                            const upperRole = role.toUpperCase();
-                            const roleStyles = {
-                              OWNER: "bg-yellow-500/20 text-yellow-500 border-yellow-500/30",
-                              ADMIN: "bg-purple-500/20 text-purple-500 border-purple-500/30",
-                              MEMBER: "bg-blue-500/20 text-blue-500 border-blue-500/30",
-                              VIEWER: "bg-gray-500/20 text-gray-500 border-gray-500/30",
-                            };
-                            const style = roleStyles[upperRole as keyof typeof roleStyles] || roleStyles.MEMBER;
-                            return (
-                              <span key={role} className={`px-2 py-0.5 text-[10px] font-bold rounded border ${style}`}>
-                                {upperRole}
-                              </span>
-                            );
-                          })}
-                        </div>
-                        {canInviteMembers &&
-                          member.email !== user?.email &&
-                          member.status !== "PENDING" &&
-                          !member.roles.some(r => r.toUpperCase() === "OWNER") && (
+                          <div className="flex items-center gap-2">
+                            {member.roles.map((role) => {
+                              const upperRole = role.toUpperCase();
+                              const roleStyles = {
+                                OWNER: "bg-yellow-500/20 text-yellow-500 border-yellow-500/30",
+                                ADMIN: "bg-purple-500/20 text-purple-500 border-purple-500/30",
+                                MEMBER: "bg-blue-500/20 text-blue-500 border-blue-500/30",
+                                VIEWER: "bg-gray-500/20 text-gray-500 border-gray-500/30",
+                              };
+                              const style = roleStyles[upperRole as keyof typeof roleStyles] || roleStyles.MEMBER;
+                              return (
+                                <span key={role} className={`px-2 py-0.5 text-[10px] font-bold rounded border ${style}`}>
+                                  {upperRole}
+                                </span>
+                              );
+                            })}
+                          </div>
+                          {canInviteMembers &&
+                            member.email !== user?.email &&
+                            member.status !== "PENDING" &&
+                            !member.roles.some(r => r.toUpperCase() === "OWNER") && (
+                              <button
+                                onClick={() => handleRemoveMember(member)}
+                                className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"
+                                title="Remove member"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          {member.email === user?.email &&
+                            !member.roles.some((r) => r.toUpperCase() === "OWNER") &&
+                            member.status !== "PENDING" && (
+                              <button
+                                onClick={() => handleRemoveMember(member)}
+                                className="px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded border border-red-200"
+                                title="Leave this workspace"
+                              >
+                                Leave
+                              </button>
+                            )}
+                          {canInviteMembers && member.status === "PENDING" && (
                             <button
-                              onClick={() => handleRemoveMember(member)}
+                              onClick={() => handleCancelInvitation(member)}
                               className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"
-                              title="Remove member"
+                              title="Cancel invitation"
                             >
                               <Trash2 size={16} />
                             </button>
                           )}
-                        {member.email === user?.email &&
-                          !member.roles.some((r) => r.toUpperCase() === "OWNER") &&
-                          member.status !== "PENDING" && (
-                            <button
-                              onClick={() => handleRemoveMember(member)}
-                              className="px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded border border-red-200"
-                              title="Leave this workspace"
-                            >
-                              Leave
-                            </button>
+                          {member.email === user?.email && (
+                            <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full">You</span>
                           )}
-                        {canInviteMembers && member.status === "PENDING" && (
-                          <button
-                            onClick={() => handleCancelInvitation(member)}
-                            className="p-1.5 hover:bg-red-50 rounded text-red-600 hover:text-red-700 transition-colors"
-                            title="Cancel invitation"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        )}
-                        {member.email === user?.email && (
-                          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full">You</span>
-                        )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
           )}
         </div>
       </main>
@@ -1624,11 +1627,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
             <div className="flex border-b">
               <button
                 onClick={() => setProjectSettingsTab("general")}
-                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                  projectSettingsTab === "general"
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${projectSettingsTab === "general"
                     ? "text-purple-600 border-b-2 border-purple-600 bg-purple-50"
                     : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                }`}
+                  }`}
               >
                 <FileText size={16} />
                 General
@@ -1636,11 +1638,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               {!isDesktop() && (
                 <button
                   onClick={() => setProjectSettingsTab("members")}
-                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                    projectSettingsTab === "members"
+                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${projectSettingsTab === "members"
                       ? "text-purple-600 border-b-2 border-purple-600 bg-purple-50"
                       : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                  }`}
+                    }`}
                 >
                   <Users size={16} />
                   Members ({projectSettingsModal.members?.length || 0})
@@ -1649,11 +1650,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
               {canManageOpenProject && (
                 <button
                   onClick={() => setProjectSettingsTab("danger")}
-                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                    projectSettingsTab === "danger"
+                  className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${projectSettingsTab === "danger"
                       ? "text-red-600 border-b-2 border-red-600 bg-red-50"
                       : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                  }`}
+                    }`}
                 >
                   <AlertTriangle size={16} />
                   Danger Zone
@@ -1948,8 +1948,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       <UserGuideModal isOpen={showUserGuide} onClose={() => setShowUserGuide(false)} />
 
       {/* Report Issue Modal */}
-      {isReportIssueModalOpen && (
-        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+      {reportIssueModalType && (
+        <ReportIssueModal
+          initialIssueType={reportIssueModalType}
+          onClose={() => setReportIssueModalType(null)}
+        />
       )}
     </div>
   );

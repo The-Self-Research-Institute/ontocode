@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Trash, AlertTriangle, Bug, CreditCard, Mail, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Trash, AlertTriangle, Bug, ListOrdered, CreditCard, Mail, CheckCircle, XCircle } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { validateWorkspaceName, validateDescription } from "../utils/validation";
@@ -14,7 +14,7 @@ function safeGetStorage(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
 function safeRemoveStorage(key: string): void {
-  try { localStorage.removeItem(key); } catch {}
+  try { localStorage.removeItem(key); } catch { }
 }
 
 interface WorkspaceMember {
@@ -126,7 +126,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
     }
   }, [user?.subscriptionPlan]);
   // Report Issue modal state — available in workspace selection screen
-  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [reportIssueModalType, setReportIssueModalType] = useState<"Bug" | "Task" | null>(null);
 
   const showConfirmDialog = useCallback((title: string, message: string, confirmLabel = "OK"): Promise<boolean> => {
     return new Promise<boolean>((resolve) => {
@@ -437,7 +437,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       const errorMsg = err.response?.data?.error || err.message || "Failed to delete workspace";
       const requiresAction = err.response?.data?.requiresAction;
       const actions = err.response?.data?.actions;
-      
+
       // Check if this is a billing-related deletion error
       if (err.response?.status === 402) {
         setError(`❌ ${errorMsg}\n\n📋 ${requiresAction}`);
@@ -563,12 +563,21 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           )}
           <button
             type="button"
-            onClick={() => setIsReportIssueModalOpen(true)}
+            onClick={() => setReportIssueModalType("Bug")}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
-            title="Report an issue or request a feature"
+            title="Report a bug"
           >
             <Bug size={14} />
             Report Issue
+          </button>
+          <button
+            type="button"
+            onClick={() => setReportIssueModalType("Task")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
+            title="Request a feature"
+          >
+            <ListOrdered size={14} />
+            Feature Request
           </button>
           {/* Desktop download — always visible */}
           <button
@@ -577,7 +586,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 text-xs font-medium text-purple-200 transition-colors backdrop-blur-sm"
             title="Download OntoCode Desktop"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
             Desktop App
           </button>
         </div>
@@ -630,83 +639,82 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
                 const selfMember = getCurrentUserMember(workspace);
                 const isPending = selfMember?.status?.toUpperCase() === "PENDING";
                 return (
-                <div
-                  key={workspace.id}
-                  onClick={() => !selecting && !disabled && handleSelectWorkspace(workspace.workspaceId)}
-                  className={`bg-white/5 backdrop-blur-sm border rounded-xl p-6 transition-all group ${
-                    disabled
+                  <div
+                    key={workspace.id}
+                    onClick={() => !selecting && !disabled && handleSelectWorkspace(workspace.workspaceId)}
+                    className={`bg-white/5 backdrop-blur-sm border rounded-xl p-6 transition-all group ${disabled
                       ? "opacity-60 cursor-not-allowed border-white/10"
                       : isPending
-                      ? "hover:bg-amber-500/5 hover:border-amber-400/50 cursor-pointer border-amber-500/30"
-                      : "hover:bg-white/10 hover:border-purple-400/50 cursor-pointer border-white/10"
-                  }`}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div className="flex items-start space-x-4 flex-1 min-w-0">
-                      <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${isPending ? "bg-gradient-to-br from-amber-500 to-orange-600" : "bg-gradient-to-br from-purple-500 to-indigo-600"}`}>
-                        {isPending ? <Mail size={24} className="text-white" /> : <Building2 size={24} className="text-white" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center flex-wrap gap-2 mb-1 min-w-0">
-                          <h3 className="text-xl font-semibold text-white truncate flex-shrink min-w-0" title={workspace.name}>
-                            {workspace.name}
-                          </h3>
-                          <div className="flex-shrink-0 flex items-center gap-1">
-                            {isPending ? (
-                              <span className="px-2 py-1 rounded text-xs border bg-amber-500/20 text-amber-300 border-amber-500/30">
-                                Invitation Pending
-                              </span>
-                            ) : (
-                              getRoleBadge(workspace)
-                            )}
+                        ? "hover:bg-amber-500/5 hover:border-amber-400/50 cursor-pointer border-amber-500/30"
+                        : "hover:bg-white/10 hover:border-purple-400/50 cursor-pointer border-white/10"
+                      }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div className="flex items-start space-x-4 flex-1 min-w-0">
+                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${isPending ? "bg-gradient-to-br from-amber-500 to-orange-600" : "bg-gradient-to-br from-purple-500 to-indigo-600"}`}>
+                          {isPending ? <Mail size={24} className="text-white" /> : <Building2 size={24} className="text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center flex-wrap gap-2 mb-1 min-w-0">
+                            <h3 className="text-xl font-semibold text-white truncate flex-shrink min-w-0" title={workspace.name}>
+                              {workspace.name}
+                            </h3>
+                            <div className="flex-shrink-0 flex items-center gap-1">
+                              {isPending ? (
+                                <span className="px-2 py-1 rounded text-xs border bg-amber-500/20 text-amber-300 border-amber-500/30">
+                                  Invitation Pending
+                                </span>
+                              ) : (
+                                getRoleBadge(workspace)
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        {workspace.description && (
-                          <p className="text-gray-400 text-sm mb-2 line-clamp-2" title={workspace.description}>
-                            {workspace.description}
-                          </p>
-                        )}
-                        <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-gray-400">
-                          <span className="flex items-center space-x-1">
-                            <Users size={14} />
-                            <span>
-                              {workspace.memberCount} member{workspace.memberCount !== 1 ? "s" : ""}
+                          {workspace.description && (
+                            <p className="text-gray-400 text-sm mb-2 line-clamp-2" title={workspace.description}>
+                              {workspace.description}
+                            </p>
+                          )}
+                          <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-sm text-gray-400">
+                            <span className="flex items-center space-x-1">
+                              <Users size={14} />
+                              <span>
+                                {workspace.memberCount} member{workspace.memberCount !== 1 ? "s" : ""}
+                              </span>
                             </span>
-                          </span>
-                          <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${workspacePlanBadge(workspace.subscriptionPlan).cls}`}>
-                            {workspacePlanBadge(workspace.subscriptionPlan).label}
-                          </span>
+                            <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-bold ${workspacePlanBadge(workspace.subscriptionPlan).cls}`}>
+                              {workspacePlanBadge(workspace.subscriptionPlan).label}
+                            </span>
+                          </div>
+                          {isPending && (
+                            <p className="text-amber-400/80 text-xs mt-1">Click to accept or decline this invitation</p>
+                          )}
                         </div>
-                        {isPending && (
-                          <p className="text-amber-400/80 text-xs mt-1">Click to accept or decline this invitation</p>
+                      </div>
+                      <div className="flex items-center gap-2 self-end sm:self-auto flex-shrink-0">
+                        {(!isPending && selfMember?.role?.toUpperCase() === "OWNER") && (
+                          <button
+                            onClick={(e) => confirmDelete(workspace, e)}
+                            className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                            title="Delete workspace"
+                          >
+                            <Trash size={18} />
+                          </button>
+                        )}
+                        {!disabled && (
+                          <ChevronRight
+                            size={24}
+                            className={`transition-colors flex-shrink-0 ${isPending ? "text-amber-400/60 group-hover:text-amber-400" : "text-gray-400 group-hover:text-purple-400"}`}
+                          />
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 self-end sm:self-auto flex-shrink-0">
-                      {(!isPending && selfMember?.role?.toUpperCase() === "OWNER") && (
-                        <button
-                          onClick={(e) => confirmDelete(workspace, e)}
-                          className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-                          title="Delete workspace"
-                        >
-                          <Trash size={18} />
-                        </button>
-                      )}
-                      {!disabled && (
-                        <ChevronRight
-                          size={24}
-                          className={`transition-colors flex-shrink-0 ${isPending ? "text-amber-400/60 group-hover:text-amber-400" : "text-gray-400 group-hover:text-purple-400"}`}
-                        />
-                      )}
-                    </div>
+                    {errMsg && (
+                      <div className="mt-3 pt-3 border-t border-red-500/20 flex items-center gap-1.5 text-xs text-red-400">
+                        <AlertTriangle size={12} className="flex-shrink-0" />
+                        <span>{errMsg}</span>
+                      </div>
+                    )}
                   </div>
-                  {errMsg && (
-                    <div className="mt-3 pt-3 border-t border-red-500/20 flex items-center gap-1.5 text-xs text-red-400">
-                      <AlertTriangle size={12} className="flex-shrink-0" />
-                      <span>{errMsg}</span>
-                    </div>
-                  )}
-                </div>
                 );
               })}
             </>
@@ -746,100 +754,100 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
             </h3>
 
             <>
-            {createDialogError && (
-              <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-4 text-sm backdrop-blur-sm">
-                <p>{createDialogError}</p>
-                {createDialogError.includes("Workspace limit reached") && (
+              {createDialogError && (
+                <div className="bg-red-500/10 border border-red-400/30 text-red-400 px-4 py-3 rounded-lg mb-4 text-sm backdrop-blur-sm">
+                  <p>{createDialogError}</p>
+                  {createDialogError.includes("Workspace limit reached") && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowCreateDialog(false); onUpgradeAccountPlan?.(); }}
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-lg transition-colors"
+                    >
+                      <CreditCard size={13} />
+                      Upgrade Account
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateWorkspace} className="space-y-4">
+                <div>
+                  <label htmlFor="workspaceName" className="block text-sm text-gray-200 mb-2">
+                    Workspace Name *
+                  </label>
+                  <input
+                    type="text"
+                    id="workspaceName"
+                    value={newWorkspaceName}
+                    onChange={(e) => {
+                      setNewWorkspaceName(e.target.value);
+                      setCreateDialogError("");
+                    }}
+                    required
+                    disabled={creating}
+                    maxLength={255}
+                    className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    placeholder="My Ontology Workspace"
+                  />
+                  <p className={`text-xs mt-1 ${newWorkspaceName.length >= 255 ? 'text-red-400 font-medium' : newWorkspaceName.length > 240 ? 'text-orange-400 font-medium' : 'text-gray-400'}`}>
+                    {newWorkspaceName.length}/255 characters
+                    {newWorkspaceName.length >= 255 && ' (Maximum reached)'}
+                  </p>
+                </div>
+                <div>
+                  <label htmlFor="workspaceDescription" className="block text-sm text-gray-200 mb-2">
+                    Description (Optional)
+                  </label>
+                  <textarea
+                    id="workspaceDescription"
+                    value={newWorkspaceDescription}
+                    onChange={(e) => setNewWorkspaceDescription(e.target.value)}
+                    disabled={creating}
+                    rows={3}
+                    maxLength={1000}
+                    className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                    placeholder="A workspace for my ontology projects..."
+                  />
+                  <div className="flex justify-between text-xs text-gray-400 mt-1">
+                    <span>Describe your workspace</span>
+                    <span className={newWorkspaceDescription.length > 900 ? "text-orange-400 font-medium" : ""}>
+                      {newWorkspaceDescription.length}/1000 characters
+                    </span>
+                  </div>
+                </div>
+                <div className="flex space-x-3 pt-4">
                   <button
                     type="button"
-                    onClick={() => { setShowCreateDialog(false); onUpgradeAccountPlan?.(); }}
-                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-lg transition-colors"
+                    onClick={() => {
+                      setShowCreateDialog(false);
+                      setNewWorkspaceName("");
+                      setNewWorkspaceDescription("");
+                      setCreateDialogError("");
+                    }}
+                    disabled={creating}
+                    className="flex-1 px-4 py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all disabled:opacity-50"
                   >
-                    <CreditCard size={13} />
-                    Upgrade Account
+                    Cancel
                   </button>
-                )}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateWorkspace} className="space-y-4">
-              <div>
-                <label htmlFor="workspaceName" className="block text-sm text-gray-200 mb-2">
-                  Workspace Name *
-                </label>
-                <input
-                  type="text"
-                  id="workspaceName"
-                  value={newWorkspaceName}
-                  onChange={(e) => {
-                    setNewWorkspaceName(e.target.value);
-                    setCreateDialogError("");
-                  }}
-                  required
-                  disabled={creating}
-                  maxLength={255}
-                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  placeholder="My Ontology Workspace"
-                />
-                <p className={`text-xs mt-1 ${newWorkspaceName.length >= 255 ? 'text-red-400 font-medium' : newWorkspaceName.length > 240 ? 'text-orange-400 font-medium' : 'text-gray-400'}`}>
-                  {newWorkspaceName.length}/255 characters
-                  {newWorkspaceName.length >= 255 && ' (Maximum reached)'}
-                </p>
-              </div>
-              <div>
-                <label htmlFor="workspaceDescription" className="block text-sm text-gray-200 mb-2">
-                  Description (Optional)
-                </label>
-                <textarea
-                  id="workspaceDescription"
-                  value={newWorkspaceDescription}
-                  onChange={(e) => setNewWorkspaceDescription(e.target.value)}
-                  disabled={creating}
-                  rows={3}
-                  maxLength={1000}
-                  className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
-                  placeholder="A workspace for my ontology projects..."
-                />
-                <div className="flex justify-between text-xs text-gray-400 mt-1">
-                  <span>Describe your workspace</span>
-                  <span className={newWorkspaceDescription.length > 900 ? "text-orange-400 font-medium" : ""}>
-                    {newWorkspaceDescription.length}/1000 characters
-                  </span>
+                  <button
+                    type="submit"
+                    disabled={creating || !newWorkspaceName.trim() || newWorkspaceName.length >= 255}
+                    className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+                  >
+                    {creating ? (
+                      <>
+                        <Loader2 size={20} className="animate-spin" />
+                        <span>Creating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus size={20} />
+                        <span>Create</span>
+                      </>
+                    )}
+                  </button>
                 </div>
-              </div>
-              <div className="flex space-x-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateDialog(false);
-                    setNewWorkspaceName("");
-                    setNewWorkspaceDescription("");
-                    setCreateDialogError("");
-                  }}
-                  disabled={creating}
-                  className="flex-1 px-4 py-3 bg-white/5 border border-white/20 text-white font-medium rounded-lg hover:bg-white/10 transition-all disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating || !newWorkspaceName.trim() || newWorkspaceName.length >= 255}
-                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium rounded-lg hover:from-purple-600 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
-                >
-                  {creating ? (
-                    <>
-                      <Loader2 size={20} className="animate-spin" />
-                      <span>Creating...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Plus size={20} />
-                      <span>Create</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+              </form>
             </>
           </div>
         </div>
@@ -994,8 +1002,11 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       )}
 
       {/* Report Issue Modal — available from workspace selection */}
-      {isReportIssueModalOpen && (
-        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
+      {reportIssueModalType && (
+        <ReportIssueModal
+          initialIssueType={reportIssueModalType}
+          onClose={() => setReportIssueModalType(null)}
+        />
       )}
     </div>
   );

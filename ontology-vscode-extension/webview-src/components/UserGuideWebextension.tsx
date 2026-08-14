@@ -1463,7 +1463,7 @@ export const UserGuideWebextension: React.FC<UserGuideWebextensionProps> = ({ is
                         search to find the right location, then click a line number to place the citation
                       </li>
                       <li>
-                        <strong>Cross-Format Sync:</strong> Citations are automatically inserted across all six formats
+                        <strong>Cross-Format Sync:</strong> Citations are automatically inserted across all seven formats
                         simultaneously
                       </li>
                       <li>

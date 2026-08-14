@@ -230,6 +230,7 @@ public class ManchesterExpressionService {
             throw new IllegalStateException("Failed to serialize OWL axiom");
         }
         mutationService.applyRawUpdate(projectId, sparql, draft, userId);
+
     }
 
     private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms) throws Exception {
@@ -244,7 +245,7 @@ private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, bool
     }
     mutationService.applyRawUpdate(projectId, sparql, draft, userId);
 }
-    private OWLOntology loadOntology(String projectId) throws Exception {
+     OWLOntology loadOntology(String projectId) throws Exception {
         return loadOntology(projectId, false, null);
     }
 

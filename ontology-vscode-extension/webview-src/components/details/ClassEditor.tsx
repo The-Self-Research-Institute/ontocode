@@ -1995,13 +1995,13 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       }
       if (onRefreshIndividuals) onRefreshIndividuals();
     } catch (error) {
-      console.error("[ClassEditor] Failed to remove class assertion:", error);
-      notificationService.error("Remove Failed", `Failed to remove instance from class: ${error instanceof Error ? error.message : "Unknown error"}`);
+      console.error("[ClassEditor] Failed to delete instance:", error);
+      notificationService.error("Delete Failed", `Failed to delete instance: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsSavingAxiom(false);
       isSavingAxiomRef.current = false;
     }
-};
+  };
 
   const handleEditInstance = (instanceId: string) => {
     console.log("[ClassEditor] handleEditInstance called:", { instanceId, classIri: item.id });
@@ -2082,6 +2082,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
       await new Promise((resolve) => setTimeout(resolve, 500));
       await loadClassDetails(undefined, true);
+      window.dispatchEvent(new CustomEvent("gca:changed", { detail: { projectId } }));
     } catch (error) {
       console.error("[ClassEditor] Failed to save GCA:", error);
       notificationService.error("Save Failed", `Failed to save general class axiom: ${error instanceof Error ? error.message : "Unknown error"}`);

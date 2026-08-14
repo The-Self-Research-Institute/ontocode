@@ -660,7 +660,7 @@ export const UserGuideDesktop: React.FC<UserGuideDesktopProps> = ({ isOpen, onCl
                         search to find the right location, then click a line number to place the citation
                       </li>
                       <li>
-                        <strong>Cross-Format Sync:</strong> Citations are automatically inserted across all six formats
+                        <strong>Cross-Format Sync:</strong> Citations are automatically inserted across all seven formats
                         simultaneously
                       </li>
                       <li>
@@ -770,20 +770,12 @@ export const UserGuideDesktop: React.FC<UserGuideDesktopProps> = ({ isOpen, onCl
             <h3 style={styles.quickRefTitle}>Quick Reference</h3>
             <div style={styles.quickRefGrid}>
               <div style={styles.quickRefCard}>
-                <strong>Billing</strong>
-                <p style={styles.quickRefText}>Workspace Settings → Billing — manage plan, card &amp; invoices</p>
-              </div>
-              <div style={styles.quickRefCard}>
                 <strong>📧 Need Help?</strong>
                 <p style={styles.quickRefText}>Help → Report Issue</p>
               </div>
               <div style={styles.quickRefCard}>
                 <strong>🚀 Best Practice</strong>
                 <p style={styles.quickRefText}>Save frequently, use descriptive names</p>
-              </div>
-              <div style={styles.quickRefCard}>
-                <strong>👥 Collaboration</strong>
-                <p style={styles.quickRefText}>Real-time editing, live cursors enabled</p>
               </div>
             </div>
           </div>

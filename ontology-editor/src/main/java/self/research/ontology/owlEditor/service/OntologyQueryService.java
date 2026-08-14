@@ -2908,38 +2908,59 @@ public class OntologyQueryService {
         // (?rel discriminates; intersection/union/complement/oneOf merged as before)
         CompletableFuture<TupleQueryResult> anonymousFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String q = PREFIXES + """
-                SELECT ?rel ?bnode ?member ?memberLabel ?exprType WHERE {
-                  {
-                    <%1$s> rdfs:subClassOf ?bnode . BIND("sub" AS ?rel)
-                  } UNION {
-                    <%1$s> owl:equivalentClass ?bnode . BIND("equiv" AS ?rel)
-                  }
-                  FILTER(isBlank(?bnode))
-                  {
-                    { ?bnode owl:intersectionOf ?list . BIND("intersection" AS ?exprType) }
-                    UNION
-                    { ?bnode owl:unionOf ?list . BIND("union" AS ?exprType) }
-                    ?list rdf:rest*/rdf:first ?member .
-                    FILTER(isIRI(?member))
-                  }
-                  UNION
-                  {
-                    ?bnode owl:complementOf ?member . BIND("complement" AS ?exprType)
-                    FILTER(isIRI(?member))
-                  }
-                  UNION
-                  {
-                    ?bnode owl:oneOf ?list . BIND("oneOf" AS ?exprType)
-                    ?list rdf:rest*/rdf:first ?member .
-                  }
-                  OPTIONAL { ?member rdfs:label ?memberLabel }
-                }
-                LIMIT 1000
-                """.formatted(classIri);
-            return datasetService.execSelect(projectId, q);
-        }), queryPool);
+                SELECT ?rel ?bnode ?member ?memberLabel ?exprType
+               ?memberOnProp ?memberPropLabel ?memberRestrictionType ?memberFiller ?memberFillerLabel ?memberCard
+        WHERE {
+          {
+            <%1$s> rdfs:subClassOf ?bnode . BIND("sub" AS ?rel)
+          } UNION {
+            <%1$s> owl:equivalentClass ?bnode . BIND("equiv" AS ?rel)
+          }
+          FILTER(isBlank(?bnode))
+          {
+            { ?bnode owl:intersectionOf ?list . BIND("intersection" AS ?exprType) }
+            UNION
+            { ?bnode owl:unionOf ?list . BIND("union" AS ?exprType) }
+            ?list rdf:rest*/rdf:first ?member .
+          }
+          UNION
+          {
+            ?bnode owl:complementOf ?member . BIND("complement" AS ?exprType)
+          }
+          UNION
+          {
+            ?bnode owl:oneOf ?list . BIND("oneOf" AS ?exprType)
+            ?list rdf:rest*/rdf:first ?member .
+          }
+          OPTIONAL { ?member rdfs:label ?memberLabel }
+          OPTIONAL {
+            ?member owl:onProperty ?memberOnProp .
+            OPTIONAL { ?memberOnProp rdfs:label ?memberPropLabel }
+            {
+              ?member owl:someValuesFrom ?memberFiller . BIND("some" AS ?memberRestrictionType)
+            } UNION {
+              ?member owl:allValuesFrom ?memberFiller . BIND("only" AS ?memberRestrictionType)
+            } UNION {
+              ?member owl:hasValue ?memberFiller . BIND("value" AS ?memberRestrictionType)
+            } UNION {
+              ?member owl:minQualifiedCardinality ?memberCard . BIND("min" AS ?memberRestrictionType)
+              OPTIONAL { ?member owl:onClass ?memberFiller }
+            } UNION {
+              ?member owl:maxQualifiedCardinality ?memberCard . BIND("max" AS ?memberRestrictionType)
+              OPTIONAL { ?member owl:onClass ?memberFiller }
+            } UNION {
+              ?member owl:qualifiedCardinality ?memberCard . BIND("exactly" AS ?memberRestrictionType)
+              OPTIONAL { ?member owl:onClass ?memberFiller }
+            }
+            OPTIONAL { ?memberFiller rdfs:label ?memberFillerLabel }
+          }
+        }
+        LIMIT 1000
+        """.formatted(classIri);
+    return datasetService.execSelect(projectId, q);
+}), queryPool);
         
-        // --- DisjointUnionOf + HasKey merged ---
+         // --- DisjointUnionOf + HasKey merged ---
         CompletableFuture<TupleQueryResult> listAxiomsFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT ?axType ?list ?prop WHERE {
@@ -2957,7 +2978,6 @@ public class OntologyQueryService {
                 """.formatted(classIri, classIri);
             return datasetService.execSelect(projectId, q);
         }, queryPool);
-        
         // --- Inferred axioms (equivalent + superclass + disjoint) in ONE query ---
         // GraphDB-only graphs: on Fuseki/TDB2 these graphs don't exist, so this
         // returns empty — one cheap round trip instead of the previous three.
@@ -3020,36 +3040,58 @@ public class OntologyQueryService {
         // instability across separate SPARQL queries (blank node IDs from query 1
         // are not guaranteed to match in a second query against RDF4J/Fuseki).
         CompletableFuture<TupleQueryResult> gciFuture = queryAsync(() -> {
-            String q = PREFIXES + """
-                SELECT ?subExpr ?superClass ?superClassLabel ?exprType ?member ?memberLabel WHERE {
-                  ?subExpr rdfs:subClassOf ?superClass .
-                  FILTER(isBlank(?subExpr))
-                  {
-                    FILTER(?superClass = <%s>)
-                  } UNION {
-                    ?subExpr (rdf:first|rdf:rest|owl:intersectionOf|owl:unionOf|owl:complementOf|owl:someValuesFrom|owl:allValuesFrom|owl:onClass)+ <%s> .
-                  }
-                  OPTIONAL { ?superClass rdfs:label ?superClassLabel }
-                  OPTIONAL {
-                    {
-                      { ?subExpr owl:intersectionOf ?list . BIND("intersection" AS ?exprType) }
-                      UNION
-                      { ?subExpr owl:unionOf ?list . BIND("union" AS ?exprType) }
-                      ?list rdf:rest*/rdf:first ?member .
-                      FILTER(isIRI(?member))
-                    }
-                    UNION
-                    {
-                      ?subExpr owl:complementOf ?member . BIND("complement" AS ?exprType)
-                      FILTER(isIRI(?member))
-                    }
-                    OPTIONAL { ?member rdfs:label ?memberLabel }
-                  }
-                }
-                LIMIT 500
-                """.formatted(classIri, classIri);
-            return datasetService.execSelect(projectId, q);
-        }, queryPool);
+    String q = PREFIXES + """
+       SELECT ?subExpr ?superClass ?superClassLabel ?exprType ?member ?memberLabel
+       ?memberOnProp ?memberPropLabel ?memberRestrictionType ?memberFiller ?memberFillerLabel ?memberCard
+WHERE {
+          ?subExpr rdfs:subClassOf ?superClass .
+          FILTER(isBlank(?subExpr))
+          OPTIONAL {
+            ?subExpr (rdf:first|rdf:rest|owl:intersectionOf|owl:unionOf|owl:complementOf|owl:someValuesFrom|owl:allValuesFrom|owl:onClass)+ ?pathTarget .
+            FILTER(?pathTarget = <%s>)
+          }
+          FILTER(?superClass = <%s> || bound(?pathTarget))
+          OPTIONAL { ?superClass rdfs:label ?superClassLabel }
+          OPTIONAL {
+    {
+      { ?subExpr owl:intersectionOf ?list . BIND("intersection" AS ?exprType) }
+      UNION
+      { ?subExpr owl:unionOf ?list . BIND("union" AS ?exprType) }
+      ?list rdf:rest*/rdf:first ?member .
+    }
+    UNION
+    {
+      ?subExpr owl:complementOf ?member . BIND("complement" AS ?exprType)
+    }
+    OPTIONAL { ?member rdfs:label ?memberLabel }
+    OPTIONAL {
+      ?member owl:onProperty ?memberOnProp .
+      OPTIONAL { ?memberOnProp rdfs:label ?memberPropLabel }
+      {
+        ?member owl:someValuesFrom ?memberFiller . BIND("some" AS ?memberRestrictionType)
+      } UNION {
+        ?member owl:allValuesFrom ?memberFiller . BIND("only" AS ?memberRestrictionType)
+      } UNION {
+        ?member owl:hasValue ?memberFiller . BIND("value" AS ?memberRestrictionType)
+      } UNION {
+        ?member owl:minQualifiedCardinality ?memberCard . BIND("min" AS ?memberRestrictionType)
+        OPTIONAL { ?member owl:onClass ?memberFiller }
+      } UNION {
+        ?member owl:maxQualifiedCardinality ?memberCard . BIND("max" AS ?memberRestrictionType)
+        OPTIONAL { ?member owl:onClass ?memberFiller }
+      } UNION {
+        ?member owl:qualifiedCardinality ?memberCard . BIND("exactly" AS ?memberRestrictionType)
+        OPTIONAL { ?member owl:onClass ?memberFiller }
+      }
+      OPTIONAL { ?memberFiller rdfs:label ?memberFillerLabel }
+    }
+}
+        }
+        LIMIT 500
+        """.formatted(classIri, classIri);
+    return datasetService.execSelect(projectId, q);
+}, queryPool);
+
 
         // --- Anonymous ancestor superclasses ---
         // OPTIMIZED: Added explicit LIMIT to prevent runaway transitive path
@@ -3231,7 +3273,7 @@ public class OntologyQueryService {
 
         // --- Process anonymous expressions (sub + equiv axes from the merged query) ---
         TupleQueryResult anonRs = anonymousFuture.join();
-        Map<String, List<String>> anonMemberLabels = new LinkedHashMap<>();
+        Map<String, Map<String, String>> anonMemberByIdentity = new LinkedHashMap<>();
         Map<String, String> anonExprType = new LinkedHashMap<>();
         Map<String, String> anonRel = new LinkedHashMap<>();
         while (anonRs.hasNext()) {
@@ -3239,19 +3281,48 @@ public class OntologyQueryService {
             String rel = sol.hasBinding("rel") ? literal(sol, "rel") : "sub";
             String bnode = sol.getValue("bnode").stringValue();
             String groupKey = rel + "|" + bnode;
-            String memberIri = resource(sol, "member");
-            String memberLabel = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel") : localName(memberIri);
             String exprType = sol.hasBinding("exprType") ? literal(sol, "exprType") : "";
-            if (memberIri != null) {
-                anonMemberLabels.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(memberLabel);
-                anonExprType.putIfAbsent(groupKey, exprType);
-                anonRel.putIfAbsent(groupKey, rel);
+
+            String onProp = resource(sol, "memberOnProp");
+            String memberIdentity;
+            String memberText;
+            if (onProp != null) {
+                // Identity = the restriction blank node itself, so the same restriction with
+                // multiple rdfs:label rows on its filler collapses to one entry, not one per
+                // label.
+                memberIdentity = resourceOrBlank(sol, "member");
+                String propLabel = sol.hasBinding("memberPropLabel") ? literal(sol, "memberPropLabel")
+                        : formatIriWithPrefix(onProp);
+                String restrictionType = sol.hasBinding("memberRestrictionType") ? literal(sol, "memberRestrictionType")
+                        : "some";
+                String fillerIri = sol.hasBinding("memberFiller") ? sol.getValue("memberFiller").stringValue() : "";
+                String fillerLabel = sol.hasBinding("memberFillerLabel") ? literal(sol, "memberFillerLabel")
+                        : formatIriWithPrefix(fillerIri);
+                String cardinality = sol.hasBinding("memberCard") ? literal(sol, "memberCard") : "";
+                memberText = cardinality.isEmpty()
+                        ? propLabel + " " + restrictionType + " " + fillerLabel
+                        : propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
+            } else {
+                String memberIri = resource(sol, "member");
+                if (memberIri == null)
+                    continue;
+                memberIdentity = memberIri;
+                memberText = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel") : localName(memberIri);
             }
+
+            Map<String, String> byIdentity = anonMemberByIdentity.computeIfAbsent(groupKey, k -> new LinkedHashMap<>());
+            // First label seen for this member wins — later rows for the same member (a
+            // second
+            // rdfs:label) are ignored instead of appearing as a second, phantom operand.
+            byIdentity.putIfAbsent(memberIdentity, memberText);
+            anonExprType.putIfAbsent(groupKey, exprType);
+            anonRel.putIfAbsent(groupKey, rel);
         }
-        for (Map.Entry<String, List<String>> entry : anonMemberLabels.entrySet()) {
+        for (Map.Entry<String, Map<String, String>> entry : anonMemberByIdentity.entrySet()) {
             String groupKey = entry.getKey();
-            List<String> labels = entry.getValue();
-            if (labels == null || labels.isEmpty()) continue;
+            List<String> labels = new ArrayList<>(entry.getValue().values());
+            if (labels.isEmpty())
+                continue;
             String exprType = anonExprType.getOrDefault(groupKey, "");
             boolean isEquiv = "equiv".equals(anonRel.get(groupKey));
             String definition = switch (exprType) {
@@ -3366,35 +3437,54 @@ public class OntologyQueryService {
         
         // --- Process GCI axioms ---
         // Group rows by subExpr; inline member data avoids second-query blank-node instability.
-        TupleQueryResult gciRs = gciFuture.join();
-        Map<String, Map<String, Object>> gciGroups = new LinkedHashMap<>();
-        while (gciRs.hasNext()) {
-            BindingSet sol = gciRs.next();
-            String subExpr = sol.getValue("subExpr").stringValue();
-            Map<String, Object> group = gciGroups.computeIfAbsent(subExpr, k -> {
-                Map<String, Object> g = new LinkedHashMap<>();
-                String sc = resource(sol, "superClass");
-                String scLabel = sol.hasBinding("superClassLabel") ? literal(sol, "superClassLabel")
-                        : (sc != null ? localName(sc) : "?");
-                g.put("superClassLabel", scLabel);
-                g.put("exprType", null);
-                g.put("members", new ArrayList<String>());
-                return g;
-            });
-            if (sol.hasBinding("exprType")) {
-                if (group.get("exprType") == null) group.put("exprType", sol.getValue("exprType").stringValue());
-                if (sol.hasBinding("member")) {
-                    String memberIri = resource(sol, "member");
-                    String memberLabel = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel")
-                            : (memberIri != null ? localName(memberIri) : null);
-                    if (memberLabel != null) {
-                        @SuppressWarnings("unchecked")
-                        List<String> members = (List<String>) group.get("members");
-                        if (!members.contains(memberLabel)) members.add(memberLabel);
-                    }
-                }
-            }
+       TupleQueryResult gciRs = gciFuture.join();
+Map<String, Map<String, Object>> gciGroups = new LinkedHashMap<>();
+while (gciRs.hasNext()) {
+    BindingSet sol = gciRs.next();
+    String subExpr = sol.getValue("subExpr").stringValue();
+    Map<String, Object> group = gciGroups.computeIfAbsent(subExpr, k -> {
+        Map<String, Object> g = new LinkedHashMap<>();
+        String sc = resource(sol, "superClass");
+        String scLabel = sol.hasBinding("superClassLabel") ? literal(sol, "superClassLabel")
+                : (sc != null ? localName(sc) : "?");
+        g.put("superClassLabel", scLabel);
+        g.put("exprType", null);
+        // Keyed by member identity (IRI or restriction blank node) so a member with
+        // multiple rdfs:label rows collapses to one operand instead of one per label.
+        g.put("membersByIdentity", new LinkedHashMap<String, String>());
+        return g;
+    });
+    if (sol.hasBinding("exprType")) {
+        if (group.get("exprType") == null) group.put("exprType", sol.getValue("exprType").stringValue());
+        String onProp = resource(sol, "memberOnProp");
+        String memberIdentity;
+        String memberText;
+        if (onProp != null) {
+            memberIdentity = resourceOrBlank(sol, "member");
+            String propLabel = sol.hasBinding("memberPropLabel") ? literal(sol, "memberPropLabel") : formatIriWithPrefix(onProp);
+            String restrictionType = sol.hasBinding("memberRestrictionType") ? literal(sol, "memberRestrictionType") : "some";
+            String fillerIri = sol.hasBinding("memberFiller") ? sol.getValue("memberFiller").stringValue() : "";
+            String fillerLabel = sol.hasBinding("memberFillerLabel") ? literal(sol, "memberFillerLabel") : formatIriWithPrefix(fillerIri);
+            String cardinality = sol.hasBinding("memberCard") ? literal(sol, "memberCard") : "";
+            memberText = cardinality.isEmpty()
+                    ? propLabel + " " + restrictionType + " " + fillerLabel
+                    : propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
+        } else if (sol.hasBinding("member")) {
+            String memberIri = resource(sol, "member");
+            memberIdentity = memberIri;
+            memberText = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel")
+                    : (memberIri != null ? localName(memberIri) : null);
+        } else {
+            memberIdentity = null;
+            memberText = null;
         }
+        if (memberIdentity != null && memberText != null) {
+            @SuppressWarnings("unchecked")
+            Map<String, String> membersByIdentity = (Map<String, String>) group.get("membersByIdentity");
+            membersByIdentity.putIfAbsent(memberIdentity, memberText);
+        }
+    }
+}
         List<Map<String, String>> generalClassAxioms = new ArrayList<>();
         Set<String> seenGciDefinitions = new LinkedHashSet<>();
         for (Map.Entry<String, Map<String, Object>> entry : gciGroups.entrySet()) {
@@ -3403,8 +3493,8 @@ public class OntologyQueryService {
             String superClassLabel = (String) group.get("superClassLabel");
             String exprType = (String) group.get("exprType");
             @SuppressWarnings("unchecked")
-            List<String> members = (List<String>) group.get("members");
-            List<String> sortedMembers = new ArrayList<>(members);
+Map<String, String> membersByIdentity = (Map<String, String>) group.get("membersByIdentity");
+List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
             java.util.Collections.sort(sortedMembers);
             String subManchester = null;
             if (exprType != null && !sortedMembers.isEmpty()) {
@@ -3413,8 +3503,8 @@ public class OntologyQueryService {
                 else if ("complement".equals(exprType) && sortedMembers.size() == 1) subManchester = "not " + sortedMembers.get(0);
             }
             String definition = (subManchester != null && !subManchester.isBlank())
-                    ? "(" + subManchester + ") SubClassOf " + superClassLabel
-                    : "GCA SubClassOf " + superClassLabel;
+        ? subManchester + " SubClassOf " + superClassLabel
+        : "GCA SubClassOf " + superClassLabel;
             if (seenGciDefinitions.contains(definition)) continue;
             seenGciDefinitions.add(definition);
             Map<String, String> axiom = new LinkedHashMap<>();
@@ -3675,36 +3765,57 @@ public class OntologyQueryService {
         }, queryPool);
 
         CompletableFuture<TupleQueryResult> gciFuture = queryAsync(() -> {
-            String q = PREFIXES + """
-                SELECT ?subExpr ?superClass ?superClassLabel ?exprType ?member ?memberLabel WHERE {
-                  ?subExpr rdfs:subClassOf ?superClass .
-                  FILTER(isBlank(?subExpr))
-                  {
-                    FILTER(?superClass = <%s>)
-                  } UNION {
-                    ?subExpr (rdf:first|rdf:rest|owl:intersectionOf|owl:unionOf|owl:complementOf|owl:someValuesFrom|owl:allValuesFrom|owl:onClass)+ <%s> .
-                  }
-                  OPTIONAL { ?superClass rdfs:label ?superClassLabel }
-                  OPTIONAL {
-                    {
-                      { ?subExpr owl:intersectionOf ?list . BIND("intersection" AS ?exprType) }
-                      UNION
-                      { ?subExpr owl:unionOf ?list . BIND("union" AS ?exprType) }
-                      ?list rdf:rest*/rdf:first ?member .
-                      FILTER(isIRI(?member))
-                    }
-                    UNION
-                    {
-                      ?subExpr owl:complementOf ?member . BIND("complement" AS ?exprType)
-                      FILTER(isIRI(?member))
-                    }
-                    OPTIONAL { ?member rdfs:label ?memberLabel }
-                  }
-                }
-                LIMIT 500
-                """.formatted(classIri, classIri);
-            return datasetService.execSelect(projectId, q);
-        }, queryPool);
+    String q = PREFIXES + """
+        SELECT ?subExpr ?superClass ?superClassLabel ?exprType ?member ?memberLabel
+               ?memberOnProp ?memberPropLabel ?memberRestrictionType ?memberFiller ?memberFillerLabel ?memberCard
+        WHERE {
+          ?subExpr rdfs:subClassOf ?superClass .
+          FILTER(isBlank(?subExpr))
+          OPTIONAL {
+            ?subExpr (rdf:first|rdf:rest|owl:intersectionOf|owl:unionOf|owl:complementOf|owl:someValuesFrom|owl:allValuesFrom|owl:onClass)+ ?pathTarget .
+            FILTER(?pathTarget = <%s>)
+          }
+          FILTER(?superClass = <%s> || bound(?pathTarget))
+          OPTIONAL { ?superClass rdfs:label ?superClassLabel }
+          OPTIONAL {
+            {
+              { ?subExpr owl:intersectionOf ?list . BIND("intersection" AS ?exprType) }
+              UNION
+              { ?subExpr owl:unionOf ?list . BIND("union" AS ?exprType) }
+              ?list rdf:rest*/rdf:first ?member .
+            }
+            UNION
+            {
+              ?subExpr owl:complementOf ?member . BIND("complement" AS ?exprType)
+            }
+            OPTIONAL { ?member rdfs:label ?memberLabel }
+            OPTIONAL {
+              ?member owl:onProperty ?memberOnProp .
+              OPTIONAL { ?memberOnProp rdfs:label ?memberPropLabel }
+              {
+                ?member owl:someValuesFrom ?memberFiller . BIND("some" AS ?memberRestrictionType)
+              } UNION {
+                ?member owl:allValuesFrom ?memberFiller . BIND("only" AS ?memberRestrictionType)
+              } UNION {
+                ?member owl:hasValue ?memberFiller . BIND("value" AS ?memberRestrictionType)
+              } UNION {
+                ?member owl:minQualifiedCardinality ?memberCard . BIND("min" AS ?memberRestrictionType)
+                OPTIONAL { ?member owl:onClass ?memberFiller }
+              } UNION {
+                ?member owl:maxQualifiedCardinality ?memberCard . BIND("max" AS ?memberRestrictionType)
+                OPTIONAL { ?member owl:onClass ?memberFiller }
+              } UNION {
+                ?member owl:qualifiedCardinality ?memberCard . BIND("exactly" AS ?memberRestrictionType)
+                OPTIONAL { ?member owl:onClass ?memberFiller }
+              }
+              OPTIONAL { ?memberFiller rdfs:label ?memberFillerLabel }
+            }
+          }
+        }
+        LIMIT 500
+        """.formatted(classIri, classIri);
+    return datasetService.execSelect(projectId, q);
+}, queryPool);
 
         CompletableFuture<TupleQueryResult> ancestorFuture = queryAsync(() -> {
             String q = PREFIXES + """
@@ -3863,34 +3974,53 @@ public class OntologyQueryService {
         details.put("inferredDisjointClassesAxioms", inferredDisjointAxioms);
 
         TupleQueryResult gciRs = gciFuture.join();
-        Map<String, Map<String, Object>> gciGroups = new LinkedHashMap<>();
-        while (gciRs.hasNext()) {
-            BindingSet sol = gciRs.next();
-            String subExpr = sol.getValue("subExpr").stringValue();
-            Map<String, Object> group = gciGroups.computeIfAbsent(subExpr, k -> {
-                Map<String, Object> g = new LinkedHashMap<>();
-                String sc = resource(sol, "superClass");
-                String scLabel = sol.hasBinding("superClassLabel") ? literal(sol, "superClassLabel")
-                        : (sc != null ? localName(sc) : "?");
-                g.put("superClassLabel", scLabel);
-                g.put("exprType", null);
-                g.put("members", new ArrayList<String>());
-                return g;
-            });
-            if (sol.hasBinding("exprType")) {
-                if (group.get("exprType") == null) group.put("exprType", sol.getValue("exprType").stringValue());
-                if (sol.hasBinding("member")) {
-                    String memberIri = resource(sol, "member");
-                    String memberLabel = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel")
-                            : (memberIri != null ? localName(memberIri) : null);
-                    if (memberLabel != null) {
-                        @SuppressWarnings("unchecked")
-                        List<String> members = (List<String>) group.get("members");
-                        if (!members.contains(memberLabel)) members.add(memberLabel);
-                    }
-                }
-            }
+Map<String, Map<String, Object>> gciGroups = new LinkedHashMap<>();
+while (gciRs.hasNext()) {
+    BindingSet sol = gciRs.next();
+    String subExpr = sol.getValue("subExpr").stringValue();
+    Map<String, Object> group = gciGroups.computeIfAbsent(subExpr, k -> {
+        Map<String, Object> g = new LinkedHashMap<>();
+        String sc = resource(sol, "superClass");
+        String scLabel = sol.hasBinding("superClassLabel") ? literal(sol, "superClassLabel")
+                : (sc != null ? localName(sc) : "?");
+        g.put("superClassLabel", scLabel);
+        g.put("exprType", null);
+        // Keyed by member identity (IRI or restriction blank node) so a member with
+        // multiple rdfs:label rows collapses to one operand instead of one per label.
+        g.put("membersByIdentity", new LinkedHashMap<String, String>());
+        return g;
+    });
+    if (sol.hasBinding("exprType")) {
+        if (group.get("exprType") == null) group.put("exprType", sol.getValue("exprType").stringValue());
+        String onProp = resource(sol, "memberOnProp");
+        String memberIdentity;
+        String memberText;
+        if (onProp != null) {
+            memberIdentity = resourceOrBlank(sol, "member");
+            String propLabel = sol.hasBinding("memberPropLabel") ? literal(sol, "memberPropLabel") : formatIriWithPrefix(onProp);
+            String restrictionType = sol.hasBinding("memberRestrictionType") ? literal(sol, "memberRestrictionType") : "some";
+            String fillerIri = sol.hasBinding("memberFiller") ? sol.getValue("memberFiller").stringValue() : "";
+            String fillerLabel = sol.hasBinding("memberFillerLabel") ? literal(sol, "memberFillerLabel") : formatIriWithPrefix(fillerIri);
+            String cardinality = sol.hasBinding("memberCard") ? literal(sol, "memberCard") : "";
+            memberText = cardinality.isEmpty()
+                    ? propLabel + " " + restrictionType + " " + fillerLabel
+                    : propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
+        } else if (sol.hasBinding("member")) {
+            String memberIri = resource(sol, "member");
+            memberIdentity = memberIri;
+            memberText = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel")
+                    : (memberIri != null ? localName(memberIri) : null);
+        } else {
+            memberIdentity = null;
+            memberText = null;
         }
+        if (memberIdentity != null && memberText != null) {
+            @SuppressWarnings("unchecked")
+            Map<String, String> membersByIdentity = (Map<String, String>) group.get("membersByIdentity");
+            membersByIdentity.putIfAbsent(memberIdentity, memberText);
+        }
+    }
+}
         List<Map<String, String>> generalClassAxioms = new ArrayList<>();
         Set<String> seenGciDefinitions = new LinkedHashSet<>();
         for (Map.Entry<String, Map<String, Object>> entry : gciGroups.entrySet()) {
@@ -3899,8 +4029,8 @@ public class OntologyQueryService {
             String superClassLabel = (String) group.get("superClassLabel");
             String exprType = (String) group.get("exprType");
             @SuppressWarnings("unchecked")
-            List<String> members = (List<String>) group.get("members");
-            List<String> sortedMembers = new ArrayList<>(members);
+Map<String, String> membersByIdentity = (Map<String, String>) group.get("membersByIdentity");
+List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
             java.util.Collections.sort(sortedMembers);
             String subManchester = null;
             if (exprType != null && !sortedMembers.isEmpty()) {
@@ -3909,8 +4039,8 @@ public class OntologyQueryService {
                 else if ("complement".equals(exprType) && sortedMembers.size() == 1) subManchester = "not " + sortedMembers.get(0);
             }
             String definition = (subManchester != null && !subManchester.isBlank())
-                    ? "(" + subManchester + ") SubClassOf " + superClassLabel
-                    : "GCA SubClassOf " + superClassLabel;
+        ? subManchester + " SubClassOf " + superClassLabel
+        : "GCA SubClassOf " + superClassLabel;
             if (seenGciDefinitions.contains(definition)) continue;
             seenGciDefinitions.add(definition);
             Map<String, String> axiom = new LinkedHashMap<>();

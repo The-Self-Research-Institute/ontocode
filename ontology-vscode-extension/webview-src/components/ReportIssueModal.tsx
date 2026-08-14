@@ -29,6 +29,7 @@ interface ReportIssueModalProps {
   projectName?: string;
   projectId?: string;
   ontologyFilePath?: string;
+  initialIssueType?: "Bug" | "Task";
   onClose: () => void;
 }
 
@@ -41,6 +42,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   projectName,
   projectId,
   ontologyFilePath,
+  initialIssueType,
   onClose,
 }) => {
   const { user } = useAuth();
@@ -48,7 +50,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [stepsToReproduce, setStepsToReproduce] = useState("");
-  const [issueType, setIssueType] = useState("Task");
+  const [issueType, setIssueType] = useState(initialIssueType || "Bug");
   const [priority, setPriority] = useState("Medium");
   const [attachments, setAttachments] = useState<File[]>([]);
   const [filePreviews, setFilePreviews] = useState<Map<string, string>>(new Map());
@@ -383,7 +385,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         const jiraFailureReason = result.jiraFailureReason || undefined;
         setSubmitResult({
           success: true,
-          message: result.message || (issueType === "Task" ? "Feature request submitted successfully!" : "Issue reported successfully!"),
+          // message: result.message || (issueType === "Task" ? "Feature request submitted successfully!" : "Bug reported successfully!"),
+          message: issueType === "Task" ? "Feature request submitted successfully!" : "Bug reported successfully!",
           jiraUrl: result.jiraIssueUrl,
           jiraFailureReason,
         });
@@ -397,7 +400,11 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
       } else {
         setSubmitResult({
           success: false,
-          message: result.message || "Failed to submit issue report",
+          message:
+            result.message ||
+            (issueType === "Task"
+              ? "Failed to submit feature request"
+              : "Failed to submit issue report"),
         });
       }
     } catch (error) {
@@ -468,16 +475,21 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   const isPartialSuccess = !!submitResult?.success && !!submitResult?.jiraFailureReason;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-white z-50 flex flex-col">
+      <div className="flex-1 w-full max-w-5xl mx-auto overflow-hidden flex flex-col">
         {/* Header */}
         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="bg-white bg-opacity-20 p-2 rounded-lg">
-              <Bug className="text-white" size={28} />
+              {React.createElement(issueType === "Task" ? ListOrdered : Bug, {
+                className: "text-white",
+                size: 28,
+              })}
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-white">Report an Issue</h2>
+              <h2 className="text-2xl font-bold text-white">
+                {issueType === "Task" ? "Request a Feature" : "Report a Bug"}
+              </h2>
               {projectName && <p className="text-purple-100 text-sm mt-1">Project: {projectName}</p>}
             </div>
           </div>
@@ -503,17 +515,15 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
         {/* Success/Error Message */}
         {submitResult && (
           <div
-            className={`mx-6 mt-6 p-5 rounded-lg flex items-start gap-4 shadow-md ${
-              isPartialSuccess
+            className={`mx-6 mt-6 p-5 rounded-lg flex items-start gap-4 shadow-md ${isPartialSuccess
                 ? "bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300"
                 : submitResult.success
-                ? "bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300"
-                : "bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300"
-            }`}
+                  ? "bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300"
+                  : "bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-300"
+              }`}
           >
-            <div className={`flex-shrink-0 p-2 rounded-full ${
-              isPartialSuccess ? "bg-amber-100" : submitResult.success ? "bg-green-100" : "bg-red-100"
-            }`}>
+            <div className={`flex-shrink-0 p-2 rounded-full ${isPartialSuccess ? "bg-amber-100" : submitResult.success ? "bg-green-100" : "bg-red-100"
+              }`}>
               {isPartialSuccess ? (
                 <AlertCircle className="text-amber-600" size={24} />
               ) : submitResult.success ? (
@@ -523,9 +533,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               )}
             </div>
             <div className="flex-1">
-              <p className={`text-base font-semibold mb-2 ${
-                isPartialSuccess ? "text-amber-900" : submitResult.success ? "text-green-900" : "text-red-900"
-              }`}>
+              <p className={`text-base font-semibold mb-2 ${isPartialSuccess ? "text-amber-900" : submitResult.success ? "text-green-900" : "text-red-900"
+                }`}>
                 {submitResult.message}
               </p>
               {submitResult.jiraFailureReason && (
@@ -536,9 +545,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               {submitResult.success && (
                 <div className="flex items-center gap-3 mt-3">
                   <span
-                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border ${
-                      getIssueTypeStyle(issueType).color
-                    }`}
+                    className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold border ${getIssueTypeStyle(issueType).color
+                      }`}
                   >
                     {React.createElement(getIssueTypeStyle(issueType).icon, { size: 14 })}
                     {issueType === "Task" ? "Feature Request" : issueType}
@@ -710,9 +718,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
               <span className="text-xs font-normal text-gray-500">(Optional)</span>
             </label>
             <div
-              className={`border-2 border-dashed rounded-lg transition-all ${
-                isDragging ? "border-purple-500 bg-purple-50" : "border-gray-300 bg-gray-50 hover:bg-gray-100"
-              }`}
+              className={`border-2 border-dashed rounded-lg transition-all ${isDragging ? "border-purple-500 bg-purple-50" : "border-gray-300 bg-gray-50 hover:bg-gray-100"
+                }`}
               onDragOver={handleDragOver}
               onDragEnter={handleDragEnter}
               onDragLeave={handleDragLeave}
@@ -720,14 +727,12 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             >
               {/* Upload Button - Vertical centered layout with dynamic sizing */}
               <label
-                className={`flex flex-col items-center justify-center cursor-pointer transition-all ${
-                  attachments.length > 0 ? "py-3" : "py-8"
-                }`}
+                className={`flex flex-col items-center justify-center cursor-pointer transition-all ${attachments.length > 0 ? "py-3" : "py-8"
+                  }`}
               >
                 <div
-                  className={`rounded-full transition-all ${attachments.length > 0 ? "p-2 mb-2" : "p-3 mb-3"} ${
-                    isDragging ? "bg-purple-200 scale-110" : "bg-purple-100"
-                  }`}
+                  className={`rounded-full transition-all ${attachments.length > 0 ? "p-2 mb-2" : "p-3 mb-3"} ${isDragging ? "bg-purple-200 scale-110" : "bg-purple-100"
+                    }`}
                 >
                   <Upload
                     size={attachments.length > 0 ? 20 : 28}
@@ -735,9 +740,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                   />
                 </div>
                 <span
-                  className={`font-medium transition-colors ${
-                    attachments.length > 0 ? "text-sm mb-1" : "text-base mb-1"
-                  } ${isDragging ? "text-purple-700" : "text-gray-700"}`}
+                  className={`font-medium transition-colors ${attachments.length > 0 ? "text-sm mb-1" : "text-base mb-1"
+                    } ${isDragging ? "text-purple-700" : "text-gray-700"}`}
                 >
                   {isDragging ? "Drop files here" : "Choose files to upload"}
                 </span>
@@ -789,11 +793,11 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                           {/* File thumbnail/icon */}
                           <div className="w-full aspect-[4/3] flex items-center justify-center p-2 bg-gray-50">
                             {isImage &&
-                            preview &&
-                            !preview.startsWith("text:") &&
-                            !preview.startsWith("pdf:") &&
-                            !preview.startsWith("word:") &&
-                            !preview.startsWith("video:") ? (
+                              preview &&
+                              !preview.startsWith("text:") &&
+                              !preview.startsWith("pdf:") &&
+                              !preview.startsWith("word:") &&
+                              !preview.startsWith("video:") ? (
                               <img src={preview} alt={file.name} className="w-full h-full object-cover rounded" />
                             ) : preview?.startsWith("video:") ? (
                               <video
@@ -889,7 +893,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                 </>
               ) : (
                 <>
-                  <Bug size={18} />
+                  {React.createElement(issueType === "Task" ? ListOrdered : Bug, { size: 18 })}
                   <span>{issueType === "Task" ? "Submit Feature Request" : "Submit Issue Report"}</span>
                 </>
               )}
