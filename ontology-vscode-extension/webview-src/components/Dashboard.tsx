@@ -16196,7 +16196,9 @@ const updateItemInState = useCallback(
                           </div>
                         ) : (
                           <div style={{ borderColor: "var(--border)" }}>
-                            {generalClassAxioms.map((axiom, idx) => (
+                            {generalClassAxioms.map((axiomUntyped, idx) => {
+                              const axiom = axiomUntyped as any;
+                              return (
                               <AxiomRow
                                 key={axiom.id || `${axiom.subExpression}-${idx}`}
                                 axiom={{
@@ -16209,7 +16211,8 @@ const updateItemInState = useCallback(
                                 isViewOnly={isViewOnlyMember}
                                 onViewOnlyAction={handleViewOnlyAction}
                               />
-                            ))}
+                              );
+                            })}
                           </div>
                           //   <div className="divide-y" style={{ borderColor: "var(--border)" }}>
                           //     {generalClassAxioms.map((axiom, idx) => {
