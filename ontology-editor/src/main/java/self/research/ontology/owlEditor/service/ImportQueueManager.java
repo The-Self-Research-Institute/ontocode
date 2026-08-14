@@ -22,6 +22,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Manages import queue with notifications and statistics
+ */
 @Slf4j
 @Service
 public class ImportQueueManager {
@@ -38,16 +41,22 @@ public class ImportQueueManager {
                 return t;
             });
 
+    // Tuned via ONTOCODE_IMPORT_MAX_CONCURRENT env var in docker-compose.
+    // With Apache Jena TDB2 (current triplestore), keep this at 1 on ALL tiers.
+    // TDB2 is single-writer: concurrent imports parse into heap simultaneously but
+    // writes to Fuseki serialize at the transaction lock anyway — no throughput gain,
+    // double the memory pressure. Only raise above 1 if the triplestore is replaced
+    // with a multi-writer backend.
     @Value("${ontocode.import.max-concurrent:1}")
     private int maxConcurrentImports;
 
     private static final int MAX_RETRIES = 3;
     private static final long RETRY_DELAY_MS = 10 * 1000;
-
+    /** Never timeout an in-flight import earlier than this floor. */
     private static final long MIN_PROCESSING_TIMEOUT_MS = 10 * 60 * 1000;
-
+    /** Allow headroom beyond the estimator because parse/write phases can vary. */
     private static final double PROCESSING_TIMEOUT_MULTIPLIER = 2.0;
-
+    /** Cap total queue wait shown to users (sum of ahead-of-you estimates). */
     private static final long MAX_WAIT_TIME_MS = 20 * 60 * 1000;
 
     public ImportQueueManager(SimpMessagingTemplate messagingTemplate,
@@ -58,6 +67,9 @@ public class ImportQueueManager {
         this.metadataService = metadataService;
     }
 
+    /**
+     * Add a project to the import queue
+     */
     public synchronized ImportQueueItem enqueue(String projectId, String filename, String ownerEmail, Path owlFile) {
         return enqueue(projectId, filename, ownerEmail, owlFile, ImportOptions.defaults());
     }
@@ -68,7 +80,7 @@ public class ImportQueueManager {
                                                Path owlFile,
                                                ImportOptions options) {
         long enqueueStart = System.nanoTime();
-
+        // Check if already queued or processing
         ImportQueueItem existing = findInQueue(projectId);
         if (existing != null) {
             log.warn("[Queue] Project {} already in queue at position {}", projectId, existing.getQueuePosition());
@@ -87,6 +99,7 @@ public class ImportQueueManager {
         Integer annotationCount = readMetaCount(projectId, "annotationPropertyCount", "annotationProperties");
         long estimatedDurationMs = estimator.estimateDurationMs(fileSizeBytes, classCount, annotationCount);
 
+        // Create queue item
         ImportQueueItem item = ImportQueueItem.builder()
                 .projectId(projectId)
                 .filename(filename)
@@ -105,19 +118,26 @@ public class ImportQueueManager {
                 .maxRetries(MAX_RETRIES)
                 .build();
 
+        // Add to end of queue (FIFO)
         queue.addLast(item);
         updateQueuePositions();
 
         log.info("[Queue] Added project {} to queue at position {} (total in queue: {}) in {} ms",
                 projectId, item.getQueuePosition(), queue.size(), (System.nanoTime() - enqueueStart) / 1_000_000);
 
+        // Notify user about queue position
         notifyQueueStatus(projectId);
 
+        // Broadcast queue stats to all users
         broadcastQueueStats();
 
         return item;
     }
 
+    /**
+     * Get next item from queue and mark as processing.
+     * Skips items whose repository is already being imported (per-repo locking).
+     */
     public synchronized ImportQueueItem dequeue() {
         long dequeueStart = System.nanoTime();
         if (activeImports.size() >= maxConcurrentImports || queue.isEmpty()) {
@@ -126,6 +146,7 @@ public class ImportQueueManager {
             return null;
         }
 
+        // Find first queued item whose project is not already being processed
         ImportQueueItem item = null;
         var it = queue.iterator();
         while (it.hasNext()) {
@@ -139,7 +160,7 @@ public class ImportQueueManager {
         if (item == null) {
             log.debug("[Queue] Dequeue found no eligible item (queued={}, activeProjectIds={})",
                     queue.size(), activeImports.keySet());
-            return null;
+            return null; // All queued items are for projects already being imported
         }
 
         item.setStatus(ImportQueueItem.ImportStatus.PROCESSING);
@@ -151,15 +172,21 @@ public class ImportQueueManager {
         log.info("[Queue] Started processing project {} (waited {} ms in queue, dequeue took {} ms, queue size now: {})",
                 item.getProjectId(), item.getWaitTimeMs(), (System.nanoTime() - dequeueStart) / 1_000_000, queue.size());
 
+        // Update queue positions for remaining items
         updateQueuePositions();
 
+        // Notify that processing started
         notifyProcessingStarted(item);
 
+        // Broadcast updated queue stats
         broadcastQueueStats();
 
         return item;
     }
 
+    /**
+     * Mark import as completed
+     */
     public synchronized void markCompleted(String projectId, long durationMs) {
         ImportQueueItem item = activeImports.remove(projectId);
         if (item != null) {
@@ -172,16 +199,24 @@ public class ImportQueueManager {
         }
 
         refreshQueuedEstimates();
-
+        // Update queue positions
         updateQueuePositions();
 
+        // Broadcast updated stats
         broadcastQueueStats();
     }
 
+    /**
+     * Mark import as failed with option to retry
+     */
     public synchronized void markFailed(String projectId) {
         markFailed(projectId, "Unknown error", false);
     }
 
+    /**
+     * Mark import as failed with retry logic
+     * @param shouldRetry true if this is a retryable error (e.g., connection timeout)
+     */
     public synchronized void markFailed(String projectId, String reason, boolean shouldRetry) {
         ImportQueueItem item = activeImports.remove(projectId);
         if (item == null) {
@@ -193,31 +228,40 @@ public class ImportQueueManager {
         item.setFailureReason(reason);
         item.setLastAttemptAt(Instant.now());
 
+        // Check if should retry
         if (shouldRetry && item.getRetryCount() < item.getMaxRetries()) {
             item.setRetryCount(item.getRetryCount() + 1);
             item.setStatus(ImportQueueItem.ImportStatus.RETRYING);
-
+            
             log.warn("[Queue] Failed project {} (attempt {}/{}): {}. Will retry in {} seconds",
                     projectId, item.getRetryCount(), item.getMaxRetries(), reason, RETRY_DELAY_MS / 1000);
-
+            
+            // Re-queue with delay
             scheduleRetry(item);
-
+            
+            // Notify user about retry
             notifyRetrying(item);
         } else {
             item.setStatus(ImportQueueItem.ImportStatus.FAILED);
             log.error("[Queue] Failed project {} permanently ({}): {}",
-                    projectId,
+                    projectId, 
                     item.getRetryCount() >= item.getMaxRetries() ? "max retries exceeded" : "non-retryable error",
                     reason);
-
+            
+            // Notify user about failure
             notifyFailed(item);
         }
 
+        // Update queue positions
         updateQueuePositions();
 
+        // Broadcast updated stats
         broadcastQueueStats();
     }
 
+    /**
+     * Schedule a retry for a failed import
+     */
     private void scheduleRetry(ImportQueueItem item) {
         retryScheduler.schedule(() -> {
             synchronized (this) {
@@ -237,13 +281,17 @@ public class ImportQueueManager {
         retryScheduler.shutdownNow();
     }
 
+    /**
+     * Get queue status for a specific project
+     */
     public synchronized ImportQueueItem getStatus(String projectId) {
-
+        // Check if processing
         ImportQueueItem active = activeImports.get(projectId);
         if (active != null) {
             return active;
         }
 
+        // Check if in queue
         return findInQueue(projectId);
     }
 
@@ -275,6 +323,9 @@ public class ImportQueueManager {
         broadcastQueueStats();
     }
 
+    /**
+     * Estimate wait time for a given project in the queue.
+     */
     public synchronized long getEstimatedWaitTimeMs(String projectId) {
         ImportQueueItem item = getStatus(projectId);
         if (item == null) {
@@ -283,6 +334,9 @@ public class ImportQueueManager {
         return calculateEstimatedWaitTime(item);
     }
 
+    /**
+     * Get overall queue statistics
+     */
     public synchronized QueueStatusMessage.QueueStats getQueueStats() {
         long activeRemainingMs = activeImports.values().stream()
                 .mapToLong(this::estimateRemainingTimeMs)
@@ -311,14 +365,24 @@ public class ImportQueueManager {
                 .build();
     }
 
+    /**
+     * Check if queue can accept more imports
+     */
     public synchronized boolean canProcess() {
         return activeImports.size() < maxConcurrentImports;
     }
 
+    /**
+     * Check if the queue is empty (no pending imports)
+     */
     public synchronized boolean isEmpty() {
         return queue.isEmpty() && activeImports.isEmpty();
     }
 
+    /**
+     * Expire processing imports that have exceeded the supplied timeout.
+     * Returns the expired items so callers can update project-level status stores.
+     */
     public synchronized List<ImportQueueItem> expireStuckProcessing(long maxProcessingMs) {
         if (maxProcessingMs <= 0 || activeImports.isEmpty()) {
             return List.of();
@@ -379,6 +443,8 @@ public class ImportQueueManager {
                 Math.max(configuredTimeoutMs, MIN_PROCESSING_TIMEOUT_MS),
                 estimateBasedTimeoutMs);
     }
+
+    // Private helper methods
 
     private ImportQueueItem findInQueue(String projectId) {
         return queue.stream()
@@ -447,6 +513,7 @@ public class ImportQueueManager {
             item.setQueuePosition(position++);
         }
 
+        // Notify all queued projects about position changes
         for (ImportQueueItem item : queue) {
             notifyQueueStatus(item.getProjectId());
         }

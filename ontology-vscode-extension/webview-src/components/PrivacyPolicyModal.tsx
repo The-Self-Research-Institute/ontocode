@@ -8,7 +8,7 @@ interface Props {
 
 const EFFECTIVE_DATE = "To be announced";
 const COMPANY = "The Self Research Institute";
-const PRODUCT = "OntoCode Studio";
+const PRODUCT = "OntoCode";
 const CONTACT = "privacy@ontocode.org";
 
 export const PrivacyPolicyModal: React.FC<Props> = ({ isOpen, onClose }) => {
@@ -27,7 +27,7 @@ export const PrivacyPolicyModal: React.FC<Props> = ({ isOpen, onClose }) => {
         aria-labelledby="privacy-title"
         onClick={(e) => e.stopPropagation()}
       >
-        {}
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-indigo-100 rounded-lg flex items-center justify-center">
@@ -50,7 +50,7 @@ export const PrivacyPolicyModal: React.FC<Props> = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        {}
+        {/* Body */}
         <div className="overflow-y-auto px-6 py-5 text-sm text-gray-700 space-y-5 leading-relaxed">
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-amber-800 text-xs">
             This Privacy Policy is currently being finalised and will be published before the official launch of
@@ -159,7 +159,7 @@ export const PrivacyPolicyModal: React.FC<Props> = ({ isOpen, onClose }) => {
           </section>
         </div>
 
-        {}
+        {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-200 flex justify-end shrink-0">
           <button
             type="button"

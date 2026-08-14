@@ -26,15 +26,15 @@ export const DuplicateFileDialog: React.FC<DuplicateFileDialogProps> = ({
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center">
-      {}
+      {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-black/50 backdrop-blur-sm"
         onClick={onCancel}
       />
-
-      {}
+      
+      {/* Dialog */}
       <div className="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6 z-[71]">
-        {}
+        {/* Header */}
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
@@ -57,7 +57,7 @@ export const DuplicateFileDialog: React.FC<DuplicateFileDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* File Info */}
         <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-2 mb-2">
             <FileText className="w-4 h-4 text-gray-500" />
@@ -75,12 +75,12 @@ export const DuplicateFileDialog: React.FC<DuplicateFileDialogProps> = ({
           )}
         </div>
 
-        {}
+        {/* Message */}
         <p className="text-gray-700 dark:text-gray-300 mb-6">
           Would you like to replace the existing file or create a new copy?
         </p>
 
-        {}
+        {/* Actions */}
         <div className="flex flex-col gap-2">
           <button
             onClick={onReplace}
@@ -91,7 +91,7 @@ export const DuplicateFileDialog: React.FC<DuplicateFileDialogProps> = ({
             </svg>
             Replace Existing File
           </button>
-
+          
           <button
             onClick={onCreateCopy}
             className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
@@ -101,7 +101,7 @@ export const DuplicateFileDialog: React.FC<DuplicateFileDialogProps> = ({
             </svg>
             Create a Copy
           </button>
-
+          
           <button
             onClick={onCancel}
             className="w-full px-4 py-3 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 font-medium rounded-lg transition-colors"
@@ -110,7 +110,7 @@ export const DuplicateFileDialog: React.FC<DuplicateFileDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Info Note */}
         <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
           <p className="text-xs text-blue-800 dark:text-blue-300">
             <strong>Replace:</strong> Overwrites the existing file with the new content.<br/>

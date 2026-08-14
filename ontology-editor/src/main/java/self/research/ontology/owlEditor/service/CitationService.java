@@ -25,6 +25,10 @@ import java.time.Duration;
 import java.util.*;
 import java.util.regex.Pattern;
 
+/**
+ * Service for managing citations in ontologies.
+ * Handles insertion of citation RDF data into GraphDB repositories.
+ */
 @Service
 public class CitationService {
 
@@ -45,12 +49,22 @@ public class CitationService {
         .connectTimeout(Duration.ofSeconds(10))
         .build();
 
+    /**
+     * Insert citation RDF data into the project's GraphDB repository at a specific line
+     * 
+     * @param projectId - the project ID
+     * @param citationContent - the RDF content (Turtle or RDF/XML)
+     * @param format - "turtle" or "rdfxml"
+     * @param metadata - optional metadata about the citation (title, authors, etc.)
+     * @param lineNumber - line number where citation should be inserted (0 = end of file)
+     */
     public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata, int lineNumber) {
         try {
             log.info("[CitationService] Inserting citation into project: {} at line: {}", projectId, lineNumber);
 
+            // Parse the RDF content
             RDFFormat rdfFormat = format.equalsIgnoreCase("turtle") ? RDFFormat.TURTLE : RDFFormat.RDFXML;
-
+            
             Model citationModel;
             try (StringReader reader = new StringReader(citationContent)) {
                 citationModel = Rio.parse(reader, "", rdfFormat);
@@ -59,17 +73,18 @@ public class CitationService {
             log.info("[CitationService] Parsed {} RDF statements from citation", citationModel.size());
 
             if (lineNumber > 0) {
-
+                // Insert at specific line by manipulating the source code
                 insertCitationAtLine(projectId, citationContent, format, citationModel, lineNumber);
             } else {
-
+                // Insert at end (traditional method)
                 insertCitationAtEnd(projectId, citationModel, format);
             }
 
-            String title = metadata != null && metadata.containsKey("title")
-                ? metadata.get("title").toString()
+            // Record in history
+            String title = metadata != null && metadata.containsKey("title") 
+                ? metadata.get("title").toString() 
                 : "Citation";
-
+            
             historyService.recordEdit(
                 projectId,
                 "system",
@@ -91,16 +106,27 @@ public class CitationService {
         }
     }
 
+    /**
+     * Insert citation at a specific line position
+     * Note: RDF triples are inserted into the graph at the semantic layer.
+     * Line numbers are a syntactic property of the serialized format.
+     * The file persistence (with citations at specific lines) is handled by the frontend upload.
+     * This method ensures the citation triples are in the graph regardless of file position.
+     */
     private void insertCitationAtLine(String projectId, String citationContent, String format, Model citationModel, int lineNumber) throws Exception {
         log.info("[CitationService] Insert citation at line {} - storing RDF triples in graph", lineNumber);
-
+        
+        // Insert RDF triples into the graph (line positioning is handled by frontend file upload)
         insertCitationAtEnd(projectId, citationModel, format);
-
+        
         log.info("[CitationService] Citation RDF triples inserted into graph (file line positioning handled by frontend)");
     }
 
+    /**
+     * Insert citation at the end of the ontology
+     */
     private void insertCitationAtEnd(String projectId, Model citationModel, String format) throws Exception {
-
+        // Convert model to SPARQL INSERT query
         StringBuilder insertQuery = new StringBuilder();
         insertQuery.append("PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n");
         insertQuery.append("PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n");
@@ -120,11 +146,11 @@ public class CitationService {
             insertQuery.append(" ");
             insertQuery.append(formatValue(st.getPredicate().toString()));
             insertQuery.append(" ");
-
+            
             if (st.getObject() instanceof org.eclipse.rdf4j.model.Literal) {
                 org.eclipse.rdf4j.model.Literal literal = (org.eclipse.rdf4j.model.Literal) st.getObject();
                 insertQuery.append("\"\"\"").append(escapeLiteral(literal.stringValue())).append("\"\"\"");
-
+                
                 if (literal.getLanguage().isPresent()) {
                     insertQuery.append("@").append(literal.getLanguage().get());
                 } else if (literal.getDatatype() != null) {
@@ -133,17 +159,21 @@ public class CitationService {
             } else {
                 insertQuery.append(formatValue(st.getObject().toString()));
             }
-
+            
             insertQuery.append(" .\n");
         }
 
         insertQuery.append("}");
 
+        // Execute SPARQL update
         String sparqlUpdate = insertQuery.toString();
         log.debug("[CitationService] SPARQL Update:\n{}", sparqlUpdate);
         datasetService.execUpdate(projectId.replaceAll("\\$.*", ""), sparqlUpdate);
     }
 
+    /**
+     * Overloaded method for backward compatibility - inserts at end of file (lineNumber = 0)
+     */
     public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata) {
         insertCitation(projectId, citationContent, format, metadata, 0);
     }
@@ -199,10 +229,17 @@ public class CitationService {
         }
     }
 
+    /**
+     * Get all citations from a project's ontology
+     * 
+     * @param projectId - the project ID
+     * @return list of citation metadata
+     */
     public List<Map<String, Object>> getCitations(String projectId) {
         try {
             log.info("[CitationService] Retrieving citations for project: {}", projectId);
 
+            // Query for bibliographic resources (using common citation ontologies)
             String sparqlQuery = """
                 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -210,7 +247,7 @@ public class CitationService {
                 PREFIX dcterms: <http://purl.org/dc/terms/>
                 PREFIX bibo: <http://purl.org/ontology/bibo/>
                 PREFIX prov: <http://www.w3.org/ns/prov#>
-
+                
                 SELECT DISTINCT ?citation ?title ?creator ?date ?doi
                 WHERE {
                   {
@@ -223,7 +260,7 @@ public class CitationService {
                     ?citation rdf:type prov:Entity .
                     ?citation dc:title ?anyTitle .
                   }
-
+                  
                   OPTIONAL { ?citation dc:title ?title }
                   OPTIONAL { ?citation dcterms:title ?title }
                   OPTIONAL { ?citation dc:creator ?creator }
@@ -236,38 +273,39 @@ public class CitationService {
                 """;
 
             List<Map<String, Object>> citations = new ArrayList<>();
-
+            
+            // Use SparqlDatasetService to execute query
             RepositoryConnection conn = datasetService.getConnection();
             try {
                 TupleQueryResult results = datasetService.executeQuery(conn, projectId, sparqlQuery);
-
+                
                 while (results.hasNext()) {
                     BindingSet binding = results.next();
                     Map<String, Object> citation = new HashMap<>();
-
+                    
                     if (binding.hasBinding("citation")) {
                         citation.put("iri", binding.getValue("citation").stringValue());
                     }
-
+                    
                     if (binding.hasBinding("title")) {
                         citation.put("title", binding.getValue("title").stringValue());
                     }
-
+                    
                     if (binding.hasBinding("creator")) {
                         citation.put("creator", binding.getValue("creator").stringValue());
                     }
-
+                    
                     if (binding.hasBinding("date")) {
                         citation.put("date", binding.getValue("date").stringValue());
                     }
-
+                    
                     if (binding.hasBinding("doi")) {
                         citation.put("doi", binding.getValue("doi").stringValue());
                     }
-
+                    
                     citations.add(citation);
                 }
-
+                
                 results.close();
             } finally {
                 conn.close();
@@ -282,10 +320,17 @@ public class CitationService {
         }
     }
 
+    /**
+     * Delete a citation from the ontology
+     * 
+     * @param projectId - the project ID
+     * @param citationIRI - the IRI of the citation to delete
+     */
     public void deleteCitation(String projectId, String citationIRI) {
         try {
             log.info("[CitationService] Deleting citation {} from project: {}", citationIRI, projectId);
 
+            // Delete all triples where citation is the subject OR object
             String sparqlUpdate = String.format("""
                 DELETE {
                   <%s> ?p ?o .
@@ -306,6 +351,7 @@ public class CitationService {
 
             log.info("[CitationService] Successfully deleted citation from project: {}", projectId);
 
+            // Record in history
             historyService.recordEdit(
                 projectId,
                 "system",
@@ -325,6 +371,9 @@ public class CitationService {
         }
     }
 
+    /**
+     * Format an RDF value for SPARQL (wrap in angle brackets if IRI)
+     */
     private String formatValue(String value) {
         if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("urn:")) {
             return "<" + value + ">";
@@ -332,6 +381,9 @@ public class CitationService {
         return value;
     }
 
+    /**
+     * Escape special characters in literals
+     */
     private String escapeLiteral(String value) {
         return value
             .replace("\\", "\\\\")
@@ -341,22 +393,26 @@ public class CitationService {
             .replace("\t", "\\t");
     }
 
+    /**
+     * Extract the main citation IRI from the RDF model
+     */
     private String getCitationIRI(Model model) {
-
+        // Find the first subject that's a bibliographic resource
         for (Statement st : model) {
-            if (st.getPredicate().toString().contains("type") &&
-                (st.getObject().toString().contains("Article") ||
+            if (st.getPredicate().toString().contains("type") && 
+                (st.getObject().toString().contains("Article") || 
                  st.getObject().toString().contains("Book") ||
                  st.getObject().toString().contains("Document") ||
                  st.getObject().toString().contains("Entity"))) {
                 return st.getSubject().toString();
             }
         }
-
+        
+        // Fallback: return first subject
         if (!model.isEmpty()) {
             return model.iterator().next().getSubject().toString();
         }
-
+        
         return "unknown";
     }
 

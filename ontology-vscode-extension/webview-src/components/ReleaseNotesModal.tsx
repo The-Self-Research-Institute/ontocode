@@ -25,7 +25,7 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({ isOpen, on
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-        {}
+        {/* Header */}
         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="bg-white bg-opacity-20 p-2 rounded-lg">
@@ -33,7 +33,7 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({ isOpen, on
             </div>
             <div>
               <h2 className="text-2xl font-bold text-white">Release Notes</h2>
-              <p className="text-purple-100 text-sm mt-1">What&apos;s new in OntoCode Studio</p>
+              <p className="text-purple-100 text-sm mt-1">What&apos;s new in OntoCode</p>
             </div>
           </div>
           <button
@@ -45,7 +45,7 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({ isOpen, on
           </button>
         </div>
 
-        {}
+        {/* Content */}
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6 space-y-8">
           {RELEASE_NOTES.length === 0 && (
             <p className="text-sm text-gray-500 text-center py-8">No release notes available.</p>
@@ -104,7 +104,7 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({ isOpen, on
           })}
         </div>
 
-        {}
+        {/* Footer */}
         <div className="border-t-2 border-gray-200 bg-gray-50 px-6 py-4 flex justify-end">
           <button
             onClick={onClose}

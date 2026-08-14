@@ -9,12 +9,12 @@ interface EditOntologyIRIDialogProps {
   initialVersionIri: string;
 }
 
-const EditOntologyIRIDialog: React.FC<EditOntologyIRIDialogProps> = ({
-  isOpen,
-  onClose,
-  onSave,
-  initialOntologyIri,
-  initialVersionIri
+const EditOntologyIRIDialog: React.FC<EditOntologyIRIDialogProps> = ({ 
+  isOpen, 
+  onClose, 
+  onSave, 
+  initialOntologyIri, 
+  initialVersionIri 
 }) => {
   const [ontologyIri, setOntologyIri] = useState(initialOntologyIri);
   const [versionIri, setVersionIri] = useState(initialVersionIri);
@@ -51,7 +51,7 @@ const EditOntologyIRIDialog: React.FC<EditOntologyIRIDialogProps> = ({
       }}
     >
       <div className="bg-[#F0F0F0] rounded-lg shadow-2xl w-[500px] flex flex-col overflow-hidden border border-gray-400" onClick={e => e.stopPropagation()}>
-        {}
+        {/* Header */}
         <div className="bg-white px-4 py-2 flex justify-between items-center border-b border-gray-300">
           <div className="flex items-center gap-2">
             <div className="w-5 h-5 bg-green-600 rounded flex items-center justify-center">
@@ -91,7 +91,7 @@ const EditOntologyIRIDialog: React.FC<EditOntologyIRIDialogProps> = ({
           </div>
         </div>
 
-        {}
+        {/* Footer */}
         <div className="bg-[#F0F0F0] p-4 flex justify-end gap-2 border-t border-gray-300">
           <button
             onClick={handleSave}

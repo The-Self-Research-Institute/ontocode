@@ -306,7 +306,7 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
 
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e] text-gray-200">
-      {}
+      {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-gray-700">
         <div className="flex items-center gap-2">
           <Sparkles className="w-6 h-6 text-purple-400" />
@@ -331,7 +331,7 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
         </div>
       </div>
 
-      {}
+      {/* Notifications */}
       {error && (
         <div className="mx-4 mt-2 p-3 bg-red-900/40 border border-red-500 rounded text-red-300 text-sm flex items-center justify-between">
           <span>{error}</span>
@@ -344,7 +344,7 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
         </div>
       )}
 
-      {}
+      {/* Tab Navigation */}
       <div className="flex border-b border-gray-700">
         <button
           onClick={() => setActiveTab('memberships')}
@@ -366,7 +366,7 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
         </button>
       </div>
 
-      {}
+      {/* Loading overlay for initial data fetch */}
       {isLoading && (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
@@ -374,12 +374,12 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
         </div>
       )}
 
-      {}
+      {/* Content */}
       {!isLoading && (
         <div className="flex-1 overflow-auto p-4">
           {activeTab === 'memberships' && (
             <div className="space-y-6">
-              {}
+              {/* Add New Membership */}
               <div className="bg-[#252525] p-4 rounded border border-gray-700">
                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                   <Plus className="w-5 h-5" />
@@ -423,7 +423,7 @@ ${memberships.map(m => `<${m.entity}> fuzzy:hasMembership [
                 </div>
               </div>
 
-              {}
+              {/* Membership List */}
               <div className="bg-[#252525] p-4 rounded border border-gray-700">
                 <h3 className="text-lg font-semibold mb-4">Fuzzy Memberships ({memberships.length})</h3>
                 <div className="space-y-2">

@@ -21,24 +21,24 @@ public class PluginUserInstall {
     private String id;
 
     @Indexed
-    private String pluginId;
+    private String pluginId;  // Plugin that was installed
 
     @Indexed
-    private String userId;
+    private String userId;  // User who installed
 
-    private String username;
+    private String username;  // Display name
 
-    private String version;
+    private String version;  // Version installed
 
-    private Boolean isActive;
+    private Boolean isActive;  // Currently installed (true) or uninstalled (false)
 
-    private Integer totalInstalls;
+    private Integer totalInstalls;  // How many times this user installed this plugin
 
-    private LocalDateTime firstInstalledAt;
+    private LocalDateTime firstInstalledAt;  // When user first installed
 
-    private LocalDateTime lastInstalledAt;
+    private LocalDateTime lastInstalledAt;  // Most recent installation
 
-    private LocalDateTime lastUninstalledAt;
+    private LocalDateTime lastUninstalledAt;  // When user uninstalled (if applicable)
 
     private LocalDateTime createdAt;
 

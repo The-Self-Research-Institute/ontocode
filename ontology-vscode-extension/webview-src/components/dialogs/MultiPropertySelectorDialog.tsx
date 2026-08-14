@@ -50,23 +50,28 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
   const [hasInitialized, setHasInitialized] = useState(false);
   const [selectedProperty, setSelectedProperty] = useState<TreeNode | null>(null);
   const [localExpandedNodes, setLocalExpandedNodes] = useState<string[]>([]);
-
+  
+  // Inline property creation state
   const [showInlinePropertyCreate, setShowInlinePropertyCreate] = useState(false);
   const [inlinePropertyName, setInlinePropertyName] = useState('');
   const [isCreatingProperty, setIsCreatingProperty] = useState(false);
-
+  
+  // For disjoint property validation: check if current property is in selection
   const isDisjointDialog = title?.toLowerCase().includes('disjoint');
   const hasSelfSelection = isDisjointDialog && currentPropertyIri && selectedProperties.includes(currentPropertyIri);
 
+  // Track hierarchy updates to ensure re-renders
   const [objectPropertiesTree, setObjectPropertiesTree] = useState<TreeNode[]>([]);
   const [dataPropertiesTree, setDataPropertiesTree] = useState<TreeNode[]>([]);
 
+  // Update local tree state when hierarchies change
   useEffect(() => {
     const newObjectTree = objectPropertyHierarchy || objectProperties.map(p => ({
       ...p,
       children: [],
       hasChildren: false
     } as TreeNode));
+    console.log('[MultiPropertySelectorDialog] Object hierarchy updated, nodes:', newObjectTree.length, 'first node children:', newObjectTree[0]?.children?.length);
     setObjectPropertiesTree(newObjectTree);
   }, [objectPropertyHierarchy, objectProperties]);
 
@@ -76,6 +81,7 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
       children: [],
       hasChildren: false
     } as TreeNode));
+    console.log('[MultiPropertySelectorDialog] Data hierarchy updated, nodes:', newDataTree.length, 'first node children:', newDataTree[0]?.children?.length);
     setDataPropertiesTree(newDataTree);
   }, [dataPropertyHierarchy, dataProperties]);
 
@@ -83,10 +89,10 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
     if (isOpen && !hasInitialized) {
       setHasInitialized(true);
       setSearchQuery('');
-
+      // Load initial selections if provided
       if (initialSelectedIds.length > 0) {
         setSelectedProperties(initialSelectedIds);
-
+        // Auto-switch to the appropriate tab based on first selected property
         const hasObjectProperty = objectProperties.some(p => initialSelectedIds.includes(p.id));
         const hasDataProperty = dataProperties.some(p => initialSelectedIds.includes(p.id));
         if (hasDataProperty && !hasObjectProperty) {
@@ -100,6 +106,7 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
     }
   }, [isOpen, hasInitialized, initialSelectedIds, objectProperties, dataProperties]);
 
+  // Reset hasInitialized when dialog closes
   useEffect(() => {
     if (!isOpen) {
       setHasInitialized(false);
@@ -108,11 +115,12 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
 
   if (!isOpen) return null;
 
+  // Use external toggle handler if provided, otherwise use local
   const handleToggleNode = (nodeId: string) => {
     if (onToggleNode) {
       onToggleNode(nodeId);
     } else {
-      setLocalExpandedNodes(prev =>
+      setLocalExpandedNodes(prev => 
         prev.includes(nodeId) ? prev.filter(id => id !== nodeId) : [...prev, nodeId]
       );
     }
@@ -120,9 +128,10 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
 
   const effectiveExpandedNodes = onToggleNode ? expandedNodes : localExpandedNodes;
 
+  // Handle property selection (multi-select with checkboxes)
   const handleSelectProperty = (property: TreeNode) => {
     setSelectedProperty(property);
-
+    // Toggle selection
     if (selectedProperties.includes(property.id)) {
       setSelectedProperties(prev => prev.filter(id => id !== property.id));
     } else {
@@ -152,6 +161,7 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
     return id.split('#').pop() || id;
   };
 
+  // Filter based on search
   const filterTree = (nodes: TreeNode[], query: string): TreeNode[] => {
     if (!query) return nodes;
     const lowerQuery = query.toLowerCase();
@@ -165,6 +175,7 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
   const filteredObjectProperties = filterTree(objectPropertiesTree, searchQuery);
   const filteredDataProperties = filterTree(dataPropertiesTree, searchQuery);
 
+  // Inline property creation handlers
   const handleInlineAddProperty = (type: 'subclass' | 'sibling') => {
     setShowInlinePropertyCreate(true);
     setInlinePropertyName('');
@@ -172,37 +183,48 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
 
   const handleInlinePropertyCreateSubmit = async () => {
     if (!inlinePropertyName.trim()) return;
-
+    
     const handler = activeTab === 'object' ? onAddObjectProperty : onAddDataProperty;
     if (!handler) return;
-
+    
+    console.log('[MultiPropertySelectorDialog] Creating property:', inlinePropertyName, 'in tab:', activeTab);
     setIsCreatingProperty(true);
     try {
       const parentId = selectedProperty?.id;
       const type = selectedProperty ? 'subclass' : 'sibling';
-
+      
+      console.log('[MultiPropertySelectorDialog] Parent:', parentId, 'Type:', type);
+      
+      // Expand parent node to show new property
       if (parentId && !effectiveExpandedNodes.includes(parentId)) {
+        console.log('[MultiPropertySelectorDialog] Expanding parent node:', parentId);
         handleToggleNode(parentId);
       }
-
-      const topNodeId = activeTab === 'object'
+      
+      // Also expand the top property node if creating at root
+      const topNodeId = activeTab === 'object' 
         ? 'http://www.w3.org/2002/07/owl#topObjectProperty'
         : 'http://www.w3.org/2002/07/owl#topDataProperty';
-
+      
       if (!selectedProperty && !effectiveExpandedNodes.includes(topNodeId)) {
+        console.log('[MultiPropertySelectorDialog] Expanding top node:', topNodeId);
         handleToggleNode(topNodeId);
       }
-
+      
+      // Call the appropriate property creation handler (this already refreshes data via refreshProperties())
+      console.log('[MultiPropertySelectorDialog] Calling handler...');
       await handler(type, parentId, inlinePropertyName.trim());
-
+      console.log('[MultiPropertySelectorDialog] Handler completed');
+      
+      // Reset form
       setShowInlinePropertyCreate(false);
       setInlinePropertyName('');
-
+      
       // Note: The handlers already refresh properties via refreshProperties()
       // The hierarchy will update automatically through props
     } catch (error) {
       console.error('[MultiPropertySelectorDialog] Failed to create property:', error);
-
+      // Don't close the form on error so user can try again
       setShowInlinePropertyCreate(true);
     } finally {
       setIsCreatingProperty(false);
@@ -228,15 +250,15 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
             <X size={20} />
           </button>
         </div>
-
+        
         <div className="p-4 flex-1 overflow-hidden flex flex-col min-h-0">
-          {}
+          {/* Selected properties display */}
           <div className="mb-3">
             <div className="text-xs font-medium text-gray-500 uppercase mb-1">Selected Properties ({selectedProperties.length})</div>
             {selectedProperties.length > 0 ? (
               <div className="flex flex-wrap gap-1">
                 {selectedProperties.map(id => (
-                  <span
+                  <span 
                     key={id}
                     className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs cursor-pointer hover:bg-purple-200"
                     onClick={() => handleToggleProperty(id)}
@@ -251,7 +273,7 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
             )}
           </div>
 
-          {}
+          {/* Tabs */}
           <div className="flex border-b border-gray-200 mb-2">
             <button
               onClick={() => setActiveTab('object')}
@@ -277,9 +299,9 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
             </button>
           </div>
 
-          {}
+          {/* Property hierarchy using EntityHierarchy component */}
           <div className="flex-1 overflow-hidden border rounded min-h-0 bg-white flex flex-col">
-            {}
+            {/* Inline Object Property Creation Form */}
             {activeTab === 'object' && showInlinePropertyCreate && (
               <div className="p-3 bg-blue-50 border-b border-blue-200">
                 <div className="flex items-center gap-2">
@@ -315,8 +337,8 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
                 <p className="mt-1 text-xs text-blue-700">Press Enter to create, Escape to cancel</p>
               </div>
             )}
-
-            {}
+            
+            {/* Inline Data Property Creation Form */}
             {activeTab === 'data' && showInlinePropertyCreate && (
               <div className="p-3 bg-green-50 border-b border-green-200">
                 <div className="flex items-center gap-2">
@@ -352,7 +374,7 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
                 <p className="mt-1 text-xs text-green-700">Press Enter to create, Escape to cancel</p>
               </div>
             )}
-
+            
             {activeTab === 'object' && (
               <div className="flex-1 overflow-hidden">
                 <EntityHierarchy
@@ -399,14 +421,14 @@ const MultiPropertySelectorDialog: React.FC<MultiPropertySelectorDialogProps> = 
             Select at least {minSelection} propert{minSelection === 1 ? 'y' : 'ies'} for the key
           </div>
           <div className="flex gap-2">
-            <button
-              onClick={onClose}
+            <button 
+              onClick={onClose} 
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
             >
               Cancel
             </button>
-            <button
-              onClick={handleConfirm}
+            <button 
+              onClick={handleConfirm} 
               disabled={selectedProperties.length < minSelection || (isDisjointDialog && hasSelfSelection)}
               className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
               title={isDisjointDialog && hasSelfSelection ? "Cannot make a property disjoint with itself" : ""}

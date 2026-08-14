@@ -22,28 +22,28 @@ public class Plugin {
     private String id;
 
     @Indexed(unique = true)
-    private String pluginId;
+    private String pluginId;  // e.g., "ontocode-theme-pack"
 
-    private String name;
+    private String name;  // Display name
     private String description;
     private String author;
     private String authorEmail;
 
-    private String latestVersion;
-    private String category;
+    private String latestVersion;  // Current stable version
+    private String category;  // e.g., "Visualization", "Editor", "Utility"
     private List<String> keywords;
 
-    private String license;
-    private String repository;
-    private String homepage;
-    private String icon;
-    private List<String> screenshots;
+    private String license;  // e.g., "MIT", "Apache-2.0"
+    private String repository;  // Git repository URL
+    private String homepage;  // Plugin homepage URL
+    private String icon;  // Icon URL or base64
+    private List<String> screenshots;  // Screenshot URLs
 
     private Long totalDownloads;
-    private Double averageRating;
+    private Double averageRating;  // 0.0 - 5.0
     private Integer reviewCount;
 
-    private Boolean verified;
+    private Boolean verified;  // Official/verified plugin
     private Boolean deprecated;
 
     private LocalDateTime createdAt;

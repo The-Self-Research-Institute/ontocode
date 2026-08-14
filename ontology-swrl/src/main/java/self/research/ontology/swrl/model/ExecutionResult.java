@@ -10,7 +10,7 @@ public class ExecutionResult {
     private List<InferredAxiom> inferredAxioms;
     private String errorMessage;
     private List<String> executedRuleNames = new ArrayList<>();
-    private String executionMode = "all";
+    private String executionMode = "all"; // "all" or "selected"
 
     public ExecutionResult() {}
 

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
-
+// '/pure' entry: no eager script injection at import time (see BillingManagement).
 import { loadStripe } from '@stripe/stripe-js/pure';
 import type { StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Loader2, Shield, CheckCircle, CreditCard } from 'lucide-react';
@@ -20,6 +20,8 @@ interface PaymentSetupModalProps {
     onConfirmed: (setupIntentId: string) => void | Promise<void>;
     onClose: () => void;
 }
+
+// ─── Inner form — must live inside <Elements> ────────────────────────────────
 
 interface PaymentFormProps {
     planName: string;
@@ -51,7 +53,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
         setError(null);
 
         try {
-
+        // Persist params so they survive a 3DS redirect
         safeSetStorage('pendingSubscription', JSON.stringify({ workspaceId, planName, interval }));
 
         const { error: confirmError, setupIntent } = await stripe.confirmSetup({
@@ -74,7 +76,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
         }
 
         if (setupIntent?.status === 'succeeded') {
-
+            // Combine all recovery data into one key — survives a network cut before /subscribe completes
             safeSetStorage('pendingPaymentRecovery', JSON.stringify({ setupIntentId: setupIntent.id, workspaceId, planName, interval }));
             safeRemoveStorage('pendingSubscription');
             await Promise.resolve(onConfirmed(setupIntent.id));
@@ -91,7 +93,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
 
     return (
         <form onSubmit={handleSubmit} className="space-y-5">
-            {}
+            {/* Plan summary */}
             <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
                 <div>
                     <p className="text-[11px] uppercase tracking-widest text-gray-400 mb-0.5">Selected plan</p>
@@ -115,7 +117,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                 </div>
             )}
 
-            {}
+            {/* Stripe Payment Element */}
             <div>
                 <p className="flex items-center gap-2 text-sm text-gray-300 mb-2">
                     <CreditCard size={15} />
@@ -130,7 +132,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                 </div>
             )}
 
-            {}
+            {/* Trust line */}
             <div className="flex items-start gap-2 text-[11px] text-gray-400">
                 <Shield size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
                 <span>Secured by Stripe. Paid plans renew automatically with reminders at 15, 7, and 1 day. Canceling blocks workspace access until renewed.</span>
@@ -146,7 +148,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
                 </span>
             </div>
 
-            {}
+            {/* Actions */}
             <div className="flex gap-3 pt-1">
                 <button
                     type="button"
@@ -177,6 +179,8 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ planName, interval, workspace
         </form>
     );
 };
+
+// ─── Modal shell ─────────────────────────────────────────────────────────────
 
 const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
     publishableKey,
@@ -242,7 +246,7 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
         <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="dark-surface relative w-full max-w-md h-[85vh] max-h-[720px] bg-gradient-to-b from-slate-900 to-indigo-950 border border-white/15 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
 
-                {}
+                {/* Header */}
                 <div className="flex items-center justify-between px-6 py-5 border-b border-white/10 flex-shrink-0">
                     <div>
                         <h2 className="text-lg font-bold text-white">
@@ -265,7 +269,7 @@ const PaymentSetupModal: React.FC<PaymentSetupModalProps> = ({
                     </button>
                 </div>
 
-                {}
+                {/* Form */}
                 <div className="px-6 py-6 overflow-y-auto flex-1">
                     <Elements stripe={stripePromise} options={options}>
                         <PaymentForm

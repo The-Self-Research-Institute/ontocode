@@ -16,18 +16,18 @@ import java.util.UUID;
 @AllArgsConstructor
 @Document(collection = "project_shares")
 public class ProjectShare {
-
+    
     @Id
     private String id;
-
+    
     private String projectId;
     private String ownerEmail;
     private List<String> sharedWithEmails = new ArrayList<>();
     private String shareLink;
-    private String permission;
+    private String permission; // "view" or "edit"
     private Instant createdAt;
     private Instant updatedAt;
-
+    
     public ProjectShare(String projectId, String ownerEmail, String permission) {
         this.id = UUID.randomUUID().toString();
         this.projectId = projectId;
@@ -38,18 +38,18 @@ public class ProjectShare {
         this.updatedAt = Instant.now();
         this.sharedWithEmails = new ArrayList<>();
     }
-
+    
     private String generateShareLink() {
         return UUID.randomUUID().toString().replace("-", "").substring(0, 16);
     }
-
+    
     public void addSharedEmail(String email) {
         if (!sharedWithEmails.contains(email)) {
             sharedWithEmails.add(email);
             updatedAt = Instant.now();
         }
     }
-
+    
     public void removeSharedEmail(String email) {
         sharedWithEmails.remove(email);
         updatedAt = Instant.now();

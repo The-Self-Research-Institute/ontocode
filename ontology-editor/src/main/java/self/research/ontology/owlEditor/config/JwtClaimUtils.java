@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Base64;
 
+/**
+ * Lightweight JWT payload parsing for optional request parameters (same secret validation is done elsewhere).
+ */
 public final class JwtClaimUtils {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -32,6 +35,7 @@ public final class JwtClaimUtils {
         return node != null && !node.isNull() && node.asBoolean(false);
     }
 
+    /** @return { plan, userId } or null if token missing/invalid; userId null if absent or blank */
     public static String[] extractPlanAndUserId(String authHeader) {
         JsonNode claims = parsePayload(authHeader);
         if (claims == null) {
@@ -61,14 +65,14 @@ public final class JwtClaimUtils {
             return null;
         }
         String payload = parts[1];
-
+        // Base64-URL payloads may omit padding; the decoder is strict on some JREs
         int r = payload.length() % 4;
         if (r == 2) {
             payload += "==";
         } else if (r == 3) {
             payload += "=";
         } else if (r == 1) {
-            return null;
+            return null; // invalid segment length
         }
         try {
             byte[] decoded = Base64.getUrlDecoder().decode(payload);

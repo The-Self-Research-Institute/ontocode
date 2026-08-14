@@ -15,7 +15,7 @@ export const OntoCodeLogo: React.FC<OntoCodeLogoProps> = ({
 }) => (
   <img
     src={logoSrc}
-    alt="OntoCode Studio"
+    alt="OntoCode"
     width={size}
     height={size}
     className={`${rounded ? "rounded-lg" : ""} object-contain ${className}`.trim()}

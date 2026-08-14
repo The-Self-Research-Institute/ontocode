@@ -35,9 +35,9 @@ public class Invitation {
     private String invitedByEmail;
 
     @NotBlank
-    private String role;
+    private String role; // VIEWER, MEMBER, ADMIN
 
-    private String status;
+    private String status; // PENDING, ACCEPTED, CANCELLED
 
     private LocalDateTime createdAt;
     private LocalDateTime acceptedAt;
@@ -47,6 +47,7 @@ public class Invitation {
         this.status = "PENDING";
     }
 
+    // Getters and Setters
     public String getId() {
         return id;
     }

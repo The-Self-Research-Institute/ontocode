@@ -14,6 +14,7 @@ const PLATFORM_META: Record<PlatformKey, { label: string; icon: typeof Monitor; 
   "linux-x64": { label: "Linux", icon: Terminal, os: "Ubuntu 20.04+ or equivalent (AppImage — runs on most distros)" },
 };
 
+/** Best default platform guess before /info tells us what's actually available. */
 function defaultPlatform(): PlatformKey {
   return detectClientOs() === "linux" ? "linux-x64" : "windows-x64";
 }
@@ -59,6 +60,7 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+/** Visitor OS for download analytics (separate from installer platform). */
 function detectClientOs(): string {
   const ua = navigator.userAgent.toLowerCase();
   const platform = (
@@ -116,7 +118,8 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           if (!found.includes(platform)) setPlatform(found[0]);
         }
         if (data?.latest?.["linux-deb"]) setLinuxDeb(data.latest["linux-deb"]);
-
+        // linux-arm64 / linux-flatpak are secondary Linux package options
+        // alongside the primary AppImage (same pattern as .deb).
         if (data?.latest?.["linux-arm64"]) setLinuxArm64(data.latest["linux-arm64"]);
         if (data?.latest?.["linux-flatpak"]) setLinuxFlatpak(data.latest["linux-flatpak"]);
         if (data?.systemRequirements) setRequirements(data.systemRequirements);
@@ -125,7 +128,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           setReleases({
             "windows-x64": {
               version: "1.1.0",
-              filename: "OntoCode Studio-Setup.exe",
+              filename: "OntoCode-Setup.exe",
               size: 0,
               releaseNotes: "",
               publishedAt: "",
@@ -144,7 +147,12 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   const release = releases[platform] ?? null;
 
   const openExternal = (url: string) => {
-
+    // VS Code webviews are sandboxed iframes — a programmatic window.location.href
+    // navigation to an external URL is silently blocked (unlike a real <a> click,
+    // which the webview host intercepts). Route through the extension host instead.
+    // Note: window.vscode alone isn't enough to detect this — the plain-browser
+    // bridge (vscodeBridge.ts) installs a same-named shim so browser code keeps
+    // working, so isRealVSCode() is needed to tell the two apart.
     if (isRealVSCode()) {
       window.vscode!.postMessage({ type: "openExternalUrl", url });
     } else {
@@ -176,7 +184,15 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
 
   return (
     <div className="relative min-h-screen text-white">
-      {}
+      {/* Fixed, viewport-pinned background layer — NOT the box-height-dependent
+          background this div used to carry directly. This page must always render
+          dark/violet regardless of the app's light/dark theme (it's a marketing/
+          download page, not themed app chrome), and a background tied to this div's
+          own content height can be outrun by taller content inside html/body/#root's
+          independently-scrolling containers (see index.css), letting the theme's
+          light body background show through past wherever this div's box ended —
+          exactly what made the feature checklist unreadable in light mode. A fixed
+          layer covers the full viewport unconditionally, at any scroll position. */}
       <div className="fixed inset-0 -z-10 bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900" />
       <div className="border-b border-white/10 bg-white/5 backdrop-blur-sm">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -211,7 +227,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             <Cpu size={14} /> Desktop Edition — Free Download ({PLATFORM_META[platform].label})
           </div>
           <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-            OntoCode Studio
+            OntoCode Desktop
           </h1>
           <p className="text-lg text-white/60 max-w-2xl mx-auto">
             Full OWL ontology editor — works completely offline. No account required.

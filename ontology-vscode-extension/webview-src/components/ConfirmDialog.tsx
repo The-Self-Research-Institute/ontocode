@@ -49,13 +49,13 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
 
     return (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-            {}
+            {/* Backdrop */}
             <div 
                 className="absolute inset-0 bg-black bg-opacity-50"
                 onClick={onCancel}
             />
-
-            {}
+            
+            {/* Dialog */}
             <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
                 <div className="flex items-start gap-4">
                     <div className={`flex-shrink-0 w-12 h-12 rounded-full ${theme.iconBg} flex items-center justify-center`}>
@@ -72,7 +72,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
                         </p>
                     </div>
                 </div>
-
+                
                 <div className="flex justify-end gap-3 mt-6">
                     <button
                         onClick={onCancel}

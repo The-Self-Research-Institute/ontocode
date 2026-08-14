@@ -30,7 +30,7 @@ export const OpenSourceLicensesModal: React.FC<OpenSourceLicensesModalProps> = (
                 Open Source Libraries
               </h2>
               <p className="text-xs text-gray-500">
-                OntoCode Studio is built with the following open-source software
+                OntoCode is built with the following open-source software
               </p>
             </div>
           </div>
@@ -44,9 +44,9 @@ export const OpenSourceLicensesModal: React.FC<OpenSourceLicensesModalProps> = (
           </button>
         </div>
         <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
-          {}
+          {/* OntoCode own license notice */}
           <div className="bg-purple-50 border border-purple-200 rounded-lg px-4 py-3 text-sm text-purple-900">
-            <span className="font-semibold">OntoCode Studio VSCode Extension</span> is itself open-source software,
+            <span className="font-semibold">OntoCode VSCode Extension</span> is itself open-source software,
             released under the{" "}
             <span className="font-medium">GNU Affero General Public License v3 (AGPL-3.0-or-later)</span>.
             The source code will be published at{" "}

@@ -1,9 +1,12 @@
 package self.research.ontology.auth.dto;
 
+/**
+ * Request DTO for creating a checkout session
+ */
 public class BillingCheckoutRequest {
-    private String planName;
-    private String interval;
-    private String workspaceId;
+    private String planName;     // PRO or ENTERPRISE
+    private String interval;     // monthly or yearly
+    private String workspaceId;  // optional workspace context
 
     public BillingCheckoutRequest() {}
 

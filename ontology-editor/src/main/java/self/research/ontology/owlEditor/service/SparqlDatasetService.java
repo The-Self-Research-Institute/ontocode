@@ -65,6 +65,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Service for managing GraphDB repositories.
+ * Provides SPARQL query/update and bulk loading capabilities for large ontologies.
+ *
+ * Each project gets its own named graph in GraphDB repository.
+ */
 @Service
 public class SparqlDatasetService {
 
@@ -86,6 +92,7 @@ public class SparqlDatasetService {
     @Value("${ontocode.fuseki.adminPassword:admin}")
     private String fusekiAdminPassword;
 
+    /** Files below this size (MB) import into the shared dataset; larger files get a dedicated TDB2 dataset. */
     @Value("${ontocode.fuseki.shared-graph.max-file-mb:50}")
     private int sharedGraphMaxFileMb;
 
@@ -98,20 +105,31 @@ public class SparqlDatasetService {
     @Autowired(required = false)
     private OntologySpringCacheEvictionService springCacheEviction;
 
+    // Phase C: in-memory mirror of project graphs to bypass GraphDB on hot reads.
     @Autowired(required = false)
     private ProjectRepoCache projectRepoCache;
 
+    // MongoDB persistent top-level class cache — evicted on import/mutation.
     @Autowired(required = false)
     private TopLevelClassCacheService topLevelCacheService;
 
+    // Hierarchy snapshot + per-class detail caches (MongoDB) — like the top-level
+    // cache, they mirror the public graph and must drop on every public write.
+    // @Lazy breaks the startup cycle: hierarchyIndexService → hierarchySnapshotBuildService
+    // → storageManager → sparqlDatasetService (this bean).
     @Autowired(required = false)
     @Lazy
     private HierarchyIndexService hierarchyIndexService;
 
+    // @Lazy: ClassDetailCacheService's constructor takes SparqlDatasetService,
+    // so eager injection here forms a two-bean startup cycle.
     @Autowired(required = false)
     @Lazy
     private ClassDetailCacheService classDetailCacheService;
 
+    // OWLAPI in-memory model (fast-open). Evicted here so EVERY write path —
+    // including services that call execUpdate directly without going through
+    // OntologyMutationService.apply() — invalidates the parsed model.
     @Autowired(required = false)
     private OwlApiMutationCoordinator mutationCoordinator;
 
@@ -124,21 +142,31 @@ public class SparqlDatasetService {
     @Autowired(required = false)
     private MainGraphRevisionService mainGraphRevisionService;
 
+    // Shared repository connection (legacy / fallback for existing data)
     private Repository repository;
 
+    // Per-file repository cache: projectId → dedicated SPARQLRepository for that file's TDB2 dataset.
+    // Gives each file its own Fuseki dataset so buffer-pool / GC pressure from large ontologies
+    // (GO-plus, NCBITaxon) cannot degrade queries against smaller co-resident files.
     private final Map<String, Repository> perFileRepositories = new ConcurrentHashMap<>();
 
+    // Projects whose dedicated dataset exists but is empty while the shared named graph has data
+    // (legacy split-brain from chunked imports). Cached to avoid re-running expensive COUNT/ASK
+    // on every status poll. Evicted by evictPerFileDataset() when a new import starts.
     private final java.util.Set<String> sharedFallbackProjects =
             java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
 
+    // Shared Java HttpClient — reused for GSP batch POSTs and direct file uploads.
+    // HttpClient is expensive to construct (thread pools); one instance per service is correct.
     private static final java.net.http.HttpClient SHARED_HTTP_CLIENT = java.net.http.HttpClient.newBuilder()
             .version(java.net.http.HttpClient.Version.HTTP_1_1)
             .connectTimeout(java.time.Duration.ofSeconds(30))
             .build();
 
+    // Cache of graph URIs per project (projectId -> graphUri)
     private final Map<String, String> graphUriCache = new ConcurrentHashMap<>();
     private final Map<String, PartitionGraphs> partitionGraphCache = new ConcurrentHashMap<>();
-    private static final long PARTITION_CACHE_TTL_MS = 120_000;
+    private static final long PARTITION_CACHE_TTL_MS = 120_000; // 2 minutes — partition graphs rarely change
 
     public interface ProgressListener {
         void onProgress(ImportProgress progress);
@@ -212,6 +240,9 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Initialize Fuseki SPARQL endpoint connection via SPARQLRepository
+     */
     public void init() {
         if (repository == null) {
             log.info("Initializing Fuseki SPARQL connection: query={} update={}", fusekiQueryEndpoint, fusekiUpdateEndpoint);
@@ -219,19 +250,27 @@ public class SparqlDatasetService {
                 BasicCredentialsProvider credsProvider = new BasicCredentialsProvider();
                 credsProvider.setCredentials(AuthScope.ANY,
                         new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
-
+                // Preemptive Basic Auth — RDF4J's SPARQLProtocolSession intercepts 401 and
+                // throws UnauthorizedException before HttpClient can retry with credentials,
+                // so we must send the Authorization header on every request upfront.
                 String encodedCreds = java.util.Base64.getEncoder().encodeToString(
                         (fusekiAdminUser + ":" + fusekiAdminPassword)
                                 .getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 final String basicAuthHeader = "Basic " + encodedCreds;
-
+                // 2-hour socket timeout matches the gateway and tomcat timeouts — prevents
+                // QueryInterruptedException (SocketTimeoutException) on large ontology commits.
+                // connectionRequestTimeout reduced to 10s: fail fast when pool is saturated
+                // (default Apache HttpClient pool is maxTotal=20 / defaultMaxPerRoute=2 — we
+                // override below so classDetails' 20 parallel queries don't starve children).
                 org.apache.http.client.config.RequestConfig requestConfig =
                         org.apache.http.client.config.RequestConfig.custom()
                                 .setConnectTimeout(30_000)
                                 .setSocketTimeout(7_200_000)
                                 .setConnectionRequestTimeout(10_000)
                                 .build();
-
+                // Single Fuseki host — set per-route limit equal to total so all parallel
+                // classDetails futures (up to 20) plus concurrent children/properties queries
+                // can each hold a connection without queuing.
                 org.apache.http.impl.conn.PoolingHttpClientConnectionManager connManager =
                         new org.apache.http.impl.conn.PoolingHttpClientConnectionManager();
                 connManager.setMaxTotal(60);
@@ -253,6 +292,7 @@ public class SparqlDatasetService {
                 sparqlRepo.init();
                 repository = sparqlRepo;
 
+                // Test connectivity with a cheap ASK query
                 try (RepositoryConnection conn = repository.getConnection()) {
                     conn.prepareBooleanQuery("ASK { }").evaluate();
                     log.info("✅ Fuseki connection verified: {}", fusekiQueryEndpoint);
@@ -265,6 +305,11 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Fast TCP probe of the Fuseki endpoint. Used on desktop (lazy Fuseki) to
+     * skip work quietly while the store is still starting, instead of failing
+     * every query with connection-refused stack traces.
+     */
     public boolean isFusekiReachable() {
         try {
             java.net.URI uri = java.net.URI.create(fusekiQueryEndpoint);
@@ -280,9 +325,21 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Warm up TDB2 B-tree indexes after startup so the first user request isn't cold.
+     * Runs asynchronously — never blocks startup or user requests.
+     *
+     * <p>Strategy: run cheap predicate-scoped COUNT queries first (seconds each) to
+     * load the POS index pages for the three predicates our queries use most heavily.
+     * These complete long before the full triple scan, so the first user request that
+     * opens a project hits warm indexes even if the background scan is still running.
+     *
+     * <p>Then run the full GRAPH GROUP-BY scan to finish warming the GSPO index.
+     */
     @EventListener(ApplicationReadyEvent.class)
     public void warmupFusekiAsync() {
-
+        // Seed tripleCountCache from MongoDB metadata immediately — avoids the first
+        // status poll per project running a slow COUNT(*) on cold TDB2.
         if (projectRepository != null) {
             try {
                 projectRepository.findByStatusIn(java.util.List.of("COMPLETED")).forEach(p -> {
@@ -305,6 +362,9 @@ public class SparqlDatasetService {
                 long start = System.currentTimeMillis();
                 Repository repo = getRepository();
 
+                // Phase 1: warm the three POS index ranges our queries depend on most.
+                // Each is a range scan on one predicate — loads just the B-tree pages
+                // for that predicate into OS page cache, takes seconds on cold TDB2.
                 String[][] priorityScans = {
                     {"rdfs:subClassOf", "SELECT (COUNT(*) AS ?c) WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?o }"},
                     {"rdf:type",        "SELECT (COUNT(*) AS ?c) WHERE { ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?o }"},
@@ -324,10 +384,12 @@ public class SparqlDatasetService {
                     }
                 }
 
+                // Phase 2: full GRAPH GROUP-BY scan — warms the GSPO index for all named graphs.
+                // This can take minutes on large datasets but runs in the background.
                 try (RepositoryConnection conn = repo.getConnection()) {
                     TupleQuery q = conn.prepareTupleQuery(
                         "SELECT ?g (COUNT(*) AS ?c) WHERE { GRAPH ?g { ?s ?p ?o } } GROUP BY ?g");
-                    q.setMaxExecutionTime(600);
+                    q.setMaxExecutionTime(600); // up to 10 min for very large datasets
                     try (TupleQueryResult r = q.evaluate()) {
                         int graphs = 0;
                         while (r.hasNext()) { r.next(); graphs++; }
@@ -341,6 +403,9 @@ public class SparqlDatasetService {
         });
     }
 
+    /**
+     * Get repository instance (lazy init)
+     */
     public Repository getRepository() {
         if (repository == null) {
             init();
@@ -348,6 +413,10 @@ public class SparqlDatasetService {
         return repository;
     }
 
+    /**
+     * Shared vs dedicated Fuseki dataset for one project. All import and query paths must use
+     * the same binding so clear / GSP PUT / verify / SPARQL hit the same repository and named graph.
+     */
     private record ProjectGraphBinding(
             Repository repository,
             String projectId,
@@ -364,6 +433,11 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Return a dedicated per-file SPARQLRepository when {@code createIfAbsent} is true (imports),
+     * or when a dedicated dataset already exists on Fuseki (restart / query reconnect).
+     * Never caches a failed fallback in {@link #perFileRepositories}.
+     */
     public Repository getRepository(String projectId) {
         return resolveBinding(projectId, false).repository();
     }
@@ -396,7 +470,8 @@ public class SparqlDatasetService {
 
     private boolean fusekiDatasetExists(String fusekiBase, String datasetName) {
         try {
-
+            // Check specific dataset directly — O(1) regardless of total dataset count.
+            // GET /$/datasets/{name} returns 200 if exists, 404 if not.
             String adminUrl = fusekiBase + "/$/datasets/" + datasetName;
             String auth = "Basic " + java.util.Base64.getEncoder()
                     .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
@@ -455,13 +530,15 @@ public class SparqlDatasetService {
                 }
                 SPARQLRepository repo = connectPerFileRepository(fusekiBase, dsName);
 
+                // Legacy split-brain: an empty dedicated dataset was created while chunked import
+                // wrote to the shared named graph. Prefer shared when dedicated has no triples.
                 if (!createIfAbsent && datasetExists) {
-
+                    // Fast path: cached decision from a prior call avoids repeated SPARQL on every poll.
                     if (sharedFallbackProjects.contains(projectId)) {
                         return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
                     }
                     try (RepositoryConnection dedicatedConn = repo.getConnection()) {
-
+                        // Use ASK (stops at first triple) instead of COUNT (scans all triples).
                         boolean dedicatedEmpty = !askGraphHasData(dedicatedConn, graphUri);
                         if (dedicatedEmpty) {
                             try (RepositoryConnection sharedConn = getRepository().getConnection()) {
@@ -495,6 +572,7 @@ public class SparqlDatasetService {
         return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
     }
 
+    /** Drop in-memory per-file repo handle (e.g. after replace/clear). Does not delete Fuseki data. */
     public void evictPerFileDataset(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return;
@@ -505,14 +583,16 @@ public class SparqlDatasetService {
         log.info("[PerFileDS] Evicted cached repository for project {}", projectId);
     }
 
+    /** Convert a projectId to a Fuseki-safe dataset name (max 64 chars, alphanumeric + hyphens). */
     private String toDatasetName(String projectId) {
-
+        // projectId format: "proj-abc--uuid" — already URL-safe, just cap length.
         String safe = projectId.replaceAll("[^a-zA-Z0-9\\-]", "-");
         return safe.length() > 64 ? safe.substring(0, 64) : safe;
     }
 
+    /** Create a TDB2 dataset on the Fuseki server if it does not already exist. */
     private void ensureFusekiDataset(String fusekiBase, String datasetName) throws Exception {
-
+        // Use URLConnection to avoid Java HttpClient issues with the '$' character in the path
         String adminUrl = fusekiBase + "/$/datasets";
         String body = "dbName=" + URLEncoder.encode(datasetName, StandardCharsets.UTF_8)
                     + "&dbType=tdb2";
@@ -525,7 +605,7 @@ public class SparqlDatasetService {
         conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
         conn.setRequestProperty("Authorization", auth);
         conn.setConnectTimeout(15000);
-        conn.setReadTimeout(60000);
+        conn.setReadTimeout(60000); // Fuseki TDB2 dataset creation can take 30-60s under load
         conn.setDoOutput(true);
         try (java.io.OutputStream os = conn.getOutputStream()) {
             os.write(body.getBytes(StandardCharsets.UTF_8));
@@ -538,6 +618,7 @@ public class SparqlDatasetService {
         throw new RuntimeException("Fuseki dataset creation returned HTTP " + status);
     }
 
+    /** Get the GSP (Graph Store Protocol) endpoint URL for a per-file dataset. */
     public String getPerFileGspEndpoint(String projectId) {
         java.net.URI endpointUri = java.net.URI.create(fusekiQueryEndpoint);
         String base = endpointUri.getScheme() + "://" + endpointUri.getHost()
@@ -545,6 +626,9 @@ public class SparqlDatasetService {
         return base + "/" + toDatasetName(projectId) + "/data";
     }
 
+    /**
+     * Get graph URI for a project
+     */
     public String getGraphUri(String projectId) {
         return graphUriCache.computeIfAbsent(projectId, SparqlGraphUris::mainProjectGraph);
     }
@@ -566,10 +650,30 @@ public class SparqlDatasetService {
         return shouldScopeReadsToDraftCopy(projectId, userId);
     }
 
+    /**
+     * Copy-on-switch reads always use the draft graph while the session is READY, even after
+     * main has advanced past the draft's baseline. Reconciling that divergence is the "Pull"
+     * button's job (a real per-entity merge into the draft graph) — silently falling back to
+     * main-graph reads here used to hide the user's own draft edits behind whatever the public
+     * graph currently looks like as soon as anyone made an unrelated public change.
+     */
     private boolean shouldScopeReadsToDraftCopy(String projectId, String userId) {
         return isDraftCopyReady(projectId, userId);
     }
 
+    /**
+     * Check if a file is already loaded into GraphDB by checking for file metadata triples
+     * or by checking if the ontology IRI already exists in the project graph
+     * @param projectId The project ID
+     * @param fileName The name of the file to check
+     * @param fileId Optional file ID to check for specific file metadata
+     * @return Map with "exists" boolean and "details" with information about the existing file
+     */
+
+    /**
+     * Quick check: does the Fuseki graph for this project already have any triples?
+     * Used by upload-by-file-ref to skip re-import when data is already loaded.
+     */
     public boolean hasGraphData(String projectId) {
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);
@@ -591,13 +695,15 @@ public class SparqlDatasetService {
             String graphUri = graphBinding.graphUri();
 
             try (RepositoryConnection conn = graphBinding.repository().getConnection()) {
-
+                // Check 1: Check if there are any triples in the graph (basic duplicate prevention)
                 long graphSize = countGraphTriplesSparql(conn, graphUri);
 
+                // Check 2: Query for file metadata if the system stores it
+                // This checks for triples that might indicate a file was already loaded
                 String checkQuery = String.format(
                     "ASK { " +
                     "  GRAPH <%s> { " +
-                    "    { ?s ?p ?o } " +
+                    "    { ?s ?p ?o } " + // Check if graph has any data
                     "  } " +
                     "}",
                     graphUri
@@ -609,7 +715,8 @@ public class SparqlDatasetService {
                 log.info("[TIMING] checkFileExistsInGraphDB ASK query for project {}: {} ms", projectId, elapsedMillis(askStart));
 
                 if (hasData && graphSize > 0) {
-
+                    // Graph has data - check if it's from a file with the same name
+                    // Try to find ontology IRI or file identifier
                     String detailQuery = String.format(
                         "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> " +
                         "PREFIX owl: <http://www.w3.org/2002/07/owl#> " +
@@ -649,6 +756,8 @@ public class SparqlDatasetService {
                     log.info("[GraphDB Duplicate Check] Project {} graph contains {} triples. File: {}, FileId: {}",
                         projectId, graphSize, fileName, fileId);
 
+                    // GO-plus (~1.2M triples) sits below the 3M mem-cache default but still
+                    // needs large-ontology query limits (see OntologyQueryService.classDetails).
                     if (projectRepoCache != null && graphSize >= 1_000_000L) {
                         projectRepoCache.markKnownLarge(projectId);
                         log.info("[GraphDB] Marked project {} as large ontology ({} triples)", projectId, graphSize);
@@ -673,21 +782,33 @@ public class SparqlDatasetService {
         return result;
     }
 
+    /**
+     * Get the project directory path
+     */
     public Path getProjectPath(String projectId) {
         return Paths.get(dataDir, "projects", projectId);
     }
 
+    /**
+     * Execute a SPARQL SELECT query and return materialized results
+     */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery) {
-
+        // Default to includeInferred=false — the repository uses ruleset: empty,
+        // so inference adds only overhead (30-130s penalties per query)
         return execSelect(projectId, sparqlQuery, false);
     }
 
+    /** True if this project has been confirmed to exceed the no-cache threshold. */
     public boolean isKnownLargeProject(String projectId) {
         return projectRepoCache != null && projectRepoCache.isKnownLarge(projectId);
     }
 
+    /**
+     * Execute a SPARQL SELECT query with control over inference.
+     * @param includeInferred false to skip transitive/OWL inference (much faster on large repos)
+     */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery, boolean includeInferred) {
-
+        // Copy-on-switch draft is per-user; in-memory cache cannot include another user's draft graph.
         boolean draftScope = isDraftCopyReadyForRead(projectId);
         if (!includeInferred && !draftScope && projectRepoCache != null && projectRepoCache.isEnabled()) {
             TupleQueryResult cached = trySelectFromMemCache(projectId, sparqlQuery);
@@ -698,6 +819,10 @@ public class SparqlDatasetService {
         return execSelectGraphDB(projectId, sparqlQuery, includeInferred);
     }
 
+    /**
+     * Run a SELECT against the in-memory project repo. Returns {@code null} on
+     * cache miss / load failure so the caller can fall back to GraphDB.
+     */
     private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery) {
         long start = System.nanoTime();
         Repository memRepo = projectRepoCache.getOrLoad(projectId, new ProjectRepoCache.Loader() {
@@ -708,7 +833,9 @@ public class SparqlDatasetService {
                 return getGraphUri(pid);
             }
             @Override public long estimateTripleCount(String pid) {
-
+                // Run COUNT with a 8-second timeout so cold TDB2 doesn't block
+                // the request thread for 60+ seconds and hit the ALB timeout.
+                // On timeout we return -1 (unknown) → caller proceeds to cache load.
                 try {
                     return CompletableFuture.supplyAsync(() -> {
                         try {
@@ -735,7 +862,7 @@ public class SparqlDatasetService {
         }
         try (RepositoryConnection conn = memRepo.getConnection()) {
             String finalQuery = sparqlQuery;
-
+            // Match SPARQL FROM clause: "FROM <" — avoids false positive on owl:someValuesFrom etc.
             if (!finalQuery.matches("(?si).*\\bFROM\\s+<.*")) {
                 finalQuery = finalQuery.replaceFirst("(?i)WHERE",
                         buildFromClause(conn, projectId) + " WHERE");
@@ -762,6 +889,12 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Stream every explicit triple in the project's graph(s) from GraphDB.
+     * Used by {@link ProjectRepoCache} to populate the in-memory mirror.
+     * The caller MUST close the returned {@link GraphQueryResult} which in
+     * turn closes its RepositoryConnection.
+     */
     private GraphQueryResult execConstructAll(String projectId) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         final RepositoryConnection conn = binding.repository().getConnection();
@@ -771,7 +904,7 @@ public class SparqlDatasetService {
             GraphQuery gq = conn.prepareGraphQuery(q);
             gq.setIncludeInferred(false);
             final GraphQueryResult inner = gq.evaluate();
-
+            // Wrap so closing the result also closes the connection.
             return new GraphQueryResult() {
                 @Override public java.util.Map<String, String> getNamespaces() { return inner.getNamespaces(); }
                 @Override public boolean hasNext() { return inner.hasNext(); }
@@ -787,6 +920,10 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Original GraphDB SELECT path — retained as the fallback behind the
+     * in-memory cache.
+     */
     private TupleQueryResult execSelectGraphDB(String projectId, String sparqlQuery, boolean includeInferred) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
@@ -795,6 +932,8 @@ public class SparqlDatasetService {
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long connMs = (System.nanoTime() - totalStart) / 1_000_000;
 
+            // Scope query to this project's graph only — strip user-supplied FROM <> to prevent cross-project reads.
+            // Use regex to avoid false positive on owl:someValuesFrom / owl:allValuesFrom etc.
             if (sparqlQuery.matches("(?si).*\\bFROM\\s+<.*")) {
                 sparqlQuery = sparqlQuery.replaceAll("(?i)\\bFROM\\s+<[^>]+>", " ");
             }
@@ -803,6 +942,7 @@ public class SparqlDatasetService {
                     buildFromClause(conn, projectId) + " WHERE");
             }
 
+            // Extract query type for logging (first SELECT/ASK/CONSTRUCT keyword)
             String queryType = extractQueryType(sparqlQuery);
 
             log.info("[GRAPHDB] EXECUTING {} project={} graph={} connTime={}ms", queryType, projectId, graphUri, connMs);
@@ -811,8 +951,8 @@ public class SparqlDatasetService {
             long queryStart = System.nanoTime();
             TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
             query.setIncludeInferred(includeInferred);
-            query.setMaxExecutionTime(300);
-
+            query.setMaxExecutionTime(300); // 5-minute timeout to prevent indefinite hangs
+            // Materialize results into a list before closing connection
             List<BindingSet> results = new ArrayList<>();
             List<String> bindingNames = new ArrayList<>();
             try (TupleQueryResult result = query.evaluate()) {
@@ -824,6 +964,7 @@ public class SparqlDatasetService {
             long queryMs = (System.nanoTime() - queryStart) / 1_000_000;
             long totalMs = (System.nanoTime() - totalStart) / 1_000_000;
 
+            // Log to dedicated SPARQL logger
             sparqlLog.info("[SPARQL] {} project={} results={} queryTime={}ms totalTime={}ms connTime={}ms",
                     queryType, projectId, results.size(), queryMs, totalMs, connMs);
 
@@ -836,6 +977,7 @@ public class SparqlDatasetService {
             log.info("[GRAPHDB] {} completed: {} results in {}ms (conn={}ms, query={}ms)",
                     queryType, results.size(), totalMs, connMs, queryMs);
 
+            // Diagnostic: If no results, check if graphs have any data at all
             if (results.isEmpty()) {
                 try {
                     List<String> allGraphs = getAllGraphUris(conn, projectId);
@@ -855,17 +997,25 @@ public class SparqlDatasetService {
                 }
             }
 
+            // Return a simple iterator-based implementation
             return new SimpleTupleQueryResult(bindingNames, results);
 
         } catch (Exception e) {
             long totalMs = (System.nanoTime() - totalStart) / 1_000_000;
             log.error("[GRAPHDB] SELECT failed for project {} after {}ms", projectId, totalMs, e);
             sparqlLog.error("[SPARQL_ERROR] project={} duration={}ms error={}", projectId, totalMs, e.getMessage());
-
+            // Preserve the real cause's message — SparqlQueryController.sparqlFailure() reports
+            // getMessage() from whatever it catches, and a generic wrapper message here (as this
+            // used to be: `new RuntimeException("SPARQL query execution failed", e)`) meant every
+            // failure surfaced to the user as the same unhelpful text regardless of actual cause,
+            // while the real message only ever showed up in this server-side log line.
             throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);
         }
     }
 
+    /**
+     * Simple in-memory TupleQueryResult implementation
+     */
     private static class SimpleTupleQueryResult implements TupleQueryResult {
         private final List<String> bindingNames;
         private final List<BindingSet> bindings;
@@ -883,7 +1033,7 @@ public class SparqlDatasetService {
 
         @Override
         public void close() {
-
+            // No-op, already materialized
         }
 
         @Override
@@ -903,12 +1053,16 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Execute a SPARQL CONSTRUCT query
+     */
     public GraphQueryResult execConstruct(String projectId, String sparqlQuery) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
 
         try (RepositoryConnection conn = binding.repository().getConnection()) {
 
+            // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
                 sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
                     buildFromClause(conn, projectId) + " WHERE");
@@ -928,10 +1082,18 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Execute a SPARQL ASK query. Read scope follows {@link SparqlQueryContext} (draft graph
+     * when the user has a ready draft copy).
+     */
     public boolean execAsk(String projectId, String sparqlQuery) {
         return execAsk(projectId, sparqlQuery, null);
     }
 
+    /**
+     * Execute a SPARQL ASK query against a specific named graph (ignores draft read scope).
+     * Used after mutations to verify writes landed in the same graph that was updated.
+     */
     public boolean execAskInGraph(String projectId, String graphUri, String sparqlQuery) {
         return execAsk(projectId, sparqlQuery, graphUri);
     }
@@ -942,6 +1104,9 @@ public class SparqlDatasetService {
 
         try (RepositoryConnection conn = binding.repository().getConnection()) {
 
+            // Inject FROM clause if not present.
+            // ASK queries legally omit the WHERE keyword (ASK { } is valid SPARQL), so we
+            // cannot rely on finding WHERE — fall back to injecting FROM before the opening brace.
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
                 String fromClause = forceGraphUri != null
                         ? "FROM <" + forceGraphUri + ">"
@@ -949,7 +1114,7 @@ public class SparqlDatasetService {
                 if (sparqlQuery.toUpperCase().contains("WHERE")) {
                     sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", fromClause + " WHERE");
                 } else {
-
+                    // ASK { ... } without WHERE — insert FROM <graph> WHERE before the body brace
                     sparqlQuery = sparqlQuery.replaceFirst("(?i)(ASK\\s*)\\{", "$1" + fromClause + " WHERE {");
                 }
             }
@@ -969,10 +1134,16 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Execute a SPARQL UPDATE operation
+     */
     public void execUpdate(String projectId, String sparqlUpdate) {
         execUpdate(projectId, getGraphUri(projectId), sparqlUpdate);
     }
 
+    /**
+     * Apply SPARQL UPDATE to the user's copy-on-switch draft graph (full main snapshot).
+     */
     public void execDraftUpdateCopyOnSwitch(String projectId, String userId, String sparqlUpdate) {
         String draftGraph = getDraftGraphUri(projectId, userId);
         if (sparqlUpdate.toUpperCase().contains("WHERE")
@@ -984,11 +1155,14 @@ public class SparqlDatasetService {
 
     public void clearDraftGraph(String projectId, String userId) {
         String draftGraph = getDraftGraphUri(projectId, userId);
-
+        // SILENT suppresses "No such graph" when the draft graph has never been created yet.
         execUpdate(projectId, draftGraph, "CLEAR SILENT GRAPH <" + draftGraph + ">");
         log.info("[DRAFT-GRAPH] Cleared draft graph {} for project {} user {}", draftGraph, projectId, userId);
     }
 
+    /**
+     * Atomically publishes a copy-on-switch draft by moving the draft graph to main.
+     */
     public void moveDraftToMain(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
@@ -1000,6 +1174,10 @@ public class SparqlDatasetService {
                 projectId, userId, elapsedMillis(start));
     }
 
+    /**
+     * Full copy of the main graph into the user's draft graph (copy-on-switch model).
+     * The draft graph must be cleared before calling this.
+     */
     public void copyMainGraphToDraft(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
@@ -1023,21 +1201,31 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * True when the user has a ready copy-on-switch draft session (reads/writes use draft graph).
+     */
     public boolean hasActiveDraftSession(String projectId, String userId) {
         return isDraftCopyReady(projectId, userId);
     }
 
+    /** @deprecated Use {@link #hasActiveDraftSession} */
     @Deprecated
     public boolean hasActiveDraftOverlay(String projectId, String userId) {
         return hasActiveDraftSession(projectId, userId);
     }
 
+    // Short-lived TTL cache: avoids a MongoDB round-trip on every SPARQL read in draft scope.
+    // Key = "projectId\0userId", value = [result(0/1), expiryEpochMs].
+    // 5-second TTL is safe: the transition READY→true fires only on copy completion or
+    // publish, both infrequent relative to the poll interval already used by the UI.
     private static final long DRAFT_READY_CACHE_TTL_MS = 5_000;
     private final java.util.concurrent.ConcurrentHashMap<String, long[]> draftReadyCache =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private boolean isDraftCopyReady(String projectId, String userId) {
-
+        // userId is resolved from the JWT/X-Ontocode-User-Id header on every request
+        // (including ones made while viewing Public), so it alone can't signal "this
+        // request wants draft scope" — that requires the explicit draft=true parameter.
         if (!SparqlQueryContext.wantsDraft()) {
             return false;
         }
@@ -1057,6 +1245,7 @@ public class SparqlDatasetService {
         return result;
     }
 
+    /** Evict the draft-ready cache entry when the session transitions (copy complete, publish, discard). */
     public void evictDraftReadyCache(String projectId, String userId) {
         if (projectId != null && userId != null) {
             draftReadyCache.remove(projectId + " " + userId);
@@ -1102,7 +1291,13 @@ public class SparqlDatasetService {
         if (rdfContent == null || rdfContent.isBlank()) {
             throw new IllegalArgumentException("RDF content is empty");
         }
-
+        // Parse locally and re-emit as a plain "CLEAR GRAPH; INSERT DATA" SPARQL Update string,
+        // executed the same way every other mutation in this class is (conn.prepareUpdate().execute()).
+        // RDF4J's SPARQLConnection.add(InputStream, format, graphIri) — a different RDF4J API that
+        // streams the parsed statements to Fuseki itself rather than going through a SPARQL Update
+        // string — silently fails ("error executing transaction", no useful detail) for some
+        // ontologies produced by the merge/publish pipeline, even though the identical triples
+        // load fine via a raw SPARQL INSERT DATA or the Graph Store Protocol. Sidestep it entirely.
         List<Statement> statements = new ArrayList<>();
         RDFParser parser = Rio.createParser(format);
         parser.setRDFHandler(new StatementCollector(statements));
@@ -1147,6 +1342,7 @@ public class SparqlDatasetService {
 
             String graphAwareUpdate = injectGraphContext(sparqlUpdate, targetGraphUri);
 
+            // Explicitly manage transaction for immediate visibility
             boolean autoCommit = conn.isAutoCommit();
             if (autoCommit) {
                 conn.begin();
@@ -1158,6 +1354,7 @@ public class SparqlDatasetService {
                 update.execute();
                 long updateExecMs = elapsedMillis(updateExecStart);
 
+                // Explicitly commit for immediate visibility
                 long commitMs = 0;
                 if (autoCommit) {
                     long commitStart = System.nanoTime();
@@ -1171,10 +1368,16 @@ public class SparqlDatasetService {
                 log.info("[GRAPHDB] UPDATE completed: execTime={}ms commitTime={}ms totalTime={}ms",
                         updateExecMs, commitMs, totalMs);
 
+                // Phase C: evict the in-memory mirror so the next read repopulates it
+                // with the just-written triples. Cheap (microseconds) + safe.
                 if (projectRepoCache != null) {
                     projectRepoCache.evict(projectId);
                 }
 
+                // Single choke point for derived-cache invalidation: several services
+                // (metadata, Manchester expressions, axiom annotations, citations, raw
+                // SPARQL console) write here without going through the mutation service,
+                // so this is the only place that reliably sees every data change.
                 invalidateDerivedCachesAfterUpdate(projectId);
 
                 List<OntologyMutationService.MutationOp> structuredOps = MutationContext.getAndClear();
@@ -1204,8 +1407,11 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Inject GRAPH/WITH context into SPARQL UPDATE
+     */
     private String injectGraphContext(String sparql, String graphUri) {
-
+        // Extract PREFIX declarations
         StringBuilder prefixes = new StringBuilder();
         StringBuilder operations = new StringBuilder();
 
@@ -1220,9 +1426,14 @@ public class SparqlDatasetService {
 
         String operationsStr = operations.toString().trim();
 
+        // Check if this is INSERT { ... } WHERE { ... } with Turtle syntax (contains blank nodes or semicolons within braces)
+        // Don't split by semicolon in this case as it's part of Turtle syntax
         if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
             if (operationsStr.toUpperCase().contains("USING ")) {
-
+                // Draft update: USING already present; wrap INSERT template with GRAPH instead of
+                // WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
+                // Close GRAPH and outer INSERT braces before WHERE (non-greedy .*? alone left USING
+                // attached to a malformed template for blank-node inserts).
                 operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\}\\s*)(WHERE)",
                         "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
                 log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
@@ -1233,6 +1444,8 @@ public class SparqlDatasetService {
             return prefixes.toString() + operationsStr;
         }
 
+        // For other cases, split by semicolon and process each statement
+        // Split operations by semicolon - BUT only at top level, not inside {}
         String[] statements = splitUpdateStatements(operationsStr);
         StringBuilder result = new StringBuilder(prefixes);
 
@@ -1244,23 +1457,25 @@ public class SparqlDatasetService {
 
             log.info("[GRAPH-INJECT] Statement {}: '{}'", i, stmt.substring(0, Math.min(100, stmt.length())));
 
+            // For INSERT DATA and DELETE DATA, wrap in GRAPH clause
             if (stmt.matches("(?is)INSERT\\s+DATA\\s*\\{.*")) {
-
+                // Replace the opening brace to add GRAPH context
                 stmt = stmt.replaceFirst("(?is)(INSERT\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {");
-
+                // Add closing brace for GRAPH context before the final brace
                 stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
                 log.info("[GRAPH-INJECT] Matched INSERT DATA");
             } else if (stmt.matches("(?is)DELETE\\s+DATA\\s*\\{.*")) {
-
+                // Replace the opening brace to add GRAPH context
                 stmt = stmt.replaceFirst("(?is)(DELETE\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {");
-
+                // Add closing brace for GRAPH context before the final brace
                 stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
                 log.info("[GRAPH-INJECT] Matched DELETE DATA");
             }
-
+            // For DELETE { ... } WHERE { ... }, add WITH clause (or GRAPH if USING is present)
             else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().toUpperCase().startsWith("WITH")) {
                 if (stmt.toUpperCase().contains("USING ")) {
-
+                    // Draft update: USING already present; wrap DELETE/INSERT templates with GRAPH
+                    // instead of WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
                     stmt = stmt.replaceFirst("(?is)(DELETE\\s*\\{)(.*?)(\\})",
                             "$1 GRAPH <" + graphUri + "> {$2} $3");
                     stmt = stmt.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\})(\\s*WHERE)",
@@ -1283,6 +1498,9 @@ public class SparqlDatasetService {
         return result.toString();
     }
 
+    /**
+     * Split UPDATE statements by semicolon, but only at top level (not inside braces)
+     */
     private String[] splitUpdateStatements(String operations) {
         List<String> statements = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -1298,7 +1516,7 @@ public class SparqlDatasetService {
                 braceDepth--;
                 current.append(c);
             } else if (c == ';' && braceDepth == 0) {
-
+                // Top-level semicolon - this is a statement separator
                 statements.add(current.toString().trim());
                 current = new StringBuilder();
             } else {
@@ -1306,6 +1524,7 @@ public class SparqlDatasetService {
             }
         }
 
+        // Add the last statement
         if (current.length() > 0) {
             statements.add(current.toString().trim());
         }
@@ -1313,6 +1532,11 @@ public class SparqlDatasetService {
         return statements.toArray(new String[0]);
     }
 
+    /**
+     * Bulk load RDF data from input stream into GraphDB using CHUNKED approach
+     * Parses the file and uploads in batches of 1000 triples to avoid connection timeouts
+     * This is more reliable for large files that cause "Connection aborted" errors
+     */
     public void bulkLoadChunked(String projectId, InputStream inputStream, RDFFormat rdfFormat) {
         bulkLoadChunked(projectId, inputStream, rdfFormat, -1, ImportOptions.defaults(), null);
     }
@@ -1344,6 +1568,9 @@ public class SparqlDatasetService {
             log.info("Starting CHUNKED bulk load for project: {} with format: {} (batch size: {} triples, dedicated={})",
                     projectId, rdfFormat, batchSize, binding.dedicatedPerFile());
 
+                // Strip binary garbage bytes that may be prepended by the upload pipeline.
+                // This includes BOM, whitespace, or other binary data before content starts.
+                // Apply to ALL formats, not just RDF/XML.
                 CountingInputStream countingStream = new CountingInputStream(inputStream);
                 InputStream cleanedStream = stripLeadingGarbage(countingStream, rdfFormat);
 
@@ -1356,8 +1583,12 @@ public class SparqlDatasetService {
                 var valueFactory = conn.getValueFactory();
                 IRI graphIri = valueFactory.createIRI(graphUri);
 
+                // NOTE: The repository is configured with graphdb:ruleset "empty"
+                // so there is NO inference engine active. The disableInferenceDuringImport
+                // call is skipped because it's a no-op that just adds HTTP round-trips.
                 boolean inferenceDisabled = false;
 
+                // Start the import transaction AFTER inference is disabled
                 if (!conn.isActive()) {
                     conn.begin();
                 }
@@ -1384,15 +1615,16 @@ public class SparqlDatasetService {
                         }
                     }
 
+                    // Parse and upload in batches
                     log.info("Creating RDF parser for format: {} (class: {})", rdfFormat, rdfFormat.getClass().getName());
                     RDFParser parser = Rio.createParser(rdfFormat);
                     log.info("Parser created: {} (class: {})", parser, parser.getClass().getName());
-
+                    // PERFORMANCE: Disable expensive validations for large files
                     parser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
                     parser.getParserConfig().set(BasicParserSettings.VERIFY_DATATYPE_VALUES, false);
                     parser.getParserConfig().set(BasicParserSettings.NORMALIZE_DATATYPE_VALUES, false);
                     parser.getParserConfig().set(BasicParserSettings.FAIL_ON_UNKNOWN_DATATYPES, false);
-
+                    // OWL/XML SUPPORT: Allow unqualified attributes (ontologyIRI, IRI, etc.)
                     parser.getParserConfig().set(BasicParserSettings.FAIL_ON_UNKNOWN_LANGUAGES, false);
                     parser.getParserConfig().addNonFatalError(BasicParserSettings.VERIFY_URI_SYNTAX);
                     parser.getParserConfig().addNonFatalError(BasicParserSettings.VERIFY_DATATYPE_VALUES);
@@ -1408,12 +1640,18 @@ public class SparqlDatasetService {
                         clearGraph(conn, targetGraphIri, targetGraphUri, projectId + "-staging");
                     }
 
+                    // Final references for use in inner class
                     final String finalTargetGraphUri = targetGraphUri;
                     final IRI finalTargetGraphIri = targetGraphIri;
                     Map<IRI, List<Statement>> partitionBatches = partitionByNamespace ? new HashMap<>() : null;
 
-                    final long COMMIT_TIME_INTERVAL_MS = 60_000L;
-                    final long COMMIT_TRIPLE_INTERVAL = 200_000L;
+                    // Intermediate commits keep the transaction alive and prevent GraphDB from
+                    // timing out long-running transactions ("transaction not registered" error).
+                    // With ruleset "empty" (no inference), commits are cheap — just index updates.
+                    // But each commit+begin is 2 HTTP round-trips, and GraphDB indexes on commit,
+                    // so committing too often adds significant overhead for large imports.
+                    final long COMMIT_TIME_INTERVAL_MS = 60_000L; // Commit every 60 seconds
+                    final long COMMIT_TRIPLE_INTERVAL = 200_000L;  // Also commit every 200k triples
                     final AtomicLong lastCommitTime = new AtomicLong(System.currentTimeMillis());
                     final AtomicLong lastCommitTriples = new AtomicLong(0);
 
@@ -1427,7 +1665,8 @@ public class SparqlDatasetService {
                     parser.setRDFHandler(new AbstractRDFHandler() {
                         @Override
                         public void handleNamespace(String prefix, String uri) {
-
+                            // Optimized: Skip namespace handling - causes overhead for large imports
+                            // GraphDB infers namespaces from data anyway
                         }
 
                         @Override
@@ -1441,6 +1680,7 @@ public class SparqlDatasetService {
                                 if (graphBatch.size() >= batchSize) {
                                     flushBatchWithRetry(projectId, conn, graphBatch, graphForStatement, totalTriples, batchSize, fileSizeBytes);
 
+                                    // Time-based and count-based intermediate commits
                                     long now = System.currentTimeMillis();
                                     long triplesNow = totalTriples.get();
                                     if (now - lastCommitTime.get() >= COMMIT_TIME_INTERVAL_MS
@@ -1461,6 +1701,7 @@ public class SparqlDatasetService {
                             if (batch.size() >= batchSize) {
                                 flushBatchWithRetry(projectId, conn, batch, finalTargetGraphIri, totalTriples, batchSize, fileSizeBytes);
 
+                                // Time-based and count-based intermediate commits
                                 long now = System.currentTimeMillis();
                                 long triplesNow = totalTriples.get();
                                 if (now - lastCommitTime.get() >= COMMIT_TIME_INTERVAL_MS
@@ -1477,7 +1718,7 @@ public class SparqlDatasetService {
                             if (progressListener != null) {
                                 long now = System.nanoTime();
                                 long last = lastProgressSentAt.get();
-                                if ((now - last) >= 2_000_000_000L) {
+                                if ((now - last) >= 2_000_000_000L) { // 2 seconds
                                     if (lastProgressSentAt.compareAndSet(last, now)) {
                                         long elapsedMs = elapsedMillis(bulkLoadStart);
                                         long triplesProcessed = totalTriples.get();
@@ -1494,6 +1735,7 @@ public class SparqlDatasetService {
 
                     log.info("Parsing RDF file...");
 
+                    // Preview first 500 bytes for debugging
                     cleanedStream.mark(1024);
                     byte[] preview = cleanedStream.readNBytes(500);
                     cleanedStream.reset();
@@ -1504,6 +1746,7 @@ public class SparqlDatasetService {
                     parser.parse(cleanedStream, finalTargetGraphUri);
                     log.info("[TIMING] RDF parsing completed in {} ms ({} triples parsed)", elapsedMillis(parseStart), totalTriples.get());
 
+                    // Upload remaining triples
                     if (partitionByNamespace) {
                         for (Map.Entry<IRI, List<Statement>> entry : partitionBatches.entrySet()) {
                             if (!entry.getValue().isEmpty()) {
@@ -1527,6 +1770,8 @@ public class SparqlDatasetService {
 
                     }
 
+                    // Guard: If the parser produced 0 triples and we cleared the graph,
+                    // rollback to preserve the original data instead of committing the clear.
                     if (totalTriples.get() == 0 && shouldClear) {
                         if (conn.isActive()) {
                             conn.rollback();
@@ -1538,12 +1783,14 @@ public class SparqlDatasetService {
                                 "Existing data preserved (not cleared).");
                     }
 
+                    // Commit transaction
                     log.warn("⏳ Committing {} triples to GraphDB...", totalTriples.get());
                     long commitStart = System.nanoTime();
                     conn.commit();
                     long commitDuration = elapsedMillis(commitStart);
                     log.info("✓ FINAL COMMIT completed in {} ms ({} sec)", commitDuration, commitDuration / 1000);
 
+                    // VERIFICATION: Check if data is actually readable after commit (SPARQL COUNT is much faster than conn.size())
                     long verifyStart = System.nanoTime();
                     long verifiedSize = countGraphTriplesSparql(conn, graphUri);
                     log.info("✓ VERIFICATION: Graph {} contains {} triples after commit (check took {} ms)",
@@ -1556,8 +1803,10 @@ public class SparqlDatasetService {
                                         + " triples but named graph is empty after commit for project " + projectId);
                     }
 
+                    // Invalidate context caches after new data is committed
                     invalidateContextCaches(projectId);
 
+                    // Register any partition graphs that were created during this import
                     if (partitionBatches != null && !partitionBatches.isEmpty()) {
                         List<String> partGraphs = partitionBatches.keySet().stream()
                                 .map(IRI::stringValue)
@@ -1584,9 +1833,10 @@ public class SparqlDatasetService {
                     }
                     throw e;
                 } finally {
-
+                    // With ruleset "empty", inference is never enabled so no re-enable needed.
+                    // Kept as guard for future ruleset changes.
                     if (inferenceDisabled) {
-
+                        // reEnableInferenceNoReindex(conn, valueFactory);
                     }
                 }
             }
@@ -1598,6 +1848,22 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Import an RDF file by POSTing the entire file directly to GraphDB's REST API
+     * in a single HTTP request. GraphDB handles parsing and indexing internally —
+     * no client-side batching, no intermediate commits, no transaction management.
+     *
+     * This is the fastest client-side approach: ONE HTTP request for the entire file.
+     * Falls back to chunked if this fails (e.g., GraphDB rejects the request or times out).
+     *
+     * @param projectId   The project ID (determines the named graph)
+     * @param sourceFile  Path to the RDF file on the editor's filesystem
+     * @param rdfFormat   The RDF format of the file
+     * @param fileSizeBytes The file size in bytes (for logging)
+     * @param options     Import options (mode, partition strategy)
+     * @param progressListener Optional callback for progress updates
+     * @return true if direct upload succeeded, false if it should fall back to chunked
+     */
     public boolean directHttpUpload(String projectId,
                                      Path sourceFile,
                                      RDFFormat rdfFormat,
@@ -1613,6 +1879,7 @@ public class SparqlDatasetService {
                 ? resolvedOptions.getMode()
                 : ImportOptions.ImportMode.FULL;
 
+        // Direct upload does not support DIFF mode or namespace partitioning
         if (mode == ImportOptions.ImportMode.DIFF) {
             log.info("[DirectUpload] DIFF mode not supported, falling back to chunked");
             return false;
@@ -1723,7 +1990,9 @@ public class SparqlDatasetService {
             log.info("═══════════════════════════════════════════════════════════");
             log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
             log.info("  Verified triples: {}", verifiedSize);
-
+            // Re-seed tripleCountCache immediately so that the first topLevelClasses()
+            // call after import doesn't hit the 8-second COUNT timeout (which returns -1).
+            // invalidateContextCaches() above just cleared this entry.
             if (verifiedSize > 0) {
                 tripleCountCache.put(projectId, verifiedSize);
                 if (verifiedSize >= 1_000_000L && projectRepoCache != null) {
@@ -1754,6 +2023,9 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Fuseki has no server-side import directory API — always falls back to chunked or directHttpUpload.
+     */
     public boolean serverSideImport(String projectId,
                                      Path sourceFile,
                                      RDFFormat rdfFormat,
@@ -1762,9 +2034,164 @@ public class SparqlDatasetService {
                                      ProgressListener progressListener) {
         log.debug("[ServerImport] Not supported on Fuseki — falling back to directHttpUpload / chunked");
         return false;
+        /*
+        // Legacy GraphDB server-side import body kept for reference — not used with Fuseki
+        Path importDir = Paths.get("/opt/graphdb-import");
+        if (!Files.isDirectory(importDir)) {
+            return false;
+        }
 
+        ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
+        ImportOptions.ImportMode mode = resolvedOptions.getMode() != null
+                ? resolvedOptions.getMode()
+                : ImportOptions.ImportMode.FULL;
+        boolean shouldClear = mode == ImportOptions.ImportMode.FULL;
+
+        String graphUri = getGraphUri(projectId);
+        // Use a unique filename to avoid collisions
+        String importFileName = projectId.replaceAll("[^a-zA-Z0-9._-]", "_") + "_" + System.currentTimeMillis()
+                + "." + rdfFormat.getDefaultFileExtension();
+        Path importFile = importDir.resolve(importFileName);
+
+        try {
+            // Step 1: Copy file to the shared import directory
+            long copyStart = System.nanoTime();
+            Files.copy(sourceFile, importFile, StandardCopyOption.REPLACE_EXISTING);
+            log.info("[ServerImport {}] File copied to import dir in {} ms ({} bytes)",
+                    projectId, elapsedMillis(copyStart), fileSizeBytes);
+
+            if (progressListener != null) {
+                progressListener.onProgress(new ImportProgress(fileSizeBytes / 4, fileSizeBytes, 0, elapsedMillis(copyStart)));
+            }
+
+            // Step 2: (Graph clearing is handled atomically by replaceGraphs in the REST API call below)
+            // This avoids a race where the graph is cleared but import fails mid-way, leaving empty graph
+
+            if (progressListener != null) {
+                progressListener.onProgress(new ImportProgress(fileSizeBytes / 2, fileSizeBytes, 0, elapsedMillis(copyStart)));
+            }
+
+            // Step 3: Trigger GraphDB server-side import via REST API
+            // The file is at /opt/graphdb/home/graphdb-import/<filename> inside the GraphDB container
+            long importStart = System.nanoTime();
+            log.info("[ServerImport {}] Triggering server-side import: file={}, graph={}", projectId, importFileName, graphUri);
+
+            HttpClient httpClient = HttpClient.newHttpClient();
+            String importUrl = graphdbUrl + "/rest/data/import/server/" + URLEncoder.encode(repositoryId, StandardCharsets.UTF_8);
+
+            // GraphDB server-side import request body
+            // Use replaceGraphs to atomically clear+import (avoids race where we clear graph then fail mid-import)
+            String replaceGraphsJson = shouldClear ? "[\"" + graphUri + "\"]" : "[]";
+            String jsonBody = String.format(
+                    "{\"fileNames\":[\"%s\"],\"importSettings\":{\"context\":\"%s\",\"replaceGraphs\":%s}}",
+                    importFileName, graphUri, replaceGraphsJson);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(importUrl))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 300) {
+                log.warn("[ServerImport {}] GraphDB REST API returned {}: {}", projectId, response.statusCode(), response.body());
+                return false;
+            }
+            log.info("[ServerImport {}] Import triggered, polling for completion...", projectId);
+
+            // Step 4: Poll for completion
+            // Scale timeout with file size: small files should fail fast, large files get more time
+            String statusUrl = graphdbUrl + "/rest/data/import/server/" + URLEncoder.encode(repositoryId, StandardCharsets.UTF_8);
+            int maxPolls;
+            if (fileSizeBytes < 1024 * 1024) {           // < 1MB: 30 seconds
+                maxPolls = 30;
+            } else if (fileSizeBytes < 50 * 1024 * 1024) { // < 50MB: 3 minutes
+                maxPolls = 180;
+            } else {
+                maxPolls = 600;                             // >= 50MB: 10 minutes
+            }
+            log.info("[ServerImport {}] File size: {} bytes, maxPolls: {}", projectId, fileSizeBytes, maxPolls);
+            for (int poll = 0; poll < maxPolls; poll++) {
+                Thread.sleep(1000);
+
+                HttpRequest statusReq = HttpRequest.newBuilder()
+                        .uri(URI.create(statusUrl))
+                        .GET()
+                        .build();
+                HttpResponse<String> statusResp = httpClient.send(statusReq, HttpResponse.BodyHandlers.ofString());
+                String body = statusResp.body();
+
+                // Check if our file is still in the import list (means still importing or queued)
+                if (!body.contains(importFileName)) {
+                    // File no longer in list — import finished
+                    log.info("[ServerImport {}] Import completed in {} ms", projectId, elapsedMillis(importStart));
+                    break;
+                }
+
+                // Check for status in the JSON response
+                if (body.contains("\"status\":\"DONE\"") && body.contains(importFileName)) {
+                    log.info("[ServerImport {}] Import DONE in {} ms", projectId, elapsedMillis(importStart));
+                    break;
+                }
+                if (body.contains("\"status\":\"ERROR\"") && body.contains(importFileName)) {
+                    log.error("[ServerImport {}] Import failed: {}", projectId, body);
+                    return false;
+                }
+
+                // Update progress
+                if (progressListener != null && poll % 2 == 0) {
+                    long elapsed = elapsedMillis(copyStart);
+                    // Estimate progress: 50% is copy done, 50-99% is GraphDB processing
+                    int estimatedPercent = (int) Math.min(99, 50 + (poll * 50.0 / maxPolls));
+                    progressListener.onProgress(new ImportProgress(
+                            (long) (fileSizeBytes * estimatedPercent / 100.0), fileSizeBytes, 0, elapsed));
+                }
+
+                // Early exit for small files: if still not done after maxPolls, don't wait more
+                if (poll == maxPolls - 1) {
+                    log.warn("[ServerImport {}] Polling timed out after {} seconds — falling back to other methods", projectId, maxPolls);
+                }
+            }
+
+            // Step 5: Verify (using SPARQL COUNT, much faster than conn.size())
+            try (RepositoryConnection conn = getRepository().getConnection()) {
+                long size = countGraphTriplesSparql(conn, graphUri);
+                log.info("[ServerImport {}] ✅ Verification: graph has {} triples", projectId, size);
+                if (size == 0) {
+                    log.warn("[ServerImport {}] Graph is empty after import — falling back to chunked", projectId);
+                    return false;
+                }
+            }
+
+            if (progressListener != null) {
+                progressListener.onProgress(new ImportProgress(fileSizeBytes, fileSizeBytes, 0, elapsedMillis(copyStart)));
+            }
+
+            // Invalidate context caches after new data is committed
+            invalidateContextCaches(projectId);
+
+            long totalMs = elapsedMillis(copyStart);
+            log.info("═══════════════════════════════════════════════════════════");
+            log.info("✅ SERVER-SIDE IMPORT COMPLETE for project: {}", projectId);
+            log.info("  TOTAL TIME: {} ms ({} seconds)", totalMs, totalMs / 1000);
+            log.info("═══════════════════════════════════════════════════════════");
+            return true;
+
+        } catch (Exception e) {
+            log.warn("[ServerImport {}] Server-side import failed, will fall back to chunked: {}", projectId, e.getMessage());
+            return false;
+        } finally {
+            // Clean up the import file
+            try { Files.deleteIfExists(importFile); } catch (Exception ignored) {}
+        }
+        */
     }
 
+    /**
+     * Bulk load RDF data from input stream into GraphDB
+     * Supports: RDF/XML, Turtle, N-Triples, JSON-LD
+     * Uses streaming to handle large files without loading entire content into memory
+     */
     public void bulkLoad(String projectId, InputStream inputStream, RDFFormat rdfFormat) {
         long bulkLoadStart = System.nanoTime();
         try {
@@ -1774,6 +2201,8 @@ public class SparqlDatasetService {
             log.info("Starting bulk load for project: {} with format: {} (endpoint: {})",
                     projectId, rdfFormat, fusekiQueryEndpoint);
 
+            // Wrap with BOM-aware input stream to handle UTF-8 BOM (Byte Order Mark)
+            // Many OWL files downloaded from the internet have BOM which can cause parse failures
             InputStream bomStrippedStream = new org.apache.commons.io.input.BOMInputStream(
                 inputStream,
                 org.apache.commons.io.ByteOrderMark.UTF_8,
@@ -1781,18 +2210,23 @@ public class SparqlDatasetService {
                 org.apache.commons.io.ByteOrderMark.UTF_16BE
             );
 
-            InputStream bufferedStream = new java.io.BufferedInputStream(bomStrippedStream, 65536);
+            // Use large buffered input stream for better performance
+            InputStream bufferedStream = new java.io.BufferedInputStream(bomStrippedStream, 65536); // 64KB buffer
 
             try (RepositoryConnection conn = repo.getConnection()) {
                 var valueFactory = conn.getValueFactory();
                 IRI graphIri = valueFactory.createIRI(graphUri);
 
+                // **CRITICAL PERFORMANCE FIX**: Disable auto-commit for bulk loading
+                // This groups all operations into a single transaction instead of committing each triple
                 boolean originalAutoCommit = conn.isAutoCommit();
 
+                // Only disable auto-commit if not already disabled
                 if (originalAutoCommit) {
                     conn.setAutoCommit(false);
                 }
 
+                // Only begin transaction if not already active
                 if (!conn.isActive()) {
                     conn.begin();
                     log.info("Started new transaction for bulk load");
@@ -1805,12 +2239,13 @@ public class SparqlDatasetService {
 
                 java.io.File tempFile = null;
                 try {
-
+                    // Record current dataset size if possible
                     long sizeBeforeClear = safeGraphSize(conn, graphIri, "before-clear", projectId);
                     if (sizeBeforeClear >= 0) {
                         log.info("Project {}: {} triples detected before clear", projectId, sizeBeforeClear);
                     }
 
+                    // Clear existing data only if needed (avoid hanging clears on empty graphs)
                     if (sizeBeforeClear > 0) {
                         clearGraph(conn, graphIri, graphUri, projectId);
                     } else {
@@ -1819,6 +2254,9 @@ public class SparqlDatasetService {
 
                     log.info("Loading data into GraphDB graph: {}", graphUri);
 
+                    // WORKAROUND for "Connection reset by peer" errors:
+                    // Save stream to temp file first, then load from file
+                    // This makes the request repeatable if connection fails
                     tempFile = java.io.File.createTempFile("graphdb-upload-", ".rdf");
                     tempFile.deleteOnExit();
 
@@ -1833,13 +2271,14 @@ public class SparqlDatasetService {
                             tempFileDuration, fileSize, fileSize / 1024 / 1024,
                             (fileSize / 1024.0 / 1024.0) / (tempFileDuration / 1000.0));
 
+                    // Now load from file (repeatable if connection drops)
                     long addStart = System.nanoTime();
                     final AtomicLong tripleCounter = new AtomicLong(0);
                     final AtomicLong lastLogTime = new AtomicLong(System.currentTimeMillis());
                     try (java.io.FileInputStream fis = new java.io.FileInputStream(tempFile)) {
-
+                        // Use a parser to capture namespaces while loading
                         org.eclipse.rdf4j.rio.RDFParser parser = org.eclipse.rdf4j.rio.Rio.createParser(rdfFormat);
-
+                        // Lenient parsing for OWL/XML compatibility
                         parser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
                         parser.getParserConfig().set(BasicParserSettings.VERIFY_DATATYPE_VALUES, false);
                         parser.getParserConfig().set(BasicParserSettings.NORMALIZE_DATATYPE_VALUES, false);
@@ -1855,10 +2294,10 @@ public class SparqlDatasetService {
                                 st = sanitizeStatement(st, conn.getValueFactory());
                                 conn.add(st, graphIri);
                                 long count = tripleCounter.incrementAndGet();
-
+                                // Log progress every 50000 triples or every 30 seconds
                                 if (count % 50000 == 0 || (System.currentTimeMillis() - lastLogTime.get() > 30000)) {
                                     long elapsed = elapsedMillis(addStart);
-                                    double rate = (count * 1000.0) / elapsed;
+                                    double rate = (count * 1000.0) / elapsed; // triples per second
                                     log.info("  Progress: {} triples parsed/uploaded in {} ms ({} triples/sec)",
                                             count, elapsed, (long) rate);
                                     lastLogTime.set(System.currentTimeMillis());
@@ -1872,10 +2311,13 @@ public class SparqlDatasetService {
                     log.info("✓ Parsing & uploading completed in {} ms ({} sec) - {} triples at {} triples/sec",
                             parseDuration, parseDuration / 1000, tripleCounter.get(), (long) parseRate);
 
+                    // Get size after loading (SPARQL COUNT is much faster than conn.size())
                     long sizeQueryStart = System.nanoTime();
                     long tripleCount = countGraphTriplesSparql(conn, graphUri);
                     log.info("Graph size computed in {} ms", elapsedMillis(sizeQueryStart));
 
+                    // **COMMIT THE TRANSACTION** - This is where all changes are persisted
+                    // For large files (100k+ triples), this commit can take 1-5 minutes
                     log.warn("⏳ Committing {} triples to GraphDB - this may take several minutes for large ontologies...", tripleCount);
                     long commitStart = System.nanoTime();
                     conn.commit();
@@ -1883,6 +2325,7 @@ public class SparqlDatasetService {
                     log.info("✓ Transaction committed in {} ms ({} seconds)",
                             commitDuration, commitDuration / 1000);
 
+                    // Restore original auto-commit setting
                     conn.setAutoCommit(originalAutoCommit);
 
                     long totalDuration = elapsedMillis(bulkLoadStart);
@@ -1898,7 +2341,7 @@ public class SparqlDatasetService {
                     log.info("  Average speed: {} triples/sec", (long)((tripleCount * 1000.0) / Math.max(totalDuration, 1)));
                     log.info("═══════════════════════════════════════════════════════════");
                 } catch (Exception e) {
-
+                    // Rollback on any error
                     try {
                         if (conn.isActive()) {
                             conn.rollback();
@@ -1907,7 +2350,7 @@ public class SparqlDatasetService {
                     } catch (Exception rollbackEx) {
                         log.error("Failed to rollback transaction", rollbackEx);
                     }
-                    throw e;
+                    throw e; // Re-throw to outer catch blocks
                 } finally {
                     if (tempFile != null) tempFile.delete();
                 }
@@ -1917,6 +2360,7 @@ public class SparqlDatasetService {
             log.error("RDF parsing failed for project: {}. Parse error: {}", projectId, e.getMessage());
             log.error("Error at line {}, column {}", e.getLineNumber(), e.getColumnNumber());
 
+            // Log more context about the error
             String errorMsg = "Invalid RDF format";
             if (e.getMessage().contains("prolog")) {
                 errorMsg = "File encoding issue or invalid XML prolog. The file may have hidden characters, incorrect BOM, or is not valid RDF/XML.";
@@ -1983,6 +2427,9 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Clear all data for a project (dedicated dataset if present, plus legacy shared named graph).
+     */
     public void clearDataset(String projectId) {
         try {
             String graphUri = getGraphUri(projectId);
@@ -2016,10 +2463,18 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Get prefix mappings from the dataset.
+     * Returns all namespaces registered in the GraphDB repository.
+     */
     public Map<String, String> getPrefixes(String projectId) {
         return doGetPrefixes(projectId);
     }
 
+    /**
+     * Internal: returns prefixes registered in the GraphDB repository.
+     * Uses the fast conn.getNamespaces() API instead of scanning all triples.
+     */
     private Map<String, String> doGetPrefixes(String projectId) {
         Map<String, String> prefixes = new HashMap<>();
 
@@ -2046,16 +2501,20 @@ public class SparqlDatasetService {
         return prefixes;
     }
 
+    /**
+     * Set prefix mappings in the dataset
+     */
     public void setPrefixes(String projectId, Map<String, String> prefixes) {
         try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
 
+            // Add prefix mappings to repository
             for (Map.Entry<String, String> entry : prefixes.entrySet()) {
                 String prefix = entry.getKey();
-
+                // Normalize: strip trailing colon for RDF4J
                 if (prefix.endsWith(":")) {
                     prefix = prefix.substring(0, prefix.length() - 1);
                 } else if (prefix.equals(":")) {
-                    prefix = "";
+                    prefix = ""; // Default prefix
                 }
                 conn.setNamespace(prefix, entry.getValue());
             }
@@ -2068,6 +2527,9 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Update a single prefix mapping
+     */
     public void updatePrefix(String projectId, String prefix, String iri) {
         try (RepositoryConnection conn = getRepository().getConnection()) {
             String normalizedPrefix = prefix;
@@ -2084,6 +2546,9 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Remove a prefix mapping from the dataset
+     */
     public void removePrefix(String projectId, String prefix) {
         try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
             String normalizedPrefix = prefix;
@@ -2100,6 +2565,9 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Get dataset size (triple count) for a project
+     */
     public long getDatasetSize(String projectId) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
@@ -2120,10 +2588,17 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Check if dataset exists for a project
+     */
     public boolean datasetExists(String projectId) {
         return getDatasetSize(projectId) > 0;
     }
 
+    /**
+     * Export dataset as RDF string
+     */
+    // GraphDB internal/system namespace prefixes that should not appear in ontology exports
     private static final Set<String> GRAPHDB_SYSTEM_NAMESPACE_PREFIXES = Set.of(
         "sail", "geof", "graphdb", "rdf4j", "sesame", "rep", "sr", "apf", "afn",
         "list", "agg", "omgeo", "geoext", "ofn", "path", "spif", "fn",
@@ -2146,7 +2621,7 @@ public class SparqlDatasetService {
             conn.export(Rio.createWriter(format, writer), contexts.toArray(new IRI[0]));
 
             String result = writer.toString();
-
+            // Post-process: strip GraphDB system xmlns declarations from RDF/XML output
             if (format == org.eclipse.rdf4j.rio.RDFFormat.RDFXML) {
                 result = stripSystemNamespaces(result);
             }
@@ -2160,10 +2635,23 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Stream-export the dataset directly to the given OutputStream without buffering
+     * the entire graph in a StringWriter first. Callers that previously used
+     * exportDataset() + ByteArrayInputStream should switch to this method to avoid
+     * the heap spike (StringWriter + String + ByteArrayInputStream = 3× graph size in RAM).
+     */
     public void exportDatasetToStream(String projectId, RDFFormat format, OutputStream out) {
         exportDatasetToStream(projectId, null, format, out);
     }
 
+    /**
+     * Stream-export the dataset, optionally overlaying the user's private draft graph.
+     * When userId is provided, draft additions become visible to the reasoner.
+     * Note: draft-deleted entities from the main graph still appear (deletion markers are
+     * non-OWL predicates and are ignored by OWLAPI — they do not affect correctness for
+     * additions, which is the common private-mode use case).
+     */
     public void exportDatasetToStream(String projectId, String userId, RDFFormat format, OutputStream out) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
@@ -2188,13 +2676,24 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Strip GraphDB internal system namespace declarations from RDF/XML export output.
+     * GraphDB registers many internal namespaces in its repository config that pollute exports —
+     * but some of the "system" prefixes (e.g. skos, wgs, gn) are also real, commonly-used ontology
+     * vocabularies. Blindly deleting the xmlns declaration while leaving `prefix:something`
+     * elements/attributes in the body (because the ontology's own data genuinely uses that
+     * vocabulary) produces XML with an undefined namespace prefix, which any namespace-aware
+     * parser (OWLAPI, OntoCode, xmllint) rejects as malformed. Only strip a declaration when the
+     * prefix is truly unused elsewhere in the document.
+     */
     private String stripSystemNamespaces(String rdfXml) {
-
+        // Remove xmlns:PREFIX="..." declarations for known system namespaces, but only when
+        // that prefix isn't actually referenced as a QName anywhere else in the document.
         for (String prefix : GRAPHDB_SYSTEM_NAMESPACE_PREFIXES) {
             java.util.regex.Pattern usagePattern = java.util.regex.Pattern.compile(
                 "[<\\s\"']" + java.util.regex.Pattern.quote(prefix) + ":[A-Za-z_]");
             if (usagePattern.matcher(rdfXml).find()) {
-
+                // Genuinely used as an element/attribute prefix — keep its declaration.
                 continue;
             }
             rdfXml = rdfXml.replaceAll(
@@ -2207,9 +2706,13 @@ public class SparqlDatasetService {
         return getRepository().getConnection();
     }
 
+    /**
+     * Execute custom SPARQL query with connection
+     */
     public TupleQueryResult executeQuery(RepositoryConnection conn, String projectId, String sparqlQuery) {
         String graphUri = getGraphUri(projectId);
 
+        // Inject FROM clause if not present
         if (!sparqlQuery.toUpperCase().contains("FROM")) {
             sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
                 buildFromClause(conn, projectId) + " WHERE");
@@ -2222,6 +2725,9 @@ public class SparqlDatasetService {
         return result;
     }
 
+    /**
+     * Shutdown repository connections
+     */
     @PreDestroy
     public void shutdown() {
         if (repository != null && repository.isInitialized()) {
@@ -2238,7 +2744,7 @@ public class SparqlDatasetService {
     private String extractQueryType(String sparql) {
         if (sparql == null) return "UNKNOWN";
         String trimmed = sparql.stripLeading().toUpperCase();
-
+        // Skip PREFIX declarations
         while (trimmed.startsWith("PREFIX")) {
             int nl = trimmed.indexOf('\n');
             if (nl < 0) break;
@@ -2253,6 +2759,7 @@ public class SparqlDatasetService {
         return "QUERY";
     }
 
+    /** Scale GSP/HTTP upload timeouts with file size — large Fuseki commits can exceed 10 min. */
     private java.time.Duration gspRequestTimeout(long fileSizeBytes) {
         long mb = fileSizeBytes > 0 ? fileSizeBytes / (1024 * 1024) : 0;
         if (mb >= 200) {
@@ -2275,6 +2782,10 @@ public class SparqlDatasetService {
         return java.time.Duration.ofMinutes(30);
     }
 
+    /**
+     * Fuseki may return HTTP 200 from GSP PUT before TDB2 finishes indexing large RDF/XML.
+     * Poll briefly before falling back to slow client-side chunked parse.
+     */
     private long waitForGraphTriplesAfterDirectUpload(Repository repository,
                                                       String graphUri,
                                                       String projectId,
@@ -2304,8 +2815,15 @@ public class SparqlDatasetService {
         return verifiedSize;
     }
 
+    // Triple counts only change on import/mutation, but the UI polls status every ~2s.
+    // Without this cache each poll runs COUNT(*) — 10-60s on large cold TDB2 graphs,
+    // stacking polls until the gateway 504s and the import looks failed to the user.
     private final Map<String, Long> tripleCountCache = new ConcurrentHashMap<>();
 
+    /**
+     * Triple count for a project's named graph (-1 if Fuseki is unreachable).
+     * Lightweight helper for status polling during long imports.
+     */
     public long getGraphTripleCount(String projectId) {
         Long cached = tripleCountCache.get(projectId);
         if (cached != null) {
@@ -2335,16 +2853,19 @@ public class SparqlDatasetService {
     }
 
     private int resolveBatchSize(long fileSizeBytes) {
-
+        // Larger batches reduce HTTP round-trip overhead.
+        // Each batch is one HTTP POST to GraphDB's transaction endpoint.
+        // For a 224MB/2.8M triple file at 10K batch size = 280 HTTP requests.
+        // At 50K batch size = 56 HTTP requests — 5x fewer round-trips.
         if (fileSizeBytes <= 0) {
             return 5000;
         }
         long mb = fileSizeBytes / (1024 * 1024);
         if (mb >= 200) {
-            return 50000;
+            return 50000;  // Large files: maximize throughput, fewer HTTP round-trips
         }
         if (mb >= 50) {
-            return 25000;
+            return 25000;  // Medium files: balanced
         }
         if (mb >= 10) {
             return 10000;
@@ -2360,15 +2881,17 @@ public class SparqlDatasetService {
 
             int contentStart = -1;
 
+            // First, check for UTF-8 BOM (EF BB BF) - common issue with text editors
             if (head.length >= 3 && head[0] == (byte) 0xEF && head[1] == (byte) 0xBB && head[2] == (byte) 0xBF) {
                 log.info("Detected UTF-8 BOM, will strip 3 bytes");
                 contentStart = 3;
             }
 
+            // Check for leading whitespace (spaces, tabs, newlines) before content
             if (contentStart == -1) {
                 for (int i = 0; i < head.length; i++) {
                     byte b = head[i];
-
+                    // Skip whitespace: space (32), tab (9), newline (10), carriage return (13)
                     if (b != 32 && b != 9 && b != 10 && b != 13) {
                         if (i > 0) {
                             contentStart = i;
@@ -2379,9 +2902,10 @@ public class SparqlDatasetService {
                 }
             }
 
+            // For XML-based formats (RDF/XML, OWL/XML), look for XML markers
             if (format == RDFFormat.RDFXML) {
-
-                if (contentStart == -1 || contentStart > 100) {
+                // Look for <?xml declaration
+                if (contentStart == -1 || contentStart > 100) { // Only search if we haven't found content or found too much garbage
                     for (int i = 0; i < head.length - 5; i++) {
                         if (head[i] == '<' && head[i + 1] == '?' &&
                                 head[i + 2] == 'x' && head[i + 3] == 'm' && head[i + 4] == 'l') {
@@ -2392,6 +2916,7 @@ public class SparqlDatasetService {
                     }
                 }
 
+                // Look for <rdf:RDF opening tag
                 if (contentStart == -1) {
                     String headStr = new String(head, 0, Math.min(head.length, 1024), java.nio.charset.StandardCharsets.UTF_8);
                     int rdfIndex = headStr.indexOf("<rdf:RDF");
@@ -2401,6 +2926,7 @@ public class SparqlDatasetService {
                     }
                 }
 
+                // Look for <owl:Ontology or <Ontology tags
                 if (contentStart == -1) {
                     String headStr = new String(head, 0, Math.min(head.length, 1024), java.nio.charset.StandardCharsets.UTF_8);
                     int owlIndex = headStr.indexOf("<owl:Ontology");
@@ -2413,32 +2939,35 @@ public class SparqlDatasetService {
                     }
                 }
             } else if (format == RDFFormat.TURTLE || format == RDFFormat.N3) {
-
+                // For Turtle/N3, look for @prefix or @base directives
                 if (contentStart == -1 || contentStart > 100) {
                     String headStr = new String(head, 0, Math.min(head.length, 1024), java.nio.charset.StandardCharsets.UTF_8);
                     int prefixIndex = headStr.indexOf("@prefix");
                     if (prefixIndex < 0) {
                         prefixIndex = headStr.indexOf("@base");
                     }
-                    if (prefixIndex >= 0 && prefixIndex < 100) {
+                    if (prefixIndex >= 0 && prefixIndex < 100) { // Only if reasonable
                         contentStart = prefixIndex;
                         log.info("Found Turtle directive at character offset: {}", prefixIndex);
                     }
                 }
             }
 
+            // If no content markers found, return original stream
             if (contentStart == -1) {
                 log.info("No garbage bytes detected, using original stream");
                 buffered.reset();
                 return buffered;
             }
 
+            // If content starts at the beginning, no stripping needed
             if (contentStart == 0) {
                 log.info("Content starts at byte 0, no stripping needed");
                 buffered.reset();
                 return buffered;
             }
 
+            // Strip the garbage bytes before actual content
             log.warn("Stripping {} bytes of garbage before {} content", contentStart, format);
             byte[] trimmed = new byte[head.length - contentStart];
             System.arraycopy(head, contentStart, trimmed, 0, trimmed.length);
@@ -2449,6 +2978,9 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * @deprecated Use stripLeadingGarbage instead
+     */
     @Deprecated
     private InputStream stripLeadingGarbageRdfXml(InputStream inputStream) {
         return stripLeadingGarbage(inputStream, RDFFormat.RDFXML);
@@ -2519,7 +3051,7 @@ public class SparqlDatasetService {
         }
         long count = totalTriples.addAndGet(batch.size());
         long durationMs = elapsedMillis(start);
-
+        // Log every 50K triples with timing
         if (count % 50000 == 0) {
             log.info("[TIMING] flushBatch: uploaded {} triples so far (this batch: {} triples in {} ms, rate: {} triples/sec)",
                      count, batch.size(), durationMs, (long)((batch.size() * 1000.0) / Math.max(durationMs, 1)));
@@ -2530,6 +3062,11 @@ public class SparqlDatasetService {
         batch.clear();
     }
 
+    /**
+     * POST a batch of statements directly to Fuseki's GSP endpoint as Turtle.
+     * Bypasses RDF4J SPARQL INSERT DATA transactions — no Jetty 20MB form limit.
+     * GSP POST appends to the named graph without replacing it.
+     */
     private void postBatchToGSP(String projectId, List<Statement> batch, String graphUri, long fileSizeBytes) {
         if (batch.isEmpty()) return;
 
@@ -2570,6 +3107,10 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Flush a batch with retry logic. If GraphDB is temporarily unresponsive (GC pause,
+     * high load), wait and retry up to 3 times with exponential backoff.
+     */
     private void flushBatchWithRetry(String projectId,
                                      RepositoryConnection conn,
                                      List<Statement> batch,
@@ -2578,7 +3119,7 @@ public class SparqlDatasetService {
                                      int batchSize,
                                      long fileSizeBytes) {
         int maxRetries = 3;
-        long backoffMs = 5_000;
+        long backoffMs = 5_000; // 5s initial backoff
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 flushBatch(projectId, conn, batch, graphIri, totalTriples, batchSize, fileSizeBytes);
@@ -2596,7 +3137,7 @@ public class SparqlDatasetService {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException("Interrupted during retry backoff", ie);
                 }
-
+                // Verify GraphDB is reachable before retrying
                 if (!waitForGraphDB(15_000)) {
                     throw new RuntimeException("Fuseki did not recover within timeout. Last error: " + e.getMessage(), e);
                 }
@@ -2605,6 +3146,9 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Check if an exception is a connection-level error (connection refused, timeout, etc.)
+     */
     private boolean isConnectionError(Throwable e) {
         Throwable current = e;
         while (current != null) {
@@ -2623,6 +3167,10 @@ public class SparqlDatasetService {
         return false;
     }
 
+    /**
+     * Wait for Fuseki to become reachable, polling every 2 seconds.
+     * @return true if Fuseki responds within the timeout
+     */
     private boolean waitForGraphDB(long timeoutMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
@@ -2637,12 +3185,12 @@ public class SparqlDatasetService {
                         .build();
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
                 if (response.statusCode() == 200 || response.statusCode() == 400) {
-
+                    // 400 = endpoint reachable but needs a query param — that's OK
                     log.info("Fuseki is reachable again (status {})", response.statusCode());
                     return true;
                 }
             } catch (Exception ignored) {
-
+                // Still not reachable
             }
             try {
                 Thread.sleep(2_000);
@@ -2666,6 +3214,11 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Fast triple count using SPARQL COUNT instead of conn.size().
+     * conn.size(graphIri) is extremely slow on GraphDB (20-60s even for small graphs)
+     * because it scans the entire index. A SPARQL COUNT query is orders of magnitude faster.
+     */
     private long countGraphTriplesSparql(RepositoryConnection conn, String graphUri) {
         String query = "SELECT (COUNT(*) AS ?count) FROM <" + graphUri + "> WHERE { ?s ?p ?o }";
         try (TupleQueryResult result = conn.prepareTupleQuery(query).evaluate()) {
@@ -2683,6 +3236,11 @@ public class SparqlDatasetService {
         return 0;
     }
 
+    /**
+     * ASK-based existence check: returns true immediately on the first triple found.
+     * Use this instead of countGraphTriplesSparql when you only need a yes/no answer —
+     * ASK is O(1) regardless of graph size while COUNT scans every triple.
+     */
     private boolean askGraphHasData(RepositoryConnection conn, String graphUri) {
         String query = "ASK { GRAPH <" + graphUri + "> { ?s ?p ?o } }";
         try {
@@ -2733,7 +3291,10 @@ public class SparqlDatasetService {
     }
 
     private List<String> getPartitionGraphs(RepositoryConnection conn, String projectId, String baseGraph) {
-
+        // Partition graphs are only created during import with PartitionStrategy.NAMESPACE.
+        // They are populated into the cache at import time (see bulkLoadChunked).
+        // If cache is cold/expired, we return empty — no expensive GraphDB queries needed.
+        // getContextIDs() over HTTP takes 20-64 seconds and is not acceptable.
         PartitionGraphs cached = partitionGraphCache.get(projectId);
         if (cached != null) {
             long age = System.currentTimeMillis() - cached.lastUpdatedMs;
@@ -2741,35 +3302,51 @@ public class SparqlDatasetService {
                 return cached.graphUris;
             }
         }
-
+        // Cold cache — assume no partitions (base graph only).
+        // Partitions will be populated after the next import if applicable.
         log.debug("[TIMING] getPartitionGraphs for project {}: cache miss, returning empty (no expensive query)", projectId);
         return List.of();
     }
 
+    /**
+     * Register partition graphs discovered during import into the cache.
+     * Called from bulkLoadChunked when partitionByNamespace is enabled.
+     */
     public void registerPartitionGraphs(String projectId, List<String> graphs) {
         partitionGraphCache.put(projectId, new PartitionGraphs(graphs, System.currentTimeMillis()));
         log.info("[CACHE] Registered {} partition graphs for project {}", graphs.size(), projectId);
     }
 
+    /**
+     * Invalidate every cache derived from the project's triples after a SPARQL UPDATE.
+     * Deliberately does NOT touch the partition graph cache (partitions only change on import).
+     */
     private void invalidateDerivedCachesAfterUpdate(String projectId) {
         tripleCountCache.remove(projectId);
         String userId = SparqlQueryContext.getUserId();
-
+        // userId alone doesn't mean "this was a draft mutation" — it's resolvable via
+        // header/JWT on every authenticated request, draft or public alike. The mutation
+        // endpoint's explicit draft=true/false request param (mirrored into wantsDraft by
+        // SparqlQueryContextInterceptor) is the real signal.
         boolean isDraftMutation = SparqlQueryContext.wantsDraft() && userId != null && !userId.isBlank();
         if (isDraftMutation) {
-
+            // Draft: evict only this user's Caffeine L1 entries — public users' cache is unaffected.
+            // MongoDB L2 (topLevelCacheService) is skipped: it reflects the public graph, unchanged.
             if (springCacheEviction != null) {
                 springCacheEviction.evictForProjectAndUser(projectId, userId);
             }
         } else {
-
+            // Public mutation: evict all project-scoped cache entries (all users see updated data).
             if (topLevelCacheService != null) {
                 topLevelCacheService.evict(projectId);
             }
             if (hierarchyIndexService != null) {
                 hierarchyIndexService.markStale(projectId);
             }
-
+            // Structured mutations invalidate class details per affected IRI in
+            // OntologyMutationService — a project-wide drop here would defeat the
+            // prewarmed cache. Only unstructured writes (raw SPARQL, Manchester,
+            // citations, admin ops) have unknown scope and need the full drop.
             if (classDetailCacheService != null && !MutationContext.hasStructuredOps()) {
                 classDetailCacheService.dropAll(projectId);
             }
@@ -2780,6 +3357,14 @@ public class SparqlDatasetService {
         markProjectDirty(projectId);
     }
 
+    /**
+     * Marker file recording that Fuseki has changes the on-disk OWL artifacts don't.
+     * DesktopOntologyLoader and HierarchySnapshotBuildService both check it before trusting
+     * an on-disk ontology.original.* or ontology.current.* file, re-exporting fresh from Fuseki
+     * instead when it's present. Public so callers whose write path reimports into Fuseki
+     * without also resyncing the on-disk file (e.g. code-view-save) can re-assert dirty after
+     * bulkLoadChunked()'s internal invalidateContextCaches() incorrectly clears it (see below).
+     */
     public void markProjectDirty(String projectId) {
         if (projectId == null || projectId.isBlank()) return;
         try {
@@ -2794,6 +3379,7 @@ public class SparqlDatasetService {
         }
     }
 
+    /** Fresh import: on-disk artifacts match Fuseki again, so the dirty marker no longer applies. */
     private void clearProjectDirty(String projectId) {
         if (projectId == null || projectId.isBlank()) return;
         try {
@@ -2804,20 +3390,33 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Invalidate the per-project partition cache and Spring-managed caches.
+     * Called after successful imports to ensure new graphs are discovered.
+     */
     private void invalidateContextCaches(String projectId) {
         partitionGraphCache.remove(projectId);
         tripleCountCache.remove(projectId);
-
+        // Correct only for callers that resync the on-disk ontology.original.*/current.* file
+        // to match this same import (ProjectImportService copies the uploaded file to disk
+        // separately). bulkLoadChunked() is also the reimport path behind code-view-save, which
+        // never touches those on-disk files — that caller re-asserts dirty via markProjectDirty()
+        // right after this runs, overriding the clear below. See markProjectDirty() javadoc.
         clearProjectDirty(projectId);
-
+        // Drop the in-memory project mirror so imports are visible.
         if (projectRepoCache != null) {
             projectRepoCache.evict(projectId);
         }
-
+        // Drop the MongoDB persistent top-level class cache for this project.
         if (topLevelCacheService != null) {
             topLevelCacheService.evict(projectId);
         }
-
+        // Mark the precomputed hierarchy snapshot stale + schedule a rebuild. Without this,
+        // /classes/children (and /classes/top-level) keep serving whatever was last built —
+        // bulkLoadChunked() is the write path behind code-view-save and bulk imports, and unlike
+        // execUpdate()'s invalidateDerivedCachesAfterUpdate() it never told the snapshot a write
+        // happened, so entities added via Code View correctly appeared in Graph View (reads live
+        // SPARQL) but never in the Entities hierarchy tree (reads the stale snapshot instead).
         if (hierarchyIndexService != null) {
             hierarchyIndexService.markStale(projectId);
         }
@@ -2875,6 +3474,14 @@ public class SparqlDatasetService {
         log.info("Graph {} cleared via conn.clear() in {} ms", graphUri, elapsedMillis(fallbackStart));
     }
 
+    /**
+     * Get root classes (direct children of owl:Thing) from GraphDB using SPARQL.
+     * This queries the actual imported triples, not the original file.
+     * Works for all file formats (OWL/XML, RDF/XML, Turtle, etc.)
+     *
+     * @param projectId Project identifier
+     * @return List of maps containing class info: id, label, type, hasChildren
+     */
     public List<Map<String, Object>> getRootClassesFromGraphDB(String projectId) {
         List<Map<String, Object>> rootClasses = new ArrayList<>();
 
@@ -2883,7 +3490,8 @@ public class SparqlDatasetService {
 
         try (RepositoryConnection conn = graphBinding.repository().getConnection()) {
             String baseGraph = graphUri;
-
+            // SPARQL query to find all classes that are NOT subclasses of any class except owl:Thing
+            // Includes owl:Class, rdfs:Class, and classes only mentioned in subclass axioms
             String query =
                 "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> \n" +
                 "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> \n" +
@@ -2934,6 +3542,7 @@ public class SparqlDatasetService {
                         ? binding.getValue("label").stringValue()
                         : extractShortForm(classIri);
 
+                    // Check if this class has children
                     boolean hasChildren = classHasChildren(conn, projectId, classIri);
 
                     Map<String, Object> classInfo = new HashMap<>();
@@ -2957,6 +3566,13 @@ public class SparqlDatasetService {
         return rootClasses;
     }
 
+    /**
+     * Get child classes of a given class using SPARQL.
+     *
+     * @param projectId Project identifier
+     * @param parentClassIri IRI of the parent class
+     * @return List of maps containing child class info
+     */
     public List<Map<String, Object>> getChildClassesFromGraphDB(String projectId, String parentClassIri) {
         List<Map<String, Object>> childClasses = new ArrayList<>();
 
@@ -2965,7 +3581,7 @@ public class SparqlDatasetService {
 
         try (RepositoryConnection conn = graphBinding.repository().getConnection()) {
             String baseGraph = graphUri;
-
+            // SPARQL query to find direct children of a given class
             String query =
                 "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> \n" +
                 "PREFIX owl: <http://www.w3.org/2002/07/owl#> \n" +
@@ -3000,6 +3616,7 @@ public class SparqlDatasetService {
                         ? binding.getValue("label").stringValue()
                         : extractShortForm(childIri);
 
+                    // Check if this child has further children
                     boolean hasChildren = classHasChildren(conn, projectId, childIri);
 
                     Map<String, Object> childInfo = new HashMap<>();
@@ -3024,6 +3641,15 @@ public class SparqlDatasetService {
         return childClasses;
     }
 
+    /**
+     * Check if a class has any direct subclasses.
+     * Used to determine hasChildren flag without loading all children.
+     *
+     * @param conn RepositoryConnection to use
+     * @param graphUri URI of the graph
+     * @param classIri IRI of the class to check
+     * @return true if class has direct subclasses
+     */
     private boolean classHasChildren(RepositoryConnection conn, String projectId, String classIri) {
         try {
             String baseGraph = getGraphUri(projectId);
@@ -3057,6 +3683,11 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Sanitize a statement by percent-encoding invalid characters in IRIs.
+     * GraphDB rejects IRIs containing characters like [], {}, etc.
+     * Returns the original statement if no sanitization is needed.
+     */
     private static final AtomicLong sanitizeLogCount = new AtomicLong(0);
 
     private Statement sanitizeStatement(Statement st, ValueFactory vf) {
@@ -3094,36 +3725,45 @@ public class SparqlDatasetService {
         return changed ? vf.createStatement(subject, predicate, object) : st;
     }
 
+    /**
+     * Percent-encode characters in an IRI that GraphDB rejects.
+     * Returns null if no sanitization needed (fast path for common case).
+     * Optimized: uses char[] directly and avoids String.charAt() overhead on hot path.
+     */
     private String sanitizeIriString(String iri) {
         if (iri == null || iri.isEmpty()) return null;
 
+        // Reject IRIs that are only whitespace — GraphDB throws InvalidValueException
         if (iri.isBlank()) {
             log.warn("[IRI-SANITIZE] Skipping blank IRI");
             return "urn:invalid:blank-iri";
         }
 
+        // Fast check: scan for any character that needs encoding.
+        // Most IRIs are clean ASCII — exit as early as possible.
         final int len = iri.length();
         for (int i = 0; i < len; i++) {
             char c = iri.charAt(i);
-
+            // Control characters (0x00-0x1F, 0x7F) cause GraphDB InvalidValueException
             if (c < 0x20 || c == 0x7F
                     || c > 127 || c == ' ' || c == '[' || c == ']' || c == '{' || c == '}'
                     || c == '|' || c == '\\' || c == '^' || c == '`'
                     || c == '(' || c == ')') {
-
+                // Found a bad char — do encoding starting from this position
                 return sanitizeIriStringFrom(iri, i);
             }
         }
         return null;
     }
 
+    /** Encode bad chars in IRI starting from position {@code start}. */
     private String sanitizeIriStringFrom(String iri, int start) {
         final int len = iri.length();
         StringBuilder sb = new StringBuilder(len + 40);
-        sb.append(iri, 0, start);
+        sb.append(iri, 0, start); // copy clean prefix
         for (int i = start; i < len; i++) {
             char c = iri.charAt(i);
-
+            // Control characters (0x00-0x1F, 0x7F) — GraphDB rejects these with InvalidValueException
             if (c < 0x20 || c == 0x7F) {
                 sb.append('%');
                 sb.append(Character.toUpperCase(Character.forDigit((c >> 4) & 0xF, 16)));
@@ -3141,7 +3781,7 @@ public class SparqlDatasetService {
             else if (c == '(') sb.append("%28");
             else if (c == ')') sb.append("%29");
             else if (c > 127) {
-
+                // Percent-encode non-ASCII (Unicode subscripts, etc.)
                 byte[] utf8 = String.valueOf(c).getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 for (byte b : utf8) {
                     sb.append('%');
@@ -3154,10 +3794,17 @@ public class SparqlDatasetService {
         return sb.toString();
     }
 
+    /**
+     * Disable GraphDB's forward-chaining inference engine during bulk import.
+     * This is the single biggest performance win: without inference, commits
+     * that took 8+ minutes complete in under 30 seconds.
+     *
+     * Must be called OUTSIDE an active transaction.
+     */
     private boolean disableInferenceDuringImport(RepositoryConnection conn, ValueFactory vf) {
         try {
             if (conn.isActive()) {
-                conn.commit();
+                conn.commit(); // close any open tx first
             }
             conn.begin();
             IRI sysProp = vf.createIRI("http://www.ontotext.com/owlim/system#inferenceDisabled");
@@ -3172,6 +3819,12 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Re-enable inference after import WITHOUT triggering a full reindex.
+     * Our SPARQL queries use explicit patterns (owl:Class, rdfs:subClassOf)
+     * and do NOT depend on inferred triples, so reindex is unnecessary and
+     * would waste 14+ minutes on large ontologies.
+     */
     private void reEnableInferenceNoReindex(RepositoryConnection conn, ValueFactory vf) {
         try {
             if (conn.isActive()) {
@@ -3188,21 +3841,33 @@ public class SparqlDatasetService {
         }
     }
 
+    /**
+     * Extract short form (local name) from an IRI for use as class label.
+     * Examples:
+     *   http://example.org#MyClass -> MyClass
+     *   http://example.org/ontology#Name -> Name
+     *
+     * @param iri Full IRI string
+     * @return Short form (last part after # or /)
+     */
     private String extractShortForm(String iri) {
         if (iri == null || iri.isEmpty()) {
             return "unknown";
         }
 
+        // Try to extract after # first (OWL convention)
         int hashIndex = iri.lastIndexOf('#');
         if (hashIndex >= 0 && hashIndex < iri.length() - 1) {
             return iri.substring(hashIndex + 1);
         }
 
+        // Fall back to after last /
         int slashIndex = iri.lastIndexOf('/');
         if (slashIndex >= 0 && slashIndex < iri.length() - 1) {
             return iri.substring(slashIndex + 1);
         }
 
+        // Return as-is if no delimiter found
         return iri;
     }
 }

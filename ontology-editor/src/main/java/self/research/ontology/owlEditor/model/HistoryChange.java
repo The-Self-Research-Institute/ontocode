@@ -8,6 +8,10 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Represents a change synced from GraphDB history to MongoDB.
+ * This enables full feature support (approve, reject, comments) for GraphDB changes.
+ */
 @Document(collection = "history_changes")
 public class HistoryChange {
 
@@ -18,57 +22,63 @@ public class HistoryChange {
     private String projectId;
 
     @Indexed
-    private String editId;
+    private String editId; // The GraphDB edit IRI for deduplication
 
     @Indexed
     private String userId;
-
+    
     private String username;
 
     @Indexed
     private LocalDateTime timestamp;
 
-    private String operationType;
-
-    private String entityType;
-
+    private String operationType; // ADD, REMOVE, MODIFY
+    
+    private String entityType; // CLASS, PROPERTY, INDIVIDUAL, ANNOTATION, AXIOM
+    
     private String entityIRI;
-
+    
     private String entityLabel;
-
+    
+    // Change details from GraphDB
     private String oldValue;
     private String newValue;
-    private String annotationProperty;
-
+    private String annotationProperty; // For annotation changes, the property IRI
+    
     private String description;
-
-    private String status = "PENDING";
+    
+    // Collaboration features
+    private String status = "PENDING"; // PENDING, APPROVED, REJECTED
     private String approvedBy;
     private LocalDateTime approvedAt;
     private String rejectedBy;
     private LocalDateTime rejectedAt;
-
+    
+    // Comments
     private Map<String, CommentEntry> comments = new HashMap<>();
-
+    
+    // Conflict resolution
     private boolean hasConflict = false;
     private String conflictResolution;
     private String resolvedBy;
     private LocalDateTime resolvedAt;
-
+    
+    // Metadata from GraphDB
     private Map<String, String> metadata = new HashMap<>();
-
+    
+    // Sync tracking
     private LocalDateTime syncedAt;
-
+    
     public static class CommentEntry {
         private String userId;
         private String username;
         private String text;
         private LocalDateTime timestamp;
-
+        
         public CommentEntry() {
             this.timestamp = LocalDateTime.now();
         }
-
+        
         public CommentEntry(String userId, String username, String text) {
             this();
             this.userId = userId;
@@ -76,6 +86,7 @@ public class HistoryChange {
             this.text = text;
         }
 
+        // Getters and Setters
         public String getUserId() {
             return userId;
         }
@@ -109,6 +120,7 @@ public class HistoryChange {
         }
     }
 
+    // Constructors
     public HistoryChange() {
         this.timestamp = LocalDateTime.now();
         this.syncedAt = LocalDateTime.now();
@@ -122,6 +134,7 @@ public class HistoryChange {
         this.username = username;
     }
 
+    // Builder pattern
     public static class Builder {
         private HistoryChange change;
 
@@ -184,6 +197,7 @@ public class HistoryChange {
         }
     }
 
+    // Getters and Setters
     public String getId() {
         return id;
     }

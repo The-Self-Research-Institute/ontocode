@@ -1,5 +1,5 @@
 {
-  "name": "OntoCode Studio - Ontology Editor",
+  "name": "OntoCode - Ontology Editor",
   "description": "A web-based ontology editor running within VS Code. It provides a comprehensive interface for browsing and editing OWL ontologies, including classes, properties, and individuals. It features an integrated SWRL editor for rule-based reasoning.",
   "requestFramePermissions": []
 }
