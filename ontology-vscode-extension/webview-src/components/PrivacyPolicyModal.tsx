@@ -8,7 +8,7 @@ interface Props {
 
 const EFFECTIVE_DATE = "To be announced";
 const COMPANY = "The Self Research Institute";
-const PRODUCT = "OntoCode";
+const PRODUCT = "OntoCode Studio";
 const CONTACT = "privacy@ontocode.org";
 
 export const PrivacyPolicyModal: React.FC<Props> = ({ isOpen, onClose }) => {

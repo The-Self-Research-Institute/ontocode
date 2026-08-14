@@ -426,7 +426,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
             : 'Access until';
     const renewalDateLabel = formatBillingDate(billingSummary?.currentPeriodEnd);
     const paymentHistory = billingSummary?.paymentHistory || [];
-    const planDisplayName = plan ? `OntoCode ${plan.charAt(0)}${plan.slice(1).toLowerCase()}` : 'Subscription';
+    const planDisplayName = plan ? `OntoCode Studio ${plan.charAt(0)}${plan.slice(1).toLowerCase()}` : 'Subscription';
     const autoRenewEnabled = billingSummary?.autoRenewEnabled !== false && billingSummary?.cancelAtPeriodEnd !== true;
 
     return (
@@ -744,7 +744,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                             <Download size={16} /> Desktop License
                                         </p>
                                         <p className="text-sm text-slate-400 mt-1 text-balance">
-                                            Download a license file to activate OntoCode Desktop on your computer.
+                                            Download a license file to activate OntoCode Studio on your computer.
                                         </p>
                                         {licenseError && (
                                             <p className="text-xs text-red-400 mt-2">{licenseError}</p>

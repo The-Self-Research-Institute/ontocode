@@ -1,6 +1,6 @@
 /**
  * desktop.ts
- * Helpers for the OntoCode Electron desktop build.
+ * Helpers for the OntoCode Studio Electron desktop build.
  *
  * Desktop mode is detected by the presence of `window.electronAPI`, which is
  * exposed via the Electron preload contextBridge (and therefore reliably visible

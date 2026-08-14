@@ -76,10 +76,10 @@ export const DesktopUpdateBanner: React.FC = () => {
         <Download size={16} className="flex-shrink-0" />
         <span>
           {isReady
-            ? `OntoCode ${version} is ready. Restart to update.`
+            ? `OntoCode Studio ${version} is ready. Restart to update.`
             : isDownloading
-              ? `Downloading OntoCode ${version}… ${update.percent ?? 0}%`
-              : `A new version of OntoCode is available (${version}).`}
+              ? `Downloading OntoCode Studio ${version}… ${update.percent ?? 0}%`
+              : `A new version of OntoCode Studio is available (${version}).`}
         </span>
         {isReady ? (
           <button

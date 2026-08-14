@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.selfresearch.OntoCode</id>
+  <name>OntoCode Studio</name>
+  <summary>OWL ontology editor with reasoning and visualization</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <developer id="org.selfresearch">
+    <name>The Self Research Institute</name>
+  </developer>
+  <url type="homepage">https://ontocode.selfresearch.org</url>
+  <url type="bugtracker">https://github.com/The-Self-Research-Institute/ontocode/issues</url>
+
+  <description>
+    <p>
+      OntoCode Studio is a modular environment for building, editing, managing, and
+      collaborating on OWL ontologies. It bundles a graph-based ontology
+      editor, reasoning support, and visualization tools into a single
+      desktop application, backed by a local Apache Jena Fuseki triple
+      store and MongoDB instance.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Visual and text-based OWL/RDF/Turtle ontology editing</li>
+      <li>Built-in reasoning and consistency checking</li>
+      <li>Interactive ontology graph visualization</li>
+      <li>Local-first storage with no required network account</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">org.selfresearch.OntoCode.desktop</launchable>
+
+  <screenshots>
+    <!--
+      TODO: replace with real, permanently-hosted screenshot URLs before
+      submitting to Flathub (review requires at least one working image).
+    -->
+    <screenshot type="default">
+      <caption>OntoCode Studio ontology graph editor</caption>
+      <image>https://ontocode.selfresearch.org/assets/screenshots/editor-1.png</image>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="1.1.0-beta.18" date="2026-08-13" type="development">
+      <description>
+        <p>Beta build.</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1" />
+
+  <categories>
+    <category>Development</category>
+    <category>Science</category>
+  </categories>
+</component>

@@ -64,7 +64,7 @@ class PluginLoaderService {
       description: 'Built-in plugin',
       main: './index.js',
       category: 'Built-in',
-      author: 'OntoCode',
+      author: 'OntoCode Studio',
     };
   }
 
@@ -129,7 +129,7 @@ class PluginLoaderService {
               description: 'Built-in plugin',
               main: './index.js',
               category: 'Built-in',
-              author: 'OntoCode'
+              author: 'OntoCode Studio'
             };
           } else {
             const data = await manifestResponse.json();
@@ -145,7 +145,7 @@ class PluginLoaderService {
             description: 'Built-in plugin',
             main: './index.js',
             category: 'Built-in',
-            author: 'OntoCode'
+            author: 'OntoCode Studio'
           };
         }
       } else {

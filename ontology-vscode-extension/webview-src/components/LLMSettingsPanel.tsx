@@ -138,7 +138,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
           <div>
             <h3 className="font-semibold text-indigo-900">Graph View AI Insights</h3>
             <p className="text-sm text-indigo-700 mt-1">
-              Bring your own LLM API key. OntoCode never stores or sees your credentials. Everything stays in your browser.
+              Bring your own LLM API key. OntoCode Studio never stores or sees your credentials. Everything stays in your browser.
             </p>
           </div>
         </div>
@@ -209,7 +209,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
           </button>
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          🔒 Your key is stored only in your browser's localStorage. Never sent to OntoCode servers.
+          🔒 Your key is stored only in your browser's localStorage. Never sent to OntoCode Studio servers.
         </p>
       </div>
 

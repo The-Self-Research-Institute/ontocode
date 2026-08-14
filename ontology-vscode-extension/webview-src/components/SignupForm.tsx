@@ -105,7 +105,7 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
               <AppVersionBadge variant="dark" />
             </div>
             <h2 className="text-3xl font-bold text-white mb-2">Create Your Account</h2>
-            <p className="text-gray-300">Get started with OntoCode</p>
+            <p className="text-gray-300">Get started with OntoCode Studio</p>
           </div>
 
           {error && (

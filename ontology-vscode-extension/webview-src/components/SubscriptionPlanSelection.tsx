@@ -228,7 +228,7 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
                             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
                                 <Star size={14} className="text-white" />
                             </div>
-                            <span className="text-violet-300 text-xs font-semibold uppercase tracking-widest">OntoCode</span>
+                            <span className="text-violet-300 text-xs font-semibold uppercase tracking-widest">OntoCode Studio</span>
                         </div>
                         <h1 className="text-xl sm:text-2xl font-bold text-white">
                             {isInactiveCurrentPlan ? 'Renew your subscription' : currentRank > 1 ? 'Manage your plan' : 'Choose your plan'}

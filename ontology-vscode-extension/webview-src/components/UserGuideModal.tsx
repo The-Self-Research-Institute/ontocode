@@ -116,7 +116,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
         <div style={styles.header}>
           <div style={styles.headerTitle}>
             <BookOpen size={24} style={{ color: "#3b82f6" }} />
-            <h2 style={styles.title}>OntoCode User Guide</h2>
+            <h2 style={styles.title}>OntoCode Studio User Guide</h2>
           </div>
           <div style={styles.headerActions}>
             <button onClick={allSections} style={styles.expandAllBtn}>
@@ -131,7 +131,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
         {}
         <div style={styles.content}>
           <p style={styles.intro}>
-            Welcome to OntoCode! This guide follows the logical workflow for setting up and using OntoCode. Start with
+            Welcome to OntoCode Studio! This guide follows the logical workflow for setting up and using OntoCode Studio. Start with
             creating a workspace, then invite workspace members, and progress through creating projects and files. Each
             section includes positive scenarios (what to do) and negative scenarios (what to avoid) to help you work
             efficiently.
@@ -306,7 +306,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <div style={styles.infoBox}>
                     <strong>Available Plans:</strong>
                     <ul style={styles.roleList}>
-                      <li><strong>FREE:</strong> Limited members &amp; projects — ideal for exploring OntoCode</li>
+                      <li><strong>FREE:</strong> Limited members &amp; projects — ideal for exploring OntoCode Studio</li>
                       <li><strong>PRO:</strong> Increased member limits, priority support, monthly or annual billing — annual discount available</li>
                       <li><strong>ENTERPRISE:</strong> Unlimited members, custom limits, annual discount available</li>
                     </ul>
@@ -348,7 +348,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       </li>
                       <li>
                         <strong>Enter Card Details:</strong> Payment is handled securely by Stripe — your card data
-                        never touches OntoCode servers
+                        never touches OntoCode Studio servers
                       </li>
                       <li>
                         <strong>Confirm Subscription:</strong> After payment, your workspace is immediately upgraded and
@@ -414,7 +414,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                       your payment method promptly via the Billing portal
                     </li>
                     <li>
-                      <strong>No Downgrades:</strong> OntoCode does not support moving to a lower paid plan. You can
+                      <strong>No Downgrades:</strong> OntoCode Studio does not support moving to a lower paid plan. You can
                       keep your current plan, upgrade, or cancel renewal at period end
                     </li>
                   </ul>
@@ -571,7 +571,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   </h4>
                   <ul style={styles.list}>
                     <li>
-                      <strong>Check Email:</strong> Look for invitation email from OntoCode (check spam/junk folder if
+                      <strong>Check Email:</strong> Look for invitation email from OntoCode Studio (check spam/junk folder if
                       needed)
                     </li>
                     <li>
@@ -979,7 +979,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   <div style={styles.warning}>
                     <AlertCircle size={16} />
                     <span>
-                      <strong>Auto-save:</strong> OntoCode auto-saves drafts every 30 seconds, but explicitly save via
+                      <strong>Auto-save:</strong> OntoCode Studio auto-saves drafts every 30 seconds, but explicitly save via
                       the "File" menu click "Save" important changes to prevent loss during network issues.
                     </span>
                   </div>
@@ -1133,7 +1133,7 @@ export const UserGuideModal: React.FC<UserGuideModalProps> = ({ isOpen, onClose 
                   </h4>
                   <ul style={styles.list}>
                     <li>
-                      <strong>Auto-Reconnect:</strong> If your connection drops, OntoCode automatically reconnects and
+                      <strong>Auto-Reconnect:</strong> If your connection drops, OntoCode Studio automatically reconnects and
                       re-syncs your collaboration session
                     </li>
                     <li>
