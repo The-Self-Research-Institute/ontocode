@@ -912,7 +912,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                   <span className="truncate">{currentWorkspaceName}</span>
                 </h1>
                 <p className="text-xs sm:text-sm text-gray-500 truncate">
-                  OntoCode Project Dashboard{appVersion ? ` v${appVersion}` : ""} · Welcome, {user?.username}
+                  OntoCode Studio Project Dashboard{appVersion ? ` v${appVersion}` : ""} · Welcome, {user?.username}
                   {!isDesktop() && currentWorkspaceName && (
                     <button
                       onClick={() => {

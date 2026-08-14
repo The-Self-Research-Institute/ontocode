@@ -81,7 +81,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
                 setError('This invitation link is invalid or has been removed. Please contact the workspace owner to request a new invitation.');
             } else if (err?.code === 'ECONNREFUSED' || err?.code === 'ERR_NETWORK' || err?.message?.includes('Network Error') || err?.message?.includes('Failed to fetch')) {
 
-                setError('Unable to connect to the server. Please make sure the OntoCode services are running and try again.');
+                setError('Unable to connect to the server. Please make sure the OntoCode Studio services are running and try again.');
             } else if (err?.code === 'TIMEOUT' || err?.message?.includes('timeout')) {
                 setError('Connection timed out. Please check your network connection and try again.');
             } else {

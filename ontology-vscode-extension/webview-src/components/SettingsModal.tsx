@@ -514,7 +514,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
               {activeTab === "about" && (
                 <div className="space-y-6">
                   <div>
-                    <h4 className="text-lg font-semibold text-gray-900 mb-1">About OntoCode</h4>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">About OntoCode Studio</h4>
                     <p className="text-sm text-gray-500 mb-4">
                       Version information for the app you are running now.
                     </p>

@@ -83,7 +83,7 @@ const LoginForm = ({
           <div className="flex justify-center mb-3">
             <AppVersionBadge variant="dark" />
           </div>
-          <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Welcome to OntoCode</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Welcome to OntoCode Studio</h2>
           <p className="text-gray-300">Sign in to access your ontology editor</p>
         </div>
 

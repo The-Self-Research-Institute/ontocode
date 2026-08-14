@@ -1584,7 +1584,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           type: "showNotification",
           notification: {
             type,
-            title: "OntoCode",
+            title: "OntoCode Studio",
             message,
           },
         });
@@ -16598,7 +16598,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   href="/desktop"
                   onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('navigate-desktop-download')); }}
                   className="flex items-center gap-1.5 text-xs text-purple-600 hover:text-purple-700 hover:bg-purple-50 p-2 rounded-md cursor-pointer"
-                  title="Download OntoCode Desktop"
+                  title="Download OntoCode Studio"
                 >
                   <Monitor size={14} />
                   <span className="hidden sm:inline">Desktop</span>
