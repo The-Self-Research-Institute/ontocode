@@ -33,11 +33,11 @@ interface DraftPRPanelProps {
   projectId: string;
   userId: string;
   username: string;
-
+  /** true if the current user can approve/reject PRs (OWNER, ADMIN, EDITOR) */
   canReview: boolean;
-
+  /** true if the current user is in draft mode and can raise a PR */
   canRaisePR: boolean;
-
+  /** current draft change count for the user */
   draftCount: number;
   onPRApproved?: () => void;
 }
@@ -59,17 +59,20 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   const [activeTab, setActiveTab] = useState<"open" | "closed">("open");
   const [liveDraftCount, setLiveDraftCount] = useState(draftCount);
 
+  // Raise PR form
   const [showRaiseForm, setShowRaiseForm] = useState(false);
   const [prTitle, setPrTitle] = useState("");
   const [prDescription, setPrDescription] = useState("");
   const [raising, setRaising] = useState(false);
   const [raiseError, setRaiseError] = useState<string | null>(null);
 
+  // Review
   const [reviewingPrId, setReviewingPrId] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const [expandedPrId, setExpandedPrId] = useState<string | null>(null);
 
+  // Per-PR draft changes and conflict analysis
   const [prChangesMap, setPrChangesMap] = useState<Record<string, DraftChange[]>>({});
   const [prConflictMap, setPrConflictMap] = useState<Record<string, {
     conflictType: string;
@@ -215,7 +218,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
     try {
       const asNum = Number(raw);
       if (!isNaN(asNum) && asNum > 0) {
-
+        // epoch seconds (< 1e11) → convert to ms for JS Date
         const ms = asNum < 1e11 ? asNum * 1000 : asNum;
         return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
       }
@@ -246,7 +249,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {}
+        {/* Header */}
         <div
           className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
           style={{ borderColor: "var(--color-border)" }}
@@ -265,7 +268,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Raise PR section */}
         {canRaisePR && (
           <div className="px-4 py-3 border-b flex-shrink-0" style={{ borderColor: "var(--color-border)" }}>
             {myOpenPR ? (
@@ -333,7 +336,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
           </div>
         )}
 
-        {}
+        {/* Tabs */}
         <div className="flex border-b flex-shrink-0 px-4" style={{ borderColor: "var(--color-border)" }}>
           {(["open", "closed"] as const).map((tab) => (
             <button
@@ -353,7 +356,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
           </button>
         </div>
 
-        {}
+        {/* PR list */}
         <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3">
           {error && <div className="text-xs text-red-500 mb-1">{error}</div>}
           {loading && <div className="text-xs opacity-60 text-center py-4">Loading…</div>}
@@ -368,7 +371,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
               className="rounded border text-xs"
               style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-background-secondary, transparent)" }}
             >
-              {}
+              {/* PR header row */}
               <div
                 className="flex items-start gap-2 px-3 py-2.5 cursor-pointer"
                 onClick={() => {
@@ -405,7 +408,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                 </div>
               </div>
 
-              {}
+              {/* Expanded details */}
               {expandedPrId === pr.id && (
                 <div className="px-3 pb-3 border-t" style={{ borderColor: "var(--color-border)" }}>
                   {pr.description && (
@@ -418,7 +421,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                     <div className="mt-2 text-xs opacity-50 italic">Awaiting review</div>
                   )}
 
-                  {}
+                  {/* Full change list for reviewers */}
                   {canReview && pr.status === "OPEN" && (() => {
                     const prChanges = prChangesMap[pr.id];
                     const ci = prConflictMap[pr.id];
@@ -443,7 +446,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
 
                     return (
                       <div className="mt-2 flex flex-col gap-1.5 text-[11px]">
-                        {}
+                        {/* Conflict banners */}
                         {ci?.conflictType === "IRI_OVERLAP" && (
                           <div
                             className="rounded px-2 py-1.5 border"
@@ -473,12 +476,12 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                           </div>
                         )}
 
-                        {}
+                        {/* Change summary header */}
                         <div className="font-semibold opacity-70 mt-1">
                           {prChanges.length} change{prChanges.length !== 1 ? "s" : ""} by {pr.authorUsername}
                         </div>
 
-                        {}
+                        {/* Grouped categories */}
                         {categories.map((cat) => {
                           const items = grouped[cat];
                           const isExpanded = expandedCats.has(cat);
@@ -539,7 +542,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                     );
                   })()}
 
-                  {}
+                  {/* Review actions — only for open PRs and users who can review */}
                   {canReview && pr.status === "OPEN" && (
                     <div className="mt-3">
                       {reviewingPrId === pr.id ? (

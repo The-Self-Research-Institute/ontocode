@@ -17,6 +17,18 @@ import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditS
 
 import java.util.Map;
 
+/**
+ * WebSocket controller for handling real-time collaborative editing messages.
+ * 
+ * Message Flow:
+ * - Client sends to: /app/collab/{projectId}/edit
+ * - Server broadcasts to: /topic/ontology/{projectId}
+ * 
+ * Topics:
+ * - /topic/ontology/{projectId} - Ontology edit operations
+ * - /topic/presence/{projectId} - User presence (join/leave/cursor)
+ * - /topic/locks/{projectId} - Node lock/unlock notifications
+ */
 @Slf4j
 @Controller
 @CrossOrigin(originPatterns = "*", allowedHeaders = "*", methods = {})
@@ -27,6 +39,10 @@ public class CollaborativeEditController {
     private final CollaborativeEditService collaborativeEditService;
     private final WorkspaceOwnershipService workspaceOwnershipService;
 
+    /**
+     * Handle edit operations from clients and broadcast to all subscribers.
+     * FREE plan non-owners are rejected to prevent unauthorized ontology mutations.
+     */
     @MessageMapping("/collab/{projectId}/edit")
     public void handleEdit(
             @DestinationVariable String projectId,
@@ -37,6 +53,7 @@ public class CollaborativeEditController {
         operation.setSessionId(sessionId);
         operation.setProjectId(projectId);
 
+        // Enforce FREE plan restriction via session attributes populated by WebSocketAuthChannelInterceptor
         Map<String, Object> attrs = headerAccessor.getSessionAttributes();
         if (attrs != null) {
             String plan = (String) attrs.getOrDefault("plan", "FREE");
@@ -55,56 +72,67 @@ public class CollaborativeEditController {
         log.debug("Received edit for project {} from session {}: {}",
                 projectId, sessionId, operation.getType());
 
+        // Process and broadcast through service
         collaborativeEditService.processEdit(operation);
     }
 
+    /**
+     * Handle user presence updates (join, leave, cursor movement).
+     */
     @MessageMapping("/collab/{projectId}/presence")
     public void handlePresence(
             @DestinationVariable String projectId,
             @Payload PresenceMessage message,
             SimpMessageHeaderAccessor headerAccessor) {
-
+        
         String sessionId = headerAccessor.getSessionId();
         message.setSessionId(sessionId);
         message.setProjectId(projectId);
-
-        log.debug("Presence update for project {} from session {}: {}",
+        
+        log.debug("Presence update for project {} from session {}: {}", 
                 projectId, sessionId, message.getType());
-
+        
         collaborativeEditService.processPresence(message);
     }
 
+    /**
+     * Handle lock/unlock requests for ontology nodes.
+     */
     @MessageMapping("/collab/{projectId}/lock")
     public void handleLock(
             @DestinationVariable String projectId,
             @Payload LockMessage message,
             SimpMessageHeaderAccessor headerAccessor) {
-
+        
         String sessionId = headerAccessor.getSessionId();
         message.setSessionId(sessionId);
         message.setProjectId(projectId);
-
-        log.debug("Lock operation for project {} from session {}: {}",
+        
+        log.debug("Lock operation for project {} from session {}: {}", 
                 projectId, sessionId, message.getType());
-
+        
         if (message.getType() == LockMessage.LockType.LOCK_REQUEST) {
             collaborativeEditService.acquireLock(
-                projectId,
-                message.getNodeId(),
-                message.getUserId(),
-                message.getUsername(),
+                projectId, 
+                message.getNodeId(), 
+                message.getUserId(), 
+                message.getUsername(), 
                 sessionId
             );
         } else if (message.getType() == LockMessage.LockType.LOCK_RELEASED) {
             collaborativeEditService.releaseLock(
-                projectId,
-                message.getNodeId(),
-                message.getUserId(),
+                projectId, 
+                message.getNodeId(), 
+                message.getUserId(), 
                 sessionId
             );
         }
     }
 
+    /**
+     * Send a message to a specific user.
+     * Used for sending error notifications or conflict warnings.
+     */
     public void sendToUser(String userId, String projectId, Object message) {
         String destination = String.format("/queue/ontology/%s", projectId);
         messagingTemplate.convertAndSendToUser(userId, destination, message);

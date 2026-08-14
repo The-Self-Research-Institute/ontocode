@@ -21,6 +21,12 @@ const PLUGIN_LIBRARY_NAMES: Record<string, string> = {
   'reasoner-plugin': 'ReasonerPlugin',
 };
 
+/**
+ * Resolve the API base URL for plugin service calls.
+ * In VS Code Desktop, window.API_BASE_URL is injected by the extension host.
+ * In standalone browser mode (npm run dev), fall back to the gateway URL
+ * based on deployment type, matching apiClient behavior.
+ */
 function getPluginApiBaseUrl(): string {
   return getApiBaseUrl();
 }
@@ -48,10 +54,19 @@ export interface InstalledPlugin {
   error?: string;
 }
 
+/**
+ * Plugin Loader Service
+ * Handles dynamic loading, installation, and lifecycle management of plugins
+ * Ensures complete independence - plugins can be added/removed without affecting core or other plugins
+ */
 class PluginLoaderService {
   private installedPlugins: Map<string, InstalledPlugin> = new Map();
   private listeners: Set<() => void> = new Set();
 
+  /**
+   * Get auth token from localStorage
+   * Returns null if no token is available
+   */
   private getAuthToken(): string | null {
     return localStorage.getItem('authToken');
   }
@@ -68,6 +83,7 @@ class PluginLoaderService {
     };
   }
 
+  /** Desktop / first run: register built-in plugins locally without a marketplace call. */
   ensureDefaultBuiltInPlugins(): void {
     let added = false;
     for (const pluginId of BUILTIN_PLUGIN_IDS) {
@@ -98,14 +114,22 @@ class PluginLoaderService {
     });
   }
 
+  /**
+   * Install plugin from backend service
+   * @param pluginId plugin identifier
+   * @param version optional specific version to install (for rollback / pinned install)
+   */
   async installPlugin(pluginId: string, version?: string): Promise<void> {
     try {
-
+      // Check if this is a built-in plugin (already registered in pluginManager)
+      // Built-in plugins don't have .vsix files - they're compiled into the extension
       const isBuiltIn = (BUILTIN_PLUGIN_IDS as readonly string[]).includes(pluginId);
 
       let manifest: PluginManifest;
 
       if (isBuiltIn) {
+        // For built-in plugins, just fetch metadata (no .vsix download needed)
+        console.log(`[PluginLoader] Installing built-in plugin: ${pluginId}`);
 
         const token = this.getAuthToken();
         const headers: HeadersInit = { 'Content-Type': 'application/json' };
@@ -121,7 +145,7 @@ class PluginLoaderService {
 
           if (!manifestResponse.ok) {
             console.warn(`[PluginLoader] Could not fetch metadata from backend, using default manifest`);
-
+            // Use default manifest if backend fetch fails
             manifest = {
               name: pluginId,
               displayName: pluginId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
@@ -137,7 +161,7 @@ class PluginLoaderService {
           }
         } catch (error) {
           console.warn(`[PluginLoader] Backend request failed, using default manifest:`, error);
-
+          // Fallback manifest if fetch fails
           manifest = {
             name: pluginId,
             displayName: pluginId.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
@@ -149,6 +173,8 @@ class PluginLoaderService {
           };
         }
       } else {
+        // For external plugins, download the .vsix package
+        console.log(`[PluginLoader] Downloading external plugin: ${pluginId}`);
 
         const token = this.getAuthToken();
         const headers: HeadersInit = {};
@@ -168,6 +194,7 @@ class PluginLoaderService {
           throw new Error(`Failed to download plugin: ${response.statusText}`);
         }
 
+        // Extract manifest from plugin package
         const token2 = this.getAuthToken();
         const headers2: HeadersInit = { 'Content-Type': 'application/json' };
         if (token2) {
@@ -187,10 +214,13 @@ class PluginLoaderService {
         manifest = data.manifest || data;
       }
 
+      // If a specific version was requested (rollback / pinned install), override manifest.version
+      // so the installed state reflects the chosen version rather than the latest metadata returned.
       if (version && manifest) {
         manifest = { ...manifest, version };
       }
 
+      // Store plugin metadata
       const plugin: InstalledPlugin = {
         id: pluginId,
         manifest,
@@ -200,8 +230,10 @@ class PluginLoaderService {
 
       this.installedPlugins.set(pluginId, plugin);
 
+      // Persist to localStorage for persistence across sessions
       this.saveToStorage();
 
+      // Track installation on backend (best effort - don't fail if this fails)
       try {
         const trackToken = this.getAuthToken();
         const trackHeaders: HeadersInit = {};
@@ -217,19 +249,25 @@ class PluginLoaderService {
         console.warn('[PluginLoader] Failed to track installation on backend:', error);
       }
 
+      // Notify listeners
       this.notifyListeners();
 
+      console.log(`[PluginLoader] ✅ Installed plugin: ${pluginId}`);
     } catch (error) {
       console.error(`[PluginLoader] ❌ Failed to install plugin ${pluginId}:`, error);
       throw error;
     }
   }
 
+  /**
+   * Uninstall plugin
+   */
   async uninstallPlugin(pluginId: string): Promise<void> {
     if (this.installedPlugins.has(pluginId)) {
       this.installedPlugins.delete(pluginId);
       this.saveToStorage();
 
+      // Track uninstallation on backend
       try {
         const uninstallToken = this.getAuthToken();
         const uninstallHeaders: HeadersInit = {};
@@ -246,9 +284,14 @@ class PluginLoaderService {
       }
 
       this.notifyListeners();
+      console.log(`[PluginLoader] Uninstalled plugin: ${pluginId}`);
     }
   }
 
+  /**
+   * Load plugin component dynamically
+   * This would typically use dynamic import() in production
+   */
   async loadPlugin(pluginId: string): Promise<React.ComponentType<any> | null> {
     const plugin = this.installedPlugins.get(pluginId);
     if (!plugin) {
@@ -262,7 +305,8 @@ class PluginLoaderService {
 
     try {
       const baseUrl = `${getPluginApiBaseUrl()}/api/plugins/${pluginId}/download`;
-
+      // Desktop: plugins are not in the local DB — probe once and skip immediately on 404.
+      // Cloud:   retry up to 2 times (backend might be cold-starting).
       const maxAttempts = isDesktop() ? 1 : 2;
       const retryDelayMs = 1500;
       let loaded = false;
@@ -270,14 +314,16 @@ class PluginLoaderService {
 
       for (let attempt = 0; attempt < maxAttempts && !loaded; attempt++) {
         const bundleUrl = attempt > 0 ? `${baseUrl}?_t=${Date.now()}` : baseUrl;
+        console.log(`[PluginLoader] 📥 Loading ${pluginId} (attempt ${attempt + 1}/${maxAttempts}) from ${bundleUrl}`);
         try {
-
+          // Desktop: check availability before injecting a <script> tag (avoids noisy 404 errors).
           if (isDesktop()) {
             const token = this.getAuthToken();
             const headers: HeadersInit = {};
             if (token) headers['Authorization'] = `Bearer ${token}`;
             const probe = await fetch(bundleUrl, { method: 'HEAD', headers }).catch(() => ({ ok: false, status: 0 }));
             if (!probe.ok) {
+              console.log(`[PluginLoader] ℹ️ ${pluginId} not available on desktop backend (${probe.status}) — skipping`);
               return null;
             }
           }
@@ -300,12 +346,14 @@ class PluginLoaderService {
         throw new Error(`Unknown plugin library name for ${pluginId}`);
       }
 
+      // Get the component from the global scope - UMD export should be directly on window
       const pluginModule = (window as any)[libraryName];
 
       if (!pluginModule) {
         throw new Error(`Plugin ${pluginId} library not found on window`);
       }
 
+      // Get the default export (the React component)
       const component = pluginModule.default || pluginModule;
 
       if (!component) {
@@ -314,6 +362,8 @@ class PluginLoaderService {
 
       plugin.component = component;
       plugin.loaded = true;
+
+      console.log(`[PluginLoader] ✅ Successfully loaded plugin ${pluginId}`);
 
       this.notifyListeners();
 
@@ -326,23 +376,38 @@ class PluginLoaderService {
     }
   }
 
+  /**
+   * Get all installed plugins
+   */
   getInstalledPlugins(): InstalledPlugin[] {
     return Array.from(this.installedPlugins.values());
   }
 
+  /**
+   * Check if plugin is installed
+   */
   isPluginInstalled(pluginId: string): boolean {
     return this.installedPlugins.has(pluginId);
   }
 
+  /**
+   * Subscribe to plugin changes
+   */
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
+  /**
+   * Notify all listeners of changes
+   */
   private notifyListeners(): void {
     this.listeners.forEach(listener => listener());
   }
 
+  /**
+   * Save installed plugins to localStorage
+   */
   private saveToStorage(): void {
     try {
       const pluginData = Array.from(this.installedPlugins.entries()).map(([id, plugin]) => ({
@@ -355,6 +420,9 @@ class PluginLoaderService {
     }
   }
 
+  /**
+   * Load installed plugins from localStorage
+   */
   loadFromStorage(): void {
     try {
       const stored = localStorage.getItem('ontocode_installed_plugins');
@@ -370,7 +438,7 @@ class PluginLoaderService {
         });
         this.notifyListeners();
       }
-
+      // Desktop: always have core plugins available (backend may still be starting).
       if (isDesktop()) {
         this.ensureDefaultBuiltInPlugins();
       }
@@ -382,6 +450,9 @@ class PluginLoaderService {
     }
   }
 
+  /**
+   * Rate a plugin
+   */
   async ratePlugin(
     pluginId: string,
     stars: number,
@@ -404,9 +475,10 @@ class PluginLoaderService {
         recommended
       });
 
+      console.log(`[PluginLoader] Successfully rated plugin ${pluginId} with ${stars} stars`);
     } catch (error: any) {
       console.error('[PluginLoader] Failed to rate plugin:', error);
-
+      // Check if it's an authentication error
       if (error?.status === 401 || error?.message?.includes('Unauthorized')) {
         throw new Error('Please log in to rate plugins');
       }
@@ -414,18 +486,21 @@ class PluginLoaderService {
     }
   }
 
+  /**
+   * Get user's rating for a plugin
+   */
   async getUserRating(pluginId: string): Promise<any> {
     try {
       const token = this.getAuthToken();
       if (!token) {
-
+        // No auth token - user not logged in, return null silently
         return null;
       }
 
       const response = await apiClient.get(`/api/plugins/${pluginId}/my-rating`);
       return response;
     } catch (error: any) {
-
+      // Silently return null for 401 (not logged in) or 404 (no rating yet)
       if (error?.status === 401 || error?.status === 404 || error?.status === 204) {
         return null;
       }
@@ -434,6 +509,9 @@ class PluginLoaderService {
     }
   }
 
+  /**
+   * Get all ratings for a plugin
+   */
   async getPluginRatings(pluginId: string): Promise<any[]> {
     try {
       const token = this.getAuthToken();
@@ -458,6 +536,9 @@ class PluginLoaderService {
     }
   }
 
+  /**
+   * Get plugin statistics (installs, ratings, etc.)
+   */
   async getPluginStats(pluginId: string): Promise<any> {
     try {
       const token = this.getAuthToken();
@@ -483,16 +564,21 @@ class PluginLoaderService {
   }
 }
 
+// Singleton instance
 export const pluginLoader = new PluginLoaderService();
 
+/**
+ * React Hook for using plugins
+ */
 export function usePluginLoader() {
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPlugin[]>([]);
 
   useEffect(() => {
-
+    // Load from storage on mount
     pluginLoader.loadFromStorage();
     setInstalledPlugins(pluginLoader.getInstalledPlugins());
 
+    // Subscribe to changes
     const unsubscribe = pluginLoader.subscribe(() => {
       setInstalledPlugins(pluginLoader.getInstalledPlugins());
     });

@@ -1,4 +1,12 @@
-
+/**
+ * WebGL renderer spike — Sigma.js v3 over graphology, with the d3-force layout
+ * running headless. Feature-flagged via settings.renderer === 'webgl'.
+ *
+ * In scope: render at 10k+ nodes, zoom/pan, hover neighbor-dim, click-select,
+ * node drag, label density LOD (Sigma built-in), dark mode, ?bench=N synthetic mode.
+ * Out of scope (stays on the SVG renderer): edit-on-canvas, VOWL notation shapes,
+ * collaborative cursors, matrix view, export.
+ */
 
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import Sigma from 'sigma';
@@ -13,6 +21,7 @@ import { askGraph, AskResult, getUnmatchedTerms } from './askGraph';
 import { isSparqlQuery, runSparqlHighlight } from './sparqlAsk';
 import { generateSparql, mapTermsToLabels, answerQuestion } from '../services/LocalTermMapper';
 
+/** Imperative camera / export API for the parent toolbar. */
 export type WebGLCameraHandle = {
   fitAll: () => void;
   fitToNodes: (ids: string[]) => void;
@@ -21,11 +30,13 @@ export type WebGLCameraHandle = {
   capturePng: () => Promise<Blob | null>;
 };
 
+// Distinct hues for Louvain module coloring (colorblind-conscious, both themes)
 const COMMUNITY_PALETTE = [
   '#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2',
   '#edc948', '#ff9da7', '#9c755f', '#86bcb6', '#d37295', '#a0cbe8'
 ];
 
+// Saturated palette for user-pinned color groups — must read over dimmed nodes
 const GROUP_PALETTE = ['#16a34a', '#ea580c', '#7c3aed', '#0891b2', '#db2777', '#ca8a04', '#dc2626', '#2563eb'];
 const COLOR_GROUPS_KEY = 'ontocode-graph-color-groups';
 
@@ -34,6 +45,7 @@ export interface ColorGroup {
   color: string;
 }
 
+/** Substring match with optional * wildcards ("sensor*quality"). */
 function matchesQuery(label: string, query: string): boolean {
   const l = label.toLowerCase();
   const q = query.toLowerCase();
@@ -58,6 +70,7 @@ function loadColorGroups(): ColorGroup[] {
   }
 }
 
+/** Cycle-safe BFS: the focus node plus everything within `depth` hops. */
 function bfsNeighborhood(graph: Graph, start: string, depth: number): Set<string> {
   const seen = new Set([start]);
   let frontier = [start];
@@ -81,34 +94,49 @@ export interface WebGLGraphViewProps {
   nodeSize?: number;
   positions?: Map<string, { x: number; y: number }>;
   selectedNodeIds?: Set<string>;
-
+  /** Enables SPARQL-in-search-box against the editor backend. */
   projectId?: string;
   onNodeClick?: (nodeId: string) => void;
   onNodeRightClick?: (nodeId: string, event: { x: number; y: number }) => void;
   onNodeDoubleClick?: (nodeId: string) => void;
-
+  /** Hierarchy expansion state/actions for the hover-card quick actions. */
   hasNodeChildren?: (nodeId: string) => boolean;
   isNodeExpanded?: (nodeId: string) => boolean;
   onToggleNodeChildren?: (nodeId: string) => void;
-
+  /** Navigate to the entity in the host app (Entities tab). */
   onGoToEntity?: (nodeId: string) => void;
-
+  /** Class edit actions for the hover card (rename = rdfs:label only). */
   canEdit?: boolean;
   onRenameNode?: (nodeId: string, newLabel: string) => void | Promise<void>;
   onDeleteNode?: (nodeId: string) => void;
   onAddChildNode?: (nodeId: string) => void;
-
+  /**
+   * Search-panel Dim mode: fade everything outside this focus set.
+   * Hide mode is handled upstream by filtering `nodes`/`edges`.
+   */
   dimFocusIds?: Set<string> | null;
-
+  /**
+   * Bump after bulk hierarchy changes (Expand All / deep dive) so the camera
+   * re-frames once layout has nodes to measure — same role as SVG auto-fit
+   * after Tree↔Network.
+   */
   viewportFitToken?: number;
-
+  /** CSS background grid on the wrapper when true. */
   showGrid?: boolean;
-
+  /**
+   * When false, skip ForceAtlas2 even without saved positions.
+   * When true (default), run FA2 only if positions are absent/empty.
+   */
   physicsEnabled?: boolean;
-
+  /**
+   * The host's search/filter panel (AdvancedGraphView's styles.searchPanel)
+   * covers the bottom-left corner when open — suppress the hover card
+   * instead of repositioning it, so it never renders on top of that panel.
+   */
   searchPanelOpen?: boolean;
 }
 
+/** Synthetic graph for renderer benchmarks (?bench=N or the perf harness). */
 export function buildBenchmarkData(count: number): { nodes: OntologyNode[]; edges: OntologyEdge[] } {
   const types = ['class', 'individual', 'datatype', 'objectProperty', 'dataProperty'] as const;
   const nodes: OntologyNode[] = [];
@@ -121,7 +149,7 @@ export function buildBenchmarkData(count: number): { nodes: OntologyNode[]; edge
       uri: `urn:bench:${i}`
     });
     if (i > 0) {
-
+      // Tree backbone + occasional cross-links for realistic force topology
       const parent = Math.floor((i - 1) / 4);
       edges.push({ id: `bench-e-${i}`, from: `bench-${i}`, to: `bench-${parent}`, type: 'subClassOf', label: '' } as OntologyEdge);
       if (i % 7 === 0) {
@@ -163,16 +191,16 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const hoveredNodeStateRef = useRef<string | null>(null);
   const hoveredNeighborsRef = useRef<Set<string>>(new Set());
-
+  // Delay hiding the hover card so the pointer can travel onto its action buttons
   const hoverClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  // Inline rename in the hover card: node id being renamed + draft label
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const renamingRef = useRef(renaming);
   renamingRef.current = renaming;
   const draggedNodeRef = useRef<string | null>(null);
   const [activeInsight, setActiveInsight] = useState<InsightKind | null>(null);
   const emphasizedIdsRef = useRef<Set<string> | null>(null);
-
+  /** Search-panel Dim focus — separate from insight/focus emphasis so they don't clobber each other. */
   const dimFocusIdsRef = useRef<Set<string> | null>(null);
   dimFocusIdsRef.current = dimFocusIds && dimFocusIds.size > 0 ? dimFocusIds : null;
   const [communitiesOn, setCommunitiesOn] = useState(false);
@@ -180,13 +208,15 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   const [searchQuery, setSearchQuery] = useState('');
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const askAnswersRef = useRef<Set<string> | null>(null);
-
+  // Focus mode (absorbed from LocalGraphView): center a node, show its N-hop
+  // neighborhood, walk by clicking, follow external selection.
   const [focus, setFocus] = useState<{ id: string; depth: number } | null>(null);
   const focusRef = useRef(focus);
   focusRef.current = focus;
   const [colorGroups, setColorGroups] = useState<ColorGroup[]>(loadColorGroups);
   const colorGroupsRef = useRef(colorGroups);
 
+  // Ref sync + repaint must happen after the state commit, not before
   useEffect(() => {
     colorGroupsRef.current = colorGroups;
     sigmaRef.current?.refresh({ skipIndexation: true });
@@ -201,6 +231,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   const insightsRef = useRef(insights);
   insightsRef.current = insights;
 
+  // Layout: ForceAtlas2 in a worker when physics is on and no saved positions
   useFA2Layout(graph, physicsEnabled && (!positions || positions.size === 0));
 
   useEffect(() => {
@@ -212,22 +243,32 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       defaultEdgeType: 'arrow',
       edgeLabelSize: 10,
       edgeLabelColor: { color: dark ? '#9aa7b8' : '#64748b' },
-
+      // Grid cell size below Sigma's own default (100) packs labels in tighter
+      // than they can fit — long entity names like "GreenPepperTopping" then
+      // overlap their neighbors. Widen the cell and tighten density so the
+      // decluttering grid actually wins ties instead of drawing both.
+      // Large graphs (GO Network): hide most labels until zoomed — otherwise
+      // thousands of labels paint over the FA2 blob.
       labelDensity: nodes.length > 400 ? 0.25 : 0.7,
       labelGridCellSize: nodes.length > 400 ? 220 : 160,
       labelRenderedSizeThreshold: nodes.length > 400 ? 12 : 5,
       labelColor: { color: dark ? '#e7e9f0' : '#1f2430' },
       defaultEdgeColor: dark ? '#556274' : '#aab8cc',
       zIndex: true,
-
+      // Sigma's built-in hover renderer always fills the label box with white,
+      // then draws the label text using `labelColor` — in dark theme that's a
+      // light color, so the text disappears on its own white background. Force
+      // the hover label text to a fixed dark color to match the fixed white box.
       defaultDrawNodeHover: (context, data, settings) => {
         drawDiscNodeHover(context, data, { ...settings, labelColor: { color: '#1f2430' } });
       }
     });
     sigmaRef.current = renderer;
-
+    // Test hook: lets harnesses resolve node viewport coordinates
     (containerRef.current as unknown as { __sigma?: Sigma }).__sigma = renderer;
 
+    // Hover: dim everything outside the hovered node's neighborhood.
+    // Insight emphasis / search Dim: dim everything outside the focus set.
     renderer.setSetting('nodeReducer', (node, data) => {
       const res: Record<string, unknown> = { ...data };
       const searchDim = dimFocusIdsRef.current;
@@ -237,7 +278,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
         const community = insightsRef.current.communities[node];
         if (community != null) res.color = COMMUNITY_PALETTE[community % COMMUNITY_PALETTE.length];
       }
-
+      // Pinned color groups: explicit user intent beats the automatic module overlay
       const label = String(data.label ?? '');
       for (const group of colorGroupsRef.current) {
         if (matchesQuery(label, group.query)) {
@@ -245,7 +286,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
           break;
         }
       }
-
+      // Search-panel Dim takes priority over insight/focus emphasis when active
       const focusSet = searchDim ?? emphasized;
       if (focusSet && !focusSet.has(node)) {
         res.color = dark ? '#2a3341' : '#e5e7eb';
@@ -255,7 +296,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
         if (searchDim) {
           res.zIndex = 2;
         } else {
-
+          // Ask mode: only answer nodes glow; path nodes stay normal for readability
           const answers = askAnswersRef.current;
           if (!answers || answers.has(node)) {
             res.highlighted = true;
@@ -276,7 +317,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       const searchDim = dimFocusIdsRef.current;
       const emphasized = emphasizedIdsRef.current;
       const hovered = hoveredNodeStateRef.current;
-
+      // Typed edges are the ontology advantage — but only label the hovered neighborhood to avoid clutter
       if (!hovered || !graph.hasExtremity(edge, hovered)) {
         res.label = '';
       }
@@ -304,7 +345,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       }, 450);
     });
     renderer.on('clickNode', ({ node }) => {
-
+      // In focus mode a click walks the neighborhood hop by hop
       if (focusRef.current) setFocus({ id: node, depth: focusRef.current.depth });
       onNodeClick?.(node);
     });
@@ -318,6 +359,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       onNodeRightClick?.(node, { x: (event.original as MouseEvent).clientX, y: (event.original as MouseEvent).clientY });
     });
 
+    // Node drag — the documented Sigma pattern (downNode + mousemovebody)
     renderer.on('downNode', ({ node }) => {
       draggedNodeRef.current = node;
       graph.setNodeAttribute(node, 'highlighted', true);
@@ -348,6 +390,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, dark]);
 
+  // Keep the reducers' view of hover state fresh without re-creating Sigma
   useEffect(() => {
     hoveredNodeStateRef.current = hoveredNode;
     sigmaRef.current?.refresh({ skipIndexation: true });
@@ -357,11 +400,13 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     sigmaRef.current?.refresh({ skipIndexation: true });
   }, [selectedNodeIds]);
 
+  // Keep search-panel Dim focus in sync with Sigma reducers
   useEffect(() => {
     dimFocusIdsRef.current = dimFocusIds && dimFocusIds.size > 0 ? dimFocusIds : null;
     sigmaRef.current?.refresh({ skipIndexation: true });
   }, [dimFocusIds]);
 
+  // Fly the camera to frame a set of nodes (framed-graph coords: ratio 1 ≈ whole graph)
   const fitToNodes = useCallback((ids: string[]) => {
     const renderer = sigmaRef.current;
     if (!renderer || ids.length === 0) return;
@@ -376,7 +421,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     });
     if (found === 0) return;
     const span = Math.max(maxX - minX, maxY - minY);
-
+    // Single node / tight cluster: keep context visible instead of extreme zoom
     const ratio = Math.min(1.3, Math.max(found <= 2 ? 0.3 : 0.08, span * 1.4 + 0.05));
     renderer.getCamera().animate(
       { x: (minX + maxX) / 2, y: (minY + maxY) / 2, ratio },
@@ -390,6 +435,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     fitToNodes(renderer.getGraph().nodes());
   }, [fitToNodes]);
 
+  // Sigma: smaller ratio = zoom in. factor > 1 means zoom in for the toolbar.
   const zoomBy = useCallback((factor: number) => {
     const camera = sigmaRef.current?.getCamera();
     if (!camera) return;
@@ -447,6 +493,9 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     capturePng
   }), [fitAll, fitToNodes, zoomBy, resetCamera, capturePng]);
 
+  // Bulk expand/collapse: nodes spread under FA2 while the camera stays put —
+  // re-frame all nodes on the same cadence as SVG Tree↔Network auto-fit, plus
+  // a late pass after FA2 has had more time on larger graphs.
   useEffect(() => {
     if (!viewportFitToken) return;
     const t1 = setTimeout(fitAll, 450);
@@ -481,6 +530,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     sigmaRef.current?.getCamera().animate({ x: 0.5, y: 0.5, ratio: 1.1 }, { duration: 500 });
   }, []);
 
+  // Focus neighborhood drives the emphasis machinery whenever focus is active
   const focusNodes = useMemo(
     () => (focus && graph.hasNode(focus.id) ? bfsNeighborhood(graph, focus.id, focus.depth) : null),
     [graph, focus]
@@ -503,6 +553,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     sigmaRef.current?.getCamera().animate({ x: 0.5, y: 0.5, ratio: 1.1 }, { duration: 500 });
   }, []);
 
+  // Applies an ask/SPARQL result: highlight subgraph, glow answers, fly camera
   const applyAskResult = useCallback((result: AskResult | null) => {
     setAskResult(result);
     if (result && result.subgraph.size > 0) {
@@ -519,6 +570,11 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     applyAskResult(await runSparqlHighlight(graph, query, projectId));
   }, [graph, projectId, applyAskResult]);
 
+  // Enter on a question: escalating AI cascade, every step falling back to the
+  // deterministic answer already on screen.
+  //   1. local LLM writes SPARQL from the rendered schema → backend executes
+  //   2. local LLM maps unmatched terms to real labels ("sensors"→SensingDevice) → rerun structural ask
+  //   3. deterministic askGraph result stays
   const handleAskAi = useCallback(async (question: string) => {
     if (!projectId) return;
     const fallback = askGraph(graph, question);
@@ -537,10 +593,10 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     const query = await generateSparql(question, classes, predicateNames);
     if (query) {
       const result = await runSparqlHighlight(graph, query, projectId);
-
+      // Aggregates (COUNT/"most") return literals — accept any non-empty rows, not just IRIs in view
       if (result.answers.size > 0 || (result.rows?.length ?? 0) > 0) {
         applyAskResult({ ...result, summary: `AI · ${result.summary}`, detail: query });
-
+        // Second pass: let the model read the results (IRIs → labels) and write the answer
         const labeled = (result.rows ?? []).map(row => Object.fromEntries(
           Object.entries(row).map(([k, v]) => [
             k, graph.hasNode(v) ? String(graph.getNodeAttribute(v, 'label') ?? v) : v
@@ -573,6 +629,9 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       : { subgraph: new Set(), answers: new Set(), predicates: [], summary: 'No matching concepts found' });
   }, [graph, projectId, applyAskResult]);
 
+  // Visual search: matches are emphasized in place — the graph reshapes around the query.
+  // Questions ("which qualities are measured by sensors?") route to ask-the-graph.
+  // SPARQL ("SELECT ?q WHERE {…}") runs on Enter against the editor backend.
   const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
     setActiveInsight(null);
@@ -605,6 +664,8 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     fitToNodes(matches);
   }, [graph, fitToNodes, projectId, applyAskResult]);
 
+  // Invariant: an external selection always ends up centered on screen.
+  // In focus mode it retargets the neighborhood instead (follow-selection).
   useEffect(() => {
     if (selectedNodeIds && selectedNodeIds.size === 1) {
       const [id] = [...selectedNodeIds];
@@ -638,7 +699,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   }, [persistGroups]);
 
   const hoverInfo = useMemo(() => {
-
+    // Prefer hover, then single selection, then focus — so Entity / actions stay reachable after click
     const singleSelected =
       selectedNodeIds && selectedNodeIds.size === 1 ? [...selectedNodeIds][0] : null;
     const cardNode = hoveredNode ?? singleSelected ?? focus?.id ?? null;
@@ -707,7 +768,9 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
           backdropFilter: 'blur(4px)'
         }}
       />
-      {}
+      {/* Search box above is ~26-28px tall (padding + border); 38 left only a
+          few px of clearance and the focus chip's own padding ate into it —
+          bump the gap so the two never touch regardless of font rendering. */}
       <div style={{ position: 'absolute', top: 48, right: 10, zIndex: 20, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
         {focus && (
           <div
@@ -844,7 +907,10 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
             setHoveredNode(null);
           }}
           style={{
-
+            // The search/filter panel (AdvancedGraphView's styles.searchPanel)
+            // is anchored bottom-left down to nearly the canvas floor — it
+            // would sit under this card, so hide the card instead of moving
+            // it (searchPanelOpen guard above), rather than fight over the corner.
             position: 'absolute',
             bottom: 10,
             left: 10,

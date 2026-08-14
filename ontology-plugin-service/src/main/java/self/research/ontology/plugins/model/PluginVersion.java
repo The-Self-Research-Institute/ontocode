@@ -22,20 +22,20 @@ public class PluginVersion {
     @Id
     private String id;
 
-    private String pluginId;
-    private String version;
-    private String changelog;
+    private String pluginId;  // Reference to Plugin
+    private String version;  // Semantic version e.g., "1.2.3"
+    private String changelog;  // Release notes
 
-    private String vsixFileId;
-    private Long fileSize;
+    private String vsixFileId;  // GridFS file ID
+    private Long fileSize;  // File size in bytes
 
-    private Map<String, String> dependencies;
-    private Map<String, String> engines;
+    private Map<String, String> dependencies;  // Plugin dependencies
+    private Map<String, String> engines;  // Required OntoCode version
 
-    private String entryPoint;
+    private String entryPoint;  // Main file path in plugin
     private Boolean deprecated;
     private String deprecationMessage;
 
-    private Long downloads;
+    private Long downloads;  // Download count for this version
     private LocalDateTime publishedAt;
 }

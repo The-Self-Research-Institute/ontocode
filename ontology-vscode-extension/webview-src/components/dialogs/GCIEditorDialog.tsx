@@ -13,11 +13,11 @@ interface GCIEditorDialogProps {
   projectId?: string;
 }
 
-const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
-  isOpen,
-  onClose,
-  onSave,
-  initialSubClass = '',
+const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({ 
+  isOpen, 
+  onClose, 
+  onSave, 
+  initialSubClass = '', 
   initialSuperClass = '',
   editMode = false,
   availableClasses,
@@ -39,6 +39,8 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
     }
   }, [isOpen, initialSubClass, initialSuperClass]);
 
+  // Derive suggestions via useMemo instead of useEffect+setState to avoid
+  // infinite re-render loops when callers pass a new array reference each render.
   const subClassSuggestions = useMemo(() => {
     if (subClass && availableClasses && availableClasses.length > 0) {
       return availableClasses.filter(cls =>
@@ -100,7 +102,7 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
       }}
     >
       <div className="bg-[#F0F0F0] rounded-lg shadow-2xl w-[600px] flex flex-col overflow-hidden border border-gray-400" onClick={e => e.stopPropagation()}>
-        {}
+        {/* Header */}
         <div className="bg-white px-4 py-2 flex justify-between items-center border-b border-gray-300">
           <div className="flex items-center gap-2">
             <div className="w-5 h-5 bg-orange-600 rounded flex items-center justify-center">
@@ -117,7 +119,7 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
           <div className="bg-blue-50 border border-blue-200 p-3 rounded flex gap-3">
             <Info size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
             <p className="text-[11px] text-blue-700">
-              A General Class Axiom (GCI) allows you to define a SubClassOf relationship between two complex class expressions.
+              A General Class Axiom (GCI) allows you to define a SubClassOf relationship between two complex class expressions. 
               Use Manchester Syntax for the expressions.
             </p>
           </div>
@@ -201,7 +203,7 @@ const GCIEditorDialog: React.FC<GCIEditorDialogProps> = ({
           )}
         </div>
 
-        {}
+        {/* Footer */}
         <div className="bg-[#F0F0F0] p-4 flex justify-end gap-2 border-t border-gray-300">
           <button
             onClick={handleSave}

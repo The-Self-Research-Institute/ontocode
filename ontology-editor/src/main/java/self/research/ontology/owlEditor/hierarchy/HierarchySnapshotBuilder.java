@@ -10,6 +10,16 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+/**
+ * asserted class hierarchy (structural reasoner for top-level,
+ * explicit subClassOf axioms for children). Shared by desktop warm path and cloud snapshots.
+ *
+ * <p>The {@code importsScope} parameter controls imported ontology visibility:
+ * <ul>
+ *   <li>{@link Imports#EXCLUDED} — "Show only the active ontology" (default)</li>
+ *   <li>{@link Imports#INCLUDED} — "Show the imports closure of the active ontology"</li>
+ * </ul>
+ */
 @Component
 public class HierarchySnapshotBuilder {
 
@@ -51,6 +61,10 @@ public class HierarchySnapshotBuilder {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Fast-open path: asserted hierarchy roots (without reasoner precompute).
+     * A named class is top-level when it has no asserted named superclass other than owl:Thing.
+     */
     public int countTopLevelAsserted(OWLOntology ont) {
         return countTopLevelAsserted(ont, Imports.EXCLUDED);
     }
@@ -74,6 +88,11 @@ public class HierarchySnapshotBuilder {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Flat list of every named class with its asserted parents — OWLAPI equivalent of the
+     * SPARQL allClasses query used by the graph view. Reads the live in-memory model, so on
+     * desktop it reflects mutations immediately instead of waiting for the deferred Fuseki sync.
+     */
     public List<OntologyDto.TreeNode> buildAllClasses(OWLOntology ont, int limit, Imports importsScope) {
         List<OntologyDto.TreeNode> result = new ArrayList<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
@@ -97,7 +116,11 @@ public class HierarchySnapshotBuilder {
             if (!expressions.isEmpty()) {
                 node.setClassExpressions(expressions);
             }
-
+            // extractSetOperatorExpressions only covers anonymous equivalentClass expressions
+            // (intersection/union/...) — a plain `A owl:equivalentClass B` between two named
+            // classes was never surfaced here, unlike toTreeNode() below, so two such classes
+            // rendered as fully disconnected nodes in any view backed by buildAllClasses (e.g.
+            // the graph view's bulk fetch), unlike the hierarchy views which do show it.
             List<Map<String, String>> equivalentClasses = getEquivalentClasses(ont, cls);
             if (!equivalentClasses.isEmpty()) {
                 node.setEquivalentClasses(equivalentClasses);
@@ -119,6 +142,12 @@ public class HierarchySnapshotBuilder {
         return result;
     }
 
+    /**
+     * OWLAPI mirror of the SPARQL set-operator extraction in OntologyQueryService.allClasses:
+     * anonymous union/intersection/complement/oneOf expressions this class participates in
+     * via owl:equivalentClass or rdfs:subClassOf. Restrictions are intentionally excluded
+     * (they belong to the restrictions milestone, not set operators).
+     */
     private List<OntologyDto.ClassExpressionDto> extractSetOperatorExpressions(OWLOntology ont, OWLClass cls,
                                                                                Imports importsScope) {
         List<OntologyDto.ClassExpressionDto> out = new ArrayList<>();
@@ -164,7 +193,7 @@ public class HierarchySnapshotBuilder {
                         addOperand(ont, iri, iri.getShortForm(), operands, labels);
                     });
         } else {
-            return;
+            return; // restrictions and other expression kinds are out of scope here
         }
 
         if (operands.isEmpty()) return;
@@ -228,6 +257,9 @@ public class HierarchySnapshotBuilder {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Precomputes direct children for every named class parent .
+     */
     public Map<String, List<OntologyDto.TreeNode>> buildChildrenIndex(OWLOntology ont, OWLReasoner reasoner) {
         Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, Imports.EXCLUDED);
 
@@ -243,6 +275,14 @@ public class HierarchySnapshotBuilder {
         return index;
     }
 
+    /**
+     * One-pass parent -&gt; children index over the WHOLE ontology (asserted semantics:
+     * direct subClassOf plus equivalentClass/intersectionOf-derived membership, same as
+     * {@link #structuralNamedParents} inverted). Building this once per request and reusing it
+     * for every rendered node is O(totalClasses) total instead of O(totalClasses) PER rendered
+     * node - on a 50k-class ontology that's the difference between milliseconds and minutes,
+     * and unlike a subClassOf-only shortcut it still finds equivalentClass-only children.
+     */
     private Map<OWLClass, Set<OWLClass>> assertedChildrenIndex(OWLOntology ont, Imports importsScope) {
         Map<OWLClass, Set<OWLClass>> index = new HashMap<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
@@ -256,10 +296,21 @@ public class HierarchySnapshotBuilder {
         return index;
     }
 
+    /** Returns true when the class is declared in the active (non-imported) ontology. */
     private boolean isInActiveOntology(OWLOntology ont, OWLClass cls) {
         return ont.containsClassInSignature(cls.getIRI(), Imports.EXCLUDED);
     }
 
+    /**
+     * True for built-in datatype IRIs (e.g. xsd:decimal) and OWLAPI's own internal placeholder
+     * namespace ({@code http://org.semanticweb.owlapi/error#ErrorN}). OWLAPI's RDF parser
+     * (OWLRDFConsumer) is syntax-driven, not OWL2-validated — it can declare a datatype as an
+     * OWLClass when it's referenced somewhere a class is structurally expected (e.g. owl:onClass
+     * pointing at xsd:decimal instead of the OWL2-correct owl:onDataRange), and it synthesizes
+     * ErrorN placeholder entities for RDF fragments it can't translate into a valid axiom (e.g. a
+     * dangling rdf:first/rdf:rest list left over from a partial delete). {@code OWLClass.isBuiltIn()}
+     * only ever returns true for owl:Thing/owl:Nothing, so it doesn't catch either case.
+     */
     private static boolean isBuiltInOrPlaceholder(OWLClass c) {
         String iri = c.getIRI().toString();
         return iri.startsWith("http://www.w3.org/2001/XMLSchema#")
@@ -268,6 +319,10 @@ public class HierarchySnapshotBuilder {
                 || iri.startsWith("http://org.semanticweb.owlapi/error#");
     }
 
+    /**
+     * Returns the IRI of the imported ontology that first declares this class,
+     * or null if the class belongs to the active ontology.
+     */
     private String findSourceOntologyIri(OWLOntology ont, OWLClass cls) {
         if (isInActiveOntology(ont, cls)) return null;
         for (OWLOntology imported : ont.importsClosure().toList()) {
@@ -280,6 +335,10 @@ public class HierarchySnapshotBuilder {
         return null;
     }
 
+    /**
+     * Named parents in the asserted hierarchy: explicit subClassOf plus named conjuncts from
+     * equivalentClass / anonymous subClassOf intersections (e.g. Customer under Person).
+     */
     private Set<OWLClass> structuralNamedParents(OWLOntology ont, OWLClass cls, Imports importsScope) {
         Set<OWLClass> parents = new LinkedHashSet<>();
         for (OWLSubClassOfAxiom ax : ont.subClassAxiomsForSubClass(cls).toList()) {
@@ -394,6 +453,7 @@ public class HierarchySnapshotBuilder {
         return getEntityLabel(ont, cls.getIRI(), importsScope);
     }
 
+    /** IRI-based rdfs:label lookup usable for any entity kind (class, property, individual). */
     private String getEntityLabel(OWLOntology ont, IRI iri, Imports importsScope) {
         IRI rdfsLabel = IRI.create("http://www.w3.org/2000/01/rdf-schema#label");
         Optional<String> label = ont.annotationAssertionAxioms(iri, importsScope)
@@ -414,6 +474,10 @@ public class HierarchySnapshotBuilder {
                 .orElse(null);
     }
 
+    /**
+     * Returns the first value of a specific annotation property for the given class IRI.
+     * Used by the batch annotation endpoint.
+     */
     public String getAnnotationValue(OWLOntology ont, String classIri, String propertyIri) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
         OWLClass cls = df.getOWLClass(IRI.create(classIri));
@@ -453,6 +517,13 @@ public class HierarchySnapshotBuilder {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Property restrictions (someValuesFrom/allValuesFrom/hasValue/cardinality) this class
+     * participates in via subClassOf or equivalentClass. Mirrors the SPARQL side's
+     * buildRestrictionSparqlBody (OntologyQueryService.java) so both paths produce the same
+     * {propertyIri, propertyLabel, restrictionType, fillerIri, fillerLabel, cardinality?,
+     * axiomType} shape the graph view consumes.
+     */
     private List<Map<String, String>> getRestrictions(OWLOntology ont, OWLClass cls) {
         List<Map<String, String>> result = new ArrayList<>();
         ont.subClassAxiomsForSubClass(cls).forEach(ax ->
@@ -497,7 +568,7 @@ public class HierarchySnapshotBuilder {
         } else if (ce instanceof OWLDataExactCardinality r) {
             prop = r.getProperty(); filler = r.getFiller(); restrictionType = "exactly"; cardinality = String.valueOf(r.getCardinality());
         } else {
-            return;
+            return; // anonymous set-operator expressions are handled separately (extractSetOperatorExpressions)
         }
 
         if (prop == null || prop.isAnonymous()) return;
@@ -522,7 +593,7 @@ public class HierarchySnapshotBuilder {
             fillerIri = "";
             fillerLabel = lit.getLiteral();
         } else {
-            return;
+            return; // anonymous filler (nested restriction/class expression) — out of scope here
         }
 
         Map<String, String> entry = new LinkedHashMap<>();
@@ -536,6 +607,11 @@ public class HierarchySnapshotBuilder {
         out.add(entry);
     }
 
+    /**
+     * Pairwise and n-ary (owl:AllDisjointClasses) disjointness partners for a class.
+     * OWLAPI models both as OWLDisjointClassesAxiom, whose classExpressions() lists every
+     * member of the disjoint group (2 for a pairwise disjointWith, N for AllDisjointClasses).
+     */
     private List<Map<String, String>> getDisjointClasses(OWLOntology ont, OWLClass cls) {
         return ont.disjointClassesAxioms(cls)
                 .flatMap(ax -> ax.classExpressions())

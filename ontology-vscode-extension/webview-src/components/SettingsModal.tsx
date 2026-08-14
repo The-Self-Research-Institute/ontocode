@@ -86,8 +86,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         }
     };
 
+    // Reset settings when user changes or modal opens
     useEffect(() => {
-
+        // Try to load saved settings from localStorage
         const savedSettings = localStorage.getItem('userSettings');
         if (savedSettings) {
             try {
@@ -102,7 +103,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     workspaceName: user.workspaceName || ''
                 });
             } catch (e) {
-
+                // Fall back to defaults
                 setSettings({
                     displayName: user.username,
                     email: user.email || '',
@@ -130,7 +131,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
 
     const tabs = [
         { id: 'profile', label: 'Profile', icon: User },
-
+        // Desktop: no shared workspace settings / password — show License instead.
         ...(desktop
             ? [{ id: 'license', label: 'License', icon: KeyRound }]
             : [
@@ -138,7 +139,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 { id: 'security', label: 'Security', icon: Lock },
               ]),
         { id: 'ai', label: 'AI & Integrations', icon: Zap },
-
+        // { id: 'notifications', label: 'Notifications', icon: Bell },
+        // { id: 'appearance', label: 'Appearance', icon: Palette },
+        // { id: 'preferences', label: 'Preferences', icon: Globe }
         { id: 'about', label: 'About', icon: Info },
     ];
 
@@ -150,6 +153,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
     const handleSave = async () => {
         try {
             setSaving(true);
+            console.log('Saving settings:', settings);
 
             if (activeTab === 'workspace') {
                 if (!user.workspaceId) {
@@ -172,15 +176,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 setTimeout(() => onClose(), 1500);
                 return;
             }
-
+            
+            // Try to save profile settings - handle gracefully if endpoint doesn't exist
             try {
                 await apiClient.patch('/api/users/profile', {
                     displayName: settings.displayName,
                     email: settings.email
                 });
             } catch (profileError: any) {
+                console.log('Profile endpoint not available, saving locally');
             }
-
+            
+            // Try to save preferences - handle gracefully if endpoint doesn't exist
             try {
                 await apiClient.patch('/api/users/preferences', {
                     notifications: settings.notifications,
@@ -189,10 +196,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     language: settings.language
                 });
             } catch (prefError: any) {
+                console.log('Preferences endpoint not available, saving locally');
             }
-
+            
+            // Store settings locally
             localStorage.setItem('userSettings', JSON.stringify(settings));
-
+            
             showMessage('success', 'Settings saved successfully!');
             setTimeout(() => onClose(), 1500);
         } catch (error: any) {
@@ -208,19 +217,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
             showMessage('error', 'Please fill in all password fields');
             return;
         }
-
+        
         if (passwordData.newPassword !== passwordData.confirmPassword) {
             showMessage('error', 'New passwords do not match');
             return;
         }
-
+        
         if (passwordData.newPassword.length < 6) {
             showMessage('error', 'Password must be at least 6 characters');
             return;
         }
-
+        
+        // Temporarily suppress the global 401 handler so a failed change-password
+        // shows an inline error instead of redirecting to the sign-in page.
         const prevCallback = (apiClient as any).onUnauthorized;
         apiClient.setUnauthorizedCallback(() => {
+            console.log('[SettingsModal] Suppressed 401 redirect during change-password');
         });
 
         try {
@@ -229,10 +241,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 currentPassword: passwordData.currentPassword,
                 newPassword: passwordData.newPassword
             });
-
+            
             showMessage('success', response.message || 'Password changed successfully! Signing out...');
             setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
-
+            
+            // Wait 2 seconds before logging out to show the success message
             setTimeout(() => {
                 if (onLogout) {
                     onLogout();
@@ -249,7 +262,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
             showMessage('error', msg);
         } finally {
             setSaving(false);
-
+            // Restore the global 401 handler
             apiClient.setUnauthorizedCallback(prevCallback);
         }
     };
@@ -257,7 +270,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
         <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-          {}
+          {/* Header */}
           <div className="flex items-center justify-between p-6 border-b">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
@@ -274,7 +287,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
           </div>
 
           <div className="flex flex-1 overflow-hidden">
-            {}
+            {/* Sidebar */}
             <div className="w-64 border-r bg-gray-50 p-4">
               <nav className="space-y-1">
                 {tabs.map((tab) => {
@@ -300,7 +313,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
               </nav>
             </div>
 
-            {}
+            {/* Content */}
             <div className="flex-1 overflow-y-auto p-6">
               {activeTab === "profile" && (
                 <div className="space-y-6">
@@ -421,7 +434,41 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </div>
               )}
 
-              {}
+              {/* Notifications tab - commented out
+                        {activeTab === 'notifications' && (
+                            <div className="space-y-6">
+                                <div>
+                                    <h4 className="text-lg font-semibold text-gray-900 mb-4">Notification Preferences</h4>
+                                    <div className="space-y-4">
+                                        <label className="flex items-center justify-between p-4 bg-gray-50 rounded-lg cursor-pointer">
+                                            <div>
+                                                <p className="font-medium text-gray-900">Push Notifications</p>
+                                                <p className="text-sm text-gray-500">Receive notifications in the app</p>
+                                            </div>
+                                            <input
+                                                type="checkbox"
+                                                checked={settings.notifications}
+                                                onChange={(e) => setSettings({ ...settings, notifications: e.target.checked })}
+                                                className="w-5 h-5 text-purple-600 rounded focus:ring-purple-500"
+                                            />
+                                        </label>
+                                        <label className="flex items-center justify-between p-4 bg-gray-50 rounded-lg cursor-pointer">
+                                            <div>
+                                                <p className="font-medium text-gray-900">Email Notifications</p>
+                                                <p className="text-sm text-gray-500">Receive updates via email</p>
+                                            </div>
+                                            <input
+                                                type="checkbox"
+                                                checked={settings.emailNotifications}
+                                                onChange={(e) => setSettings({ ...settings, emailNotifications: e.target.checked })}
+                                                className="w-5 h-5 text-purple-600 rounded focus:ring-purple-500"
+                                            />
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        */}
 
               {activeTab === "security" && (
                 <div className="space-y-6">
@@ -544,15 +591,64 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </div>
               )}
 
-              {}
+              {/* Appearance tab - commented out
+                        {activeTab === 'appearance' && (
+                            <div className="space-y-6">
+                                <div>
+                                    <h4 className="text-lg font-semibold text-gray-900 mb-4">Appearance</h4>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Theme
+                                            </label>
+                                            <select
+                                                value={settings.theme}
+                                                onChange={(e) => setSettings({ ...settings, theme: e.target.value })}
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                            >
+                                                <option value="light">Light</option>
+                                                <option value="dark">Dark</option>
+                                                <option value="auto">Auto (System)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        */}
 
-              {}
+              {/* Preferences tab - commented out
+                        {activeTab === 'preferences' && (
+                            <div className="space-y-6">
+                                <div>
+                                    <h4 className="text-lg font-semibold text-gray-900 mb-4">Preferences</h4>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Language
+                                            </label>
+                                            <select
+                                                value={settings.language}
+                                                onChange={(e) => setSettings({ ...settings, language: e.target.value })}
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                                            >
+                                                <option value="en">English</option>
+                                                <option value="es">Spanish</option>
+                                                <option value="fr">French</option>
+                                                <option value="de">German</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        */}
             </div>
           </div>
 
-          {}
+          {/* Footer */}
           <div className="flex items-center justify-between p-6 border-t bg-gray-50">
-            {}
+            {/* Save Message */}
             <div className="flex-1">
               {saveMessage && (
                 <div

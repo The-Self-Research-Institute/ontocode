@@ -2,6 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import type { TreeNode, Datatype } from '../../types';
 
+/**
+ * AnnotationPropertyRangeDialog - dialog for selecting annotation property ranges
+ * 
+ * Based on 's OWLAnnotationPropertyRangeEditor.java:
+ * - Two tabs: "Select Datatype" (for literal values) and "Edit raw IRI" (direct IRI input)
+ * - Annotation property ranges can be:
+ *   - Datatypes (xsd:string, xsd:integer, etc.) for literal values
+ *   - IRIs for restricting to certain entity types
+ */
+
 interface AnnotationPropertyRangeDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -11,6 +21,7 @@ interface AnnotationPropertyRangeDialogProps {
   selectedRanges?: string[]; // Already selected ranges to exclude/show
 }
 
+// Common OWL/XSD datatypes
 const COMMON_DATATYPES = [
   { id: 'http://www.w3.org/2001/XMLSchema#string', label: 'xsd:string' },
   { id: 'http://www.w3.org/2001/XMLSchema#integer', label: 'xsd:integer' },
@@ -48,6 +59,7 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
   const [searchQuery, setSearchQuery] = useState('');
   const [rawIri, setRawIri] = useState('');
 
+  // Merge provided datatypes with common ones
   const allDatatypes = [
     ...COMMON_DATATYPES,
     ...datatypes.filter(dt => !COMMON_DATATYPES.some(c => c.id === dt.id))
@@ -78,10 +90,11 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
     onClose();
   };
 
-  const isValidSelection = activeTab === 'select-datatype'
-    ? selectedDatatype !== null
+  const isValidSelection = activeTab === 'select-datatype' 
+    ? selectedDatatype !== null 
     : rawIri.trim().length > 0;
 
+  // Filter datatypes by search query
   const filteredDatatypes = allDatatypes.filter(dt => {
     if (!searchQuery) return true;
     const lowerQuery = searchQuery.toLowerCase();
@@ -97,12 +110,12 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
         if (e.target === e.currentTarget && e.button === 0) handleClose();
       }}
     >
-      <div
-        className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 flex flex-col"
+      <div 
+        className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 flex flex-col" 
         style={{ height: '500px', maxHeight: '85vh' }}
         onClick={e => e.stopPropagation()}
       >
-        {}
+        {/* Header */}
         <div className="px-4 py-3 border-b bg-gray-100 flex justify-between items-center">
           <div className="flex items-center gap-2">
             <span className="w-4 h-4 bg-orange-500 rounded-sm" />
@@ -116,7 +129,7 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
           </button>
         </div>
 
-        {}
+        {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50">
           <button
             onClick={() => setActiveTab('select-datatype')}
@@ -140,11 +153,11 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
           </button>
         </div>
 
-        {}
+        {/* Content */}
         <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === 'select-datatype' && (
             <>
-              {}
+              {/* Search */}
               <div className="px-3 py-2 border-b bg-gray-50">
                 <input
                   type="text"
@@ -155,20 +168,20 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
                 />
               </div>
 
-              {}
+              {/* Datatype List */}
               <div className="flex-1 overflow-y-auto p-2 bg-white">
                 {filteredDatatypes.length > 0 ? (
                   <div className="space-y-0.5">
                     {filteredDatatypes.map(dt => {
                       const isSelected = selectedDatatype === dt.id;
                       const isAlreadySelected = selectedRanges.includes(dt.id);
-
+                      
                       return (
                         <div
                           key={dt.id}
                           className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer rounded transition-colors ${
-                            isSelected
-                              ? 'bg-blue-600 text-white'
+                            isSelected 
+                              ? 'bg-blue-600 text-white' 
                               : isAlreadySelected
                                 ? 'bg-gray-100 text-gray-400'
                                 : 'hover:bg-gray-100 text-gray-900'
@@ -181,11 +194,11 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
                             }
                           }}
                         >
-                          {}
+                          {/* Datatype Icon (purple rectangle ) */}
                           <span className={`w-3 h-3 rounded-sm flex-shrink-0 ${
                             isSelected ? 'bg-purple-300' : 'bg-purple-500'
                           }`} />
-
+                          
                           <span className="text-sm font-mono truncate">
                             {dt.label}
                             {isAlreadySelected && <span className="ml-1 text-xs">(already selected)</span>}
@@ -201,7 +214,7 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
                 )}
               </div>
 
-              {}
+              {/* Selected Datatype Display */}
               {selectedDatatype && (
                 <div className="px-3 py-2 border-t bg-gray-50 text-xs">
                   <span className="text-gray-500">Selected: </span>
@@ -233,7 +246,7 @@ const AnnotationPropertyRangeDialog: React.FC<AnnotationPropertyRangeDialogProps
           )}
         </div>
 
-        {}
+        {/* Footer */}
         <div className="px-4 py-3 border-t bg-gray-50 flex justify-end gap-2">
           <button
             onClick={handleClose}

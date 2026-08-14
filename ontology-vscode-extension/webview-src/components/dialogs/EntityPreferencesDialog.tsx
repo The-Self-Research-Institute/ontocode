@@ -71,7 +71,7 @@ const EntityPreferencesDialog: React.FC<EntityPreferencesDialogProps> = ({
       }}
     >
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
-        {}
+        {/* Header */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2">
             <Settings size={20} className="text-purple-600" />
@@ -86,9 +86,9 @@ const EntityPreferencesDialog: React.FC<EntityPreferencesDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
-          {}
+          {/* IRI Generation Section */}
           <section className="space-y-3">
             <h4 className="text-sm font-semibold text-gray-800 border-b pb-2">IRI Generation</h4>
 
@@ -158,7 +158,7 @@ const EntityPreferencesDialog: React.FC<EntityPreferencesDialogProps> = ({
             )}
           </section>
 
-          {}
+          {/* Default Annotations Section */}
           <section className="space-y-3">
             <h4 className="text-sm font-semibold text-gray-800 border-b pb-2">Default Annotations</h4>
 
@@ -227,7 +227,7 @@ const EntityPreferencesDialog: React.FC<EntityPreferencesDialogProps> = ({
             )}
           </section>
 
-          {}
+          {/* Behavior Section */}
           <section className="space-y-3">
             <h4 className="text-sm font-semibold text-gray-800 border-b pb-2">Entity Behavior</h4>
 
@@ -283,7 +283,7 @@ const EntityPreferencesDialog: React.FC<EntityPreferencesDialogProps> = ({
           </section>
         </div>
 
-        {}
+        {/* Footer */}
         <div className="p-4 border-t border-gray-200 flex justify-between items-center flex-shrink-0">
           <button
             onClick={handleReset}

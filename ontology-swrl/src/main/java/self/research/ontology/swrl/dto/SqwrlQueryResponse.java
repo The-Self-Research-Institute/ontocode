@@ -3,6 +3,9 @@ package self.research.ontology.swrl.dto;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Response DTO for SQWRL query results
+ */
 public class SqwrlQueryResponse {
 
     private boolean success;
@@ -17,7 +20,8 @@ public class SqwrlQueryResponse {
     public SqwrlQueryResponse() {
     }
 
-    public SqwrlQueryResponse(String queryName, String queryText, long executionTimeMs,
+    // Success constructor
+    public SqwrlQueryResponse(String queryName, String queryText, long executionTimeMs, 
                               List<String> columnNames, List<Map<String, String>> rows) {
         this.success = true;
         this.queryName = queryName;
@@ -28,6 +32,7 @@ public class SqwrlQueryResponse {
         this.rowCount = rows != null ? rows.size() : 0;
     }
 
+    // Error constructor
     public SqwrlQueryResponse(String queryName, String queryText, String errorMessage) {
         this.success = false;
         this.queryName = queryName;

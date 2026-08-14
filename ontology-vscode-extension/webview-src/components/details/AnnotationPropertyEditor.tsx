@@ -9,7 +9,7 @@ import type { AnnotationProperty } from '../../types';
 
 interface AnnotationPropertyEditorProps {
   item: AnnotationProperty;
-  onUpdate: (updatedItem: AnnotationProperty) => void;
+  onUpdate: (updatedItem: AnnotationProperty, markUnsaved?: boolean, previousId?: string) => void;
   onAddAnnotation: () => void;
   onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
@@ -21,8 +21,10 @@ interface AnnotationPropertyEditorProps {
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   onNavigate?: (iri: string, type: string) => void;
-
+  /** Full annotation properties list, used to resolve superproperty IRIs to their
+   * actual rdfs:label instead of showing the bare IRI. */
   annotationProperties?: AnnotationProperty[];
+  user?: { email?: string; username?: string; userId?: string };
 }
 
 interface UsageItem {
@@ -65,7 +67,7 @@ const PropertyUsageTab: React.FC<{
       if (propertyType === 'AnnotationProperty') {
         endpoint = `/api/ontology/annotation-properties/${projectId}/usage?propertyIri=${encodeURIComponent(propertyIri)}`;
       }
-
+      
       const response = await apiClient.get<any>(endpoint);
       const usageData = response?.data?.data || response?.data || response || [];
       setUsages(Array.isArray(usageData) ? usageData : []);
@@ -102,7 +104,7 @@ const PropertyUsageTab: React.FC<{
         <div className="text-xs text-gray-600">
           Found <span className="font-bold text-purple-600">{usages.length}</span> uses of <span className="font-semibold">{label}</span>
         </div>
-
+        
         <div className="flex items-center gap-2">
           <div className="flex-1 relative">
             <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -192,6 +194,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   onViewOnlyAction,
   onNavigate,
   annotationProperties,
+  user,
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
@@ -203,13 +206,14 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
     });
     return map;
   }, [annotationProperties]);
-
+  
+  // Extended annotation property type with optional fields
   const extendedItem = item as AnnotationProperty & {
     superProperties?: string[];
     domains?: string[];
     ranges?: string[];
   };
-
+  
   const annotationCount = Object.keys(item.annotations || {}).length;
   const domainCount = extendedItem.domains?.length || 0;
   const rangeCount = extendedItem.ranges?.length || 0;
@@ -218,13 +222,28 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
 
   const handleSaveIRI = async (newIRI: string, newLabel: string) => {
     try {
-      if (newLabel !== item.label) {
-        await ontologyMutationService.updateClassLabel(projectId, item.id, newLabel);
-        onUpdate({ ...item, label: newLabel } as AnnotationProperty);
+      const iriChanged = newIRI !== item.id;
+      const labelChanged = newLabel !== item.label;
+      const previousId = item.id;
+      const targetIri = iriChanged ? newIRI : item.id;
+
+      if (iriChanged) {
+        await ontologyMutationService.renameEntity(
+          projectId,
+          item.id,
+          newIRI,
+          user?.email || "anonymous",
+          user?.username || "Anonymous",
+        );
       }
-      if (newIRI !== item.id) {
-        console.warn("IRI renaming requires backend support - not yet implemented");
-        notificationService.warning("Not Supported", "IRI renaming is not yet supported. Only label changes are saved.");
+
+      if (iriChanged || labelChanged) {
+        await ontologyMutationService.updateClassLabel(projectId, targetIri, newLabel, user?.email, user?.username);
+      }
+
+      if (iriChanged || labelChanged) {
+        const updatedItem = { ...item, id: newIRI, iri: newIRI, label: newLabel };
+         onUpdate(updatedItem as AnnotationProperty, true, iriChanged ? previousId : undefined);
       }
     } catch (error) {
       console.error("Failed to update annotation property:", error);
@@ -264,7 +283,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-white">
-      {}
+      {/* Header with IRI */}
       <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
         <div className="flex items-center gap-2 overflow-hidden">
           <div className="p-1.5 rounded bg-orange-500 text-white">
@@ -285,7 +304,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
       </div>
       <CollaboratorPresenceBar entityId={item.id} />
 
-      {}
+      {/* Tabs with Annotations, Description, Usage */}
       <div className="flex border-b border-gray-200 bg-gray-50">
         <button 
           onClick={() => setActiveTab('annotations')}
@@ -319,18 +338,18 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
         </button>
       </div>
 
-      {}
+      {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
         {activeTab === 'annotations' && (
           <div className="space-y-0">
-            {}
+            {/* Annotations Panel Header - Clean minimal style */}
             <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5 flex items-center justify-between">
               <span className="text-xs font-medium text-stone-700">Annotations: {item.label}</span>
               <button onClick={isViewOnly ? () => onViewOnlyAction?.() : onAddAnnotation} className="p-1 hover:bg-stone-200 rounded text-stone-500 hover:text-stone-700" title={isViewOnly ? "View-only: upgrade to edit" : "Add annotation"}>
                 <Plus size={14} />
               </button>
             </div>
-            {}
+            {/* Annotations Content */}
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm">
               <AnnotationsDisplay
                 annotations={item.annotations}
@@ -345,13 +364,13 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
 
         {activeTab === 'description' && (
           <div className="space-y-0">
-            {}
+            {/* Description Panel Header - Clean minimal style */}
             <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5">
               <span className="text-xs font-medium text-stone-700">Description: {item.label}</span>
             </div>
-            {}
+            {/* Description Content */}
             <div className="bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-3">
-              {}
+              {/* Domains - Annotation properties can optionally have domains */}
               <MultiSelectSection
                 title="Domains (intersection)"
                 items={extendedItem.domains}
@@ -365,7 +384,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 parentEntityIri={item.id}
               />
 
-              {}
+              {/* Ranges - Can be datatype (literal) or IRI */}
               <MultiSelectSection
                 title="Range (intersection)"
                 items={extendedItem.ranges}
@@ -379,7 +398,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
                 parentEntityIri={item.id}
               />
 
-              {}
+              {/* Superproperties */}
               <MultiSelectSection
                 title="Superproperties"
                 items={extendedItem.superProperties}

@@ -45,28 +45,34 @@ public class WorkspaceController {
         this.systemSettingsService = systemSettingsService;
     }
 
+    /**
+     * Get all workspaces for the authenticated user
+     */
     @GetMapping
     public ResponseEntity<?> getUserWorkspaces() {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
-
+            
+            // Model C Self-Healing: Sync workspaces to owner's account plan on fetch
             workspaceService.syncWorkspacesToOwnerPlan(user);
 
             List<Workspace> workspaces = workspaceService.getUserWorkspaces(user.getId());
 
+            // Sync each workspace from its owner (members inherit owner enterprise bypass / billing).
             workspaces.stream()
                     .map(Workspace::getOwnerId)
                     .distinct()
                     .forEach(ownerId -> userRepository.findById(ownerId).ifPresent(workspaceService::syncWorkspacesToOwnerPlan));
             workspaces = workspaceService.getUserWorkspaces(user.getId());
 
+            // Convert to DTO to avoid sending sensitive info
             List<Map<String, Object>> workspaceDTOs = workspaces.stream()
                     .map(this::convertToDTO)
                     .collect(Collectors.toList());
@@ -81,23 +87,27 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Check if workspace name already exists for user
+     */
     @GetMapping("/check")
     public ResponseEntity<?> checkWorkspaceExists(@RequestParam String name) {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
             List<Workspace> userWorkspaces = workspaceService.getUserWorkspaces(user.getId());
-
+            
+            // Check if workspace with same name exists
             Optional<Workspace> existingWorkspace = userWorkspaces.stream()
                     .filter(w -> w.getName().equalsIgnoreCase(name.trim()))
                     .findFirst();
-
+            
             if (existingWorkspace.isPresent()) {
                 return ResponseEntity.ok(Map.of(
                     "exists", true,
@@ -109,7 +119,7 @@ public class WorkspaceController {
                     )
                 ));
             }
-
+            
             return ResponseEntity.ok(Map.of(
                 "exists", false,
                 "name", name
@@ -120,23 +130,28 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Create a new workspace
+     */
     @PostMapping
     public ResponseEntity<?> createWorkspace(@Valid @RequestBody CreateWorkspaceRequest request) {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
             String username = user.getUsername();
-
+            
+            // Model B: billing is account-level; workspaces always start FREE.
             String rawAccountPlan = user.getSubscriptionPlanName() != null
                     ? user.getSubscriptionPlanName().toUpperCase() : "FREE";
             String accountStatus = user.getSubscriptionStatus();
 
+            // Enterprise domain bypass: treat as unlimited regardless of stored plan/status
             if (systemSettingsService.isEnterpriseBypass(user.getEmail())) {
                 rawAccountPlan = "ENTERPRISE";
                 accountStatus = "active";
@@ -146,6 +161,8 @@ public class WorkspaceController {
                     || "trialing".equalsIgnoreCase(accountStatus))
                     ? rawAccountPlan : "FREE";
 
+            // Only count workspaces the user OWNS — being a member of others' workspaces
+            // must not consume the owner's creation quota.
             List<Workspace> ownedWorkspaces = workspaceService.getOwnedWorkspaces(user.getId());
             int maxWorkspaces = getMaxWorkspacesForPlan(activeAccountPlan);
             log.info("createWorkspace: user={} planName={} status={} activePlan={} ownedCount={} maxAllowed={}",
@@ -159,6 +176,7 @@ public class WorkspaceController {
                 ));
             }
 
+            // Check for duplicate workspace name (among owned workspaces only)
             boolean nameExists = ownedWorkspaces.stream()
                 .anyMatch(w -> w.getName().equalsIgnoreCase(request.getName()));
             if (nameExists) {
@@ -166,13 +184,15 @@ public class WorkspaceController {
                     "error", "A workspace with this name already exists"
                 ));
             }
-
+            
             Workspace workspace = workspaceService.createWorkspace(
-                user.getId(),
-                request.getName(),
+                user.getId(), 
+                request.getName(), 
                 request.getDescription()
             );
-
+            // WorkspaceService.createWorkspace already stamps subscription/billing fields based on the
+            // owner's account plan/status (Model C / account-inherited workspaces). Do not override
+            // them here; only set the maxWorkspaces (creation quota) on the workspace record.
             workspace.setMaxWorkspaces(maxWorkspaces);
             workspace = workspaceService.updateWorkspace(workspace);
 
@@ -189,18 +209,22 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Get workspace subscription details
+     */
     @GetMapping("/{workspaceId}/subscription")
     public ResponseEntity<?> getSubscription(@PathVariable String workspaceId) {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
-
+            
+            // Verify user has access to workspace
             if (!workspaceService.hasAccess(workspaceId, user.getId())) {
                 return ResponseEntity.status(403).body(Map.of(
                     "error", "You don't have access to this workspace"
@@ -213,9 +237,9 @@ public class WorkspaceController {
             }
 
             Workspace workspace = workspaceOpt.get();
-
+            
             String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
-
+            
             Map<String, Object> subscription = new HashMap<>();
             subscription.put("plan", plan);
             subscription.put("maxMembers", workspace.getMaxMembers());
@@ -234,6 +258,9 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Update workspace subscription plan
+     */
     @PatchMapping("/{workspaceId}/subscription")
     public ResponseEntity<?> updateSubscription(
             @PathVariable String workspaceId,
@@ -241,14 +268,15 @@ public class WorkspaceController {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
             String username = user.getUsername();
-
+            
+            // Verify user is the owner of the workspace
             Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
             if (workspaceOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
@@ -264,6 +292,13 @@ public class WorkspaceController {
             String plan = request.getSubscriptionPlan();
             String currentPlan = workspace.getSubscriptionPlan();
 
+            // ── UPGRADE GUARD ──────────────────────────────────────────
+            // Upgrading to a paid plan (PRO/ENTERPRISE) requires an active
+            // Stripe subscription on the user's account.  The proper flow is:
+            //   1. Frontend collects card via SetupIntent
+            //   2. POST /api/billing/subscribe creates the Stripe subscription
+            //   3. StripeService updates User + syncs workspaces automatically
+            // This endpoint should only be used for DOWNGRADES or internal sync.
             if (isUpgrade(currentPlan, plan)) {
                 String stripeStatus = user.getSubscriptionStatus();
                 String stripePlan  = user.getSubscriptionPlanName();
@@ -285,6 +320,8 @@ public class WorkspaceController {
                 }
             }
 
+            // ── NO DOWNGRADE RULE ─────────────────────────────────────
+            // Users cannot downgrade from Enterprise to Pro/Free, or Pro to Free.
             if (isDowngrade(currentPlan, plan)) {
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "Downgrading is not permitted. You can only upgrade or maintain your current plan tier.",
@@ -293,9 +330,11 @@ public class WorkspaceController {
                 ));
             }
 
+            // Update subscription plan
             workspace.setSubscriptionPlan(plan);
             workspace.setUpdatedAt(LocalDateTime.now());
-
+            
+            // Update collaboration and limits based on plan (must match getMaxMembersForPlan/getMaxWorkspacesForPlan)
             switch (plan.toUpperCase()) {
                 case "FREE":
                     workspace.setMaxMembers(3);
@@ -314,7 +353,7 @@ public class WorkspaceController {
                     workspace.setCollaborationEnabled(true);
                     break;
             }
-
+            
             workspace.setSubscriptionStartDate(LocalDateTime.now());
             Workspace updatedWorkspace = workspaceService.updateWorkspace(workspace);
 
@@ -336,12 +375,15 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Select a workspace and generate a workspace-scoped JWT token
+     */
     @PostMapping("/{workspaceId}/select")
     public ResponseEntity<?> selectWorkspace(@PathVariable String workspaceId) {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
@@ -349,6 +391,7 @@ public class WorkspaceController {
             User user = userOpt.get();
             String username = user.getUsername();
 
+            // Verify user has access to workspace
             if (!workspaceService.hasAccess(workspaceId, user.getId())) {
                 return ResponseEntity.status(403).body(Map.of(
                     "error", "You don't have access to this workspace"
@@ -362,6 +405,8 @@ public class WorkspaceController {
 
             Workspace workspace = workspaceOpt.get();
 
+            // Always sync workspace billing from the owner's account (enterprise bypass, Stripe, etc.)
+            // so members see the correct plan and are not blocked by stale EXPIRED status.
             userRepository.findById(workspace.getOwnerId()).ifPresent(owner -> {
                 userRepository.findById(owner.getId()).ifPresent(workspaceService::syncWorkspacesToOwnerPlan);
             });
@@ -371,10 +416,12 @@ public class WorkspaceController {
             }
             workspace = workspaceOpt.get();
 
+            // Owner: refresh account from DB before token issue (self-heal webhook lag).
             if (user.getId().equals(workspace.getOwnerId())) {
                 user = userRepository.findById(user.getId()).orElse(user);
             }
 
+            // If the user is still PENDING, they must explicitly accept or reject before entering.
             Workspace.WorkspaceMember selfMember = workspace.getMember(user.getId());
             if (selfMember == null) {
                 selfMember = workspace.getMemberByEmail(user.getEmail());
@@ -393,7 +440,7 @@ public class WorkspaceController {
             }
 
             WorkspaceRole role = workspaceService.getMemberRole(workspaceId, user.getId());
-
+            // Fallback: owner may not be in members set (legacy data) — resolve from ownerId
             if (role == null) {
                 role = user.getId().equals(workspace.getOwnerId()) ? WorkspaceRole.OWNER : WorkspaceRole.MEMBER;
                 log.warn("[Workspace] getMemberRole returned null for user {} in workspace {} — resolved to {}",
@@ -401,17 +448,26 @@ public class WorkspaceController {
             }
             String billingStatus = resolveBillingStatus(workspace);
 
+            // Model B: account-level plan check — if account subscription has expired,
+            // collaboration features are off but workspace access is still allowed (downgraded to FREE limits).
+            // No hard block here; features are gated by workspace.collaborationEnabled.
+
             String workspacePlan = workspace.getSubscriptionPlan() != null
                     ? workspace.getSubscriptionPlan().toUpperCase()
                     : "FREE";
-
+            
             boolean isPaidPlan = !"FREE".equalsIgnoreCase(workspacePlan);
-
+            // PAYMENT_ACTION_REQUIRED: 3DS/ACH pending — subscription exists and is not expired,
+            // but collaboration is disabled until payment confirms. Issue a token with FREE
+            // effective plan rather than a hard block, so the user sees the app with a prompt
+            // to complete authentication rather than an error wall.
             boolean hasValidBilling = "ACTIVE".equalsIgnoreCase(billingStatus)
                     || "TRIALING".equalsIgnoreCase(billingStatus)
                     || "PAST_DUE".equalsIgnoreCase(billingStatus)
                     || "PAYMENT_ACTION_REQUIRED".equalsIgnoreCase(billingStatus);
 
+            // Block access only when the plan has truly expired (canceled, unpaid, expired).
+            // Enterprise domain bypass on the workspace owner grants full access to all members.
             User workspaceOwner = userRepository.findById(workspace.getOwnerId()).orElse(null);
             boolean ownerEnterpriseBypass = workspaceOwner != null
                     && systemSettingsService.isEnterpriseBypass(workspaceOwner.getEmail());
@@ -434,6 +490,7 @@ public class WorkspaceController {
                 effectivePlan = "ENTERPRISE";
             }
 
+            // Generate workspace-scoped JWT token with effective subscription plan
             Map<String, Object> claims = new HashMap<>();
             claims.put("workspaceId", workspaceId);
             claims.put("workspaceName", workspace.getName());
@@ -443,7 +500,7 @@ public class WorkspaceController {
             claims.put("roles", user.getRoles());
             claims.put("isAdmin", user.getRoles().contains("ROLE_ADMIN"));
             claims.put("plan", effectivePlan);
-            claims.put("subscriptionPlan", effectivePlan);
+            claims.put("subscriptionPlan", effectivePlan); // keep for frontend backward compat
             claims.put("billingStatus", billingStatus);
 
             String token = jwtUtil.generateToken(email, claims);
@@ -463,12 +520,15 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Get workspace details
+     */
     @GetMapping("/{workspaceId}")
     public ResponseEntity<?> getWorkspace(@PathVariable String workspaceId) {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
@@ -493,6 +553,9 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Update workspace details. Only the workspace owner can rename a workspace.
+     */
     @PatchMapping("/{workspaceId}")
     public ResponseEntity<?> updateWorkspace(
             @PathVariable String workspaceId,
@@ -549,18 +612,22 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Delete a workspace
+     */
     @DeleteMapping("/{workspaceId}")
     public ResponseEntity<?> deleteWorkspace(@PathVariable String workspaceId) {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
 
             User user = userOpt.get();
 
+            // Verify user is the owner of the workspace
             Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
             if (workspaceOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
@@ -573,6 +640,7 @@ public class WorkspaceController {
                 ));
             }
 
+            // Soft delete the workspace (cascade to projects and files)
             workspaceService.deleteWorkspace(workspaceId, user.getId());
 
             log.info("Workspace {} soft deleted by user {}", workspaceId, email);
@@ -585,7 +653,10 @@ public class WorkspaceController {
             return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
-
+    
+    /**
+     * Restore a soft-deleted workspace
+     */
     @PostMapping("/{workspaceId}/restore")
     public ResponseEntity<?> restoreWorkspace(
             @PathVariable String workspaceId,
@@ -594,7 +665,7 @@ public class WorkspaceController {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
@@ -602,6 +673,7 @@ public class WorkspaceController {
             User user = userOpt.get();
             String username = user.getUsername();
 
+            // Verify user is the owner of the workspace (check including deleted workspaces)
             Optional<Workspace> workspaceOpt = workspaceService.getWorkspaceIncludingDeleted(workspaceId);
             if (workspaceOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
@@ -613,11 +685,12 @@ public class WorkspaceController {
                     "error", "Only workspace owner can restore the workspace"
                 ));
             }
-
+            
             if (!Boolean.TRUE.equals(workspace.getIsDeleted())) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Workspace is not deleted"));
             }
 
+            // Restore the workspace
             workspaceService.restoreWorkspace(workspaceId, restoreProjects, restoreFiles);
 
             log.info("Workspace {} restored by user {}", workspaceId, username);
@@ -635,13 +708,16 @@ public class WorkspaceController {
             return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
         }
     }
-
+    
+    /**
+     * Get deleted workspaces for current user
+     */
     @GetMapping("/deleted")
     public ResponseEntity<?> getDeletedWorkspaces() {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
@@ -656,6 +732,9 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Leave a workspace (any member except the owner).
+     */
     @PostMapping("/{workspaceId}/leave")
     public ResponseEntity<?> leaveWorkspace(@PathVariable String workspaceId) {
         try {
@@ -692,6 +771,9 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Remove a member from a workspace (owner or admin)
+     */
     @DeleteMapping("/{workspaceId}/members/{userId}")
     public ResponseEntity<?> removeMember(
             @PathVariable String workspaceId,
@@ -699,7 +781,7 @@ public class WorkspaceController {
         try {
             String email = getCurrentUserEmail();
             Optional<User> userOpt = userRepository.findByEmail(email);
-
+            
             if (userOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
@@ -707,6 +789,7 @@ public class WorkspaceController {
             User user = userOpt.get();
             String username = user.getUsername();
 
+            // Verify workspace exists
             Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
             if (workspaceOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
@@ -714,6 +797,7 @@ public class WorkspaceController {
 
             Workspace workspace = workspaceOpt.get();
 
+            // Resolve target user if userId is actually an email or if we need to self-heal
             String targetUserId = userId;
             String targetEmail = null;
             if (userId.contains("@")) {
@@ -723,13 +807,14 @@ public class WorkspaceController {
                     targetUserId = targetUserOpt.get().getId();
                 }
             } else {
-
+                // If it looks like a userId, try to get the email for fallback
                 Optional<User> targetUserOpt = userRepository.findById(userId);
                 if (targetUserOpt.isPresent()) {
                     targetEmail = targetUserOpt.get().getEmail();
                 }
             }
 
+            // Get caller's role in the workspace
             Workspace.WorkspaceRole callerRole = workspaceService.getMemberRole(workspaceId, user.getId());
             boolean isOwner = callerRole == Workspace.WorkspaceRole.OWNER || workspace.getOwnerId().equals(user.getId());
             boolean isAdmin = callerRole == Workspace.WorkspaceRole.ADMIN;
@@ -740,6 +825,7 @@ public class WorkspaceController {
                 ));
             }
 
+            // Prevent workspace owner from removing themselves (must transfer ownership or delete)
             boolean isSelf = targetUserId.equals(user.getId())
                     || (targetEmail != null && targetEmail.equalsIgnoreCase(user.getEmail()));
             if (isSelf && (user.getId().equals(workspace.getOwnerId()) || targetUserId.equals(workspace.getOwnerId()))) {
@@ -748,6 +834,7 @@ public class WorkspaceController {
                 ));
             }
 
+            // Non-owner members/admins may remove themselves
             if (isSelf) {
                 workspaceService.leaveWorkspace(workspaceId, user.getId());
                 return ResponseEntity.ok(Map.of(
@@ -756,12 +843,14 @@ public class WorkspaceController {
                 ));
             }
 
+            // Admins cannot remove the owner
             if (targetUserId.equals(workspace.getOwnerId())) {
                 return ResponseEntity.status(403).body(Map.of(
                     "error", "Cannot remove the workspace owner"
                 ));
             }
 
+            // Admins cannot remove other admins — only owners can
             if (isAdmin && !isOwner) {
                 Workspace.WorkspaceRole targetRole = workspaceService.getMemberRole(workspaceId, targetUserId);
                 if (targetRole == Workspace.WorkspaceRole.ADMIN || targetRole == Workspace.WorkspaceRole.OWNER) {
@@ -771,6 +860,7 @@ public class WorkspaceController {
                 }
             }
 
+            // Remove member from workspace (using the original userId path variable which WorkspaceService.removeMember handles via removeMemberByIdOrEmail)
             workspaceService.removeMember(workspaceId, userId);
 
             log.info("Member {} removed from workspace {} by {}", userId, workspaceId, username);
@@ -784,6 +874,9 @@ public class WorkspaceController {
         }
     }
 
+    /**
+     * Update a workspace member's role (owner or admin only; can't demote self if owner)
+     */
     @PutMapping("/{workspaceId}/members/{userId}/role")
     public ResponseEntity<?> updateMemberRole(
             @PathVariable String workspaceId,
@@ -824,11 +917,11 @@ public class WorkspaceController {
             if (!callerIsOwner && !callerIsAdmin) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only workspace owners and admins can change member roles"));
             }
-
+            // Admins can't assign OWNER role — only owners can
             if (role == Workspace.WorkspaceRole.OWNER && !callerIsOwner) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only the workspace owner can transfer ownership"));
             }
-
+            // Owner can't demote themselves via this endpoint
             if (userId.equals(caller.getId()) && callerIsOwner) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Use the transfer ownership flow to change the owner's role"));
             }
@@ -839,6 +932,7 @@ public class WorkspaceController {
             }
             Workspace.WorkspaceRole previousRole = target.getRole();
 
+            // If promoting to OWNER, demote previous owner to ADMIN
             if (role == Workspace.WorkspaceRole.OWNER) {
                 workspace.getMembers().stream()
                     .filter(m -> m.getRole() == Workspace.WorkspaceRole.OWNER)
@@ -848,6 +942,7 @@ public class WorkspaceController {
             target.setRole(role);
             workspaceService.updateWorkspace(workspace);
 
+            // Backfill or remove WS_EDITOR_LINK_ADMIN project entries when admin role changes
             workspaceService.syncAdminRoleChangeToProjects(workspace, userId, previousRole, role);
 
             log.info("Member {} role changed to {} in workspace {} by {}", userId, role, workspaceId, username);
@@ -858,6 +953,7 @@ public class WorkspaceController {
         }
     }
 
+    // Helper methods
     private String getCurrentUserEmail() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication.getName();
@@ -871,7 +967,7 @@ public class WorkspaceController {
         dto.put("description", workspace.getDescription());
         dto.put("ownerId", workspace.getOwnerId());
         dto.put("memberCount", workspace.getMembers().size());
-
+        
         String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
         dto.put("subscriptionPlan", plan);
         dto.put("billingStatus", resolveBillingStatus(workspace));
@@ -879,10 +975,11 @@ public class WorkspaceController {
         dto.put("collaborationLevel", getCollaborationLevel(plan));
         dto.put("hasBasicCollaboration", hasBasicCollaboration(plan));
         dto.put("hasAdvancedCollaboration", hasAdvancedCollaboration(plan));
-
+        
         dto.put("createdAt", workspace.getCreatedAt());
         dto.put("updatedAt", workspace.getUpdatedAt());
-
+        
+        // Include member details
         List<Map<String, Object>> members = workspace.getMembers().stream()
                 .map(m -> {
                     Map<String, Object> memberDTO = new HashMap<>();
@@ -904,10 +1001,12 @@ public class WorkspaceController {
     private String resolveBillingStatus(Workspace workspace) {
         String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
 
+        // FREE workspaces are always active
         if ("FREE".equalsIgnoreCase(plan)) {
             return "ACTIVE";
         }
 
+        // Enterprise-domain owners: billing is managed externally — always active.
         Optional<User> ownerOpt = userRepository.findById(workspace.getOwnerId());
         if (ownerOpt.isPresent() && systemSettingsService.isEnterpriseBypass(ownerOpt.get().getEmail())) {
             return "ACTIVE";
@@ -915,10 +1014,12 @@ public class WorkspaceController {
 
         String stored = workspace.getBillingStatus();
 
+        // If stored status is ACTIVE or TRIALING, double-check the subscription period hasn't expired.
+        // Stripe should send webhooks, but this is a safety net for missed/delayed webhooks.
         if ("ACTIVE".equalsIgnoreCase(stored) || "TRIALING".equalsIgnoreCase(stored)) {
             LocalDateTime periodEnd = workspace.getSubscriptionCurrentPeriodEnd();
             if (periodEnd != null && periodEnd.isBefore(LocalDateTime.now())) {
-
+                // Period has passed — mark the workspace as requiring payment and persist
                 workspace.setBillingStatus("EXPIRED");
                 workspace.setCollaborationEnabled(false);
                 try { workspaceService.updateWorkspace(workspace); } catch (Exception e) {
@@ -937,7 +1038,8 @@ public class WorkspaceController {
 
         return Boolean.TRUE.equals(workspace.getCollaborationEnabled()) ? "ACTIVE" : "PENDING";
     }
-
+    
+    // Helper methods for subscription validation
     private int getMaxMembersForPlan(String plan) {
         return switch (plan.toUpperCase()) {
             case "FREE" -> 3;
@@ -946,7 +1048,7 @@ public class WorkspaceController {
             default -> 3;
         };
     }
-
+    
     private int getMaxWorkspacesForPlan(String plan) {
         return switch (plan.toUpperCase()) {
             case "FREE" -> 3;
@@ -955,14 +1057,14 @@ public class WorkspaceController {
             default -> 3;
         };
     }
-
+    
     private boolean isDowngrade(String currentPlan, String newPlan) {
         if (currentPlan == null) return false;
         int currentRank = getPlanRank(currentPlan);
         int newRank = getPlanRank(newPlan);
         return newRank < currentRank;
     }
-
+    
     private int getPlanRank(String plan) {
         return switch (plan.toUpperCase()) {
             case "FREE" -> 1;
@@ -977,19 +1079,26 @@ public class WorkspaceController {
         return getPlanRank(newPlan) > getPlanRank(currentPlan);
     }
 
+    /** Returns numeric tier for a plan name (used to compare Stripe account plan vs requested workspace plan). */
     private int planTier(String plan) {
         return getPlanRank(plan);
     }
-
+    
+    /**
+     * Check if a plan has basic collaboration features (file sharing & comments)
+     */
     private boolean hasBasicCollaboration(String plan) {
         return switch (plan.toUpperCase()) {
-            case "FREE" -> false;
-            case "PRO" -> true;
-            case "ENTERPRISE" -> true;
+            case "FREE" -> false;       // Basic collaboration: file sharing & comments
+            case "PRO" -> true;       // No collaboration
+            case "ENTERPRISE" -> true; // Basic collaboration: file sharing & comments
             default -> false;
         };
     }
-
+    
+    /**
+     * Check if a plan has advanced real-time collaboration features
+     */
     private boolean hasAdvancedCollaboration(String plan) {
         return switch (plan.toUpperCase()) {
             case "FREE" -> false;
@@ -998,7 +1107,11 @@ public class WorkspaceController {
             default -> false;
         };
     }
-
+    
+    /**
+     * Get collaboration level for a plan
+     * @return "none", "basic", or "advanced"
+     */
     public String getCollaborationLevel(String plan) {
         if (hasAdvancedCollaboration(plan)) {
             return "advanced";

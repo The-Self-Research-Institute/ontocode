@@ -17,6 +17,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 
+/** Extract all line numbers mentioned in a parser error string (1-based). */
 function parseErrorLines(errorStr: string): number[] {
   if (!errorStr) return [];
   const found = new Set<number>();
@@ -37,6 +38,7 @@ function parseErrorLines(errorStr: string): number[] {
   return Array.from(found);
 }
 
+// Declare vscode API
 declare global {
   interface Window {
     vscode?: {
@@ -58,12 +60,17 @@ interface CodeHighlighterProps {
   readOnly?: boolean;
   onSaveContent?: (content: string) => void;
   syntaxError?: string | null;
-
+  /**
+   * When false, "Copy All" and "Download" surface the upgrade prompt
+   * instead of running. Defaults to true so existing callers behave as
+   * before; pass `subscription.canAccessFeature('hasExport')` to gate.
+   */
   canExport?: boolean;
-
+  /** Called when a gated export action is clicked on a non-paid plan. */
   onExportProAction?: () => void;
 }
 
+/** Imperative handle so callers outside the editor (e.g. a Problems panel) can jump to a line. */
 export interface CodeHighlighterHandle {
   goToLine: (lineNumber: number) => void;
 }
@@ -72,6 +79,10 @@ const MAX_LINES_INITIAL = 500; // Show first 500 lines initially
 const CHUNK_SIZE = 200; // Process 200 lines at a time
 const SEARCH_DEBOUNCE_MS = 400; // Debounce search input
 
+// Edit-mode gutter virtualization (line-number + fold columns). Must match the
+// textarea's actual line box height exactly, or gutter rows drift from the lines
+// they label — see the `wrap="off"` on the textarea below, which keeps one
+// logical line == one fixed-height row (soft-wrapped long lines would break this).
 const GUTTER_LINE_HEIGHT = 22.4; // 14px font-size * 1.6 line-height
 const GUTTER_PADDING_TOP = 16; // matches the textarea's own padding-top
 const GUTTER_OVERSCAN_ROWS = 30; // rendered above/below the viewport so fast scrolls don't flash blank
@@ -124,30 +135,39 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   const lineNumberGutterRef = useRef<HTMLDivElement>(null);
   const foldGutterRef = useRef<HTMLDivElement>(null);
 
+  // Edit-mode gutter virtualization state: only the rows within [editScrollTop,
+  // editScrollTop + editViewportHeight] (+ overscan) are ever mounted as DOM nodes,
+  // instead of one node per line in the whole document (see CodeHighlighter's
+  // large-file freeze in the Code View plan). Driven by the textarea's own native
+  // scroll — the gutters themselves no longer scroll independently.
   const [editScrollTop, setEditScrollTop] = useState(0);
   const [editViewportHeight, setEditViewportHeight] = useState(0);
   const scrollRafRef = useRef<number | null>(null);
 
+  // Derived: error line numbers (1-based) from the syntaxError prop
   const errorLineNumbers = useMemo(() => new Set(parseErrorLines(syntaxError || "")), [syntaxError]);
 
+  /** Navigate to a 1-based line number in whichever mode is active. */
   const navigateToLine = useCallback((lineNumber: number) => {
     if (lineNumber < 1) return;
     const zeroIdx = lineNumber - 1;
 
     if (isEditMode && textareaRef.current) {
       const lines = currentContent.split("\n");
-
+      // Ensure lines up to target are loaded
       if (lineNumber > displayedLines) setDisplayedLines(lineNumber + 50);
       const offset = lines.slice(0, zeroIdx).reduce((acc, l) => acc + l.length + 1, 0);
       const ta = textareaRef.current;
       ta.focus();
       ta.setSelectionRange(offset, offset + (lines[zeroIdx]?.length ?? 0));
-
+      // Scroll textarea to that line
       ta.scrollTop = Math.max(0, zeroIdx * GUTTER_LINE_HEIGHT - ta.clientHeight / 2);
-
+      // Drive the gutter window directly rather than waiting for the async 'scroll'
+      // event — goToLine is often called right before the user expects to see the
+      // target line's gutter row (e.g. jumping to a lint issue).
       setEditScrollTop(ta.scrollTop);
     } else {
-
+      // View mode: use existing handleLineClick
       handleLineClick(zeroIdx);
     }
     setShowErrorDialog(false);
@@ -164,21 +184,24 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     return content ? content.split(/\r?\n/).length : 0;
   }, [content]);
 
+  // Sync currentContent with content prop
   useEffect(() => {
     setCurrentContent(content);
   }, [content]);
 
+  // Handle line content edit
   const handleContentEdit = (newContent: string) => {
     if (readOnly || !onContentChange) return;
 
     setCurrentContent(newContent);
     setHasUnsavedChanges(true);
 
+    // Notify parent of content change
     onContentChange(newContent);
   };
 
   const handleSaveChanges = () => {
-
+    // Block save when syntax errors are already known client-side
     if (syntaxError && errorLineNumbers.size > 0) {
       setShowErrorDialog(true);
       return;
@@ -194,7 +217,9 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       onExportProAction?.();
       return;
     }
+    console.log("[CodeHighlighter] Download initiated - Format:", format, "Content length:", currentContent?.length);
 
+    // Determine file extension based on format
     const extensionMap: Record<typeof format, string> = {
       turtle: "ttl",
       rdfxml: "rdf",
@@ -208,6 +233,9 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     const extension = extensionMap[format] || "txt";
     const filename = `ontology_${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`;
 
+    console.log("[CodeHighlighter] Creating file:", filename);
+
+    // Use VS Code API to download file (works in webview)
     if (window.vscode) {
       window.vscode.postMessage({
         type: "downloadFile",
@@ -215,8 +243,9 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         filename: filename,
         format: format,
       });
+      console.log("[CodeHighlighter] Download request sent to extension:", filename);
     } else {
-
+      // Fallback to direct blob download (for browser testing)
       try {
         const blob = new Blob([currentContent], { type: "text/plain;charset=utf-8" });
         const url = URL.createObjectURL(blob);
@@ -227,6 +256,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+        console.log("[CodeHighlighter] Downloaded file via blob:", filename, "Size:", blob.size, "bytes");
       } catch (error) {
         console.error("[CodeHighlighter] Download failed:", error);
         alert("Download failed: " + (error instanceof Error ? error.message : "Unknown error"));
@@ -235,6 +265,8 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   };
 
   const handleAddDoi = () => {
+    console.log("[CodeHighlighter] Add DOI button clicked");
+    console.log("[CodeHighlighter] readOnly:", readOnly, "onContentChange:", !!onContentChange);
 
     if (readOnly) {
       console.warn("[CodeHighlighter] Cannot add DOI - component is readOnly");
@@ -246,21 +278,26 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       return;
     }
 
+    console.log("[CodeHighlighter] Opening Add DOI dialog");
     setShowAddDoiDialog(true);
   };
 
   const handleAddDoiConfirm = () => {
+    console.log("[CodeHighlighter] Add DOI confirm clicked");
+    console.log("[CodeHighlighter] DOI input value:", doiInputValue);
+    console.log("[CodeHighlighter] Current format:", format);
 
     if (!doiInputValue.trim()) {
       console.warn("[CodeHighlighter] DOI input is empty");
       return;
     }
 
+    // Validate DOI format before inserting
     const norm = normalizeDoiUtil(doiInputValue);
     if (!isValidDoiFormat(norm)) {
       console.warn("[CodeHighlighter] DOI appears malformed:", doiInputValue);
       setDoiInputError('DOI looks malformed');
-
+      // Provide feedback to the user in the webview
       try {
         alert('The DOI you entered looks malformed. Please check the value and try again.');
       } catch (_) {}
@@ -273,8 +310,11 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       return;
     }
 
+    // Get cursor position or add to end
     const lines = currentContent.split(/\r?\n/);
+    console.log("[CodeHighlighter] Current content has", lines.length, "lines");
 
+    // Add DOI to the end of the file
     const indent = "    ";
     let doiLine = "";
     if (format === "turtle") {
@@ -287,15 +327,20 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       doiLine = `${indent}bibo:doi "${doiInputValue}" ;`;
     }
 
+    console.log("[CodeHighlighter] Adding DOI line:", doiLine);
+
     lines.push("", doiLine);
     const newContent = lines.join("\n");
 
+    console.log("[CodeHighlighter] New content has", newContent.split(/\r?\n/).length, "lines");
     handleContentEdit(newContent);
 
     setShowAddDoiDialog(false);
     setDoiInputValue("");
+    console.log("[CodeHighlighter] DOI added successfully");
   };
 
+  // Debounce search query
   useEffect(() => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
@@ -312,6 +357,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     };
   }, [searchQuery]);
 
+  // Search through content with chunked processing and progress (debounced)
   useEffect(() => {
     if (!debouncedSearchQuery || !content) {
       setSearchResults([]);
@@ -334,10 +380,11 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       const query = caseSensitive ? debouncedSearchQuery : debouncedSearchQuery.toLowerCase();
       const maxLines = Math.min(lines.length, MAX_SEARCH_LINES);
 
+      // Process in smaller chunks with progress updates
       let processed = 0;
 
       const processChunk = () => {
-
+        // Check if search was cancelled
         if (searchCancelRef.current) {
           setIsSearching(false);
           setSearchProgress(0);
@@ -358,18 +405,19 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         setSearchProgress(progress);
 
         if (processed < maxLines) {
-
+          // Continue processing with delay to prevent hanging
           searchTimeout = setTimeout(() => {
             animationFrameId = requestAnimationFrame(processChunk);
           }, SEARCH_CHUNK_DELAY);
         } else {
-
+          // Done
           setSearchResults(matches);
           setCurrentMatchIndex(0);
           setIsSearching(false);
           setSearchProgress(100);
           setShowSearchPanel(matches.length > 0);
 
+          // Clear progress after a delay
           setTimeout(() => setSearchProgress(0), 500);
         }
       };
@@ -386,14 +434,16 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     };
   }, [debouncedSearchQuery, content, caseSensitive]);
 
+  // Scroll to current match
   useEffect(() => {
     if (searchResults.length > 0 && editorRef.current) {
       const lineNumber = searchResults[currentMatchIndex];
-
+      // Ensure the line is loaded
       if (lineNumber >= displayedLines) {
         setDisplayedLines(Math.min(lineNumber + 50, totalLines));
       }
 
+      // Scroll to the line
       setTimeout(() => {
         const codeElement = editorRef.current;
         if (codeElement) {
@@ -405,19 +455,22 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     }
   }, [currentMatchIndex, searchResults, displayedLines, totalLines]);
 
+  // Auto-show search panel when in citation insertion mode
   useEffect(() => {
     if (citationInsertionMode || citationRemovalMode) {
       setShowSearchPanel(true);
-
+      // Exit edit mode when citation mode is active
       if (isEditMode) {
         setIsEditMode(false);
       }
     }
   }, [citationInsertionMode, citationRemovalMode, isEditMode]);
 
+  // Helper function to detect and extract DOI from a line
   const extractDOI = (line: string): string | null => {
     if (!line) return null;
 
+    // Match DOI in different formats
     const doiPatterns = [
       /bibo:doi\s+"([^"]+)"/i, // Turtle: bibo:doi "10.1234/..."
       /dc:identifier\s+"doi:([^"]+)"/i, // Turtle: dc:identifier "doi:10.1234/..."
@@ -435,17 +488,21 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     return null;
   };
 
+  // Helper function to detect if a line is part of a citation block
   const detectCitationLine = (line: string, format: string): boolean => {
     if (!line) return false;
 
+    // First check for the primary citation marker - urn:citation:
     if (/urn:citation:/i.test(line)) {
       return true;
     }
 
+    // Check for citation comment markers
     if (/Zotero Citation/i.test(line) || /###\s*Zotero Citation/i.test(line) || /<!--\s*Zotero Citation/i.test(line)) {
       return true;
     }
 
+    // Check for lines containing citation URIs in different formats
     if (
       /<urn:citation:[^>]+>/i.test(line) ||
       /IRI="urn:citation:/i.test(line) ||
@@ -454,13 +511,22 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       return true;
     }
 
+    // For context detection, we return false by default
+    // The detection relies on finding the actual urn:citation marker
+    // This prevents over-highlighting of non-citation lines
     return false;
   };
 
+  // Line count for edit mode gutter
   const editLineCount = useMemo(() => {
     return currentContent ? currentContent.split("\n").length : 1;
   }, [currentContent]);
 
+  // Defer the fold-detection scan below off the live keystroke for large documents —
+  // it's an O(n) bracket-matching pass, and re-running it synchronously on every
+  // character typed into a large ontology is what made typing feel slow. Small
+  // files (the common case) get zero added latency since there's nothing to gain
+  // from deferring a scan that's already instant.
   const [debouncedFoldContent, setDebouncedFoldContent] = useState(currentContent);
   const foldDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -477,10 +543,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     };
   }, [currentContent]);
 
+  // Detect foldable ranges from content (bracket matching + XML tag matching)
   const foldableRanges = useMemo(() => {
     const lines = debouncedFoldContent.split("\n");
     const ranges: Map<number, number> = new Map(); // startLine -> endLine (0-indexed)
 
+    // Bracket matching for { }, [ ], ( )
     const bracketMatch: Record<string, string> = { "{": "}", "[": "]", "(": ")" };
     const openBrackets = new Set(Object.keys(bracketMatch));
     const closeBrackets = new Set(Object.values(bracketMatch));
@@ -527,6 +595,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       }
     }
 
+    // XML tag matching for rdfxml/owlxml formats
     if (format === "rdfxml" || format === "owlxml") {
       const tagStack: { tag: string; line: number }[] = [];
       for (let i = 0; i < lines.length; i++) {
@@ -556,10 +625,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     return ranges;
   }, [debouncedFoldContent, format]);
 
+  // Clear collapsed ranges when content changes externally
   useEffect(() => {
     setCollapsedRanges(new Map());
   }, [content]);
 
+  // Toggle fold for a given start line
   const toggleFold = useCallback(
     (startLine: number) => {
       setCollapsedRanges((prev) => {
@@ -578,6 +649,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     [foldableRanges],
   );
 
+  // Compute display content for edit mode textarea with folds applied
   const editDisplayContent = useMemo(() => {
     if (collapsedRanges.size === 0) return currentContent;
     const lines = currentContent.split("\n");
@@ -596,12 +668,19 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     return result.join("\n");
   }, [currentContent, collapsedRanges]);
 
+  // Auto-unfold all when user focuses the textarea to edit
   const handleTextareaFocus = useCallback(() => {
     if (collapsedRanges.size > 0) {
       setCollapsedRanges(new Map());
     }
   }, [collapsedRanges]);
 
+  // Maps a rendered "visual row" back to its real 0-based line index, accounting for
+  // collapsed folds (a folded range's start line is one visual row that hides the
+  // lines beneath it). null means "no active folds" — the common case, especially for
+  // large files users haven't folded anything in — so the windowing below can index
+  // straight into the document instead of paying for this O(n) walk on every render.
+  // Built off the debounced content (see foldableRanges above) for the same reason.
   const visualRowToLineIndex = useMemo(() => {
     if (collapsedRanges.size === 0) return null;
     const lines = debouncedFoldContent.split("\n");
@@ -618,6 +697,11 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
 
   const editTotalVisualRows = visualRowToLineIndex ? visualRowToLineIndex.length : editLineCount;
 
+  // Viewport window: only rows within [gutterStartRow, gutterEndRow] get mounted as
+  // DOM nodes below, instead of one node per line in the whole document — this is
+  // the actual fix for the large-file freeze (see CodeHighlighter's Code View plan).
+  // Driven by the textarea's real scroll position (editScrollTop/editViewportHeight),
+  // kept in sync by handleTextareaScroll and the ResizeObserver effect further down.
   const { gutterStartRow, gutterEndRow } = useMemo(() => {
     const viewportPx = editViewportHeight || 400;
     const visibleRowCount = Math.ceil(viewportPx / GUTTER_LINE_HEIGHT);
@@ -698,14 +782,27 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     return items;
   }, [gutterStartRow, gutterEndRow, visualRowToLineIndex, foldableRanges, collapsedRanges, toggleFold, editScrollTop]);
 
+  // The plain-textarea edit mode (see the isEditMode branch below) never reads this
+  // value — only the view-mode dangerouslySetInnerHTML does. Without this guard, every
+  // keystroke while editing a large ontology re-ran full-document regex syntax
+  // highlighting plus citation/DOI block scanning for nothing, which is what made
+  // typing feel slow.
   const skipHighlighting = isEditMode && !citationInsertionMode && !citationRemovalMode;
 
   const highlightedContent = useMemo(() => {
     if (!content || skipHighlighting) return "";
 
+    console.log("🎨 useMemo: Re-rendering highlighted content", {
+      contentLength: content.length,
+      format,
+      hasDOI: content.includes("bibo:doi") || content.includes("dc:identifier"),
+      doiCount: (content.match(/bibo:doi/g) || []).length,
+    });
+
     const lines = content.split(/\r?\n/);
     const linesToShow = lines.slice(0, displayedLines);
 
+    // Build a map of citation blocks when in removal mode for better highlighting
     const citationBlockLines = new Set<number>();
     if (citationRemovalMode) {
       const isXmlFmt = format === "rdfxml" || format === "owlxml";
@@ -713,6 +810,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       const isManchesterFmt = format === "manchester";
       const isFunctionalFmt = format === "functional";
 
+      // Find all citation URIs and detect their full block boundaries
       for (let i = 0; i < linesToShow.length; i++) {
         const line = linesToShow[i];
         const citationUriMatch = line.match(/urn:citation:([a-zA-Z0-9]+)/i);
@@ -720,12 +818,13 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         if (citationUriMatch) {
           const citationId = citationUriMatch[1];
 
+          // Find block start (search backwards for comment or opening tag)
           let blockStart = i;
           for (let k = i - 1; k >= Math.max(0, i - 15); k--) {
             const prev = linesToShow[k].trim();
             if (prev.includes("Zotero Citation") || prev.startsWith("###") || prev.startsWith("<!--")) {
               blockStart = k;
-
+              // Include blank lines before comment
               for (let b = k - 1; b >= Math.max(0, k - 2); b--) {
                 if (linesToShow[b].trim() === "") blockStart = b;
                 else break;
@@ -743,6 +842,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
             if (prev !== "" && !prev.includes("urn:citation:") && !isXmlFmt) break;
           }
 
+          // Find block end (search forwards for closing statement)
           let blockEnd = i;
           for (let k = i; k < Math.min(linesToShow.length, i + 50); k++) {
             const trimmed = linesToShow[k].trim();
@@ -779,6 +879,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
             }
           }
 
+          // Mark the entire block
           for (let k = blockStart; k <= blockEnd; k++) {
             citationBlockLines.add(k);
           }
@@ -786,16 +887,23 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       }
     }
 
+    // Pre-allocate array for better performance
     const numberedLines: string[] = [];
 
+    // Debug: Check if we have any DOI lines to process
     const doiLines = linesToShow.filter((l) => l.includes("bibo:doi") || l.includes("dc:identifier"));
     if (doiLines.length > 0) {
+      console.log("📊 Rendering content with DOI lines:", {
+        format,
+        count: doiLines.length,
+        samples: doiLines.slice(0, 2),
+      });
     }
 
     let skipUntilLine = -1;
 
     for (let index = 0; index < linesToShow.length; index++) {
-
+      // Skip folded lines (but not the fold start line itself)
       if (index <= skipUntilLine) continue;
 
       const line = linesToShow[index];
@@ -805,16 +913,18 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       const isCollapsed = collapsedRanges.has(index);
       const foldEndLine = isCollapsed ? collapsedRanges.get(index)! : isFoldable ? foldableRanges.get(index)! : -1;
 
+      // If collapsed, skip the folded lines for subsequent iterations
       if (isCollapsed) {
         skipUntilLine = foldEndLine;
       }
 
       let processedLine = "";
 
+      // Fast path for empty lines
       if (!line.trim()) {
         processedLine = "&nbsp;";
       } else {
-
+        // Apply syntax highlighting based on format
         switch (format) {
           case "turtle":
             processedLine = highlightTurtleLine(line);
@@ -836,20 +946,22 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
             processedLine = escapeHtml(line);
         }
 
+        // Highlight search matches only when actively searching
         if (debouncedSearchQuery && debouncedSearchQuery.length >= 1) {
           const query = escapeRegex(debouncedSearchQuery);
           const flags = caseSensitive ? "g" : "gi";
           const regex = new RegExp(query, flags);
 
+          // Split by HTML tags to safely highlight only text content
           const parts = processedLine.split(/(<[^>]+>)/g);
 
           processedLine = parts
             .map((part) => {
-
+              // If it's a tag, return as is
               if (part.startsWith("<") && part.endsWith(">")) {
                 return part;
               }
-
+              // Otherwise highlight matches in text
               return part.replace(regex, (match) => {
                 return `<mark style="background-color:#f59e0b;color:#000;padding:0 2px;border-radius:2px">${match}</mark>`;
               });
@@ -858,26 +970,31 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         }
       }
 
+      // If collapsed, append fold summary to the line content
       if (isCollapsed) {
         const foldedCount = foldEndLine - index;
         processedLine += `<span style="color:#569cd6;background:#264f78;padding:1px 6px;border-radius:3px;margin-left:8px;font-size:11px;cursor:pointer" class="fold-marker" data-fold-line="${index}"> \u22EF ${foldedCount} lines </span>`;
       }
 
+      // Detect if this line is part of a citation block
+      // When in removal mode, use the pre-calculated citation block map
       const isCitationLine = citationRemovalMode ? citationBlockLines.has(index) : detectCitationLine(line, format);
 
+      // Extract DOI if present in this line
       const doi = extractDOI(line);
       const hasDOI = doi !== null;
 
       let lineStyle = "";
-
+      // Highlight citation lines in removal mode
       if (citationRemovalMode && isCitationLine) {
         lineStyle = "background-color:#7f1d1d"; // Dark red for citation lines
       }
-
+      // Add subtle highlight for DOI lines
       if (hasDOI && !citationRemovalMode) {
         lineStyle = "background-color:#1a3a2a"; // Dark green tint for DOI lines
       }
 
+      // Enhanced line number visibility - brighter colors and larger font
       const isErrorLine = errorLineNumbers.has(lineNumber);
       const lineNumberColor =
         isErrorLine ? "#f87171" :
@@ -886,10 +1003,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       const lineNumberWeight = hasDOI || isErrorLine ? "bold" : "600";
       const lineNumberSize = "13px";
 
+      // Add hover highlight when in citation insertion or removal mode
       const citationModeCursor = citationInsertionMode || citationRemovalMode ? "cursor:pointer;" : "";
       const citationModeHoverStyle =
         citationInsertionMode || citationRemovalMode ? ";transition:background-color 0.2s" : "";
 
+      // Build title text based on mode
       let lineNumberTitle = `Line ${lineNumber}`;
       if (citationInsertionMode) {
         lineNumberTitle = "Click to insert citation here";
@@ -899,6 +1018,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         lineNumberTitle = `DOI: ${doi}`;
       }
 
+      // Fold indicator: ▶ (collapsed) or ▼ (expanded) for foldable lines
       const foldIndicatorHtml = isFoldable
         ? `<span style="color:${isCollapsed ? "#c5c5c5" : "#858585"};font-size:8px;user-select:none;width:16px;min-width:16px;text-align:center;flex-shrink:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:transform 0.15s ease;transform:rotate(${isCollapsed ? "0deg" : "90deg"})" class="fold-indicator" data-fold-line="${index}" title="${isCollapsed ? "Unfold" : "Fold"}">&#9654;</span>`
         : `<span style="width:16px;min-width:16px;flex-shrink:0;display:inline-block"></span>`;
@@ -965,7 +1085,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   };
 
   const handleLineClick = (lineIndex: number) => {
-
+    // Load context around the clicked line (500 above and 500 below)
     const startLine = Math.max(0, lineIndex - CONTEXT_LINES);
     const endLine = Math.min(totalLines, lineIndex + CONTEXT_LINES + 1);
 
@@ -973,6 +1093,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       setDisplayedLines(endLine);
     }
 
+    // Scroll to line
     setTimeout(() => {
       const codeElement = editorRef.current;
       if (codeElement) {
@@ -991,6 +1112,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     setShowSearchPanel(false);
   };
 
+  // Handle content edits via event delegation
   const handleCodeInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     if (readOnly || !onContentChange) return;
 
@@ -999,10 +1121,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     updateCursorPosition(e.target);
   };
 
+  // Update cursor position
   const updateCursorPosition = (textarea: HTMLTextAreaElement) => {
     const text = textarea.value;
     const cursorPos = textarea.selectionStart;
 
+    // Calculate line and column
     const textBeforeCursor = text.substring(0, cursorPos);
     const lines = textBeforeCursor.split("\n");
     const line = lines.length;
@@ -1011,10 +1135,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     setCursorPosition({ line, column });
   };
 
+  // Handle cursor position changes (clicks, arrow keys, mouse-up after drag, etc.)
   const handleCursorMove = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
     updateCursorPosition(e.currentTarget);
   };
 
+  // Toggle edit mode
   const toggleEditMode = () => {
     if (readOnly) return;
     const entering = !isEditMode;
@@ -1024,13 +1150,17 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         const ta = textareaRef.current;
         if (ta) {
           ta.focus();
-
+          // Initialise cursor to start so position bar shows something meaningful
           updateCursorPosition(ta);
         }
       }, 50);
     }
   };
 
+  // Drives the gutter virtualization window (see gutterStartRow/gutterEndRow above)
+  // off the textarea's real scroll position. rAF-throttled since 'scroll' fires far
+  // more often than a frame — without this, fast scrolling/flinging re-runs the
+  // gutter-item memos many times more than there are frames to show them in.
   const handleTextareaScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
     const scrollTop = e.currentTarget.scrollTop;
     if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
@@ -1040,6 +1170,9 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     });
   };
 
+  // Keep the gutter viewport height in sync with the textarea's actual rendered
+  // height (window resize, panel resize, entering/leaving edit mode) — needed to
+  // compute how many rows the virtualization window must cover.
   useEffect(() => {
     const ta = textareaRef.current;
     if (!isEditMode || !ta) return;
@@ -1050,9 +1183,11 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     return () => ro.disconnect();
   }, [isEditMode]);
 
+  // Handle keyboard shortcuts and editor features
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (readOnly) return;
 
+    // Ctrl+S or Cmd+S to save
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
       if (hasUnsavedChanges && onSaveContent) {
@@ -1061,6 +1196,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       return;
     }
 
+    // Tab key for indentation
     if (e.key === "Tab") {
       e.preventDefault();
       const textarea = e.currentTarget;
@@ -1068,11 +1204,14 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       const end = textarea.selectionEnd;
       const value = textarea.value;
 
+      // Insert 4 spaces
       const newValue = value.substring(0, start) + "    " + value.substring(end);
       textarea.value = newValue;
 
+      // Move cursor after the inserted spaces
       textarea.selectionStart = textarea.selectionEnd = start + 4;
 
+      // Trigger change event
       handleContentEdit(newValue);
       return;
     }
@@ -1111,7 +1250,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   }, [content, format]);
 
   useEffect(() => {
-
+    // Only attach event listener when in view mode (editorRef is rendered)
     if (isEditMode) return;
 
     const codeElement = editorRef.current;
@@ -1123,10 +1262,13 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     const handleMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
 
+      // Allow DOI links to work - don't interfere with anchor tag clicks
       if (target.tagName === "A" || target.closest("a")) {
+        console.log("[CodeHighlighter] DOI link clicked, allowing default behavior");
         return; // Allow the link to function normally
       }
 
+      // Handle fold indicator or fold marker click
       if (target.classList.contains("fold-indicator") || target.classList.contains("fold-marker")) {
         const foldLineAttr = target.getAttribute("data-fold-line");
         if (foldLineAttr !== null) {
@@ -1138,36 +1280,46 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         }
       }
 
+      // Find the nearest element with a line index (handles clicks on nested syntax-highlighted spans)
       const lineElement = target.closest("[data-line-idx]") as HTMLElement | null;
 
+      // Handle citation insertion mode click on line number
       if (citationInsertionMode && lineElement) {
         const lineIndexAttr = lineElement.getAttribute("data-line-idx");
         if (lineIndexAttr !== null) {
           e.preventDefault();
           const lineIndex = parseInt(lineIndexAttr);
+          console.log("[CodeHighlighter] Citation insertion click detected at line index:", lineIndex);
           onInsertCitationAt?.(lineIndex);
           return;
         }
       }
 
+      // Handle citation removal mode click on code content
       if (citationRemovalMode && lineElement) {
         const lineIndexAttr = lineElement.getAttribute("data-line-idx");
         if (lineIndexAttr !== null) {
           e.preventDefault();
           const lineIndex = parseInt(lineIndexAttr);
-
+          // Check if the parent element has the citation-line class
           const parentDiv = lineElement.closest(".code-line");
           const isCitationLine = parentDiv?.getAttribute("data-is-citation") === "true";
 
+          console.log("[CodeHighlighter] Citation removal click detected at line index:", lineIndex);
+          console.log("[CodeHighlighter] Is citation line:", isCitationLine);
+
+          // Call the removal handler - it will search for citation URI in nearby lines
           onRemoveCitationAt?.(lineIndex);
           return;
         }
       }
     };
 
+    console.log("[CodeHighlighter] Attaching mousedown listener for citation mode");
     codeElement.addEventListener("mousedown", handleMouseDown);
 
     return () => {
+      console.log("[CodeHighlighter] Removing mousedown listener");
       codeElement.removeEventListener("mousedown", handleMouseDown);
     };
   }, [citationInsertionMode, citationRemovalMode, onInsertCitationAt, onRemoveCitationAt, isEditMode, toggleFold]);
@@ -1176,7 +1328,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
 
   return (
     <div className="h-full flex flex-col" style={{ minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
-      {}
+      {/* Search Bar */}
       <div className="bg-gray-800 border-b border-gray-700 p-2 flex items-center gap-2">
         <div className="flex-1 relative">
           <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -1322,7 +1474,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
           </button>
         </div>
 
-        {}
+        {/* Editor Tools */}
         <div className="flex items-center gap-1 border-l border-gray-600 pl-2">
           {!readOnly && !citationInsertionMode && !citationRemovalMode && (
             <button
@@ -1349,7 +1501,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         </div>
       </div>
 
-      {}
+      {/* Syntax Error Indicator Bar */}
       {syntaxError && (
         <div className="flex items-center gap-2 bg-red-950 border-b border-red-700 px-3 py-1.5">
           <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
@@ -1368,7 +1520,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         </div>
       )}
 
-      {}
+      {/* Search Results Panel */}
       {showSearchPanel && searchResults.length > 0 && (
         <div className="bg-gray-800 border-b border-gray-700 max-h-64 overflow-auto">
           <div className="p-2">
@@ -1420,10 +1572,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         style={{ minWidth: 0, overflow: "auto", maxWidth: "98vw", width: "100vw", position: "relative" }}
       >
         {isEditMode && !citationInsertionMode && !citationRemovalMode ? (
-
+          // Edit mode: VS Code-style editor with line numbers and fold indicators
           <>
             <div className="flex h-full rounded-lg border-2 border-blue-500 overflow-hidden bg-[#1e1e1e]">
-              {}
+              {/* Line number gutter — items are absolutely positioned within this
+                  column, windowed to gutterStartRow..gutterEndRow, so the DOM only
+                  ever holds the visible rows regardless of document size. */}
               <div
                 ref={lineNumberGutterRef}
                 className="bg-[#1e1e1e] select-none overflow-hidden flex-shrink-0"
@@ -1441,7 +1595,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
               >
                 {lineNumberGutterItems}
               </div>
-              {}
+              {/* Fold indicator gutter — same windowed-absolute-positioning scheme. */}
               <div
                 ref={foldGutterRef}
                 className="bg-[#1e1e1e] select-none overflow-hidden flex-shrink-0"
@@ -1459,7 +1613,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
               >
                 {foldGutterItems}
               </div>
-          {}
+          {/* Textarea editor */}
               <textarea
                 ref={textareaRef}
                 value={editDisplayContent}
@@ -1475,7 +1629,11 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
                   updateCursorPosition(e.currentTarget);
                 }}
                 className="code-editor-textarea flex-1 bg-[#1e1e1e] text-white font-mono text-sm resize-none focus:outline-none"
-
+                // Gutter virtualization assumes one logical line == one fixed-height
+                // (GUTTER_LINE_HEIGHT) row; soft-wrapping a long line into multiple
+                // visual rows would break that and misalign the gutters. wrap="off"
+                // + whiteSpace: pre keeps that invariant — long lines scroll
+                // horizontally instead (the textarea already has overflow: auto).
                 wrap="off"
                 style={{
                   whiteSpace: "pre",
@@ -1494,7 +1652,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
                 spellCheck={false}
               />
             </div>
-            {}
+            {/* Cursor Position Display — sits outside overflow-hidden wrapper */}
             <div
               className="absolute bottom-2 right-2 bg-gray-900 border border-gray-600 rounded px-3 py-1 text-xs font-mono text-gray-300 shadow-lg pointer-events-none"
               style={{ zIndex: 10 }}
@@ -1503,7 +1661,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
             </div>
           </>
         ) : (
-
+          // View mode: Standard line view
           <div
             ref={editorRef}
             className="bg-[#1e1e1e] p-4 rounded-lg text-sm font-mono h-full border border-gray-700 code-editor overflow-auto"
@@ -1515,7 +1673,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
               letterSpacing: "0.5px",
             }}
           >
-            {}
+            {/* Standard line-by-line view */}
             <div
               style={{
                 whiteSpace: wordWrap ? "pre-wrap" : "pre",
@@ -1538,7 +1696,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         </div>
       )}
 
-      {}
+      {/* Syntax Error Dialog */}
       {showErrorDialog && syntaxError && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
@@ -1546,7 +1704,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
           onClick={(e) => { if (e.target === e.currentTarget && e.button === 0) setShowErrorDialog(false); }}
         >
           <div className="bg-gray-900 border border-red-700 rounded-lg shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[70vh]">
-            {}
+            {/* Dialog header */}
             <div className="flex items-center gap-2 px-4 py-3 border-b border-red-800 flex-shrink-0">
               <AlertTriangle className="w-4 h-4 text-red-400" />
               <span className="text-red-300 font-semibold text-sm flex-1">Syntax Errors</span>
@@ -1558,14 +1716,14 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
               </button>
             </div>
 
-            {}
+            {/* Raw error message */}
             <div className="px-4 py-3 bg-red-950 border-b border-red-900 flex-shrink-0">
               <pre className="text-red-200 text-xs whitespace-pre-wrap break-all font-mono leading-relaxed max-h-28 overflow-y-auto">
                 {syntaxError}
               </pre>
             </div>
 
-            {}
+            {/* Error line list */}
             {errorLineNumbers.size > 0 && (
               <div className="flex-1 overflow-y-auto px-4 py-3">
                 <p className="text-gray-400 text-xs mb-2">
@@ -1615,9 +1773,11 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
 
 CodeHighlighter.displayName = "CodeHighlighter";
 
+// Line-by-line highlighting functions (no background colors, only text colors)
 function highlightTurtleLine(line: string): string {
-
+  // Debug logging for DOI detection
   if (line.includes("bibo:doi") || line.includes("dc:identifier")) {
+    console.log("🐢 highlightTurtleLine called with DOI line:", { line, escaped: escapeHtml(line) });
   }
 
   if (line.trimStart().startsWith("#")) {
@@ -1650,13 +1810,15 @@ function highlightTurtleLine(line: string): string {
     )
     // Special highlighting for DOI values - make them clickable hyperlinks
     .replace(/(bibo:doi\s+)&quot;(.+?)&quot;/gi, (_match, property, doiValue) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in Turtle:", { doiValue, fullMatch: _match });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">bibo</span>`)}:${store(`<span style="color:#dcdcaa">doi</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI'),2000);" title="Click to open DOI: ${doiUrl}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(dc:identifier\s+)&quot;doi:(.+?)&quot;/gi, (_match, property, doiValue) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in dc:identifier:", { doiValue, fullMatch: _match });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI'),2000);" title="Click to open DOI: ${doiUrl}">&quot;${displayValue}&quot;</a>`)}`;
@@ -1684,6 +1846,7 @@ function highlightRDFXMLLine(line: string): string {
   const replacements: string[] = [];
   let counter = 0;
 
+  // Function to store a replacement and return a marker
   const store = (replacement: string) => {
     const marker = `${MARKER}${counter}${MARKER}`;
     replacements[counter] = replacement;
@@ -1696,10 +1859,11 @@ function highlightRDFXMLLine(line: string): string {
     .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
     // Special highlighting for DOI elements - handle tags with or without xmlns attributes
     .replace(/(&lt;bibo:doi(?:\s+[^&gt;]*)?&gt;)([^&lt;]+)(&lt;\/bibo:doi&gt;)/gi, (_match, open, doiValue, close) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi:", { doiValue, fullMatch: _match });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
-
+      // Extract tag parts for proper highlighting
       const openTagMatch = open.match(/(&lt;)(bibo)(:)(doi)(\s+[^&gt;]*)?(&gt;)/i);
       if (openTagMatch) {
         const openTag = `${store(`<span style="color:#808080">&lt;</span>`)}${store(`<span style="color:#569cd6">bibo</span>`)}:${store(`<span style="color:#4ec9b0">doi</span>`)}${openTagMatch[5] || ""}${store(`<span style="color:#808080">&gt;</span>`)}`;
@@ -1710,7 +1874,8 @@ function highlightRDFXMLLine(line: string): string {
     })
     // Special handling for dc:identifier with doi: prefix
     .replace(/(&lt;dc:identifier&gt;)doi:([^&lt;]+)(&lt;\/dc:identifier&gt;)/gi, (_match, open, doiValue, close) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in RDF/XML dc:identifier:", { doiValue, fullMatch: _match });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
       const displayValue = doiUrl; // Show full URL
       const openTag = `${store(`<span style="color:#808080">&lt;</span>`)}${store(`<span style="color:#569cd6">dc</span>`)}:${store(`<span style="color:#4ec9b0">identifier</span>`)}${store(`<span style="color:#808080">&gt;</span>`)}`;
@@ -1718,7 +1883,8 @@ function highlightRDFXMLLine(line: string): string {
       return `${openTag}${store(`<span style="color:#ce9178">doi:</span>`)}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeTag}`;
     })
     .replace(/(bibo:doi)=(&quot;)([^&quot;]+)(&quot;)/gi, (_match, attr, openQuote, doiValue, closeQuote) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi attribute:", { doiValue, fullMatch: _match });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">${attr}</span>`)}=${openQuote}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeQuote}`;
@@ -1742,6 +1908,7 @@ function highlightRDFXMLLine(line: string): string {
     )
     .replace(/(\/?&gt;)/g, (match) => store(`<span style="color:#808080">${match}</span>`));
 
+  // Restore all stored replacements
   for (let i = 0; i < counter; i++) {
     result = result.replace(`${MARKER}${i}${MARKER}`, replacements[i]);
   }
@@ -1750,8 +1917,9 @@ function highlightRDFXMLLine(line: string): string {
 }
 
 function highlightOWLXMLLine(line: string): string {
-
+  // Debug logging for DOI detection
   if (line.includes("bibo") || line.includes("doi") || line.includes("identifier") || line.includes("Literal")) {
+    console.log("🦉📄 highlightOWLXMLLine called:", { line, escaped: escapeHtml(line) });
   }
 
   if (line.trimStart().startsWith("<!--")) {
@@ -1771,10 +1939,13 @@ function highlightOWLXMLLine(line: string): string {
     return marker;
   };
 
+  // Process DOI patterns in OWL/XML format
+  // Pattern 1: <Literal>doi:value</Literal> or <Literal>10.xxxx/...</Literal>
   let result = escaped
     .replace(
       /(&lt;Literal(?:\s+[^&gt;]*)?)&gt;(doi:)?(\d+\.\d+\/[^&lt;]+)(&lt;\/Literal&gt;)/gi,
       (_match, openTag, doiPrefix, doiValue, closeTag) => {
+        console.log("🔗 DOI PATTERN MATCHED in OWL/XML Literal:", { doiPrefix, doiValue, fullMatch: _match });
         const fullDoiValue = (doiPrefix || "") + doiValue;
         const doiUrl = fullDoiValue.startsWith("http") ? fullDoiValue : `https://doi.org/${doiValue}`;
         const displayValue = doiUrl; // Show full URL
@@ -1788,6 +1959,7 @@ function highlightOWLXMLLine(line: string): string {
     .replace(
       /(&lt;AnnotationProperty\s+IRI=&quot;[^&quot;]*(?:bibo\/doi|identifier)[^&quot;]*&quot;\s*\/&gt;)/gi,
       (match) => {
+        console.log("🔗 DOI AnnotationProperty detected in OWL/XML:", { match });
         return store(`<span style="color:#4ec9b0;font-weight:bold">${match}</span>`);
       },
     )
@@ -1809,6 +1981,7 @@ function highlightOWLXMLLine(line: string): string {
     )
     .replace(/(\/?&gt;)/g, (match) => store(`<span style="color:#808080">${match}</span>`));
 
+  // Restore all stored replacements
   for (let i = 0; i < counter; i++) {
     result = result.replace(`${MARKER}${i}${MARKER}`, replacements[i]);
   }
@@ -1817,8 +1990,9 @@ function highlightOWLXMLLine(line: string): string {
 }
 
 function highlightNTriplesLine(line: string): string {
-
+  // Debug logging for DOI detection
   if (line.includes("bibo") || line.includes("doi") || line.includes("identifier")) {
+    console.log("📊 highlightNTriplesLine called:", { line, escaped: escapeHtml(line) });
   }
 
   if (line.trimStart().startsWith("#")) {
@@ -1838,23 +2012,31 @@ function highlightNTriplesLine(line: string): string {
     return marker;
   };
 
+  // Process DOI predicates first, before generic colorizing
   let result = escaped
     // Handle Turtle-style prefixed names (which sometimes appear in N-Triples files)
     .replace(/(bibo:doi)\s+&quot;(.+?)&quot;/gi, (_match, predicate, doiValue) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in N-Triples (Turtle style) bibo:doi:", { doiValue, fullMatch: _match });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(dc:identifier)\s+&quot;doi:(.+?)&quot;/gi, (_match, predicate, doiValue) => {
-
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
     })
     // Handle true N-Triples format with full URIs (complete triple: subject predicate object)
     .replace(/(&lt;.+?&gt;)\s+(&lt;.+?bibo\/doi&gt;)\s+&quot;(.+?)&quot;/g, (_match, subject, predicate, doiValue) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in N-Triples (URI style) bibo:doi:", {
+        subject,
+        predicate,
+        doiValue,
+        fullMatch: _match,
+      });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}`;
@@ -1862,7 +2044,13 @@ function highlightNTriplesLine(line: string): string {
     .replace(
       /(&lt;.+?&gt;)\s+(&lt;.+?\/identifier&gt;)\s+&quot;doi:(.+?)&quot;/g,
       (_match, subject, predicate, doiValue) => {
-
+        console.log("🔗 DOI PATTERN MATCHED in N-Triples (URI style) dc:identifier:", {
+          subject,
+          predicate,
+          doiValue,
+          fullMatch: _match,
+        });
+        // Handle both raw DOI and full URL
         const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
         const displayValue = doiUrl; // Show full URL
         return `${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
@@ -1878,6 +2066,7 @@ function highlightNTriplesLine(line: string): string {
     .replace(/(\^\^)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`))
     .replace(/(\s\.\s*$)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`));
 
+  // Restore all stored replacements
   for (let i = 0; i < counter; i++) {
     result = result.replace(`${MARKER}${i}${MARKER}`, replacements[i]);
   }
@@ -1886,13 +2075,14 @@ function highlightNTriplesLine(line: string): string {
 }
 
 function highlightOWLLine(line: string): string {
-
+  // Debug logging for DOI detection
   if (
     line.includes("bibo") ||
     line.includes("doi") ||
     line.includes("identifier") ||
     line.includes("AnnotationAssertion")
   ) {
+    console.log("🦉 highlightOWLLine called (Manchester/Functional):", { line, escaped: escapeHtml(line) });
   }
 
   let escaped = escapeHtml(line);
@@ -1900,6 +2090,7 @@ function highlightOWLLine(line: string): string {
   const replacements: string[] = [];
   let counter = 0;
 
+  // Function to store a replacement and return a marker
   const store = (replacement: string) => {
     const marker = `${MARKER}${counter}${MARKER}`;
     replacements[counter] = replacement;
@@ -1915,6 +2106,12 @@ function highlightOWLLine(line: string): string {
     .replace(
       /(AnnotationAssertion\()(&lt;.+?bibo\/doi&gt;)\s+(&lt;.+?&gt;)\s+&quot;(.+?)&quot;\)/gi,
       (_match, funcOpen, predicate, subject, doiValue) => {
+        console.log("🔗 DOI PATTERN MATCHED in Functional syntax bibo/doi:", {
+          predicate,
+          subject,
+          doiValue,
+          fullMatch: _match,
+        });
         const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
         const displayValue = doiUrl; // Show full URL
         return `${store(`<span style="color:#dcdcaa">${funcOpen}</span>`)}${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}${store(`<span style="color:#dcdcaa">)</span>`)}`;
@@ -1924,6 +2121,12 @@ function highlightOWLLine(line: string): string {
     .replace(
       /(AnnotationAssertion\()(&lt;.+?\/identifier&gt;)\s+(&lt;.+?&gt;)\s+&quot;doi:(.+?)&quot;\)/gi,
       (_match, funcOpen, predicate, subject, doiValue) => {
+        console.log("🔗 DOI PATTERN MATCHED in Functional syntax identifier:", {
+          predicate,
+          subject,
+          doiValue,
+          fullMatch: _match,
+        });
         const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
         const displayValue = doiUrl; // Show full URL
         return `${store(`<span style="color:#dcdcaa">${funcOpen}</span>`)}${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#ce9178">&quot;doi:</span>`)}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${store(`<span style="color:#ce9178">&quot;</span>`)}${store(`<span style="color:#dcdcaa">)</span>`)}`;
@@ -1931,13 +2134,15 @@ function highlightOWLLine(line: string): string {
     )
     // Manchester/Functional syntax DOI handling (prefixed names)
     .replace(/(bibo:doi\s+)&quot;(.+?)&quot;/gi, (_match, property, doiValue) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in Manchester/Functional bibo:doi:", { doiValue, fullMatch: _match });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">bibo</span>`)}:${store(`<span style="color:#dcdcaa">doi</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;${displayValue}&quot;</a>`)}`;
     })
     .replace(/(dc:identifier\s+)&quot;doi:(.+?)&quot;/gi, (_match, property, doiValue) => {
-
+      console.log("🔗 DOI PATTERN MATCHED in Manchester/Functional dc:identifier:", { doiValue, fullMatch: _match });
+      // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
@@ -1966,6 +2171,7 @@ function highlightOWLLine(line: string): string {
     )
     .replace(/(\/?&gt;)/g, (match) => store(`<span style="color:#808080">${match}</span>`));
 
+  // Restore all stored replacements
   for (let i = 0; i < counter; i++) {
     result = result.replace(`${MARKER}${i}${MARKER}`, replacements[i]);
   }
@@ -1979,11 +2185,13 @@ function highlightTurtle(lines: string[]): string {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
+    // Comments - fast path
     if (line.trimStart().startsWith("#")) {
       result.push(`<span style="color:#6a9955">${escapeHtml(line)}</span>`);
       continue;
     }
 
+    // Empty lines - fast path
     if (!line.trim()) {
       result.push(line);
       continue;
@@ -1991,6 +2199,7 @@ function highlightTurtle(lines: string[]): string {
 
     let escaped = escapeHtml(line);
 
+    // Apply highlighting in order (most specific to least specific)
     escaped = escaped
       // Prefixes and base
       .replace(/(@prefix|@base)(\s+)/g, '<span style="color:#c586c0">$1</span>$2')
@@ -2028,6 +2237,7 @@ function highlightRDFXML(lines: string[]): string {
     const line = lines[i];
     let escaped = escapeHtml(line);
 
+    // Apply highlighting
     escaped = escaped
       // XML Declaration
       .replace(/(&lt;\?xml[^?]*\?&gt;)/g, '<span style="color:#569cd6">$1</span>')
@@ -2059,11 +2269,13 @@ function highlightNTriples(lines: string[]): string {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
+    // Comments - fast path
     if (line.trimStart().startsWith("#")) {
       result.push(`<span style="color:#6a9955">${escapeHtml(line)}</span>`);
       continue;
     }
 
+    // Empty lines - fast path
     if (!line.trim()) {
       result.push(line);
       continue;
@@ -2071,6 +2283,7 @@ function highlightNTriples(lines: string[]): string {
 
     let escaped = escapeHtml(line);
 
+    // Apply highlighting
     escaped = escaped
       // URIs in angle brackets
       .replace(/(&lt;[^&gt;]+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
@@ -2099,6 +2312,7 @@ function highlightOWL(lines: string[]): string {
     const line = lines[i];
     let escaped = escapeHtml(line);
 
+    // Apply OWL/XML highlighting (similar to RDF/XML but with OWL-specific elements)
     escaped = escaped
       // XML Declaration
       .replace(/(&lt;\?xml[^?]*\?&gt;)/g, '<span style="color:#569cd6">$1</span>')
@@ -2131,6 +2345,7 @@ function highlightOWL(lines: string[]): string {
   return result.join("\n");
 }
 
+// Fast HTML escaping using a map for better performance
 const htmlEscapeMap: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",

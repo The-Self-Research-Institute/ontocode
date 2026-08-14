@@ -8,34 +8,38 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 import java.util.Map;
 
+/**
+ * Represents a draft change in the ontology that hasn't been saved yet.
+ * Draft changes are tracked separately from committed changes.
+ */
 @Document(collection = "draft_changes")
 @CompoundIndexes({
     @CompoundIndex(name = "project_timestamp_idx", def = "{'projectId': 1, 'timestamp': -1}"),
     @CompoundIndex(name = "project_user_idx", def = "{'projectId': 1, 'userId': 1}")
 })
 public class DraftChange {
-
+    
     @Id
     private String id;
-
+    
     private String projectId;
     private String userId;
     private String username;
-
-    private String operationType;
-    private Map<String, Object> operationData;
-
+    
+    private String operationType; // createClass, deleteClass, addAnnotation, etc.
+    private Map<String, Object> operationData; // The mutation operation details
+    
     private LocalDateTime timestamp;
     private String sessionId;
-
-    private boolean applied;
-
+    
+    private boolean applied; // Whether this draft has been applied to GraphDB
+    
     public DraftChange() {
         this.timestamp = LocalDateTime.now();
         this.applied = false;
     }
-
-    public DraftChange(String projectId, String userId, String username,
+    
+    public DraftChange(String projectId, String userId, String username, 
                       String operationType, Map<String, Object> operationData) {
         this();
         this.projectId = projectId;
@@ -45,6 +49,8 @@ public class DraftChange {
         this.operationData = operationData;
     }
 
+    // Getters and Setters
+    
     public String getId() {
         return id;
     }

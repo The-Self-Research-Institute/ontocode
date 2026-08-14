@@ -29,14 +29,16 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     const [error, setError] = useState<string | null>(null);
     const [accepting, setAccepting] = useState(false);
     const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
-
+    
     const { user } = useAuth();
-
+    
+    // Get token from props or URL parameters
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token') || params.get('invite');
     const token = propToken || urlToken;
 
     useEffect(() => {
+        console.log('[InviteAcceptPage] Component mounted, token:', token);
         if (token) {
             fetchInvitationDetails();
         } else {
@@ -46,23 +48,29 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     }, [token]);
 
     const fetchInvitationDetails = async () => {
+        console.log('[InviteAcceptPage] Fetching invitation details for token:', token);
         try {
             const response = await apiClient.get(`/api/invitations/details/${token}`);
-
+            console.log('[InviteAcceptPage] Invitation details loaded:', response);
+            
+            // Check if response is valid
             if (!response) {
                 throw new Error('No response from server');
             }
-
+            
+            // apiClient.get already returns response.data, so access invitation directly
             const invData = response?.invitation || response;
-
+            
             if (!invData || !invData.inviteeEmail) {
                 throw new Error('Invalid invitation data');
             }
-
+            
             setInvitation(invData);
-
+            
+            // Check response status flags from backend
             if (response?.alreadyAccepted) {
-
+                // Invitation was already accepted - show success message and redirect
+                console.log('[InviteAcceptPage] Invitation already accepted, redirecting to workspace');
                 if (onAccepted) {
                     onAccepted({
                         workspaceId: invData.workspaceId,
@@ -76,11 +84,12 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             }
         } catch (err: any) {
             console.error('[InviteAcceptPage] Error loading invitation:', err);
-
+            
+            // Handle 404 specifically - invitation not found
             if (err?.status === 404 || err?.response?.status === 404) {
                 setError('This invitation link is invalid or has been removed. Please contact the workspace owner to request a new invitation.');
             } else if (err?.code === 'ECONNREFUSED' || err?.code === 'ERR_NETWORK' || err?.message?.includes('Network Error') || err?.message?.includes('Failed to fetch')) {
-
+                // Network/connection error - backend not available
                 setError('Unable to connect to the server. Please make sure the OntoCode Studio services are running and try again.');
             } else if (err?.code === 'TIMEOUT' || err?.message?.includes('timeout')) {
                 setError('Connection timed out. Please check your network connection and try again.');
@@ -94,13 +103,15 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     };
 
     const handleAcceptInvitation = async () => {
-
+        console.log('[InviteAcceptPage] Accept button clicked, user:', user ? 'logged in' : 'not logged in');
+        
         if (!user) {
-
+            // User not logged in - trigger callback to show signup (new users need to create account)
+            console.log('[InviteAcceptPage] User not logged in, showing signup form');
             if (onSignupRequired) {
                 onSignupRequired(invitation?.inviteeEmail || '');
             } else if (onLoginRequired) {
-
+                // Fallback to login if signup callback not provided
                 onLoginRequired(invitation?.inviteeEmail || '');
             }
             return;
@@ -108,12 +119,19 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
         try {
             setAccepting(true);
+            console.log('[InviteAcceptPage] Accepting invitation with token:', token);
             const response = await apiClient.post(`/api/invitations/accept/${token}`);
-
+            
+            console.log('[InviteAcceptPage] Invitation accepted successfully:', response);
+            
+            // Get workspace-scoped JWT by calling select workspace endpoint
             const workspaceId = response.workspaceId || invitation?.workspaceId;
-
+            console.log('[InviteAcceptPage] Selecting workspace to get JWT:', workspaceId);
+            
             const selectResponse = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
-
+            console.log('[InviteAcceptPage] Workspace selected, got JWT:', !!selectResponse.jwt);
+            
+            // Trigger callback with workspace data including JWT
             if (onAccepted) {
                 onAccepted({
                     ...response,
@@ -125,15 +143,18 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
             }
         } catch (err: any) {
             console.error('[InviteAcceptPage] Error accepting invitation:', err);
-
+            // Handle error message from various sources
             const errorMessage = err?.error || err?.data?.error || err?.message || 'Failed to accept invitation';
-
+            
+            // Check if user is already a member - treat this as success
             if (errorMessage.toLowerCase().includes('already a member')) {
-
+                console.log('[InviteAcceptPage] User is already a member, treating as success');
+                // Get workspace-scoped JWT
                 const workspaceId = invitation?.workspaceId;
                 try {
+                    console.log('[InviteAcceptPage] Getting workspace JWT for existing member:', workspaceId);
                     const selectResponse = await apiClient.post(`/api/workspaces/${workspaceId}/select`);
-
+                    
                     const successResponse = {
                         workspaceId: workspaceId,
                         workspaceName: invitation?.workspaceName,
@@ -151,7 +172,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
                     return;
                 }
             }
-
+            
             setError(errorMessage);
             if (onError) {
                 onError();
@@ -266,7 +287,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
                 </div>
             </div>
 
-            {}
+            {/* Report Issue floating button */}
             <button
               onClick={() => setIsReportIssueModalOpen(true)}
               className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"

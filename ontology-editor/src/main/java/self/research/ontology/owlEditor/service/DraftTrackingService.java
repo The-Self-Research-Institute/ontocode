@@ -20,13 +20,18 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
+/**
+ * Service for managing draft changes before they are committed to the ontology.
+ * Tracks all editing operations and maintains them as drafts until explicitly saved.
+ */
 @Service
 public class DraftTrackingService {
-
+    
     private static final Logger log = LoggerFactory.getLogger(DraftTrackingService.class);
-
+    
+    // Project-level locks for draft operations to prevent race conditions
     private final Map<String, ReentrantLock> projectLocks = new ConcurrentHashMap<>();
-
+    
     private final DraftChangeRepository draftRepository;
     private final OntologyMutationService mutationService;
     private final SparqlDatasetService datasetService;
@@ -44,6 +49,10 @@ public class DraftTrackingService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private OntologySpringCacheEvictionService springCacheEviction;
 
+    // Invalidated when drafts are published so the class tree reflects the new public graph.
+    // Publish runs in the publishing user's SPARQL context, so execUpdate's derived-cache
+    // choke point takes its draft branch and leaves public caches alone — the explicit
+    // project-wide invalidation must happen here.
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private HierarchyIndexService hierarchyIndexService;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -51,6 +60,7 @@ public class DraftTrackingService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ClassDetailCacheService classDetailCacheService;
 
+    /** Drop hierarchy caches after the public graph changes so the served tree is not stale. */
     private void invalidateHierarchyCaches(String projectId) {
         if (topLevelClassCacheService != null) topLevelClassCacheService.evict(projectId);
         if (hierarchyIndexService != null) hierarchyIndexService.markStale(projectId);
@@ -84,22 +94,28 @@ public class DraftTrackingService {
         this.draftPublishMergeService = draftPublishMergeService;
         this.draftCopyService = draftCopyService;
     }
-
+    
+    /**
+     * Record a draft change without applying it to GraphDB
+     */
     public DraftChange recordDraft(String projectId, String userId, String username,
                                    String operationType, Map<String, Object> operationData,
                                    String sessionId) {
         log.info("[DRAFT] Recording draft for project {}: {} by {}", projectId, operationType, username);
-
+        
         DraftChange draft = new DraftChange(projectId, userId, username, operationType, operationData);
         draft.setSessionId(sessionId);
-
+        
         return draftRepository.save(draft);
     }
-
+    
+    /**
+     * Record multiple draft operations
+     */
     public List<DraftChange> recordDrafts(String projectId, String userId, String username,
                                          List<MutationOp> operations, String sessionId) {
         log.info("[DRAFT] Recording {} draft operations for project {}", operations.size(), projectId);
-
+        
         List<DraftChange> drafts = operations.stream()
             .map(op -> {
                 Map<String, Object> data = new HashMap<>();
@@ -117,18 +133,21 @@ public class DraftTrackingService {
                 if (op.oldValue() != null) data.put("oldValue", op.oldValue());
                 if (op.language() != null) data.put("language", op.language());
                 if (op.datatype() != null) data.put("datatype", op.datatype());
-
-                log.info("[DRAFT CREATION] operationType: {}, iri: {}, value: '{}', oldValue: '{}'",
+                
+                log.info("[DRAFT CREATION] operationType: {}, iri: {}, value: '{}', oldValue: '{}'", 
                     op.type(), op.iri(), op.value(), op.oldValue());
-
+                
                 return new DraftChange(projectId, userId, username, op.type(), data);
             })
             .peek(draft -> draft.setSessionId(sessionId))
             .collect(Collectors.toList());
-
+        
         return draftRepository.saveAll(drafts);
     }
-
+    
+    /**
+     * Get all unapplied drafts for a project
+     */
     public List<DraftChange> getUnappliedDrafts(String projectId) {
         return draftRepository.findByProjectIdAndAppliedFalseOrderByTimestampAsc(projectId);
     }
@@ -146,14 +165,23 @@ public class DraftTrackingService {
         return draftPublishService.analyze(projectId, userId, userDrafts, enrichAxiomDetail);
     }
 
+    /**
+     * Get all drafts (applied and unapplied) for a project
+     */
     public List<DraftChange> getAllDrafts(String projectId) {
         return draftRepository.findByProjectIdOrderByTimestampDesc(projectId);
     }
-
+    
+    /**
+     * Get draft count for a project
+     */
     public long getDraftCount(String projectId) {
         return draftRepository.countByProjectIdAndAppliedFalse(projectId);
     }
-
+    
+    /**
+     * Get or create a lock for a specific project
+     */
     private ReentrantLock getProjectLock(String projectId) {
         return projectLocks.computeIfAbsent(projectId, k -> new ReentrantLock());
     }
@@ -166,6 +194,9 @@ public class DraftTrackingService {
         return applyDrafts(projectId, userId, force, merge, null);
     }
 
+    /**
+     * Apply unapplied drafts for a single user to the main graph.
+     */
     public ApplyDraftsResult applyDrafts(String projectId, String userId, boolean force, boolean merge,
                                          Map<String, ConflictResolution> resolutions) {
         log.info("[DRAFT] Applying drafts for project {} user {} (force={}, merge={})",
@@ -198,12 +229,15 @@ public class DraftTrackingService {
         }
     }
 
+    /**
+     * @deprecated Use {@link #applyDrafts(String, String, boolean, boolean, Map)} to publish only one user's drafts.
+     */
     @Deprecated
     public ApplyDraftsResult applyDrafts(String projectId) {
         log.warn("[DRAFT] applyDrafts(projectId) without userId is deprecated");
         return applyDrafts(projectId, "anonymous", false, false, null);
     }
-
+    
     private ApplyDraftsResult applyDraftsInternal(String projectId, String userId, boolean force, boolean merge,
                                                   Map<String, ConflictResolution> resolutions) {
         List<DraftChange> unappliedDrafts = getUnappliedDraftsForUser(projectId, userId);
@@ -265,12 +299,17 @@ public class DraftTrackingService {
             metadataService.writeMeta(projectId, meta);
         }, metadataExecutor);
     }
-
+    
+    /**
+     * Publish a copy-on-switch draft session atomically via SPARQL MOVE GRAPH.
+     * Conflict detection: if main has advanced since the copy, block unless force=true.
+     */
     private ApplyDraftsResult applyDraftsViaMoveGraph(String projectId, String userId, boolean force, boolean merge,
                                                       List<DraftChange> unappliedDrafts) {
         long mainRevisionAtCopy = draftCopyService.getMainRevisionAtCopy(projectId, userId);
         long currentRevision = mainGraphRevisionService.getRevision(projectId);
 
+        // Block if main changed since copy, unless user explicitly approved (force or merge).
         if (!force && !merge && mainRevisionAtCopy >= 0 && currentRevision > mainRevisionAtCopy) {
             String message = "The shared ontology was updated while you were editing (revision "
                     + mainRevisionAtCopy + " → " + currentRevision + "). "
@@ -314,6 +353,9 @@ public class DraftTrackingService {
         }
     }
 
+    /**
+     * Discard all unapplied drafts for a project
+     */
     public DiscardDraftsResult discardDrafts(String projectId, String userId) {
         log.info("[DRAFT] Discarding drafts for project {} user {}", projectId, userId);
 
@@ -347,6 +389,10 @@ public class DraftTrackingService {
         return discardDrafts(projectId, null);
     }
 
+    /**
+     * Discard unapplied drafts whose operationData.iri is in the given set.
+     * Used by pull-from-public resolution when the user chooses "take_public" for specific entities.
+     */
     public void discardDraftsByIris(String projectId, String userId, Set<String> iris) {
         List<DraftChange> candidates = userId != null && !userId.isBlank()
                 ? getUnappliedDraftsForUser(projectId, userId)
@@ -362,11 +408,17 @@ public class DraftTrackingService {
         log.info("[DRAFT] discardDraftsByIris: deleted {} drafts for project {} userId {}", toDelete.size(), projectId, userId);
     }
 
+    /**
+     * Clear all applied drafts (cleanup)
+     */
     public void clearAppliedDrafts(String projectId) {
         log.info("[DRAFT] Clearing applied drafts for project {}", projectId);
         draftRepository.deleteByProjectIdAndAppliedTrue(projectId);
     }
-
+    
+    /**
+     * Get draft statistics
+     */
     public Map<String, Object> getDraftStatistics(String projectId) {
         return getDraftStatistics(projectId, null);
     }
@@ -393,28 +445,31 @@ public class DraftTrackingService {
 
         return stats;
     }
-
+    
+    /**
+     * Record drafts as permanent changes in change tracking
+     */
     private void recordDraftsAsChanges(String projectId, List<DraftChange> drafts) {
         try {
             for (DraftChange draft : drafts) {
                 OntologyChange.ChangeType changeType = mapOperationToChangeType(draft.getOperationType());
                 if (changeType == null) continue;
-
+                
                 Map<String, Object> data = draft.getOperationData();
                 String entityIri = (String) data.get("iri");
                 String label = (String) data.get("label");
                 String oldValue = data.get("oldValue") != null ? data.get("oldValue").toString() : null;
-                String newValue = data.get("value") != null ? data.get("value").toString() :
+                String newValue = data.get("value") != null ? data.get("value").toString() : 
                                   (data.get("newValue") != null ? data.get("newValue").toString() : null);
-
-                log.info("[DRAFT] Recording change - operationType: {}, oldValue: '{}', newValue: '{}', entityIRI: {}",
+                
+                log.info("[DRAFT] Recording change - operationType: {}, oldValue: '{}', newValue: '{}', entityIRI: {}", 
                     draft.getOperationType(), oldValue, newValue, entityIri);
                 log.info("[DRAFT] Operation data keys: {}", data.keySet());
-
+                
                 OntologyChange change = new OntologyChange.Builder(
-                    projectId,
-                    draft.getUserId(),
-                    draft.getUsername(),
+                    projectId, 
+                    draft.getUserId(), 
+                    draft.getUsername(), 
                     changeType
                 )
                 .changeCategory(determineCategory(draft.getOperationType()))
@@ -425,9 +480,11 @@ public class DraftTrackingService {
                 .oldValue(oldValue)
                 .newValue(newValue)
                 .build();
-
+                
+                // Record to MongoDB via change tracking service
                 changeTrackingService.recordChange(change);
-
+                
+                // Also record to GraphDB history for Change Assistant plugin
                 String annotationProperty = data.get("property") != null ? data.get("property").toString() : null;
                 historyService.recordEdit(
                     projectId,
@@ -445,10 +502,13 @@ public class DraftTrackingService {
             log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history", drafts.size());
         } catch (Exception e) {
             log.error("[DRAFT] Failed to record changes to change tracking", e);
-
+            // Don't fail the save if change tracking fails
         }
     }
-
+    
+    /**
+     * Map operation type to ChangeType
+     */
     private OntologyChange.ChangeType mapOperationToChangeType(String operationType) {
         return switch (operationType) {
             case "createClass" -> OntologyChange.ChangeType.ADD_CLASS;
@@ -474,7 +534,10 @@ public class DraftTrackingService {
             default -> OntologyChange.ChangeType.OTHER;
         };
     }
-
+    
+    /**
+     * Determine change category from operation type
+     */
     private String determineCategory(String operationType) {
         if (operationType.contains("Class")) return "CLASS";
         if (operationType.contains("Individual")) return "INDIVIDUAL";
@@ -483,13 +546,16 @@ public class DraftTrackingService {
         if (operationType.contains("Axiom")) return "AXIOM";
         return "OTHER";
     }
-
+    
+    /**
+     * Format change description
+     */
     private String formatChangeDescription(DraftChange draft) {
         Map<String, Object> data = draft.getOperationData();
         String label = (String) data.get("label");
         String iri = (String) data.get("iri");
         String displayName = label != null ? label : iri;
-
+        
         return switch (draft.getOperationType()) {
             case "createClass" -> "Created class: " + displayName;
             case "deleteClass" -> "Deleted class: " + displayName;
@@ -514,10 +580,14 @@ public class DraftTrackingService {
             default -> "Modified: " + displayName;
         };
     }
-
+    
+    /**
+     * Convert DraftChange to MutationOp
+     */
     private MutationOp draftToMutationOp(DraftChange draft) {
         Map<String, Object> data = draft.getOperationData();
-
+        
+        // Handle cardinality conversion
         Integer cardinality = null;
         Object cardObj = data.get("cardinality");
         if (cardObj instanceof Number) {
@@ -526,10 +596,10 @@ public class DraftTrackingService {
             try {
                 cardinality = Integer.parseInt((String) cardObj);
             } catch (NumberFormatException e) {
-
+                // ignore
             }
         }
-
+        
         return new MutationOp(
             draft.getOperationType(),
             (String) data.get("iri"),
@@ -548,7 +618,9 @@ public class DraftTrackingService {
             (String) data.get("ancestorIri")
         );
     }
-
+    
+    // Result classes
+    
     public static class ApplyDraftsResult {
         private final boolean success;
         private final int appliedCount;
@@ -571,18 +643,18 @@ public class DraftTrackingService {
         public boolean isConflictBlocked() { return conflictBlocked; }
         public DraftPublishAnalysis getPublishAnalysis() { return publishAnalysis; }
     }
-
+    
     public static class DiscardDraftsResult {
         private final boolean success;
         private final int discardedCount;
         private final String message;
-
+        
         public DiscardDraftsResult(boolean success, int discardedCount, String message) {
             this.success = success;
             this.discardedCount = discardedCount;
             this.message = message;
         }
-
+        
         public boolean isSuccess() { return success; }
         public int getDiscardedCount() { return discardedCount; }
         public String getMessage() { return message; }

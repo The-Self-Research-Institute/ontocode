@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
+import org.semanticweb.owlapi.model.parameters.Imports;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport;
 
 import java.util.ArrayList;
@@ -17,6 +18,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Applies a whitelist of simple {@link OntologyMutationService.MutationOp}s directly
+ * to the in-memory OWLOntology so the fast-open path stays warm after edits.
+ */
 @Component
 @Conditional(FastOpenCondition.class)
 public class OwlApiMutationPatcher {
@@ -57,7 +62,7 @@ public class OwlApiMutationPatcher {
     public OwlApiMutationPatcher(ProjectOntologyCache ontologyCache) {
         this.ontologyCache = ontologyCache;
     }
-
+    
     public boolean tryPatch(String projectId, List<OntologyMutationService.MutationOp> ops) {
         if (ops == null || ops.isEmpty()) {
             return false;
@@ -126,14 +131,25 @@ public class OwlApiMutationPatcher {
                     toRemove.add(df.getOWLSubClassOfAxiom(sub.get(), sup.get()));
                     yield true;
                 }
-
+                // op.target() isn't a declared class — desktop has no stable id for the complex/
+                // anonymous superclass expression this row actually represents (its "id" is
+                // either a synthetic per-request index or a bare Fuseki blank-node string that
+                // means nothing in this separately-parsed in-memory model). Match by the same
+                // Manchester text the UI showed for this row instead.
                 Optional<OWLSubClassOfAxiom> match = findAnonymousSubClassOfAxiom(ontology, sub.get(), op.value());
                 if (match.isEmpty()) yield false;
                 toRemove.add(match.get());
                 yield true;
             }
             case "deleteAxiom" -> {
-
+                // Covers two distinct shapes the frontend both route through this same generic
+                // op (see ClassEditor.tsx's handleDeleteGCA, shared by the "General class axioms"
+                // and "SubClass Of (Anonymous Ancestor)" sections):
+                //  - GCI: anonymous-SUBJECT SubClassOf, ancestorIri = the superclass.
+                //  - Anonymous ancestor: named-subject (ancestorIri) SubClassOf anonymous
+                //    superclass — same shape as the main "Sub Class Of" table's complex entries.
+                // Neither has a stable id on desktop (separately-parsed in-memory model), so
+                // match by the definition text rendered for this row instead.
                 if (op.ancestorIri() == null) yield false;
                 Optional<OWLClass> anchor = namedClass(op.ancestorIri(), df);
                 if (anchor.isEmpty()) yield false;
@@ -171,7 +187,8 @@ public class OwlApiMutationPatcher {
                     toRemove.add(df.getOWLEquivalentClassesAxiom(a.get(), b.get()));
                     yield true;
                 }
-
+                // Same reasoning as deleteSubClassOf: op.target() isn't a declared class, so this
+                // is a complex/anonymous equivalent-class expression — match by definition text.
                 Optional<OWLEquivalentClassesAxiom> match = findAnonymousEquivalentClassAxiom(ontology, a.get(), op.value());
                 if (match.isEmpty()) yield false;
                 toRemove.add(match.get());
@@ -892,6 +909,11 @@ public class OwlApiMutationPatcher {
             return false;
         }
         IRI propIri = IRI.create(propertyIri);
+        if (ontology.containsAnnotationPropertyInSignature(propIri, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)) {
+            String resolved = rangeIri.startsWith("xsd:") ? "http://www.w3.org/2001/XMLSchema#" + rangeIri.substring(4) : rangeIri;
+            toAdd.add(df.getOWLAnnotationPropertyRangeAxiom(df.getOWLAnnotationProperty(propIri), IRI.create(resolved)));
+            return true;
+        }
         if (ontology.containsDataPropertyInSignature(propIri, org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED)
                 || rangeIri.contains("XMLSchema#") || rangeIri.startsWith("xsd:")) {
             String resolved = rangeIri.startsWith("xsd:") ? "http://www.w3.org/2001/XMLSchema#" + rangeIri.substring(4) : rangeIri;
@@ -975,6 +997,11 @@ public class OwlApiMutationPatcher {
         return Optional.of(df.getOWLClass(IRI.create(iri)));
     }
 
+    /**
+     * Finds the SubClassOf axiom for {@code anchor}'s complex/anonymous superclass whose
+     * Manchester rendering matches {@code definition} — the same text {@code DesktopHierarchyService}
+     * rendered for this row via {@code classExpressionToAxiomMap}'s fallback id path.
+     */
     private Optional<OWLSubClassOfAxiom> findAnonymousSubClassOfAxiom(OWLOntology ont, OWLClass anchor, String definition) {
         if (definition == null || definition.isBlank()) {
             return Optional.empty();
@@ -985,6 +1012,10 @@ public class OwlApiMutationPatcher {
                 .findFirst();
     }
 
+    /**
+     * Finds the EquivalentClasses axiom containing a complex/anonymous expression for
+     * {@code anchor} whose Manchester rendering matches {@code definition}.
+     */
     private Optional<OWLEquivalentClassesAxiom> findAnonymousEquivalentClassAxiom(OWLOntology ont, OWLClass anchor, String definition) {
         if (definition == null || definition.isBlank()) {
             return Optional.empty();
@@ -995,6 +1026,12 @@ public class OwlApiMutationPatcher {
                 .findFirst();
     }
 
+    /**
+     * Finds the General Class Axiom (anonymous-subject SubClassOf involving {@code anchor} as
+     * superclass, or nested inside a complex expression that does) whose rendering matches
+     * {@code definition} — the exact "subExpr SubClassOf anchorLabel" text
+     * {@code DesktopHierarchyService.supplementClassDetails} rendered for the GCI row.
+     */
     private Optional<OWLSubClassOfAxiom> findGciAxiom(OWLOntology ont, OWLClass anchor, String definition) {
         if (definition == null || definition.isBlank()) {
             return Optional.empty();
@@ -1016,6 +1053,16 @@ public class OwlApiMutationPatcher {
         return Optional.empty();
     }
 
+    /**
+     * "xsd:string" (short form) is the frontend's default placeholder for "no explicit datatype",
+     * not a real IRI — {@code IRI.create("xsd:string")} would create a bogus IRI literally equal
+     * to that string instead of resolving the xsd: prefix, so a literal built with it would never
+     * equal the plain-literal (df.getOWLLiteral(value)) that OWLAPI actually produces by default
+     * for untyped strings. That mismatch breaks removal-by-equality in updateAnnotation: the old
+     * literal is never found, so the delete silently no-ops while the add still runs, leaving two
+     * annotation values. Mirrors OntologyMetadataService#formatLiteral's same guard on the SPARQL
+     * side.
+     */
     private boolean isDefaultStringDatatype(String datatype) {
         return datatype.equals("xsd:string") || datatype.endsWith("#string");
     }

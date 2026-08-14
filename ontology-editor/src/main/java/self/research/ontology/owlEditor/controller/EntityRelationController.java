@@ -14,6 +14,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Single endpoint for add / edit / delete of any entity relation.
+ * PUT /api/ontology/{projectId}/relation
+ *
+ * For "edit": builds [deleteOp, addOp] and passes both to OntologyMutationService.apply()
+ * so the entire replace happens in one SPARQL UPDATE — no race condition, no orphaned triples.
+ */
 @RestController
 @RequestMapping("/api/ontology")
 @CrossOrigin
@@ -77,6 +84,13 @@ public class EntityRelationController {
         boolean isDelete = "delete".equals(req.operation());
         boolean isAdd    = "add".equals(req.operation());
 
+        // Simple IRI→IRI edit on a class axiom or property relation: use atomic
+        // DELETE{...}WHERE{...} instead of separate DELETE DATA + INSERT DATA ops.
+        // DELETE DATA only removes an EXACT ground-triple match and silently no-ops
+        // if it doesn't — leaving the old value stuck alongside the newly-inserted
+        // one (invisible until a fresh read, e.g. switching tabs, bypasses the
+        // optimistic frontend state). DELETE{...}WHERE{...} matches structurally
+        // instead, so it can't silently miss.
         if (isEdit
                 && req.oldTargetIri() != null && req.targetIri() != null
                 && req.oldRestrictionData() == null && req.restrictionData() == null
@@ -85,8 +99,8 @@ public class EntityRelationController {
             return ops;
         }
 
-        if (isEdit || isDelete) ops.add(buildSingleOp(req, true));
-        if (isEdit || isAdd)    ops.add(buildSingleOp(req, false));
+        if (isEdit || isDelete) ops.add(buildSingleOp(req, true));   // delete old value
+        if (isEdit || isAdd)    ops.add(buildSingleOp(req, false));  // add new value
         return ops;
     }
 
@@ -100,6 +114,7 @@ public class EntityRelationController {
                 || "inverse".equals(rel) || "disjoint".equals(rel) || "equivalent".equals(rel);
     }
 
+    /** Atomic DELETE+INSERT+WHERE for simple IRI class-axiom / property-relation edits. */
     private MutationOp buildAtomicUpdateOp(RelationRequest req) {
         String type = switch (req.relationshipType()) {
             case "subClassOf"      -> "updateSubClassOf";
@@ -113,11 +128,12 @@ public class EntityRelationController {
             case "equivalent"      -> "updateEquivalentProperty";
             default -> throw new IllegalArgumentException("No atomic update op for: " + req.relationshipType());
         };
-
+        // Convention in OntologyMutationService: value = old IRI, target = new IRI
         return new MutationOp(type, req.entityIri(), null, null, null,
                 req.oldTargetIri(), req.targetIri(), null, null, null, null, null, null, null, null);
     }
 
+    /** Build a single add or delete op for any relation type. */
     private MutationOp buildSingleOp(RelationRequest req, boolean isDeleteOp) {
         String rel    = req.relationshipType();
         String iri    = req.entityIri();
@@ -126,6 +142,7 @@ public class EntityRelationController {
 
         return switch (rel) {
 
+            // ── Property relations ──────────────────────────────────────────────
             case "domain" -> {
                 if (!isDeleteOp && rd != null) {
                     yield new MutationOp("addPropertyDomain", iri, null, null,
@@ -161,6 +178,7 @@ public class EntityRelationController {
                     isDeleteOp ? "deleteEquivalentProperty" : "addEquivalentProperty",
                     iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
 
+            // ── Class axiom relations ────────────────────────────────────────────
             case "subClassOf" -> {
                 if (rd != null) {
                     String opType = isDeleteOp
@@ -207,6 +225,7 @@ public class EntityRelationController {
                         iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
             }
 
+            // ── Individual relations ──────────────────────────────────────────────
             case "sameAs" -> new MutationOp(
                     isDeleteOp ? "deleteSameIndividual" : "addSameIndividual",
                     iri, null, null, null, null, target, null, null, null, null, null, null, null, null);
@@ -231,17 +250,17 @@ public class EntityRelationController {
             boolean isDataRestriction) {}
 
     public record RelationRequest(
-            String operation,
-            String entityIri,
-            String relationshipType,
-
-            String targetIri,
-            String oldTargetIri,
+            String operation,           // "add" | "edit" | "delete"
+            String entityIri,           // subject entity IRI
+            String relationshipType,    // domain|range|subProperty|inverse|disjoint|equivalent|
+                                        // subClassOf|equivalentClass|disjointWith|sameAs|differentFrom
+            String targetIri,           // new value (add / edit)
+            String oldTargetIri,        // old value (edit / delete)
             String userId,
             String username,
-            RestrictionData restrictionData,
-            RestrictionData oldRestrictionData,
-            List<String> memberIris,
-            String expressionType
+            RestrictionData restrictionData,     // new restriction (add / edit)
+            RestrictionData oldRestrictionData,  // old restriction (edit / delete)
+            List<String> memberIris,    // intersection or union members (add / edit)
+            String expressionType       // "intersection" | "union"
     ) {}
 }

@@ -1,14 +1,20 @@
 #!/bin/bash
+# ========================================
+# OntoCode - One-Click Installation
+# For Linux/Mac
+# ========================================
 
 REGISTRY="sindhujacoretopia"
 VERSION="latest"
 
+# Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
+# Configuration
 MONGO_INITDB_ROOT_USERNAME="admin"
 MONGO_INITDB_ROOT_PASSWORD="changeme123"
 MONGO_INITDB_DATABASE="ontocode"
@@ -22,6 +28,7 @@ echo -e "${CYAN}   Registry: ${REGISTRY}${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 
+# [1/6] Check Docker
 echo "[1/6] Checking Docker..."
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}[ERROR] Docker is not installed.${NC}"
@@ -37,10 +44,12 @@ if ! docker ps &> /dev/null; then
 fi
 echo -e "${GREEN}[OK] Docker is running${NC}"
 
+# [2/6] Prepare workspace
 echo ""
 echo "[2/6] Preparing workspace..."
 mkdir -p data/projects
 
+# Create .env file with direct configuration
 echo "[INFO] Creating configuration..."
 cat > .env << EOF
 # MongoDB Configuration
@@ -70,6 +79,7 @@ EOF
 
 echo -e "${GREEN}[OK] Workspace ready${NC}"
 
+# [3/6] Check/Pull images
 echo ""
 echo "[3/6] Checking images..."
 if docker images ${REGISTRY}/ontocode-gateway:${VERSION} --format "{{.Repository}}" 2>/dev/null | grep -q "ontocode-gateway"; then
@@ -92,6 +102,7 @@ else
     echo -e "${GREEN}[OK] Images ready${NC}"
 fi
 
+# [4/6] Start services
 echo ""
 echo "[4/6] Checking and starting services..."
 if docker compose ps --services --filter "status=running" 2>/dev/null | grep -q "ontology-gateway"; then
@@ -111,12 +122,14 @@ else
     fi
 fi
 
+# [5/6] Create desktop shortcut
 echo ""
 echo "[5/6] Creating desktop shortcut..."
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
+# Detect OS
 if [[ "$OSTYPE" == "darwin"* ]]; then
-
+    # macOS
     DESKTOP="$HOME/Desktop"
     cat > "${DESKTOP}/OntoCode.command" << EOF
 #!/bin/bash
@@ -130,7 +143,7 @@ EOF
         echo -e "${YELLOW}[WARN] Could not create desktop shortcut${NC}"
     fi
 else
-
+    # Linux
     DESKTOP="$HOME/Desktop"
     if [ -d "$DESKTOP" ]; then
         cat > "${DESKTOP}/OntoCode.desktop" << EOF
@@ -155,6 +168,7 @@ EOF
     fi
 fi
 
+# [6/6] Wait and open
 echo ""
 echo "[6/6] Waiting for services to be ready..."
 if docker compose ps --services --filter "status=running" 2>/dev/null | grep -q "ontology-gateway"; then
@@ -164,6 +178,7 @@ else
 fi
 echo -e "${GREEN}[OK] Services initialized${NC}"
 
+# Display info
 echo ""
 echo -e "${CYAN}========================================${NC}"
 echo -e "${CYAN}   OntoCode is running!${NC}"
@@ -180,12 +195,13 @@ echo ""
 echo -e "${CYAN}========================================${NC}"
 echo "Opening VS Code Web Editor..."
 
+# Open browser based on OS
 sleep 3
 if [[ "$OSTYPE" == "darwin"* ]]; then
-
+    # macOS
     open http://localhost:3000
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-
+    # Linux
     if command -v xdg-open &> /dev/null; then
         xdg-open http://localhost:3000 &> /dev/null
     elif command -v gnome-open &> /dev/null; then

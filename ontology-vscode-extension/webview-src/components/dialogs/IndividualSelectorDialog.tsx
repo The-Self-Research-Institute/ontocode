@@ -38,19 +38,22 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [hasInitialized, setHasInitialized] = useState(false);
   const [filteredIndividuals, setFilteredIndividuals] = useState<Individual[]>([]);
-
+  
+  // Inline individual creation state
   const [showInlineCreate, setShowInlineCreate] = useState(false);
   const [inlineIndividualName, setInlineIndividualName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
+  // Load individuals from API if needed, or filter from provided list
   useEffect(() => {
     const loadIndividuals = async () => {
-
+      // If classIri is provided and we have projectId, try to load individuals of that class
       if (classIri && projectId && individuals.length === 0) {
         try {
           const response = await apiClient.get<any>(`/api/ontology/individuals/${projectId}?classIri=${encodeURIComponent(classIri)}`);
           const loadedIndividuals = response?.data?.individuals || response?.individuals || [];
-
+          // Note: We still show all individuals, but we've attempted to load class-specific ones
+          console.log('[IndividualSelectorDialog] Loaded individuals for class:', classIri, 'count:', loadedIndividuals.length);
         } catch (error) {
           console.error('[IndividualSelectorDialog] Failed to load individuals:', error);
         }
@@ -58,26 +61,37 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
     };
     loadIndividuals();
   }, [classIri, projectId, individuals.length]);
-
+  
+  // Filter individuals - show all available individuals
   useEffect(() => {
     let filtered = individuals;
 
+    // excludeIndividualIds (already instances of this class) used to be filtered out here
+    // entirely — when every existing individual already had this type, the list showed
+    // "No individuals available", which reads as "there are no individuals in this ontology"
+    // rather than "everything that exists is already added". They're kept in the list now
+    // (see render below, where they're shown disabled with an "Already added" badge) so that
+    // distinction is visible instead of hidden.
+
+    // Filter by search query
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(ind =>
-        ind.label.toLowerCase().includes(query) ||
+      filtered = filtered.filter(ind => 
+        ind.label.toLowerCase().includes(query) || 
         ind.id.toLowerCase().includes(query)
       );
     }
-
+    
     setFilteredIndividuals(filtered);
   }, [individuals, classIri, excludeIndividualIds, searchQuery]);
 
+  // Reset state when dialog opens and load initial selections
   useEffect(() => {
     if (isOpen && !hasInitialized) {
       setHasInitialized(true);
       setSearchQuery('');
-
+      
+      // Load initial selections if provided
       if (initialSelectedIds.length > 0) {
         const initialIndividuals = individuals.filter(ind => initialSelectedIds.includes(ind.id));
         setSelectedIndividuals(initialIndividuals);
@@ -87,6 +101,7 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
     }
   }, [isOpen, hasInitialized, initialSelectedIds, individuals]);
 
+  // Reset hasInitialized when dialog closes
   useEffect(() => {
     if (!isOpen) {
       setHasInitialized(false);
@@ -94,9 +109,10 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
   }, [isOpen]);
 
   const handleIndividualSelect = (individual: Individual) => {
-
+    // Don't allow selecting excluded individuals
     if (excludeIndividualIds.includes(individual.id)) return;
-
+    
+    // Toggle selection for multi-select
     if (selectedIndividuals.find(i => i.id === individual.id)) {
       setSelectedIndividuals(prev => prev.filter(i => i.id !== individual.id));
     } else {
@@ -104,9 +120,11 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
     }
   };
 
+  // Inline individual creation handlers
   const handleInlineCreate = async () => {
     if (!inlineIndividualName.trim() || !onAddIndividual) return;
-
+    
+    console.log('[IndividualSelectorDialog] Creating individual:', inlineIndividualName);
     setIsCreating(true);
     try {
       await onAddIndividual(inlineIndividualName.trim());
@@ -127,11 +145,11 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
   const handleDeleteClick = async (e: React.MouseEvent, individual: Individual) => {
     e.stopPropagation();
     if (!onDeleteIndividual) return;
-
+    
     if (confirm(`Are you sure you want to delete "${individual.label}"?`)) {
       try {
         await onDeleteIndividual(individual.id);
-
+        // Remove from selection if selected
         setSelectedIndividuals(prev => prev.filter(i => i.id !== individual.id));
       } catch (error) {
         console.error('[IndividualSelectorDialog] Failed to delete individual:', error);
@@ -149,6 +167,7 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
     onClose();
   };
 
+  // Early return AFTER all hooks to comply with React Rules of Hooks
   if (!isOpen) return null;
 
   return (
@@ -176,15 +195,15 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
             <X size={20} />
           </button>
         </div>
-
+        
         <div className="p-4 flex-1 overflow-hidden flex flex-col min-h-0">
-          {}
+          {/* Selected individuals display */}
           <div className="mb-3">
             <div className="text-xs font-medium text-gray-500 uppercase mb-1">Selected Individuals ({selectedIndividuals.length})</div>
             {selectedIndividuals.length > 0 ? (
               <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
                 {selectedIndividuals.map(ind => (
-                  <span
+                  <span 
                     key={ind.id}
                     className="inline-flex items-center gap-1.5 px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs cursor-pointer hover:bg-purple-200"
                     onClick={() => handleIndividualSelect(ind)}
@@ -202,7 +221,7 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
             )}
           </div>
 
-          {}
+          {/* Search and toolbar - matches EntityHierarchy style */}
           <div className="flex items-center gap-1 mb-3 bg-slate-100 p-1.5 rounded border border-slate-200">
             <div className="relative flex-1">
               <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -214,7 +233,7 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
                 className="w-full pl-7 pr-2 py-1 text-sm bg-white border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-purple-500"
               />
             </div>
-            {}
+            {/* Toolbar icons like EntityHierarchy */}
             <div className="flex items-center gap-0.5">
               {onAddIndividual && !showInlineCreate && (
                 <button
@@ -248,7 +267,7 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
             </div>
           </div>
 
-          {}
+          {/* Inline Individual Creation Form */}
           {showInlineCreate && (
             <div className="p-3 bg-purple-50 border border-purple-200 rounded mb-3">
               {!onAddIndividual && (
@@ -293,7 +312,7 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
             </div>
           )}
 
-          {}
+          {/* Individuals list */}
           <div className="flex-1 overflow-y-auto border border-gray-200 rounded-md">
             {filteredIndividuals.length === 0 ? (
               <div className="p-4 text-center text-gray-400 text-sm">
@@ -315,7 +334,7 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        {}
+                        {/* Diamond-shaped icon like in EntityHierarchy */}
                         <div className={`w-4 h-4 rotate-45 rounded-sm border flex items-center justify-center flex-shrink-0 ${
                           isAlreadyAdded
                             ? 'bg-gray-300 border-gray-400'
@@ -370,8 +389,8 @@ const IndividualSelectorDialog: React.FC<IndividualSelectorDialogProps> = ({
             <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50">
               Cancel
             </button>
-            <button
-              onClick={handleConfirm}
+            <button 
+              onClick={handleConfirm} 
               disabled={selectedIndividuals.length < minSelection}
               className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
