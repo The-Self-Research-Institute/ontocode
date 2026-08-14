@@ -18,6 +18,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * IMPROVED VERSION - Complete implementation with better error handling
+ */
 @RestController
 @RequestMapping("/api/swrl")
 public class SwrlController {
@@ -27,22 +30,25 @@ public class SwrlController {
     @Autowired
     private SwrlEngineService swrlEngineService;
 
+    /**
+     * Validate a SWRL rule
+     */
     @PostMapping("/{projectId}/validate")
     public ResponseEntity<?> validateRule(
             @PathVariable String projectId,
             @RequestBody Map<String, String> request) {
-
+        
         try {
             String ruleText = request.get("ruleText");
-
+            
             if (ruleText == null || ruleText.trim().isEmpty()) {
                 return ResponseEntity.badRequest()
                     .body(createErrorResponse("Rule text cannot be empty"));
             }
-
+            
             ValidationResult result = swrlEngineService.validateRule(projectId, ruleText);
             return ResponseEntity.ok(result);
-
+            
         } catch (Exception e) {
             logger.error("Validation error for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -50,26 +56,29 @@ public class SwrlController {
         }
     }
 
+    /**
+     * Create a new SWRL rule
+     */
     @PostMapping("/{projectId}/rules")
     public ResponseEntity<?> createRule(
             @PathVariable String projectId,
             @Valid @RequestBody CreateRuleRequest request) {
-
+        
         try {
             SwrlRule rule = swrlEngineService.createRule(
-                projectId,
-                request.getRuleName(),
+                projectId, 
+                request.getRuleName(), 
                 request.getRuleText(),
                 request.getComment(),
                 request.getCategory()
             );
             return ResponseEntity.status(HttpStatus.CREATED).body(rule);
-
+            
         } catch (IllegalArgumentException e) {
             logger.warn("Invalid rule creation request: {}", e.getMessage());
             return ResponseEntity.badRequest()
                 .body(createErrorResponse(e.getMessage()));
-
+                
         } catch (Exception e) {
             logger.error("Failed to create rule for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -77,6 +86,9 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Get rules with pagination and filtering
+     */
     @GetMapping("/{projectId}/rules")
     public ResponseEntity<?> getRules(
             @PathVariable String projectId,
@@ -85,17 +97,18 @@ public class SwrlController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) Boolean enabled) {
-
+        
         try {
-
+            // Validate pagination parameters
             if (page < 0 || size < 1 || size > 100) {
                 return ResponseEntity.badRequest()
                     .body(createErrorResponse("Invalid pagination parameters"));
             }
-
+            
             Pageable pageable = PageRequest.of(page, size);
             Page<SwrlRule> rules;
-
+            
+            // Apply filters
             if (search != null && !search.trim().isEmpty()) {
                 rules = swrlEngineService.searchRules(projectId, search, pageable);
             } else if (category != null && !category.trim().isEmpty()) {
@@ -105,9 +118,9 @@ public class SwrlController {
             } else {
                 rules = swrlEngineService.getRulesPaginated(projectId, pageable);
             }
-
+            
             return ResponseEntity.ok(rules);
-
+            
         } catch (Exception e) {
             logger.error("Failed to get rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -115,18 +128,21 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ FIXED: Get single rule - Now implemented!
+     */
     @GetMapping("/{projectId}/rules/{ruleId}")
     public ResponseEntity<?> getRule(
             @PathVariable String projectId,
             @PathVariable String ruleId) {
-
+        
         try {
             SwrlRule rule = swrlEngineService.getRule(projectId, ruleId);
             return ResponseEntity.ok(rule);
-
+            
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
-
+            
         } catch (Exception e) {
             logger.error("Failed to get rule {} for project {}", ruleId, projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -134,12 +150,15 @@ public class SwrlController {
         }
     }
 
+    /**
+     * Update an existing rule
+     */
     @PutMapping("/{projectId}/rules/{ruleId}")
     public ResponseEntity<?> updateRule(
             @PathVariable String projectId,
             @PathVariable String ruleId,
             @RequestBody UpdateRuleRequest request) {
-
+        
         try {
             SwrlRule rule = swrlEngineService.updateRule(
                 ruleId,
@@ -149,12 +168,12 @@ public class SwrlController {
                 request.getCategory()
             );
             return ResponseEntity.ok(rule);
-
+            
         } catch (IllegalArgumentException e) {
             logger.warn("Invalid rule update: {}", e.getMessage());
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(createErrorResponse(e.getMessage()));
-
+                
         } catch (Exception e) {
             logger.error("Failed to update rule {} for project {}", ruleId, projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -162,18 +181,21 @@ public class SwrlController {
         }
     }
 
+    /**
+     * Delete a rule
+     */
     @DeleteMapping("/{projectId}/rules/{ruleId}")
     public ResponseEntity<?> deleteRule(
             @PathVariable String projectId,
             @PathVariable String ruleId) {
-
+        
         try {
             swrlEngineService.deleteRule(ruleId);
             return ResponseEntity.noContent().build();
-
+            
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
-
+            
         } catch (Exception e) {
             logger.error("Failed to delete rule {} for project {}", ruleId, projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -181,11 +203,14 @@ public class SwrlController {
         }
     }
 
+    /**
+     * Execute all enabled rules
+     */
     @PostMapping("/{projectId}/execute")
     public ResponseEntity<?> executeRules(@PathVariable String projectId) {
         try {
             ExecutionResult result = swrlEngineService.executeRules(projectId);
-
+            
             ExecutionResponse response = new ExecutionResponse(
                 result.isSuccess(),
                 result.getExecutionTimeMs(),
@@ -194,12 +219,12 @@ public class SwrlController {
                 result.getInferredAxioms(),
                 result.getErrorMessage()
             );
-
+            // Pass through rule names and execution mode
             response.setExecutedRuleNames(result.getExecutedRuleNames());
             response.setExecutionMode(result.getExecutionMode());
-
+            
             return ResponseEntity.ok(response);
-
+            
         } catch (Exception e) {
             logger.error("Failed to execute rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -207,20 +232,23 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Execute selected rules by IDs
+     */
     @PostMapping("/{projectId}/execute/selected")
     public ResponseEntity<?> executeSelectedRules(
             @PathVariable String projectId,
             @RequestBody Map<String, List<String>> request) {
-
+        
         try {
             List<String> ruleIds = request.get("ruleIds");
             if (ruleIds == null || ruleIds.isEmpty()) {
                 return ResponseEntity.badRequest()
                     .body(createErrorResponse("Rule IDs are required"));
             }
-
+            
             ExecutionResult result = swrlEngineService.executeSelectedRules(projectId, ruleIds);
-
+            
             ExecutionResponse response = new ExecutionResponse(
                 result.isSuccess(),
                 result.getExecutionTimeMs(),
@@ -229,12 +257,12 @@ public class SwrlController {
                 result.getInferredAxioms(),
                 result.getErrorMessage()
             );
-
+            // Pass through rule names and execution mode
             response.setExecutedRuleNames(result.getExecutedRuleNames());
             response.setExecutionMode(result.getExecutionMode());
-
+            
             return ResponseEntity.ok(response);
-
+            
         } catch (Exception e) {
             logger.error("Failed to execute selected rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -242,18 +270,21 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Test a single rule (dry run)
+     */
     @PostMapping("/{projectId}/rules/{ruleId}/test")
     public ResponseEntity<?> testRule(
             @PathVariable String projectId,
             @PathVariable String ruleId) {
-
+        
         try {
             ExecutionResult result = swrlEngineService.testSingleRuleById(projectId, ruleId);
             return ResponseEntity.ok(result);
-
+            
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
-
+            
         } catch (Exception e) {
             logger.error("Failed to test rule {} for project {}", ruleId, projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -261,15 +292,18 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Batch create rules
+     */
     @PostMapping("/{projectId}/rules/batch")
     public ResponseEntity<?> createRulesBatch(
             @PathVariable String projectId,
             @RequestBody List<CreateRuleRequest> requests) {
-
+        
         try {
             List<SwrlRule> createdRules = swrlEngineService.createRulesBatch(projectId, requests);
             return ResponseEntity.status(HttpStatus.CREATED).body(createdRules);
-
+            
         } catch (Exception e) {
             logger.error("Failed to create rules batch for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -277,15 +311,18 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Batch delete rules
+     */
     @DeleteMapping("/{projectId}/rules/batch")
     public ResponseEntity<?> deleteRulesBatch(
             @PathVariable String projectId,
             @RequestBody List<String> ruleIds) {
-
+        
         try {
             swrlEngineService.deleteRulesBatch(ruleIds);
             return ResponseEntity.noContent().build();
-
+            
         } catch (Exception e) {
             logger.error("Failed to delete rules batch for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -293,6 +330,9 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Export rules
+     */
     @GetMapping("/{projectId}/rules/export")
     public ResponseEntity<?> exportRules(@PathVariable String projectId) {
         try {
@@ -300,7 +340,7 @@ public class SwrlController {
             return ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename=rules-" + projectId + ".json")
                 .body(rules);
-
+                
         } catch (Exception e) {
             logger.error("Failed to export rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -308,15 +348,18 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Import rules
+     */
     @PostMapping("/{projectId}/rules/import")
     public ResponseEntity<?> importRules(
             @PathVariable String projectId,
             @RequestBody List<CreateRuleRequest> rules) {
-
+        
         try {
             ImportResult result = swrlEngineService.importRules(projectId, rules);
             return ResponseEntity.ok(result);
-
+            
         } catch (Exception e) {
             logger.error("Failed to import rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -324,12 +367,15 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Get rule statistics
+     */
     @GetMapping("/{projectId}/rules/stats")
     public ResponseEntity<?> getRuleStats(@PathVariable String projectId) {
         try {
             RuleStatistics stats = swrlEngineService.getRuleStatistics(projectId);
             return ResponseEntity.ok(stats);
-
+            
         } catch (Exception e) {
             logger.error("Failed to get stats for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -337,21 +383,24 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Duplicate a rule
+     */
     @PostMapping("/{projectId}/rules/{ruleId}/duplicate")
     public ResponseEntity<?> duplicateRule(
             @PathVariable String projectId,
             @PathVariable String ruleId,
             @RequestBody(required = false) Map<String, String> request) {
-
+        
         try {
             String newName = request != null ? request.get("newName") : null;
             SwrlRule duplicated = swrlEngineService.duplicateRule(ruleId, newName);
             return ResponseEntity.status(HttpStatus.CREATED).body(duplicated);
-
+            
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(createErrorResponse(e.getMessage()));
-
+                
         } catch (Exception e) {
             logger.error("Failed to duplicate rule {} for project {}", ruleId, projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -359,6 +408,9 @@ public class SwrlController {
         }
     }
 
+    /**
+     * Clear cache for a project
+     */
     @PostMapping("/{projectId}/cache/clear")
     public ResponseEntity<?> clearCache(@PathVariable String projectId) {
         try {
@@ -368,7 +420,7 @@ public class SwrlController {
                 "projectId", projectId,
                 "timestamp", Instant.now()
             ));
-
+            
         } catch (Exception e) {
             logger.error("Failed to clear cache for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -376,12 +428,15 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ NEW: Get cache statistics
+     */
     @GetMapping("/{projectId}/cache/stats")
     public ResponseEntity<?> getCacheStats(@PathVariable String projectId) {
         try {
             Map<String, Object> stats = swrlEngineService.getCacheStats();
             return ResponseEntity.ok(stats);
-
+            
         } catch (Exception e) {
             logger.error("Failed to get cache stats", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -389,6 +444,9 @@ public class SwrlController {
         }
     }
 
+    /**
+     * ✅ IMPROVED: Helper to create standardized error responses
+     */
     private Map<String, Object> createErrorResponse(String message) {
         return Map.of(
             "error", true,
@@ -397,28 +455,31 @@ public class SwrlController {
         );
     }
 
+    /**
+     * Execute a SQWRL query and return tabular results
+     */
     @PostMapping("/{projectId}/sqwrl/query")
     public ResponseEntity<?> executeSqwrlQuery(
             @PathVariable String projectId,
             @RequestBody Map<String, Object> request) {
-
+        
         try {
             String queryText = (String) request.get("queryText");
             String queryName = (String) request.get("queryName");
-            Integer maxResults = request.get("maxResults") != null
-                ? ((Number) request.get("maxResults")).intValue()
+            Integer maxResults = request.get("maxResults") != null 
+                ? ((Number) request.get("maxResults")).intValue() 
                 : null;
-
+            
             if (queryText == null || queryText.trim().isEmpty()) {
                 return ResponseEntity.badRequest()
                     .body(createErrorResponse("Query text is required"));
             }
-
+            
             logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
-
+            
             SwrlEngineService.SqwrlQueryResult result = swrlEngineService.executeSqwrlQuery(
                 projectId, queryText, queryName, maxResults);
-
+            
             if (result.isSuccess()) {
                 return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -437,7 +498,7 @@ public class SwrlController {
                     "errorMessage", result.getErrorMessage() != null ? result.getErrorMessage() : "Unknown error"
                 ));
             }
-
+            
         } catch (Exception e) {
             logger.error("SQWRL query failed for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

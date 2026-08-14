@@ -1,10 +1,10 @@
 package self.research.ontology.plugins.storage;
 
 import com.mongodb.client.gridfs.model.GridFSFile;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.slf4j.Slf4j; // Removed RequiredArgsConstructor
 import org.bson.Document;
 import org.bson.types.ObjectId;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Autowired; // Added Autowired
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -16,12 +16,17 @@ import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 
+/**
+ * GridFS implementation of PluginStorageService for Phase 1 (Zero Cost).
+ * Can be replaced with S3StorageService in Phase 2 without changing any calling code.
+ */
 @Slf4j
 @Service
 public class GridFSStorageService implements PluginStorageService {
 
     private final GridFsTemplate gridFsTemplate;
 
+    // MANUAL CONSTRUCTOR FIX
     @Autowired
     public GridFSStorageService(@Qualifier("pluginGridFsTemplate") GridFsTemplate gridFsTemplate) {
         this.gridFsTemplate = gridFsTemplate;

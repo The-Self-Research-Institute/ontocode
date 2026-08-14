@@ -96,7 +96,7 @@ const statusPill = (status: string) => {
 
 const fmtTime = (ts: any) => {
   if (!ts) return "";
-
+  // LocalDateTime serialized as array [year,month,day,hour,minute,second,nano] before Jackson fix
   if (Array.isArray(ts)) {
     const [y, mo, d, h, mi, s] = ts as number[];
     const date = new Date(y, mo - 1, d, h ?? 0, mi ?? 0, s ?? 0);
@@ -143,6 +143,7 @@ const PRsModal: React.FC<Props> = ({
       const res = await apiClient.get<{ changes: ChangeEntry[] }>(url);
       const changes: ChangeEntry[] = res?.changes || [];
 
+      // Group by userId
       const byUser: Record<string, PRGroup> = {};
       for (const c of changes) {
         if (!byUser[c.userId]) {
@@ -180,7 +181,7 @@ const PRsModal: React.FC<Props> = ({
         userId: currentUserId,
         username: currentUsername,
       });
-
+      // Optimistically update
       setGroups((prev) =>
         prev.map((g) => ({
           ...g,
@@ -228,7 +229,7 @@ const PRsModal: React.FC<Props> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-        {}
+        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <div className="flex items-center gap-2.5">
             <GitPullRequest size={18} className="text-purple-600" />
@@ -253,7 +254,7 @@ const PRsModal: React.FC<Props> = ({
           </div>
         </div>
 
-        {}
+        {/* Filter tabs */}
         <div className="flex border-b border-gray-200 px-4">
           {(["PENDING", "APPROVED", "REJECTED", "ALL"] as const).map((f) => (
             <button
@@ -270,7 +271,7 @@ const PRsModal: React.FC<Props> = ({
           ))}
         </div>
 
-        {}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto p-4">
           {loading && (
             <div className="flex items-center justify-center py-12 text-gray-400">
@@ -297,7 +298,7 @@ const PRsModal: React.FC<Props> = ({
                   key={group.userId}
                   className="mb-3 border border-gray-200 rounded-lg overflow-hidden"
                 >
-                  {}
+                  {/* Group header */}
                   <div
                     className="flex items-center justify-between px-4 py-2.5 bg-gray-50 cursor-pointer hover:bg-gray-100"
                     onClick={() => toggleGroup(group.userId)}
@@ -344,7 +345,7 @@ const PRsModal: React.FC<Props> = ({
                     )}
                   </div>
 
-                  {}
+                  {/* Change rows */}
                   {group.expanded && (
                     <div className="divide-y divide-gray-100">
                       {group.changes.map((change) => (
@@ -383,7 +384,7 @@ const PRsModal: React.FC<Props> = ({
                             </div>
                           </div>
 
-                          {}
+                          {/* Action buttons — only for reviewers on pending changes */}
                           {canReview && change.status === "PENDING" && (
                             <div className="flex gap-1 flex-shrink-0">
                               {actionLoading[change.id] ? (
@@ -417,7 +418,7 @@ const PRsModal: React.FC<Props> = ({
             })}
         </div>
 
-        {}
+        {/* Footer */}
         <div className="px-5 py-3 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
           <span className="text-[11px] text-gray-400">
             {isOwner

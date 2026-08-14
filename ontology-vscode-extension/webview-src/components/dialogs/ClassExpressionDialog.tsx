@@ -6,6 +6,7 @@ import expressionService from '../../services/expressionService';
 import { notificationService } from '../../services/notificationService';
 import type { TreeNode, Property } from '../../types';
 
+// Structured data for object/data restrictions
 export interface RestrictionData {
   type: 'objectRestriction' | 'dataRestriction';
   axiomType: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
@@ -26,9 +27,9 @@ interface ClassExpressionDialogProps {
   initialValue?: string;
   initialClassIri?: string;
   initialTab?: 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
-
+  /** Restrict which tabs are shown. If not specified, all tabs are shown. */
   allowedTabs?: TabType[];
-
+  /** Parent axiom type — EquivalentTo vs SubClassOf vs DisjointWith for restriction creators. */
   axiomType?: 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
   initialRestrictionData?: {
     propertyIri?: string;
@@ -45,21 +46,30 @@ interface ClassExpressionDialogProps {
   onAddObjectProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
   onAddDataProperty?: (type: 'subclass' | 'sibling', parentId?: string, name?: string) => Promise<void>;
   onDeleteProperty?: () => void;
-
+  // NEW: Optional property hierarchies as TreeNode[] if they have structure
   objectPropertiesTree?: TreeNode[];
   dataPropertiesTree?: TreeNode[];
-
+  // NEW: Property toggle handlers for loading children
   onToggleObjectProperty?: (nodeId: string) => void;
   onToggleDataProperty?: (nodeId: string) => void;
-
+  // NEW: Callbacks for refreshing data after mutations
   onRefreshClasses?: () => void;
   onRefreshProperties?: () => void;
-
+  // NEW: Metadata for generating IRIs
   metadata?: { ontologyIRI?: string };
 }
 
 export type TabType = 'hierarchy' | 'objectRestriction' | 'classExpression' | 'dataRestriction';
 
+/**
+ * ClassExpressionDialog -  desktop-style class expression builder
+ *
+ * Matches desktop UI with:
+ * - EntityHierarchy for all tree views (classes, properties)
+ * - Asserted/Inferred toggles
+ * - Compact two-panel layouts for restrictions
+ * - Professional toolbar integration
+ */
 const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   isOpen,
   onClose,
@@ -90,17 +100,20 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   onRefreshProperties,
   metadata
 }) => {
-
+  // If allowedTabs is specified, use it; otherwise show all tabs
   const visibleTabs = allowedTabs || ['hierarchy', 'objectRestriction', 'classExpression', 'dataRestriction'];
-
+  
   const [activeTab, setActiveTab] = useState<TabType>('hierarchy');
 
+  // Class hierarchy state
   const [selectedClass, setSelectedClass] = useState<TreeNode | null>(null);
   const [classSearchQuery, setClassSearchQuery] = useState('');
   const [localExpandedNodes, setLocalExpandedNodes] = useState<string[]>([]);
-
+  
+  // Selected items for restriction panels
   const [selectedFillerClass, setSelectedFillerClass] = useState<TreeNode | null>(null);
 
+  // Object Restriction state
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [restrictionType, setRestrictionType] = useState<'some' | 'only' | 'min' | 'max' | 'exactly' | 'value'>('some');
   const [cardinality, setCardinality] = useState(1);
@@ -110,6 +123,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const [propertyExpandedNodes, setPropertyExpandedNodes] = useState<string[]>([]);
   const [fillerExpandedNodes, setFillerExpandedNodes] = useState<string[]>([]);
 
+  // Data Restriction state
   const [selectedDataProperty, setSelectedDataProperty] = useState<Property | null>(null);
   const [dataRestrictionType, setDataRestrictionType] = useState<'some' | 'only' | 'min' | 'max' | 'exactly' | 'value'>('some');
   const [dataCardinality, setDataCardinality] = useState(1);
@@ -117,38 +131,47 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const [dataPropertyExpandedNodes, setDataPropertyExpandedNodes] = useState<string[]>([]);
   const [dataPropSearchQuery, setDataPropSearchQuery] = useState('');
 
+  // Class Expression (Manchester) state
   const [manchesterExpression, setManchesterExpression] = useState(initialValue);
   const [manchesterParseError, setManchesterParseError] = useState<string | null>(null);
   const [manchesterParseOk, setManchesterParseOk] = useState(false);
   const parseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Inline class creation state
   const [showInlineCreate, setShowInlineCreate] = useState(false);
   const [inlineCreateType, setInlineCreateType] = useState<'subclass' | 'sibling'>('subclass');
   const [inlineClassName, setInlineClassName] = useState('');
   const [isCreatingClass, setIsCreatingClass] = useState(false);
   const [isSavingConfirm, setIsSavingConfirm] = useState(false);
 
+  // Inline class deletion state
   const [showInlineDelete, setShowInlineDelete] = useState(false);
   const [isDeletingClass, setIsDeletingClass] = useState(false);
 
+  // Inline property creation state
   const [showInlinePropertyCreate, setShowInlinePropertyCreate] = useState(false);
   const [inlinePropertyCreateType, setInlinePropertyCreateType] = useState<'subclass' | 'sibling'>('subclass');
   const [inlinePropertyName, setInlinePropertyName] = useState('');
   const [isCreatingProperty, setIsCreatingProperty] = useState(false);
   const [propertyCreationTab, setPropertyCreationTab] = useState<'object' | 'data'>('object');
 
+  // Track if we've already initialized the dialog to prevent re-initialization
   const [hasInitialized, setHasInitialized] = useState(false);
 
+  // Reset state when dialog opens with initialValue
   useEffect(() => {
     if (isOpen && !hasInitialized) {
       setHasInitialized(true);
       setManchesterExpression(initialValue);
-
+      // Set the active tab based on initialTab prop or default behavior
       if (initialTab) {
         setActiveTab(initialTab);
-
+        
         const classIriToSelect = initialClassIri || initialValue;
 
+        // If opening hierarchy tab and we have an IRI, try to find and select that class.
+        // Keep initialValue reserved for the expression text so the expression editor
+        // still shows the existing axiom when users switch tabs while editing.
         if (initialTab === 'hierarchy' && classIriToSelect && (classIriToSelect.startsWith('http://') || classIriToSelect.startsWith('https://') || classIriToSelect.startsWith('urn:'))) {
           const findClassWithPath = (nodes: TreeNode[], targetId: string, path: string[] = []): { node: TreeNode | null, path: string[] } => {
             for (const node of nodes) {
@@ -162,16 +185,17 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
             }
             return { node: null, path: [] };
           };
-
+          
           const { node: foundClass, path: pathToClass } = findClassWithPath(classHierarchy, classIriToSelect);
           if (foundClass) {
             setSelectedClass(foundClass);
-
+            // Expand parent nodes so the selected class is visible
             if (pathToClass.length > 0) {
               setLocalExpandedNodes(pathToClass);
             }
           } else {
-
+            // Class not in the currently loaded tree (lazy-loaded hierarchy).
+            // Pre-fill the search so the user sees it immediately after typing.
             const localName = classIriToSelect.split(/[#/]/).pop() || classIriToSelect;
             setClassSearchQuery(localName);
           }
@@ -182,11 +206,12 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         setActiveTab('hierarchy');
       }
 
+      // Pre-populate restriction data if provided
       if (initialRestrictionData) {
         if (initialRestrictionData.isDataProperty) {
-
+          // Data property restriction
           if (initialRestrictionData.propertyIri) {
-
+            // Check if it's owl:topDataProperty (not in dataProperties array)
             if (initialRestrictionData.propertyIri === 'http://www.w3.org/2002/07/owl#topDataProperty') {
               setSelectedDataProperty({
                 id: 'http://www.w3.org/2002/07/owl#topDataProperty',
@@ -208,9 +233,9 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
             setDatatype(initialRestrictionData.fillerIri);
           }
         } else {
-
+          // Object property restriction
           if (initialRestrictionData.propertyIri) {
-
+            // Check if it's owl:topObjectProperty (not in objectProperties array)
             if (initialRestrictionData.propertyIri === 'http://www.w3.org/2002/07/owl#topObjectProperty') {
               setSelectedProperty({
                 id: 'http://www.w3.org/2002/07/owl#topObjectProperty',
@@ -229,7 +254,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
             setCardinality(initialRestrictionData.cardinality);
           }
           if (initialRestrictionData.fillerIri) {
-
+            // Find the filler class in the hierarchy and build path to it
             const findClassWithPath = (nodes: TreeNode[], targetId: string, path: string[] = []): { node: TreeNode | null, path: string[] } => {
               for (const node of nodes) {
                 if (node.id === targetId) {
@@ -242,11 +267,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
               }
               return { node: null, path: [] };
             };
-
+            
             const { node: fillerClass, path: pathToFiller } = findClassWithPath(classHierarchy, initialRestrictionData.fillerIri);
             if (fillerClass) {
               setRestrictionFiller(fillerClass);
-
+              // Expand all parent nodes so the selected node is visible
               if (pathToFiller.length > 0) {
                 setFillerExpandedNodes(pathToFiller);
               }
@@ -257,12 +282,14 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   }, [isOpen, hasInitialized, initialValue, initialClassIri, initialTab, initialRestrictionData, objectProperties, dataProperties, classHierarchy]);
 
+  // Reset hasInitialized when dialog closes
   useEffect(() => {
     if (!isOpen) {
       setHasInitialized(false);
     }
   }, [isOpen]);
 
+  // Convert flat property list to tree structure with top property
   const propertiesToTree = (properties: Property[], isDataProperty: boolean = false): TreeNode[] => {
     const topPropertyIri = isDataProperty
       ? 'http://www.w3.org/2002/07/owl#topDataProperty'
@@ -272,6 +299,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       ? 'owl:topDataProperty'
       : 'owl:topObjectProperty';
 
+    // If no properties provided, create just the top property
     if (properties.length === 0) {
       return [{
         id: topPropertyIri,
@@ -281,14 +309,16 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       }];
     }
 
+    // Build a map of properties by ID for quick lookup
     const propMap = new Map<string, Property>();
     properties.forEach(prop => propMap.set(prop.id, prop));
 
+    // Build children map: parentId -> child properties
     const childrenMap = new Map<string, Property[]>();
 
     properties.forEach(prop => {
       if (prop.superProperties && prop.superProperties.length > 0) {
-
+        // This property has parents, add it as a child to each parent
         prop.superProperties.forEach(parentId => {
           if (!childrenMap.has(parentId)) {
             childrenMap.set(parentId, []);
@@ -296,7 +326,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           childrenMap.get(parentId)!.push(prop);
         });
       } else {
-
+        // No superProperties means it's a direct child of top property
         if (!childrenMap.has(topPropertyIri)) {
           childrenMap.set(topPropertyIri, []);
         }
@@ -304,6 +334,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       }
     });
 
+    // Recursive function to build tree nodes
     const buildNode = (prop: Property): TreeNode => {
       const children = childrenMap.get(prop.id) || [];
       return {
@@ -314,6 +345,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       };
     };
 
+    // Build top property node
     const topPropertyChildren = childrenMap.get(topPropertyIri) || [];
 
     const result = [{
@@ -325,12 +357,17 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
 
     return result;
   };
-
+const localName = (iri: string): string => {
+  const hashIdx = iri.lastIndexOf('#');
+  const slashIdx = iri.lastIndexOf('/');
+  const idx = Math.max(hashIdx, slashIdx);
+  return idx >= 0 ? iri.slice(idx + 1) : iri;
+};
   const buildObjectRestriction = (): string => {
     if (!selectedProperty || !restrictionFiller) return '';
 
-    const propName = selectedProperty.label;
-    const fillerName = restrictionFiller.label;
+      const propName = localName(selectedProperty.id);
+  const fillerName = localName(restrictionFiller.id);
 
     switch (restrictionType) {
       case 'some':
@@ -351,12 +388,19 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   };
 
   const buildDataRestriction = (): string => {
+    console.log('[ClassExpressionDialog] buildDataRestriction called', {
+      selectedDataProperty,
+      datatype,
+      dataRestrictionType,
+      dataCardinality
+    });
     if (!selectedDataProperty) {
       console.warn('[ClassExpressionDialog] buildDataRestriction: No data property selected');
       return '';
     }
 
-    const propName = selectedDataProperty.label;
+    const propName = localName(selectedDataProperty.id);
+    console.log('[ClassExpressionDialog] buildDataRestriction: propName=', propName, 'datatype=', datatype);
 
     switch (dataRestrictionType) {
       case 'some':
@@ -412,6 +456,17 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   const handleConfirm = async () => {
     if (isSavingConfirm) return;
 
+    console.log('[ClassExpressionDialog] handleConfirm called', {
+      activeTab,
+      axiomType,
+      selectedClass: selectedClass?.id,
+      selectedClassLabel: selectedClass?.label,
+      selectedProperty: selectedProperty?.id,
+      restrictionFiller: restrictionFiller?.id,
+      selectedDataProperty: selectedDataProperty?.id,
+      manchesterExpression: manchesterExpression
+    });
+    
     let expression = '';
     let restrictionData: RestrictionData | undefined = undefined;
 
@@ -419,6 +474,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
       case 'hierarchy':
         if (selectedClass) {
           expression = selectedClass.id;
+          console.log('[ClassExpressionDialog] Hierarchy tab - selected class IRI:', expression, 'label:', selectedClass.label);
         } else {
           console.warn('[ClassExpressionDialog] Hierarchy tab - no class selected!');
           notificationService.warning('Selection Required', 'Please select a class from the hierarchy');
@@ -427,7 +483,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         break;
       case 'objectRestriction':
         expression = buildObjectRestriction();
-
+        // Also build structured restriction data for backend
         if (selectedProperty && restrictionFiller) {
           restrictionData = {
             type: 'objectRestriction',
@@ -454,8 +510,10 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         }
         break;
       case 'dataRestriction':
+        console.log('[ClassExpressionDialog] dataRestriction case - calling buildDataRestriction');
         expression = buildDataRestriction();
-
+        console.log('[ClassExpressionDialog] dataRestriction expression result:', expression);
+        // Also build structured restriction data for backend
         if (selectedDataProperty) {
           const fillerIri = datatype.startsWith('http://') || datatype.startsWith('rdf:') || datatype.startsWith('rdfs:') || datatype.startsWith('owl:')
             ? (datatype.includes(':') && !datatype.startsWith('http') 
@@ -465,6 +523,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                 : datatype)
               : datatype) 
             : `http://www.w3.org/2001/XMLSchema#${datatype.replace('xsd:', '')}`;
+          console.log('[ClassExpressionDialog] dataRestriction fillerIri:', fillerIri);
           restrictionData = {
             type: 'dataRestriction',
             axiomType,
@@ -473,11 +532,13 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
             fillerIri: fillerIri,
             cardinality: ['min', 'max', 'exactly'].includes(dataRestrictionType) ? dataCardinality : undefined
           };
+          console.log('[ClassExpressionDialog] dataRestriction restrictionData:', restrictionData);
         }
         break;
     }
 
     if (expression) {
+      console.log('[ClassExpressionDialog] Calling onConfirm with expression:', expression);
       setIsSavingConfirm(true);
       try {
         await onConfirm(expression, restrictionData);
@@ -493,7 +554,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
   };
 
   const handleClose = () => {
-
+    // Reset all state
     setSelectedClass(null);
     setSelectedProperty(null);
     setRestrictionFiller(null);
@@ -502,28 +563,31 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     setClassSearchQuery('');
     setFillerSearchQuery('');
     setActiveTab('hierarchy');
-
+    // Reset inline create state
     setShowInlineCreate(false);
     setInlineClassName('');
-
+    // Reset inline delete state
     setShowInlineDelete(false);
     onClose();
   };
 
+  // Handle toggle for hierarchy tab
   const handleHierarchyToggle = async (nodeId: string) => {
-
+    // Always update local expanded state first for immediate UI feedback
     const isExpanded = localExpandedNodes.includes(nodeId);
     setLocalExpandedNodes(
       isExpanded
         ? localExpandedNodes.filter(id => id !== nodeId)
         : [...localExpandedNodes, nodeId]
     );
-
+    
+    // Also call parent's toggle if provided (to load children)
     if (onToggleNode) {
       await onToggleNode(nodeId);
     }
   };
 
+  // Handle toggle for object properties
   const handleObjectPropertyToggle = async (nodeId: string) => {
     const isExpanded = propertyExpandedNodes.includes(nodeId);
     setPropertyExpandedNodes(
@@ -536,6 +600,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   };
 
+  // Handle toggle for data properties
   const handleDataPropertyToggle = async (nodeId: string) => {
     const isExpanded = dataPropertyExpandedNodes.includes(nodeId);
     setDataPropertyExpandedNodes(
@@ -548,11 +613,12 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   };
 
+  // Handle toggle for restriction filler
   const handleFillerToggle = async (nodeId: string) => {
     if (onToggleNode) {
-
+      // Use parent's toggle if available
       await onToggleNode(nodeId);
-
+      // Also update local state for this panel
       const isExpanded = fillerExpandedNodes.includes(nodeId);
       setFillerExpandedNodes(
         isExpanded
@@ -560,7 +626,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           : [...fillerExpandedNodes, nodeId]
       );
     } else {
-
+      // Fallback to local state only
       const isExpanded = fillerExpandedNodes.includes(nodeId);
       setFillerExpandedNodes(
         isExpanded
@@ -570,6 +636,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   };
 
+  // Helper to find parent of a node in the hierarchy
   const findParentNode = (nodes: TreeNode[], targetId: string, parent: TreeNode | null = null): TreeNode | null => {
     for (const node of nodes) {
       if (node.id === targetId) return parent;
@@ -581,40 +648,46 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     return null;
   };
 
+  // Handle inline class creation
   const handleInlineAddClass = (type: 'subclass' | 'sibling') => {
     setInlineCreateType(type);
     setInlineClassName('');
     setShowInlineCreate(true);
   };
 
+  // Submit inline class creation
   const handleInlineCreateSubmit = async () => {
     if (!inlineClassName.trim() || !projectId) return;
-
+    
     setIsCreatingClass(true);
     try {
       let parentIri = 'http://www.w3.org/2002/07/owl#Thing';
-
+      
       if (inlineCreateType === 'subclass' && selectedClass) {
         parentIri = selectedClass.id;
       } else if (inlineCreateType === 'sibling' && selectedClass) {
         const parent = findParentNode(classHierarchy, selectedClass.id);
         parentIri = parent?.id || 'http://www.w3.org/2002/07/owl#Thing';
       }
-
+      
+      // Generate IRI from class name
       const baseIri = metadata?.ontologyIRI || 'http://example.org/ontology#';
       const cleanName = inlineClassName.trim().replace(/\s+/g, '_');
       const newClassIri = baseIri.endsWith('#') || baseIri.endsWith('/') 
         ? `${baseIri}${cleanName}` 
         : `${baseIri}#${cleanName}`;
-
+      
+      // Ensure parent node is expanded so new class will be visible
+      // Add parent to local expanded nodes if not already expanded
       if (!localExpandedNodes.includes(parentIri)) {
         setLocalExpandedNodes(prev => [...prev, parentIri]);
       }
-
+      // Also trigger parent's toggle to ensure it's expanded in external state
       if (onToggleNode && !expandedNodes.includes(parentIri)) {
         await onToggleNode(parentIri);
       }
-
+      
+      // Create the class via the mutation service
       await ontologyMutationService.createClass(
         projectId,
         newClassIri,
@@ -623,11 +696,13 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         'anonymous',
         'Anonymous'
       );
-
+      
+      // Refresh the class hierarchy
       if (onRefreshClasses) {
         onRefreshClasses();
       }
-
+      
+      // Reset inline create state
       setShowInlineCreate(false);
       setInlineClassName('');
     } catch (error) {
@@ -637,19 +712,22 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   };
 
+  // Cancel inline creation
   const handleInlineCreateCancel = () => {
     setShowInlineCreate(false);
     setInlineClassName('');
   };
 
+  // Show inline delete confirmation
   const handleInlineDeleteStart = () => {
     if (!selectedClass || selectedClass.id.includes('Thing')) return;
     setShowInlineDelete(true);
   };
 
+  // Confirm and execute inline delete
   const handleInlineDeleteConfirm = async () => {
     if (!selectedClass || !projectId) return;
-
+    
     setIsDeletingClass(true);
     try {
       await ontologyMutationService.deleteClass(
@@ -658,10 +736,12 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
         'anonymous',
         'Anonymous'
       );
-
+      
+      // Clear selection and hide confirmation
       setSelectedClass(null);
       setShowInlineDelete(false);
-
+      
+      // Refresh the class hierarchy
       if (onRefreshClasses) {
         onRefreshClasses();
       }
@@ -672,12 +752,14 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   };
 
+  // Cancel inline delete
   const handleInlineDeleteCancel = () => {
     setShowInlineDelete(false);
   };
 
+  // Handle inline property creation
   const handleInlineAddProperty = (type: 'subclass' | 'sibling') => {
-
+    // Determine which tab we're on (object or data properties)
     const isDataTab = activeTab === 'dataRestriction';
     setPropertyCreationTab(isDataTab ? 'data' : 'object');
     setInlinePropertyCreateType(type);
@@ -685,35 +767,38 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     setShowInlinePropertyCreate(true);
   };
 
+  // Submit inline property creation
   const handleInlinePropertyCreateSubmit = async () => {
     if (!inlinePropertyName.trim() || !projectId) return;
-
+    
     setIsCreatingProperty(true);
     try {
       const isDataProperty = propertyCreationTab === 'data';
       const selectedProp = isDataProperty ? selectedDataProperty : selectedProperty;
-
+      
       let parentIri = isDataProperty 
         ? 'http://www.w3.org/2002/07/owl#topDataProperty'
         : 'http://www.w3.org/2002/07/owl#topObjectProperty';
-
+      
       if (inlinePropertyCreateType === 'subclass' && selectedProp) {
         parentIri = selectedProp.id;
       } else if (inlinePropertyCreateType === 'sibling' && selectedProp) {
-
+        // Find parent of selected property
         const hierarchy = isDataProperty ? dataPropertiesTree : objectPropertiesTree;
         const parent = findParentNode(hierarchy, selectedProp.id);
         if (parent) {
           parentIri = parent.id;
         }
       }
-
+      
+      // Generate IRI from property name
       const baseIri = metadata?.ontologyIRI || 'http://example.org/ontology#';
       const cleanName = inlinePropertyName.trim().replace(/\s+/g, '_');
       const newPropertyIri = baseIri.endsWith('#') || baseIri.endsWith('/') 
         ? `${baseIri}${cleanName}` 
         : `${baseIri}#${cleanName}`;
-
+      
+      // Create the property via the mutation service
       if (isDataProperty) {
         await ontologyMutationService.createDataProperty(
           projectId,
@@ -733,11 +818,13 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           'Anonymous'
         );
       }
-
+      
+      // Refresh if handler provided
       if (onRefreshProperties) {
         onRefreshProperties();
       }
-
+      
+      // Reset inline create state
       setShowInlinePropertyCreate(false);
       setInlinePropertyName('');
     } catch (error) {
@@ -748,6 +835,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     }
   };
 
+  // Cancel inline property creation
   const handleInlinePropertyCreateCancel = () => {
     setShowInlinePropertyCreate(false);
     setInlinePropertyName('');
@@ -798,22 +886,37 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
     (activeTab === 'dataRestriction' && selectedDataProperty
       && selectedDataProperty.id !== topDataPropertyIri)
   );
-
+  
+  // Debug logging for OK button state
   useEffect(() => {
+    console.log('[ClassExpressionDialog] OK button state:', {
+      isOkEnabled,
+      activeTab,
+      selectedClass: selectedClass?.id,
+      selectedClassExists: selectedClass !== null,
+      selectedProperty: selectedProperty?.id,
+      restrictionFiller: restrictionFiller?.id,
+      selectedDataProperty: selectedDataProperty?.id,
+      datatype,
+      dataRestrictionType
+    });
   }, [isOkEnabled, activeTab, selectedClass, selectedProperty, restrictionFiller, selectedDataProperty, datatype, dataRestrictionType]);
 
   if (!isOpen) return null;
 
+  // Use external property trees if provided, otherwise convert from flat list
   const objectPropertiesTree = externalObjectPropertiesTree || propertiesToTree(objectProperties, false);
   const dataPropertiesTree = externalDataPropertiesTree || propertiesToTree(dataProperties, true);
 
+  // Combine external and local expanded nodes for immediate UI feedback
+  // External nodes come from parent (for lazy loading), local nodes track immediate user interactions
   const effectiveExpandedNodes = [...new Set([...expandedNodes, ...localExpandedNodes])];
   const effectiveFillerExpandedNodes = [...new Set([...expandedNodes, ...fillerExpandedNodes])];
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-7xl mx-4 flex flex-col h-[90vh]">
-        {}
+        {/* Header */}
         <div className="px-6 py-3 border-b border-gray-300 flex justify-between items-center bg-gray-50">
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
           <button
@@ -825,7 +928,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Tabs - only show tabs that are in visibleTabs */}
         <div className="flex border-b border-gray-300 bg-gray-100">
           {visibleTabs.includes('hierarchy') && (
             <button
@@ -877,11 +980,11 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           )}
         </div>
 
-        {}
+        {/* Content Area */}
         <div className="flex-1 overflow-hidden min-h-0 bg-white">
-          {}
+          {/* Class Hierarchy Tab */}
           <div className={`h-full flex flex-col${activeTab !== 'hierarchy' ? ' hidden' : ''}`}>
-              {}
+              {/* Inline Create Form */}
               {showInlineCreate && (
                 <div className="px-3 py-2 bg-amber-50 border-b border-amber-200">
                   <div className="flex items-center gap-2">
@@ -921,8 +1024,8 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   </div>
                 </div>
               )}
-
-              {}
+              
+              {/* Inline Delete Confirmation */}
               {showInlineDelete && selectedClass && (
                 <div className="px-3 py-2 bg-red-50 border-b border-red-200">
                   <div className="flex items-center gap-2">
@@ -947,7 +1050,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   </div>
                 </div>
               )}
-
+              
               <div className="flex-1 overflow-hidden">
                 <EntityHierarchy
                   entitiesTab="Classes"
@@ -957,6 +1060,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                   searchQuery={classSearchQuery}
                   onSearchQueryChange={setClassSearchQuery}
                   onSelectItem={(item) => {
+                    console.log('[ClassExpressionDialog] Class selected from hierarchy:', item);
                     setSelectedClass(item as TreeNode);
                   }}
                   onToggleNode={handleHierarchyToggle}
@@ -967,15 +1071,15 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
               </div>
           </div>
 
-          {}
+          {/* Object Restriction Creator Tab */}
           <div className={`h-full flex${activeTab !== 'objectRestriction' ? ' hidden' : ''}`}>
-              {}
+              {/* LEFT: Restricted property - Uses EntityHierarchy */}
               <div className="w-1/2 border-r border-gray-300 flex flex-col">
                 <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
                   <h4 className="text-sm font-semibold text-gray-700">Restricted property</h4>
                 </div>
-
-                {}
+                
+                {/* Inline Property Create Form */}
                 {showInlinePropertyCreate && propertyCreationTab === 'object' && (
                   <div className="px-3 py-2 bg-blue-50 border-b border-blue-200">
                     <div className="flex items-center gap-2">
@@ -1015,7 +1119,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     </div>
                   </div>
                 )}
-
+                
                 <div className="flex-1 overflow-hidden">
                   <EntityHierarchy
                     entitiesTab="ObjectProperties"
@@ -1033,7 +1137,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                 </div>
               </div>
 
-              {}
+              {/* RIGHT: Restriction filler - Uses EntityHierarchy */}
               <div className="w-1/2 flex flex-col">
                 <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
                   <h4 className="text-sm font-semibold text-gray-700">Restriction filler</h4>
@@ -1056,7 +1160,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
               </div>
           </div>
 
-          {}
+          {/* Class Expression Editor Tab */}
           <div className={`h-full p-6 flex flex-col${activeTab !== 'classExpression' ? ' hidden' : ''}`}>
               <div className="flex-1 flex flex-col min-h-0">
                 <label className="text-sm font-semibold text-gray-700 mb-2">Class Expression</label>
@@ -1093,15 +1197,15 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
               </div>
           </div>
 
-          {}
+          {/* Data Restriction Creator Tab */}
           <div className={`h-full flex${activeTab !== 'dataRestriction' ? ' hidden' : ''}`}>
-              {}
+              {/* LEFT: Restricted property - Uses EntityHierarchy */}
               <div className="w-1/2 border-r border-gray-300 flex flex-col">
                 <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
                   <h4 className="text-sm font-semibold text-gray-700">Restricted property</h4>
                 </div>
-
-                {}
+                
+                {/* Inline Data Property Creation Form */}
                 {showInlinePropertyCreate && propertyCreationTab === 'data' && (
                   <div className="p-3 bg-green-50 border-b border-green-200">
                     <div className="flex items-center gap-2">
@@ -1137,7 +1241,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                     <p className="mt-1 text-xs text-green-700">Press Enter to create, Escape to cancel</p>
                   </div>
                 )}
-
+                
                 <div className="flex-1 overflow-hidden">
                   <EntityHierarchy
                     entitiesTab="DataProperties"
@@ -1155,7 +1259,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
                 </div>
               </div>
 
-              {}
+              {/* RIGHT: Restriction filler (Datatypes) */}
               <div className="w-1/2 flex flex-col">
                 <div className="bg-gray-100 px-3 py-2 border-b border-gray-300">
                   <h4 className="text-sm font-semibold text-gray-700">Restriction filler</h4>
@@ -1180,7 +1284,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           </div>
         </div>
 
-        {}
+        {/* Restriction Type Controls - Bottom panel for restriction tabs */}
         {(activeTab === 'objectRestriction' || activeTab === 'dataRestriction') && (
           <div className="px-4 py-3 bg-gray-50 border-t border-gray-300">
             <div className="flex items-center gap-4">
@@ -1228,7 +1332,7 @@ const ClassExpressionDialog: React.FC<ClassExpressionDialogProps> = ({
           </div>
         )}
 
-        {}
+        {/* Footer */}
         <div className="px-6 py-3 border-t border-gray-300 flex justify-end gap-3 bg-gray-50">
           <button
             onClick={handleClose}

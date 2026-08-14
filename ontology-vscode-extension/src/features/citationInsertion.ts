@@ -11,6 +11,15 @@ interface QuickPickCitation extends vscode.QuickPickItem {
 
 const AUTH_TOKEN_KEY = 'ontocode.authToken';
 
+/**
+ * Authoritatively validate a DOI (doi.org, via the editor backend) and, if it
+ * doesn't resolve or doesn't match this citation, let the user correct it,
+ * use it anyway, drop it, or cancel the whole insertion — the keyboard-shortcut
+ * path used to embed whatever was in Zotero's DOI field completely unchecked.
+ *
+ * Returns `{ cancelled: true }` if the user backs out entirely; otherwise
+ * `{ doi }` with `doi` possibly undefined (user chose to insert without one).
+ */
 async function resolveDoiForInsertion(
   context: vscode.ExtensionContext,
   gatewayUrl: string,
@@ -35,15 +44,15 @@ async function resolveDoiForInsertion(
           ignoreFocusOut: true,
         }
       );
-      if (!choice || choice.action === 'cancel') {return { cancelled: true };}
-      if (choice.action === 'skip') {return { doi: undefined, cancelled: false };}
+      if (!choice || choice.action === 'cancel') return { cancelled: true };
+      if (choice.action === 'skip') return { doi: undefined, cancelled: false };
       const entered = await vscode.window.showInputBox({
         prompt: 'Enter DOI',
         value: doi,
         placeHolder: 'e.g., 10.1016/j.websem.2011.01.001',
         ignoreFocusOut: true,
       });
-      if (entered === undefined) {continue;} // Esc — loop back to the same prompt
+      if (entered === undefined) continue; // Esc — loop back to the same prompt
       doi = normalizeDoi(entered);
       continue;
     }
@@ -71,26 +80,32 @@ async function resolveDoiForInsertion(
       ],
       { placeHolder: reason, ignoreFocusOut: true }
     );
-    if (!choice || choice.action === 'cancel') {return { cancelled: true };}
-    if (choice.action === 'force') {return { doi, cancelled: false };}
-    if (choice.action === 'skip') {return { doi: undefined, cancelled: false };}
+    if (!choice || choice.action === 'cancel') return { cancelled: true };
+    if (choice.action === 'force') return { doi, cancelled: false };
+    if (choice.action === 'skip') return { doi: undefined, cancelled: false };
     const entered = await vscode.window.showInputBox({
       prompt: 'Enter a corrected DOI',
       value: doi,
       placeHolder: 'e.g., 10.1016/j.websem.2011.01.001',
       ignoreFocusOut: true,
     });
-    if (entered === undefined) {continue;} // Esc — re-show the same choice for the same doi
+    if (entered === undefined) continue; // Esc — re-show the same choice for the same doi
     doi = normalizeDoi(entered);
   }
 }
 
 export async function insertCitationCommand(context: vscode.ExtensionContext, gatewayUrl: string) {
-
+  // Debug: Log all open editors
+  console.log('=== DEBUG: Looking for ontology editor ===');
+  console.log('Active editor:', vscode.window.activeTextEditor?.document.fileName);
+  console.log('Visible editors:', vscode.window.visibleTextEditors.map(e => e.document.fileName));
+  console.log('Open documents:', vscode.workspace.textDocuments.map(d => d.fileName));
+  
+  // Find the editor with an ontology file
   const editor = findOntologyEditor();
-
+  
   if (!editor) {
-
+    // Show more helpful error with what we found
     const openFiles = vscode.workspace.textDocuments
       .filter(d => !d.isUntitled && d.uri.scheme === 'file')
       .map(d => {
@@ -98,20 +113,27 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
         return fileName.substring(fileName.lastIndexOf('/') + 1).substring(fileName.lastIndexOf('\\') + 1);
       })
       .join(', ');
-
+    
     vscode.window.showWarningMessage(
       `No ontology file found. Open files: ${openFiles || 'none'}. Please open a .owl, .ttl, .rdf, or .n3 file.`
     );
     return;
   }
 
+  console.log('Found ontology editor:', editor.document.fileName);
+
+  // Focus the editor to ensure it's active
   await vscode.window.showTextDocument(editor.document, editor.viewColumn);
 
   const document = editor.document;
   const fileName = document.fileName;
   const lastDot = fileName.lastIndexOf('.');
   const fileExtension = lastDot !== -1 ? fileName.substring(lastDot).toLowerCase() : '';
-
+  
+  console.log('File name:', fileName);
+  console.log('File extension:', fileExtension);
+  
+  // Determine format based on file extension
   const format: CitationFormat = (fileExtension === '.ttl' || fileExtension === '.n3')
     ? 'turtle'
     : fileExtension === '.jsonld'
@@ -125,6 +147,10 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
     citation: null
   };
 
+  // Show the picker immediately with a visible busy spinner while the library
+  // loads in the background — a background notification toast (the previous
+  // approach) is easy to miss entirely since it appears away from where the
+  // user is looking right after pressing the shortcut.
   const quickPick = vscode.window.createQuickPick<QuickPickCitation>();
   quickPick.title = 'Insert Citation (Sci2Code)';
   quickPick.placeholder = 'Loading your Zotero library...';
@@ -135,6 +161,11 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
   quickPick.items = [manualEntryItem];
   quickPick.show();
 
+  // Get Zotero library. sci2CodeService/zoteroApiService already show specific,
+  // actionable dialogs for "not configured" and real fetch errors (invalid key,
+  // network failure, etc.) — this catch is just a last-resort net, not the
+  // primary error path, so items staying [] here still lets the picker fall
+  // back gracefully to manual entry instead of the whole command failing.
   let items: any[] = [];
   try {
     items = await sci2CodeService.getZoteroLibrary();
@@ -145,6 +176,7 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
     );
   }
 
+  // Create quick pick items
   const quickPickItems: QuickPickCitation[] = items.map(item => {
     const title = item.data?.title || 'Untitled';
     const creators = item.data?.creators?.map((c: any) =>
@@ -183,6 +215,10 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
     return;
   }
 
+  console.log('Using format:', format);
+
+  // Validate the citation's DOI (or offer to add/correct one) before inserting —
+  // this used to embed selected.citation.data?.DOI completely unchecked.
   const data = selected.citation?.data;
   const candidateDoi = extractDoiFromZoteroData(data);
   const { doi, cancelled } = await resolveDoiForInsertion(context, gatewayUrl, candidateDoi, {
@@ -194,48 +230,64 @@ export async function insertCitationCommand(context: vscode.ExtensionContext, ga
     return;
   }
 
+  // Make sure editor is still valid and focused
   const currentEditor = vscode.window.activeTextEditor;
   if (currentEditor && currentEditor.document.uri.toString() === editor.document.uri.toString()) {
     await insertCitation(currentEditor, selected.key, format, doi);
   } else {
-
+    // Re-focus the original editor
     const reopenedEditor = await vscode.window.showTextDocument(editor.document, editor.viewColumn);
     await insertCitation(reopenedEditor, selected.key, format, doi);
   }
 }
 
+// Helper function to find an editor with an ontology file
 function findOntologyEditor(): vscode.TextEditor | undefined {
   const validExtensions = ['.owl', '.ttl', '.rdf', '.n3', '.nt', '.jsonld'];
-
+  
+  console.log('=== Searching for ontology editor ===');
+  
+  // First try the active editor
   const activeEditor = vscode.window.activeTextEditor;
   if (activeEditor) {
     const fileName = activeEditor.document.fileName;
     const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
-
+    console.log('Active editor:', fileName, 'Extension:', ext);
+    
     if (validExtensions.includes(ext)) {
+      console.log('✓ Active editor is an ontology file');
       return activeEditor;
     }
   } else {
+    console.log('No active editor');
   }
-
+  
+  // Search all visible editors
+  console.log('Checking visible editors...');
   for (const editor of vscode.window.visibleTextEditors) {
     const fileName = editor.document.fileName;
     const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
-
+    console.log('Visible editor:', fileName, 'Extension:', ext);
+    
     if (validExtensions.includes(ext)) {
+      console.log('✓ Found ontology file in visible editors');
       return editor;
     }
   }
-
+  
+  // Search all open documents
+  console.log('Checking all open documents...');
   for (const doc of vscode.workspace.textDocuments) {
-    if (doc.isUntitled) {continue;}
-    if (doc.uri.scheme !== 'file') {continue;}
-
+    if (doc.isUntitled) continue;
+    if (doc.uri.scheme !== 'file') continue;
+    
     const fileName = doc.fileName;
     const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
-
+    console.log('Open document:', fileName, 'Extension:', ext);
+    
     if (validExtensions.includes(ext)) {
-
+      console.log('✓ Found ontology file in open documents');
+      // Document found, but need to check if there's an editor for it
       const editor = vscode.window.visibleTextEditors.find(e => 
         e.document.uri.toString() === doc.uri.toString()
       );
@@ -246,18 +298,19 @@ function findOntologyEditor(): vscode.TextEditor | undefined {
       // so the caller can handle it
     }
   }
-
+  
+  console.log('✗ No ontology file found');
   return undefined;
 }
 
 function extractYear(dateString: string): string {
-  if (!dateString) {return '';}
-
+  if (!dateString) return '';
+  
   const parsed = new Date(dateString);
   if (!isNaN(parsed.getTime())) {
     return parsed.getFullYear().toString();
   }
-
+  
   const yearMatch = dateString.match(/\b(19|20)\d{2}\b/);
   return yearMatch ? yearMatch[0] : '';
 }
@@ -273,6 +326,12 @@ function indentText(text: string, indent: string): string {
   return lines.map(line => indent + line).join('\n');
 }
 
+/**
+ * Inserts a formatted citation into the document. JSON-LD isn't line-oriented
+ * like Turtle/RDF-XML, so it can't be spliced in as raw text at the cursor
+ * without risking invalid JSON — instead the whole document is parsed,
+ * the citation node is added to @graph, and the result is re-serialized.
+ */
 async function insertFormattedCitation(
   editor: vscode.TextEditor,
   format: CitationFormat,
@@ -328,19 +387,21 @@ async function insertCitation(
     return;
   }
 
+  // Get citation metadata for success message
   const metadata = await sci2CodeService.getCitationMetadata(citationKey);
   const title = metadata?.title || 'Citation';
-
+  
+  // Update repository citation files
   if (metadata) {
     await updateRepositoryCitations(metadata);
   }
-
+  
   vscode.window.showInformationMessage(`✓ Inserted citation: ${title}`);
 }
 
 async function updateRepositoryCitations(item: CitationItem): Promise<void> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders) {return;}
+  if (!workspaceFolders) return;
 
   const rootPath = workspaceFolders[0].uri.fsPath;
   const bibPath = vscode.Uri.file(rootPath + '/references.bib');
@@ -348,7 +409,7 @@ async function updateRepositoryCitations(item: CitationItem): Promise<void> {
   const mdPath = vscode.Uri.file(rootPath + '/CITATIONS.md');
 
   try {
-
+    // 1. Update references.bib
     const bibSnippet = sci2CodeService.convertToBibTeX(item);
     let bibContent = '';
     try {
@@ -361,8 +422,10 @@ async function updateRepositoryCitations(item: CitationItem): Promise<void> {
     if (!bibContent.includes(item.title)) {
       bibContent += '\n' + bibSnippet;
       await vscode.workspace.fs.writeFile(bibPath, Buffer.from(bibContent, 'utf8'));
+      console.log('Updated references.bib');
     }
 
+    // 2. Update CITATION.cff
     const cffRef = sci2CodeService.convertToCFFReference(item);
     let cffContent = '';
     try {
@@ -373,11 +436,11 @@ async function updateRepositoryCitations(item: CitationItem): Promise<void> {
     }
 
     if (cffContent && !cffContent.includes(item.title)) {
-
+      // Simple append to references section
       if (!cffContent.includes('references:')) {
         cffContent += '\nreferences:\n';
       }
-
+      
       const refString = `  - type: ${cffRef.type}\n` +
                         `    title: "${cffRef.title}"\n` +
                         `    authors:\n` +
@@ -385,11 +448,13 @@ async function updateRepositoryCitations(item: CitationItem): Promise<void> {
                         (cffRef.year ? `    year: ${cffRef.year}\n` : '') +
                         (cffRef.doi ? `    doi: ${cffRef.doi}\n` : '') +
                         (cffRef.url ? `    url: "${cffRef.url}"\n` : '');
-
+      
       cffContent += refString;
       await vscode.workspace.fs.writeFile(cffPath, Buffer.from(cffContent, 'utf8'));
+      console.log('Updated CITATION.cff');
     }
 
+    // 3. Update CITATIONS.md
     let mdContent = '';
     try {
       const mdData = await vscode.workspace.fs.readFile(mdPath);
@@ -404,15 +469,16 @@ async function updateRepositoryCitations(item: CitationItem): Promise<void> {
       const mdEntry = `\n- **${item.title}**\n  - ${authors}${year ? ` (${year})` : ''}.\n` +
                       (item.url ? `  - URL: [${item.url}](${item.url})\n` : '') +
                       (item.doi ? `  - DOI: ${item.doi}\n` : '');
-
+      
       if (mdContent.includes('## References')) {
         mdContent = mdContent.replace('*No additional references yet. Use the Zotero integration to add citations.*', '');
         mdContent += mdEntry;
       } else {
         mdContent += '\n## References\n' + mdEntry;
       }
-
+      
       await vscode.workspace.fs.writeFile(mdPath, Buffer.from(mdContent, 'utf8'));
+      console.log('Updated CITATIONS.md');
     }
   } catch (error) {
     console.error('Failed to update repository citations:', error);
@@ -420,8 +486,10 @@ async function updateRepositoryCitations(item: CitationItem): Promise<void> {
 }
 
 export async function ensurePrefixes(document: vscode.TextDocument, format: CitationFormat): Promise<void> {
-
-  if (format === 'jsonld') {return;}
+  // JSON-LD has no separate "ensure prefixes" pass: insertCitationNodeIntoJsonLd
+  // merges any missing @context entries as part of its own parse/mutate/
+  // reserialize step, since that has to happen atomically with the insert anyway.
+  if (format === 'jsonld') return;
 
   const text = document.getText();
 
@@ -434,29 +502,31 @@ export async function ensurePrefixes(document: vscode.TextDocument, format: Cita
     ];
 
     const missingPrefixes = requiredPrefixes.filter(p => !text.includes(p.prefix));
-
+    
     if (missingPrefixes.length > 0) {
       const editors = vscode.window.visibleTextEditors.filter(e => 
         e.document.uri.toString() === document.uri.toString()
       );
-
+      
       if (editors.length > 0) {
         const editor = editors[0];
         await editor.edit(editBuilder => {
           let insertPosition = new vscode.Position(0, 0);
-
+          
           const prefixMatch = text.match(/@prefix/);
           if (prefixMatch && prefixMatch.index !== undefined) {
             insertPosition = document.positionAt(prefixMatch.index);
           }
-
+          
           const prefixBlock = missingPrefixes.map(p => p.declaration).join('\n') + '\n\n';
           editBuilder.insert(insertPosition, prefixBlock);
         });
       }
     }
   } else if (format === 'rdfxml') {
-
+    // URIs matched to what formatCitationForOntology's rdfxml fragment actually
+    // emits (dc:title/creator/date/identifier, foaf:homepage, prov#Entity type) —
+    // see extension.ts's formatCitationForOntology.
     const requiredNamespaces: Record<string, string> = {
       'xmlns:dc': 'http://purl.org/dc/elements/1.1/',
       'xmlns:foaf': 'http://xmlns.com/foaf/0.1/',
@@ -466,7 +536,8 @@ export async function ensurePrefixes(document: vscode.TextDocument, format: Cita
 
     const rootMatch = text.match(/<rdf:RDF([^>]*)>/i);
     if (!rootMatch || rootMatch.index === undefined) {
-
+      // No <rdf:RDF> root to attach namespaces to — nothing safe to do here;
+      // the citation insert below will fail visibly instead of silently.
       return;
     }
 
@@ -474,12 +545,12 @@ export async function ensurePrefixes(document: vscode.TextDocument, format: Cita
     const missing = Object.entries(requiredNamespaces).filter(
       ([prefix]) => !new RegExp(prefix.replace(':', '\\:'), 'i').test(existingAttrs)
     );
-    if (missing.length === 0) {return;}
+    if (missing.length === 0) return;
 
     const editors = vscode.window.visibleTextEditors.filter(e =>
       e.document.uri.toString() === document.uri.toString()
     );
-    if (editors.length === 0) {return;}
+    if (editors.length === 0) return;
 
     const editor = editors[0];
     const startPos = document.positionAt(rootMatch.index);
@@ -502,14 +573,14 @@ export async function insertCitationAtClass(classIRI: string, context: vscode.Ex
 
   const document = editor.document;
   const text = document.getText();
-
+  
   const patterns = [
     new RegExp(`<${classIRI}>`, 'g'),
     new RegExp(`:${classIRI.split(/[#/]/).pop()}\\s+a\\s+owl:Class`, 'g')
   ];
-
+  
   let position: vscode.Position | null = null;
-
+  
   for (const pattern of patterns) {
     const match = pattern.exec(text);
     if (match && match.index !== undefined) {
@@ -517,7 +588,7 @@ export async function insertCitationAtClass(classIRI: string, context: vscode.Ex
       break;
     }
   }
-
+  
   if (position) {
     await vscode.window.showTextDocument(editor.document, editor.viewColumn);
     editor.selection = new vscode.Selection(position, position);
@@ -536,14 +607,14 @@ async function showManualCitationDialog(
     placeHolder: 'e.g., The OWL API: A Java API for the semantic web',
     ignoreFocusOut: true
   });
-  if (!title) {return null;}
+  if (!title) return null;
 
   const author = await vscode.window.showInputBox({
     prompt: 'Enter the author(s)',
     placeHolder: 'e.g., Matthew Horridge, Sean Bechhofer',
     ignoreFocusOut: true
   });
-  if (!author) {return null;}
+  if (!author) return null;
 
   const year = await vscode.window.showInputBox({
     prompt: 'Enter the year',
@@ -553,7 +624,7 @@ async function showManualCitationDialog(
       return /^\d{4}$/.test(value) ? null : 'Please enter a valid 4-digit year';
     }
   });
-  if (!year) {return null;}
+  if (!year) return null;
 
   const doiInput = await vscode.window.showInputBox({
     prompt: 'Enter DOI (optional)',
@@ -567,13 +638,17 @@ async function showManualCitationDialog(
     ignoreFocusOut: true
   });
 
+  // Validate the DOI the same way a Zotero-sourced one is — a manually typed
+  // DOI is just as likely to be mistyped or made up as a bad Zotero field.
+  // An empty field skips straight through (no DOI was ever offered).
   let doi: string | undefined;
   if (doiInput?.trim()) {
     const resolved = await resolveDoiForInsertion(context, gatewayUrl, doiInput, { title, year });
-    if (resolved.cancelled) {return 'cancelled';}
+    if (resolved.cancelled) return 'cancelled';
     doi = resolved.doi;
   }
 
+  // Parse authors
   const creators = author.split(',').map(a => {
     const parts = a.trim().split(' ');
     const lastName = parts.pop() || '';
@@ -605,7 +680,8 @@ async function insertManualCitation(
     return;
   }
 
+  // Update repository citation files
   await updateRepositoryCitations(item);
-
+  
   vscode.window.showInformationMessage(`✓ Inserted manual citation: ${item.title}`);
 }

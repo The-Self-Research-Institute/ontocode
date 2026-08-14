@@ -1,13 +1,18 @@
 #!/bin/bash
+# ========================================
+# OntoCode - Docker-Only Installation
+# No Node.js Required - Everything in Docker!
+# ========================================
 
 set -e
 
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 GRAY='\033[0;37m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
 echo ""
 echo -e "${CYAN}========================================${NC}"
@@ -16,6 +21,7 @@ echo -e "${CYAN}  (No Node.js Required!)${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 
+# Check if Docker is installed
 echo -e "${YELLOW}[1/5] Checking Docker...${NC}"
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}[ERROR] Docker is not installed${NC}"
@@ -23,6 +29,7 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
+# Check if Docker is running
 if ! docker ps &> /dev/null; then
     echo -e "${RED}[ERROR] Docker is not running${NC}"
     echo "Please start Docker and try again"
@@ -30,6 +37,7 @@ if ! docker ps &> /dev/null; then
 fi
 echo -e "${GREEN}[OK] Docker is running${NC}"
 
+# Ensure data directory exists
 echo ""
 echo -e "${YELLOW}[2/5] Preparing workspace directory...${NC}"
 if [ ! -d "data/projects" ]; then
@@ -38,11 +46,13 @@ if [ ! -d "data/projects" ]; then
 fi
 echo -e "${GREEN}[OK] Workspace directory ready${NC}"
 
+# Stop any existing containers
 echo ""
 echo -e "${YELLOW}[3/5] Cleaning up existing containers...${NC}"
 docker compose down -v &> /dev/null || true
 echo -e "${GREEN}[OK] Cleanup complete${NC}"
 
+# Build and start all Docker services
 echo ""
 echo -e "${YELLOW}[4/5] Building and starting all services...${NC}"
 echo -e "${GRAY}This includes: MongoDB, GraphDB, Auth, Gateway, Editor, SWRL, Plugins, and VS Code Web${NC}"
@@ -55,6 +65,7 @@ if [ $? -ne 0 ]; then
 fi
 echo -e "${GREEN}[OK] All Docker services started successfully${NC}"
 
+# Wait for services to be ready
 echo ""
 echo -e "${YELLOW}[5/5] Waiting for all services to initialize...${NC}"
 echo -e "${GRAY}This includes starting the VS Code web server...${NC}"
@@ -84,6 +95,7 @@ echo ""
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
+# Try to open browser (works on most Linux systems)
 echo -e "${YELLOW}Opening VS Code Web Editor in your browser...${NC}"
 sleep 2
 

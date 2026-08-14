@@ -1,6 +1,6 @@
 /**
  * desktop.ts
- * Helpers for the OntoCode Electron desktop build.
+ * Helpers for the OntoCode Studio Electron desktop build.
  *
  * Desktop mode is detected by the presence of `window.electronAPI`, which is
  * exposed via the Electron preload contextBridge (and therefore reliably visible
@@ -23,14 +23,22 @@ export interface DesktopLicense {
     issuedAt?: string;
     expiresAt?: string | null; // null/absent => perpetual (FREE)
     features?: Record<string, unknown>;
-
+    /** Set by the Electron main process: true if the signature verified. */
     signatureValid?: boolean;
 }
 
+/** True when running inside the Electron desktop shell. */
 export function isDesktop(): boolean {
     return typeof window !== 'undefined' && !!(window as any).electronAPI;
 }
 
+/**
+ * True only when `window.vscode` is the real VS Code webview API. `vscodeBridge.ts`
+ * installs a same-named `window.vscode` shim in plain-browser mode (tagged
+ * `__ONTOCODE_BROWSER_BRIDGE__`) so browser code keeps working without VS Code —
+ * but that means a bare `if (window.vscode)` check can't tell "real VS Code" from
+ * "plain webapp tab", and will wrongly take the VS-Code-only code path in the browser.
+ */
 export function isRealVSCode(): boolean {
     return typeof window !== 'undefined'
         && !!(window as any).vscode
@@ -39,6 +47,7 @@ export function isRealVSCode(): boolean {
         && !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
 }
 
+/** Read the (already signature-verified) license from the Electron main process. */
 export async function getDesktopLicense(): Promise<DesktopLicense | null> {
     try {
         const api = (window as any).electronAPI;
@@ -51,10 +60,15 @@ export async function getDesktopLicense(): Promise<DesktopLicense | null> {
     return null;
 }
 
+/** Normalised plan name (uppercase). Defaults to FREE. */
 export function licensePlan(license: DesktopLicense | null | undefined): string {
     return (license?.plan || 'FREE').toUpperCase();
 }
 
+/**
+ * True when a (paid) license has an expiry date in the past. FREE/perpetual
+ * licenses (no expiresAt) never expire.
+ */
 export function isLicenseExpired(license: DesktopLicense | null | undefined): boolean {
     if (!license || !license.expiresAt) return false;
     const exp = new Date(license.expiresAt).getTime();
@@ -62,6 +76,7 @@ export function isLicenseExpired(license: DesktopLicense | null | undefined): bo
     return Date.now() >= exp;
 }
 
+/** Fired after a successful license import so the app can re-derive the user. */
 export const DESKTOP_LICENSE_UPDATED_EVENT = 'desktop-license-updated';
 
 export async function warmOntologyInMemory(
@@ -107,6 +122,7 @@ export async function warmOntologyInMemory(
     }
 }
 
+/** Poll cache-status until the OWLAPI in-memory model is ready (desktop owlapi-first). */
 export async function waitForDesktopOwlApiReady(
     projectId: string,
     options?: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal },
@@ -134,12 +150,17 @@ export function isOwlApiWarmingResponse(res: unknown): boolean {
     return !!(r?.warming || (r?.data as Record<string, unknown> | undefined)?.warming);
 }
 
+/** True when the backend is temporarily unavailable (OWLAPI warming, lazy Fuseki, overload). */
 export function isOwlApiRetryableError(e: unknown): boolean {
     const err = e as { status?: number; response?: { status?: number } } | null | undefined;
     const status = err?.status ?? err?.response?.status;
     return status === 503 || status === 502 || status === 504;
 }
 
+/**
+ * GET with retries for desktop entity lists while OWLAPI is warming or Fuseki is deferred.
+ * Returns null when aborted or all attempts exhausted without data.
+ */
 export async function getOntologyListWithRetry<T = unknown>(
     url: string,
     options?: { signal?: AbortSignal; maxAttempts?: number; delayMs?: number },
@@ -170,6 +191,10 @@ export async function getOntologyListWithRetry<T = unknown>(
     return null;
 }
 
+/**
+ * True when desktop has OWLAPI edits Fuseki hasn't caught up on (deferred sync pending).
+ * Always false off-desktop, and false on any error so the UI never blocks on a status probe.
+ */
 export async function isDesktopFusekiSyncPending(projectId: string): Promise<boolean> {
     if (!isDesktop()) return false;
     try {
@@ -181,6 +206,10 @@ export async function isDesktopFusekiSyncPending(projectId: string): Promise<boo
     }
 }
 
+/**
+ * Start Fuseki (if deferred) and sync the ontology for SPARQL/graph features.
+ * Core editing uses OWLAPI only — this is only needed for Fuseki-dependent tabs.
+ */
 export async function ensureDesktopFusekiSync(projectId: string): Promise<{ synced: boolean; error?: string }> {
     if (!isDesktop()) return { synced: true };
     try {
@@ -198,6 +227,10 @@ export async function ensureDesktopFusekiSync(projectId: string): Promise<{ sync
     }
 }
 
+/**
+ * Fire-and-forget: start Fuseki if needed and queue a background triple-store sync.
+ * Does not block the editor — OWLAPI remains the source of truth for open/edit.
+ */
 export function scheduleSilentDesktopFusekiSync(projectId: string): void {
     if (!isDesktop() || !projectId) return;
     void (async () => {
@@ -209,13 +242,21 @@ export function scheduleSilentDesktopFusekiSync(projectId: string): void {
             const encoded = encodeURIComponent(projectId);
             await apiClient.post(`/api/desktop/schedule-fuseki-sync/${encoded}`, {});
         } catch (e) {
+            console.debug('[desktop] silent Fuseki sync schedule failed (will retry on mutation)', e);
         }
     })();
 }
 
+/**
+ * Fire-and-forget: start Fuseki and the SWRL reasoner (both lazy by default —
+ * see ServiceManager.js) as soon as the project dashboard is visible, so their
+ * ~10-30s JVM startup happens during idle browsing instead of blocking the
+ * first SPARQL/graph action or reasoning run later. Not tied to a project —
+ * call once on dashboard mount, not per-project.
+ */
 export function prewarmDesktopReasoningServices(): void {
     if (!isDesktop()) return;
     const api = (window as any).electronAPI;
-    api?.ensureFuseki?.().catch(() => {});
-    api?.ensureSwrl?.().catch(() => {});
+    api?.ensureFuseki?.().catch((e: unknown) => console.debug('[desktop] Fuseki prewarm failed', e));
+    api?.ensureSwrl?.().catch((e: unknown) => console.debug('[desktop] SWRL prewarm failed', e));
 }

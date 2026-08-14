@@ -26,6 +26,7 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Property Expression state
   const [manchesterExpression, setManchesterExpression] = useState('');
 
   if (!isOpen) return null;
@@ -125,7 +126,7 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl mx-4 flex flex-col h-[85vh]">
-        {}
+        {/* Header */}
         <div className={`px-6 py-4 border-b bg-${propertyColor}-700 flex justify-between items-center`}>
           <h3 className="text-lg font-semibold text-white">{title}</h3>
           <button
@@ -136,7 +137,7 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Tabs */}
         <div className="flex border-b bg-gray-50">
           <button
             onClick={() => setActiveTab('hierarchy')}
@@ -160,9 +161,9 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
           </button>
         </div>
 
-        {}
+        {/* Content */}
         <div className="flex-1 overflow-hidden">
-          {}
+          {/* Property Hierarchy Tab */}
           {activeTab === 'hierarchy' && (
             <div className="h-full flex flex-col">
               <div className="p-3 border-b bg-gray-50">
@@ -197,7 +198,7 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
             </div>
           )}
 
-          {}
+          {/* Property Expression Editor Tab */}
           {activeTab === 'propertyExpression' && (
             <div className="h-full p-6 flex flex-col bg-white">
               <div className="flex-1 flex flex-col">
@@ -232,7 +233,7 @@ const PropertyExpressionDialog: React.FC<PropertyExpressionDialogProps> = ({
           )}
         </div>
 
-        {}
+        {/* Footer */}
         <div className="px-6 py-4 border-t bg-gradient-to-r from-gray-50 to-gray-100 flex justify-end gap-3">
           <button
             onClick={handleClose}

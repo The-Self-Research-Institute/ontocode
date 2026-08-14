@@ -16,6 +16,7 @@ import {
   Code2,
   Plus,
   Bug,
+  ListOrdered,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -86,7 +87,7 @@ const buildImportDisplayMessage = (
       graphSize && graphSize > 0
         ? `${formatTriples(graphSize)} loaded…`
         : sanitizeImportMessage(statusMessage) ||
-          (progress > 0 ? `Importing… (${progress}%)` : "Processing…");
+        (progress > 0 ? `Importing… (${progress}%)` : "Processing…");
     return `Processing now — ${base}`;
   }
 
@@ -152,7 +153,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [uploading, setUploading] = useState(false);
-  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [reportIssueModalType, setReportIssueModalType] = useState<"Bug" | "Task" | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingFile, setProcessingFile] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -175,7 +176,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const [userProjectRole, setUserProjectRole] = useState<string>("VIEWER");
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
   const [workspacePlan, setWorkspacePlan] = useState<string>("FREE");
-
+  // Refs mirror the above state so async handlers always read the latest values.
   const workspaceOwnerIdRef = useRef<string | null>(null);
   const workspacePlanRef = useRef<string>("FREE");
   const workspaceLoadedRef = useRef<boolean>(false);
@@ -231,7 +232,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         );
       } catch (err: any) {
         if (err?.status !== 202 && err?.status !== 200) {
-
+          // POST failed — the file may already be importing (e.g. auto-triggered after upload).
+          // Don't give up: poll the status API to discover actual import state.
           console.warn('[ProjectLibrary] Import trigger returned', err?.status, '— polling to check existing import status');
         }
       }
@@ -244,7 +246,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           apiClient.get(`/api/import-queue/position/${encodeURIComponent(ontologyProjectId)}`).catch(() => null),
           apiClient.get("/api/import-queue/stats").catch(() => null),
         ]);
-
+        // API returns { success: true, data: { status, ... } }; axios wraps that in res.data.
+        // Unwrap both layers so we reach the actual status fields.
         const envelope = res?.data || res;
         const data = envelope?.data || envelope;
         const status = data?.status || data?.state || null;
@@ -252,9 +255,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           typeof data?.progress === "number"
             ? data.progress
             : (() => {
-                const m = String(data?.statusMessage || data?.message || "").match(/(\d+)%/);
-                return m ? parseInt(m[1], 10) : 0;
-              })();
+              const m = String(data?.statusMessage || data?.message || "").match(/(\d+)%/);
+              return m ? parseInt(m[1], 10) : 0;
+            })();
         const message =
           data?.statusMessage ||
           data?.message ||
@@ -305,7 +308,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       } catch (err: any) {
         const httpStatus = err?.response?.status ?? err?.status;
         if (httpStatus === 404) {
-
+          // Status document doesn't exist — file was never imported or was deleted.
+          // Stop polling; don't leave the spinner running forever.
           clearInterval(importPollingRefs.current[file.id]);
           delete importPollingRefs.current[file.id];
           if (isMountedRef.current) {
@@ -332,6 +336,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const NEW_FILE_VALID_EXTENSIONS = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
 
   const handleCreateNewFile = () => {
+    console.log("[ProjectLibrary] 📝 Creating new file for project:", projectId);
     if (isDesktop()) {
       setShowNewFileNamePrompt(true);
       return;
@@ -364,7 +369,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   useEffect(() => {
     loadFiles().then(async (filesArray) => {
-
+      // After page refresh, resume progress cards for any imports still running on the backend.
       await Promise.all(filesArray.map(async (file: FileItem) => {
         const ontologyProjectId = `${projectId}--${file.id}`;
         try {
@@ -419,7 +424,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   }, [user?.workspaceId, user?.subscriptionPlan]);
 
   useEffect(() => {
-
+    // Reset on every mount (including StrictMode's simulated remount) so async
+    // callbacks like pollStatus don't see a stale false from the prior cleanup.
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
@@ -486,39 +492,71 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     return () => window.removeEventListener("queueStatusUpdate", handleQueueUpdate);
   }, [projectId]);
 
+  // Listen for file import completion messages from extension
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
       const message = event.data;
 
+      // Refetch files when import completes or file is ready
       if (message.type === "fileReady" || message.type === "importStatusUpdate") {
+        console.log(
+          "[ProjectLibrary] 📋 Received import completion message:",
+          "projectId:",
+          message.projectId,
+          "uploadedFileId:",
+          message.uploadedFileId,
+          "uploadedFileName:",
+          message.uploadedFileName,
+        );
 
+        // Check if the message is for this project
         if (message.projectId === projectId || message.status?.status === "COMPLETED") {
+          console.log("[ProjectLibrary] 📋 Refetching files after import completion");
+          console.log("[ProjectLibrary] 📋 Current files count before refresh:", files.length);
 
+          // Retry mechanism to ensure newly uploaded file appears in list
           const fetchWithRetry = async (retries = 3, delay = 1000) => {
             for (let attempt = 1; attempt <= retries; attempt++) {
+              console.log(`[ProjectLibrary] 📋 Fetch attempt ${attempt}/${retries}...`);
               const fetchedFiles = await loadFiles();
 
+              // If we're looking for a specific uploaded file, verify it's in the list
               if (message.uploadedFileId || message.uploadedFileName) {
                 let found = false;
 
+                // First try to match by fileId if available
                 if (message.uploadedFileId) {
                   found = fetchedFiles.some((f) => f.id === message.uploadedFileId);
+                  console.log(
+                    `[ProjectLibrary] 📋 Looking for file ID ${message.uploadedFileId} in ${fetchedFiles.length} files, found: ${found}`,
+                  );
                 }
 
+                // If not found by ID or no ID, try to match by filename
                 if (!found && message.uploadedFileName) {
                   const normalizedTarget = message.uploadedFileName.toLowerCase();
                   const matchedFile = fetchedFiles.find((f) => f.name.toLowerCase() === normalizedTarget);
                   found = !!matchedFile;
+                  console.log(
+                    `[ProjectLibrary] 📋 Looking for filename "${message.uploadedFileName}" in ${fetchedFiles.length} files, found: ${found}`,
+                  );
                   if (matchedFile) {
+                    console.log(`[ProjectLibrary] 📋 Matched file by name - ID: ${matchedFile.id}`);
                   } else {
+                    console.log(
+                      `[ProjectLibrary] 📋 Available filenames:`,
+                      fetchedFiles.map((f) => f.name),
+                    );
                   }
                 }
 
                 if (found) {
+                  console.log(`[ProjectLibrary] ✅ File found in list after ${attempt} attempt(s)!`);
                   return true;
                 }
 
                 if (attempt < retries) {
+                  console.log(`[ProjectLibrary] ⏳ File not found, waiting ${delay}ms before retry ${attempt + 1}...`);
                   await new Promise((resolve) => setTimeout(resolve, delay));
                 } else {
                   console.warn(
@@ -528,7 +566,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   return false;
                 }
               } else {
-
+                // No specific file to look for, just refresh once
+                console.log("[ProjectLibrary] ✅ File list refreshed (no specific file verification)");
                 return true;
               }
             }
@@ -546,6 +585,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     return () => window.removeEventListener("message", handleMessage);
   }, [projectId]);
 
+  // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => setOpenMenuFileId(null);
     if (openMenuFileId) {
@@ -558,8 +598,11 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     try {
       setLoading(true);
       const response = await apiClient.get(`/api/projects/${projectId}/files`);
+      console.log("[ProjectLibrary] Files response:", response);
 
+      // Handle both response.data and response.data.files structures
       const fileList = response?.files || response?.data || [];
+      console.log("[ProjectLibrary] Parsed file list:", fileList);
 
       if (response?.userProjectRole) {
         setUserProjectRole(response.userProjectRole);
@@ -585,6 +628,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       const targetFileName = overrideFileName || file.name;
       setProcessingFile(targetFileName);
 
+      console.log(`[ProjectLibrary] Processing file: ${targetFileName} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+
+      // For large files (>10MB), use chunked processing
       const isLargeFile = file.size > 10 * 1024 * 1024;
 
       if (isLargeFile) {
@@ -593,6 +639,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
       setUploadProgress(10); // Starting upload
 
+      console.log("[ProjectLibrary] Uploading file via multipart...");
+
+      // Build multipart FormData — streams the file directly, no base64 encoding
       const formData = new FormData();
       formData.append("file", file, targetFileName);
       formData.append("fileName", targetFileName);
@@ -601,6 +650,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         formData.append("replaceFileId", replaceFileId);
       }
 
+      // Send as multipart/form-data
       const uploadResponse = await apiClient.post(`/api/projects/${projectId}/files`, formData, {
         timeout: 600000, // 10 minute timeout for very large files
         onUploadProgress: (progressEvent) => {
@@ -611,6 +661,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         },
       });
 
+      console.log("[ProjectLibrary] Upload response:", uploadResponse);
       setUploadProgress(100);
 
       if (isLargeFile) {
@@ -628,14 +679,18 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       const responseData = (uploadResponse as any)?.data || uploadResponse;
       const uploadedFileId = responseData?.fileId || responseData?.id || null;
 
+      // Upload bytes are on the server — clear the progress UI immediately so the
+      // bar doesn't sit at 100% / "Uploading..." while loadFiles() refetches the list.
       setUploading(false);
       setUploadProgress(0);
       setProcessingFile(null);
 
+      // Refresh file list in background, then auto-start import so the user
+      // doesn't need a second click after the upload finishes.
       void loadFiles().then((files) => {
         if (uploadedFileId) {
           setSelectedFile(uploadedFileId);
-
+          // Auto-import: find the newly uploaded file and kick off import immediately.
           const newFile = files?.find((f: FileItem) => f.id === uploadedFileId);
           if (newFile) {
             void startFileImport(newFile);
@@ -649,17 +704,21 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       console.error("Error status:", error.status);
       console.error("Error data:", error.data);
 
+      // Free plan restriction (cloud workspaces only)
       if (!isDesktop() && error.status === 403 && error.data?.requiresUpgrade) {
         setShowFreePlanDialog(true);
         return;
       }
 
+      // Provide specific error messages
+      // Note: apiClient transforms errors into ApiError with status and data properties (not response.status/response.data)
       let errorMessage = "Failed to upload file";
       if (error.code === "ECONNABORTED" || error.message?.includes("timeout")) {
         errorMessage = "Upload timeout. Please try a smaller file or check your connection.";
       } else if (error.status === 413) {
-
+        // Storage limit exceeded or file too large
         const responseData = error.data;
+        console.log("Storage limit response data:", responseData);
         if (responseData?.message) {
           errorMessage = responseData.message;
         } else if (responseData?.error) {
@@ -675,6 +734,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         errorMessage = `Failed to upload file: ${error.message}`;
       }
 
+      console.log("Final error message to display:", errorMessage);
       showToast(errorMessage, "error");
     } finally {
       if (!isMountedRef.current) {
@@ -689,9 +749,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
+    // Reset input so selecting same file again triggers change
     event.target.value = "";
 
+    // Validate file size (max 1GB)
     const maxSize = 1024 * 1024 * 1024; // 1GB
     if (file.size > maxSize) {
       showToast(
@@ -701,6 +762,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       return;
     }
 
+    // Validate file type
     const validExtensions = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld", ".zip"];
     const fileExtension = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
     if (!validExtensions.includes(fileExtension)) {
@@ -715,17 +777,24 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
       );
     }
 
+    // Check if file already exists in project
     try {
+      console.log("[ProjectLibrary] Checking for duplicate file:", file.name);
       const checkResponse = await apiClient.get(
         `/api/projects/${projectId}/files/check?fileName=${encodeURIComponent(file.name)}`,
       );
+      console.log("[ProjectLibrary] Duplicate check raw response:", JSON.stringify(checkResponse));
 
       const checkData = (checkResponse as any)?.data || checkResponse;
+      console.log("[ProjectLibrary] Parsed check data:", JSON.stringify(checkData));
 
       if (checkData?.exists === true) {
         const existing = checkData.existingFile || {};
         const existingFileId = existing.fileId || existing.id || null;
         const existingFileName = existing.fileName || existing.name || file.name;
+
+        console.log("[ProjectLibrary] Duplicate detected! File ID:", existingFileId, "Name:", existingFileName);
+        console.log("[ProjectLibrary] Existing file object:", JSON.stringify(existing));
 
         if (existingFileId) {
           showToast(`File "${existingFileName}" already exists in this project.`, "error");
@@ -737,8 +806,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         }
       }
 
+      console.log("[ProjectLibrary] No duplicate found (exists=" + checkData?.exists + "), proceeding with upload");
     } catch (error: any) {
-
+      // If check fails, log detailed error but continue with upload for backward compatibility console.error("[ProjectLibrary] Duplicate check failed with error:", error);
       console.error("[ProjectLibrary] Error details:", error?.message, error?.status, error?.data);
       showToast("Unable to check for duplicates. Proceeding with upload...", "error");
     }
@@ -752,9 +822,13 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
     setLoadingFileId(file.id);
 
     try {
-
+      // Cloud-only: on FREE plan, non-owners must wait until the workspace owner
+      // has opened/imported the file into GraphDB. Desktop is single-user local —
+      // no teams, no owner/member distinction (see buildDesktopUser vs Mongo owner id).
       if (!isDesktop()) {
-
+        // Wait for workspace data before deciding on plan/owner restrictions.
+        // Clicking before the async workspace API returns would wrongly treat the user
+        // as a "free non-owner" (workspaceOwnerId is null until the API responds).
         if (!workspaceLoadedRef.current) {
           await new Promise<void>((resolve) => {
             const check = setInterval(() => {
@@ -787,19 +861,22 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           }
           // Falls through to onFileSelect if already in GraphDB
         } else {
+          // Owner or paid plan: show import card for files not yet in GraphDB
 
+          // If we're already tracking this file's import, handle state transitions
           const existingImport = fileImportStates[file.id];
           if (existingImport) {
             if (existingImport.status === 'COMPLETED') {
               onFileSelect(file.id, file.name);
             } else if (existingImport.status === 'FAILED') {
-
+              // Retry the import — previous attempt may have conflicted with an auto-triggered import
               await startFileImport(file);
             }
-
+            // IMPORTING: do nothing, card already shows the state
             return;
           }
 
+          // Check GraphDB — only navigate immediately if already imported
           try {
             const ontologyProjectId = `${projectId}--${file.id}`;
             const graphCheck: any = await apiClient.get(
@@ -891,7 +968,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {}
+      {/* Header */}
       <div className="bg-white border-b sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
@@ -915,13 +992,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 </div>
                 <div className="h-1.5 rounded-full bg-gray-200 overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${
-                      parseFloat(storageUsage.usagePercent) >= 90
+                    className={`h-full rounded-full transition-all ${parseFloat(storageUsage.usagePercent) >= 90
                         ? "bg-red-500"
                         : parseFloat(storageUsage.usagePercent) >= 70
                           ? "bg-amber-400"
                           : "bg-purple-500"
-                    }`}
+                      }`}
                     style={{ width: `${Math.min(100, parseFloat(storageUsage.usagePercent))}%` }}
                   />
                 </div>
@@ -929,77 +1005,89 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             )}
 
             <div className="flex flex-col items-start sm:items-end gap-2 w-full sm:w-auto">
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
-              <button
-                onClick={handleCreateNewFile}
-                className={`px-2 sm:px-2.5 py-1.5 text-xs border rounded-md transition-colors flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap ${
-                  userProjectRole === "VIEWER"
-                    ? "text-gray-400 border-gray-200 bg-gray-50 cursor-not-allowed opacity-60"
-                    : "text-green-600 border-green-300 bg-green-50 hover:bg-green-100"
-                }`}
-                title={userProjectRole === "VIEWER" ? "Viewers cannot create files" : "Create a new ontology file"}
-                disabled={userProjectRole === "VIEWER"}
-              >
-                <Plus size={14} />
-                <span className="hidden sm:inline">New File</span>
-                <span className="sm:hidden">+</span>
-              </button>
-              {onOpenEditor && (
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
                 <button
-                  onClick={onOpenEditor}
-                  className="px-2.5 py-1.5 text-xs text-blue-600 border border-blue-300 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors flex items-center gap-1.5 font-medium"
+                  onClick={handleCreateNewFile}
+                  className={`px-2 sm:px-2.5 py-1.5 text-xs border rounded-md transition-colors flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap ${userProjectRole === "VIEWER"
+                      ? "text-gray-400 border-gray-200 bg-gray-50 cursor-not-allowed opacity-60"
+                      : "text-green-600 border-green-300 bg-green-50 hover:bg-green-100"
+                    }`}
+                  title={userProjectRole === "VIEWER" ? "Viewers cannot create files" : "Create a new ontology file"}
+                  disabled={userProjectRole === "VIEWER"}
                 >
-                  <Code2 size={14} />
-                  Editor
+                  <Plus size={14} />
+                  <span className="hidden sm:inline">New File</span>
+                  <span className="sm:hidden">+</span>
                 </button>
-              )}
-              <button
-                onClick={() => {
-                  if (!isAppOnline()) {
-                    showToast("Connect to the internet to report an issue.", "error");
-                    return;
-                  }
-                  setIsReportIssueModalOpen(true);
-                }}
-                className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
-                title="Report Issue"
-              >
-                <Bug size={14} />
-                Report Issue
-              </button>
-              <label
-                className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${
-                  userProjectRole === "VIEWER"
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
-                    : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
-                }`}
-                title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
-              >
-                <Upload
-                  size={16}
-                  className={uploading ? "animate-bounce" : ""}
-                  style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}
-                />
-                <span className="hidden sm:inline" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
-                  {uploading ? "Uploading..." : "Upload File"}
-                </span>
-                <span className="sm:hidden" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
-                  {uploading ? "..." : "📤"}
-                </span>
-                {userProjectRole !== "VIEWER" && (
-                  <input
-                    type="file"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                    accept=".owl,.rdf,.ttl,.n3,.nt,.jsonld,.zip"
-                    disabled={uploading}
-                  />
+                {onOpenEditor && (
+                  <button
+                    onClick={onOpenEditor}
+                    className="px-2.5 py-1.5 text-xs text-blue-600 border border-blue-300 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors flex items-center gap-1.5 font-medium"
+                  >
+                    <Code2 size={14} />
+                    Editor
+                  </button>
                 )}
-              </label>
-            </div>
-            <p className="text-xs text-gray-500 max-w-xl text-left sm:text-right w-full sm:w-auto">
-              {FILE_UPLOAD_GUIDANCE}
-            </p>
+                <button
+                  onClick={() => {
+                    if (!isAppOnline()) {
+                      showToast("Connect to the internet to report an issue.", "error");
+                      return;
+                    }
+                    setReportIssueModalType("Bug");
+                  }}
+                  className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
+                  title="Report Issue"
+                >
+                  <Bug size={14} />
+                  Report Issue
+                </button>
+                <button
+                  onClick={() => {
+                    if (!isAppOnline()) {
+                      showToast("Connect to the internet to submit a feature request.", "error");
+                      return;
+                    }
+                    setReportIssueModalType("Task");
+                  }}
+                  className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
+                  title="Request a Feature"
+                >
+                  <ListOrdered size={14} />
+                  Feature Request
+                </button>
+                <label
+                  className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${userProjectRole === "VIEWER"
+                      ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
+                      : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
+                    }`}
+                  title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
+                >
+                  <Upload
+                    size={16}
+                    className={uploading ? "animate-bounce" : ""}
+                    style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}
+                  />
+                  <span className="hidden sm:inline" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
+                    {uploading ? "Uploading..." : "Upload File"}
+                  </span>
+                  <span className="sm:hidden" style={{ color: userProjectRole === "VIEWER" ? "currentColor" : "white" }}>
+                    {uploading ? "..." : "📤"}
+                  </span>
+                  {userProjectRole !== "VIEWER" && (
+                    <input
+                      type="file"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      accept=".owl,.rdf,.ttl,.n3,.nt,.jsonld,.zip"
+                      disabled={uploading}
+                    />
+                  )}
+                </label>
+              </div>
+              <p className="text-xs text-gray-500 max-w-xl text-left sm:text-right w-full sm:w-auto">
+                {FILE_UPLOAD_GUIDANCE}
+              </p>
             </div>
           </div>
 
@@ -1031,7 +1119,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             </div>
           </div>
 
-          {}
+          {/* Upload Progress Bar */}
           {uploading && (
             <div className="mt-4">
               <div className="flex items-center justify-between mb-2">
@@ -1086,7 +1174,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
           </div>
         )}
 
-      {}
+      {/* Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 overflow-y-auto" style={{ maxHeight: "calc(100vh - 240px)" }}>
         {loading ? (
           <div className="py-4">
@@ -1115,11 +1203,10 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             {!searchQuery && (
               <div className="flex flex-col items-center gap-4">
                 <label
-                  className={`group flex items-center gap-3 px-8 py-4 text-lg font-semibold rounded-xl transition-all ${
-                    userProjectRole === "VIEWER"
+                  className={`group flex items-center gap-3 px-8 py-4 text-lg font-semibold rounded-xl transition-all ${userProjectRole === "VIEWER"
                       ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-60"
                       : "hover:shadow-lg cursor-pointer bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
-                  }`}
+                    }`}
                   title={userProjectRole === "VIEWER" ? "Viewers cannot upload files" : ""}
                 >
                   <Upload
@@ -1163,25 +1250,24 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 <div
                   key={file.id}
                   onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && renamingFileId !== file.id && handleFileClick(file)}
-                  className={`relative overflow-hidden bg-white rounded-lg border-2 p-4 transition-all hover:shadow-lg ${
-                    isImporting
+                  className={`relative overflow-hidden bg-white rounded-lg border-2 p-4 transition-all hover:shadow-lg ${isImporting
                       ? isQueued
                         ? "border-purple-300 cursor-default"
                         : "border-blue-300 cursor-default"
                       : isCheckingGraphDB
-                      ? 'border-purple-400 cursor-wait'
-                      : isAnotherFileLoading
-                      ? 'border-gray-200 cursor-wait opacity-60'
-                      : isImportDone
-                      ? 'border-green-400 cursor-pointer hover:border-green-500'
-                      : isImportFailed
-                      ? 'border-red-300 cursor-pointer'
-                      : selectedFile === file.id
-                      ? 'border-purple-500 shadow-lg cursor-pointer'
-                      : 'border-gray-200 cursor-pointer'
-                  }`}
+                        ? 'border-purple-400 cursor-wait'
+                        : isAnotherFileLoading
+                          ? 'border-gray-200 cursor-wait opacity-60'
+                          : isImportDone
+                            ? 'border-green-400 cursor-pointer hover:border-green-500'
+                            : isImportFailed
+                              ? 'border-red-300 cursor-pointer'
+                              : selectedFile === file.id
+                                ? 'border-purple-500 shadow-lg cursor-pointer'
+                                : 'border-gray-200 cursor-pointer'
+                    }`}
                 >
-                  {}
+                  {/* Progress bar stripe at bottom */}
                   {(isImporting || isCheckingGraphDB) && (
                     <div className="absolute bottom-0 left-0 right-0 h-1 bg-purple-100">
                       <div
@@ -1192,59 +1278,58 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   )}
 
                   <div className="flex items-start justify-between mb-3">
-                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                      isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
-                    }`}>
+                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
+                      }`}>
                       {isImporting
                         ? <Loader2 size={24} className="text-blue-600 animate-spin" />
                         : isCheckingGraphDB
-                        ? <Loader2 size={24} className="text-purple-500 animate-spin" />
-                        : isImportDone
-                        ? <CheckCircle2 size={24} className="text-green-600" />
-                        : isImportFailed
-                        ? <XCircle size={24} className="text-red-500" />
-                        : <FileText size={24} className="text-purple-600" />
+                          ? <Loader2 size={24} className="text-purple-500 animate-spin" />
+                          : isImportDone
+                            ? <CheckCircle2 size={24} className="text-green-600" />
+                            : isImportFailed
+                              ? <XCircle size={24} className="text-red-500" />
+                              : <FileText size={24} className="text-purple-600" />
                       }
                     </div>
                     {!isImporting && !isCheckingGraphDB && (userProjectRole === "OWNER" ||
                       userProjectRole === "ADMIN" ||
                       (userProjectRole === "EDITOR" && file.uploadedByUserId === user?.userId)) && (
-                      <div className="relative">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
-                          }}
-                          className="p-1 hover:bg-gray-100 rounded"
-                        >
-                          <MoreVertical size={16} className="text-gray-400" />
-                        </button>
-                        {openMenuFileId === file.id && (
-                          <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleRenameFile(file.id);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-2"
-                            >
-                              <Edit3 size={14} />
-                              Rename
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteFile(file.id, file.name);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
-                            >
-                              <Trash2 size={14} />
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                        <div className="relative">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuFileId(openMenuFileId === file.id ? null : file.id);
+                            }}
+                            className="p-1 hover:bg-gray-100 rounded"
+                          >
+                            <MoreVertical size={16} className="text-gray-400" />
+                          </button>
+                          {openMenuFileId === file.id && (
+                            <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRenameFile(file.id);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-2"
+                              >
+                                <Edit3 size={14} />
+                                Rename
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteFile(file.id, file.name);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2"
+                              >
+                                <Trash2 size={14} />
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                   </div>
 
                   {renamingFileId === file.id ? (
@@ -1256,9 +1341,8 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                       />
                     </div>
                   ) : (
-                    <h3 className={`font-semibold mb-1 truncate ${
-                      isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'
-                    }`} title={file.name}>
+                    <h3 className={`font-semibold mb-1 truncate ${isImporting ? 'text-blue-800' : isImportDone ? 'text-green-800' : isImportFailed ? 'text-red-700' : 'text-gray-900'
+                      }`} title={file.name}>
                       {file.name}
                     </h3>
                   )}
@@ -1354,38 +1438,36 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                     <tr
                       key={file.id}
                       onClick={() => !isImporting && !isCheckingGraphDB && !isAnotherFileLoading && renamingFileId !== file.id && handleFileClick(file)}
-                      className={`transition-colors ${
-                        isImporting
+                      className={`transition-colors ${isImporting
                           ? isQueued
                             ? "bg-purple-50 cursor-default"
                             : "bg-blue-50 cursor-default"
                           : isCheckingGraphDB
-                          ? 'bg-purple-50 cursor-wait'
-                          : isAnotherFileLoading
-                          ? 'cursor-wait opacity-60'
-                          : isImportDone
-                          ? 'bg-green-50 cursor-pointer hover:bg-green-100'
-                          : isImportFailed
-                          ? 'bg-red-50 cursor-pointer hover:bg-red-100'
-                          : selectedFile === file.id
-                          ? 'bg-purple-50 cursor-pointer hover:bg-gray-50'
-                          : 'cursor-pointer hover:bg-gray-50'
-                      }`}
+                            ? 'bg-purple-50 cursor-wait'
+                            : isAnotherFileLoading
+                              ? 'cursor-wait opacity-60'
+                              : isImportDone
+                                ? 'bg-green-50 cursor-pointer hover:bg-green-100'
+                                : isImportFailed
+                                  ? 'bg-red-50 cursor-pointer hover:bg-red-100'
+                                  : selectedFile === file.id
+                                    ? 'bg-purple-50 cursor-pointer hover:bg-gray-50'
+                                    : 'cursor-pointer hover:bg-gray-50'
+                        }`}
                     >
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded flex items-center justify-center ${
-                            isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
-                          }`}>
+                          <div className={`w-8 h-8 rounded flex items-center justify-center ${isImporting ? 'bg-blue-100' : isCheckingGraphDB ? 'bg-purple-100' : isImportDone ? 'bg-green-100' : isImportFailed ? 'bg-red-100' : 'bg-purple-100'
+                            }`}>
                             {isImporting
                               ? <Loader2 size={16} className="text-blue-600 animate-spin" />
                               : isCheckingGraphDB
-                              ? <Loader2 size={16} className="text-purple-500 animate-spin" />
-                              : isImportDone
-                              ? <CheckCircle2 size={16} className="text-green-600" />
-                              : isImportFailed
-                              ? <XCircle size={16} className="text-red-500" />
-                              : <FileText size={16} className="text-purple-600" />
+                                ? <Loader2 size={16} className="text-purple-500 animate-spin" />
+                                : isImportDone
+                                  ? <CheckCircle2 size={16} className="text-green-600" />
+                                  : isImportFailed
+                                    ? <XCircle size={16} className="text-red-500" />
+                                    : <FileText size={16} className="text-purple-600" />
                             }
                           </div>
                           <div>
@@ -1476,7 +1558,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         )}
       </div>
 
-      {}
+      {/* Delete Confirmation Dialog */}
       {deleteConfirm.show && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
@@ -1503,7 +1585,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         </div>
       )}
 
-      {}
+      {/* New File Name Prompt (desktop) */}
       <PromptDialog
         isOpen={showNewFileNamePrompt}
         title="New Ontology File"
@@ -1519,13 +1601,12 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         onCancel={() => setShowNewFileNamePrompt(false)}
       />
 
-      {}
+      {/* Toast Notification */}
       {toast.show && (
         <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
           <div
-            className={`px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 text-white ${
-              toast.type === "success" ? "bg-green-600" : "bg-red-600"
-            }`}
+            className={`px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 text-white ${toast.type === "success" ? "bg-green-600" : "bg-red-600"
+              }`}
           >
             {toast.type === "success" ? (
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -1549,16 +1630,17 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         </div>
       )}
 
-      {}
-      {isReportIssueModalOpen && (
+      {/* Report Issue Modal */}
+      {reportIssueModalType && (
         <ReportIssueModal
           projectName={projectName}
           projectId={projectId}
-          onClose={() => setIsReportIssueModalOpen(false)}
+          initialIssueType={reportIssueModalType}
+          onClose={() => setReportIssueModalType(null)}
         />
       )}
 
-      {}
+      {/* Free Plan Member Open Restriction Dialog */}
       {showOwnerMustImportDialog && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
@@ -1572,9 +1654,9 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             <div className="px-6 pt-5 pb-4 flex items-start gap-4">
               <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                  <line x1="2" y1="2" x2="22" y2="22"/>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                  <line x1="2" y1="2" x2="22" y2="22" />
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
@@ -1589,17 +1671,17 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 aria-label="Close"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
             <div className="px-6 pb-5">
               <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
-                The workspace owner must import this file first by opening it in the OntoCode editor.
+                The workspace owner must import this file first by opening it in the OntoCode Studio editor.
               </div>
               <div className="flex items-start gap-2.5 text-sm text-gray-600">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
                 </svg>
                 <span>Ask the <span className="font-medium text-gray-800">workspace owner</span> to open this file once from the project library. After that, members can open it for viewing.</span>
               </div>
@@ -1616,7 +1698,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         </div>
       )}
 
-      {}
+      {/* Free Plan Upload Restriction Dialog */}
       {showFreePlanDialog && (
         <div
           className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999]"
@@ -1626,16 +1708,16 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             className="relative bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {}
+            {/* Top accent bar */}
             <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500" />
 
-            {}
+            {/* Header */}
             <div className="px-6 pt-5 pb-4 flex items-start gap-4">
               <div className="flex-shrink-0 w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                  <line x1="2" y1="2" x2="22" y2="22"/>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                  <line x1="2" y1="2" x2="22" y2="22" />
                 </svg>
               </div>
               <div className="flex-1 min-w-0">
@@ -1650,25 +1732,25 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                 aria-label="Close"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
 
-            {}
+            {/* Body */}
             <div className="px-6 pb-5">
               <div className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3.5 mb-4 text-sm text-gray-600 leading-relaxed">
                 You can <span className="font-medium text-gray-800">browse and explore</span> this project, but file uploads require a <span className="font-medium text-gray-800">Pro plan</span>.
               </div>
               <div className="flex items-start gap-2.5 text-sm text-gray-600">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5 text-violet-500">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
                 </svg>
                 <span>Ask your <span className="font-medium text-gray-800">workspace owner</span> to upgrade to Pro to unlock file uploads for all members.</span>
               </div>
             </div>
 
-            {}
+            {/* Footer */}
             <div className="px-6 pb-5 flex justify-end">
               <button
                 onClick={() => setShowFreePlanDialog(false)}

@@ -26,6 +26,10 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
 
+  // Model list per provider. The hardcoded PROVIDERS table is only ever a placeholder
+  // — shown before a key exists, or if a live fetch fails. Whenever a key is present
+  // we always ask the provider directly (on mount and on blurring the key field),
+  // so the list stays current without needing an app update.
   const [models, setModels] = useState<KnownModel[]>(() => getProviderModels(provider));
   const [modelsSource, setModelsSource] = useState<'default' | 'live'>('default');
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
@@ -59,6 +63,8 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
     }
   };
 
+  // Fetch the real model list automatically: once on mount if a key is already
+  // saved, and again whenever the provider changes while a key is present.
   useEffect(() => {
     if (apiKey.trim()) handleRefreshModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,7 +100,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
 
     setTesting(true);
     try {
-
+      // Just validate that the key exists and has reasonable format
       const keyTrimmed = apiKey.trim();
       if (keyTrimmed.length < 10) {
         setMessage({ type: 'error', text: 'API key seems too short. Please check it.' });
@@ -138,13 +144,13 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
           <div>
             <h3 className="font-semibold text-indigo-900">Graph View AI Insights</h3>
             <p className="text-sm text-indigo-700 mt-1">
-              Bring your own LLM API key. OntoCode never stores or sees your credentials. Everything stays in your browser.
+              Bring your own LLM API key. OntoCode Studio never stores or sees your credentials. Everything stays in your browser.
             </p>
           </div>
         </div>
       </div>
 
-      {}
+      {/* Provider Selection */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-3">
           Choose Your LLM Provider
@@ -172,7 +178,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
         </div>
       </div>
 
-      {}
+      {/* Provider Info */}
       <div className={`bg-gradient-to-r ${currentInfo.color} rounded-lg p-4 text-white`}>
         <p className="font-medium mb-2">{providers.find(p => p.id === provider)?.label}</p>
         <p className="text-sm opacity-90">{currentInfo.description}</p>
@@ -186,7 +192,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
         </a>
       </div>
 
-      {}
+      {/* API Key Input */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           API Key
@@ -209,11 +215,11 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
           </button>
         </div>
         <p className="text-xs text-gray-500 mt-2">
-          🔒 Your key is stored only in your browser's localStorage. Never sent to OntoCode servers.
+          🔒 Your key is stored only in your browser's localStorage. Never sent to OntoCode Studio servers.
         </p>
       </div>
 
-      {}
+      {/* Model Selection */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="block text-sm font-medium text-gray-700">
@@ -246,7 +252,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
         </p>
       </div>
 
-      {}
+      {/* Messages */}
       {message && (
         <div
           className={`p-4 rounded-lg flex items-center gap-2 ${
@@ -264,7 +270,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
         </div>
       )}
 
-      {}
+      {/* Action Buttons */}
       <div className="flex gap-3">
         <button
           onClick={handleSave}
@@ -289,7 +295,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
         </button>
       </div>
 
-      {}
+      {/* API Key Links */}
       <div className="border-t pt-6">
         <p className="text-sm font-medium text-gray-700 mb-3">Get Your API Key:</p>
         <ul className="space-y-2 text-sm">

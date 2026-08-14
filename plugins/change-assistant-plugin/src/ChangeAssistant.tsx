@@ -10,6 +10,7 @@ import ChangeGraph from './components/ChangeGraph';
 import ConflictResolver from './components/ConflictResolver';
 import AuthorActivityChart from './components/AuthorActivityChart';
 
+/** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
 async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const hostFetch = (window as any).authenticatedFetch;
   if (typeof hostFetch === 'function') {
@@ -24,6 +25,7 @@ async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   return fetch(input, { ...init, headers });
 }
 
+// Change types
 type ChangeType = 'class' | 'property' | 'individual' | 'axiom' | 'annotation' | 'import';
 type ChangeAction = 'added' | 'deleted' | 'modified';
 type ChangeStatus = 'pending' | 'approved' | 'rejected' | 'conflicted' | 'draft';
@@ -111,7 +113,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     activeAuthors: 0,
     warnings: 0
   });
-
+  
   const [activeTab, setActiveTab] = useState<'live' | 'drafts' | 'changes' | 'conflicts' | 'history' | 'stats'>('live');
   const [filterType, setFilterType] = useState<ChangeType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<ChangeStatus | 'all'>('all');
@@ -126,7 +128,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const [changeDetails, setChangeDetails] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-
+  
+  // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -134,7 +137,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     details?: string[];
     onConfirm: () => void;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
-
+  
+  // Notification state
   const [notification, setNotification] = useState<{
     show: boolean;
     type: 'success' | 'error' | 'info';
@@ -143,12 +147,13 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
 
   const [rollbackLoading, setRollbackLoading] = useState<string | null>(null);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
-
+  
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotification({ show: true, type, message });
     setTimeout(() => setNotification(prev => ({ ...prev, show: false })), 4000);
   };
 
+  // Load changes from backend
   useEffect(() => {
     loadChanges();
     loadDraftChanges();
@@ -159,11 +164,12 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     return () => clearInterval(interval);
   }, [projectId]);
 
+  // Listen for remote edit events
   useEffect(() => {
     const handleRemoteEdit = (event: CustomEvent) => {
       const detail = event.detail;
       if (detail && detail.projectId === projectId) {
-
+        // Add to live activity
         const activity: LiveActivity = {
           id: `live-${Date.now()}`,
           userId: detail.userId || 'unknown',
@@ -174,7 +180,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           isCurrentUser: false
         };
         setLiveActivity(prev => [activity, ...prev.slice(0, 19)]);
-
+        
+        // Refresh changes after remote edit
         setTimeout(() => loadChanges(), 500);
       }
     };
@@ -188,14 +195,15 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
       console.log('[ChangeAssistant] Loading drafts for projectId:', projectId);
       console.log('[ChangeAssistant] API_BASE_URL:', apiBase);
-
+      
       const response = await authFetch(`${apiBase}/api/ontology/${projectId}/drafts/stats`);
       console.log('[ChangeAssistant] Draft stats response status:', response.status);
       if (!response.ok) return;
-
+      
       const data = await response.json();
       console.log('[ChangeAssistant] Draft stats:', data);
-
+      
+      // Also get draft list
       const draftsResponse = await authFetch(`${apiBase}/api/ontology/${projectId}/drafts`);
       console.log('[ChangeAssistant] Drafts response status:', draftsResponse.status);
       if (draftsResponse.ok) {
@@ -250,7 +258,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const formatDraftDescription = (draft: any): string => {
     const opType = draft.operationType || '';
     const label = draft.operationData?.label || 'entity';
-
+    
     const descriptions: Record<string, string> = {
       'createClass': `Created class: ${label}`,
       'deleteClass': `Deleted class: ${label}`,
@@ -263,7 +271,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       'createIndividual': `Created individual: ${label}`,
       'addSubClassOf': `Added subclass axiom for: ${label}`,
     };
-
+    
     return descriptions[opType] || `${opType} operation on ${label}`;
   };
 
@@ -271,7 +279,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     const warnings: ChangeWarning[] = [];
     const opType = draft.operationType || '';
     const label = draft.operationData?.label || '';
-
+    
+    // Naming convention warnings
     if (label && opType.includes('Class')) {
       if (label[0] !== label[0].toUpperCase()) {
         warnings.push({
@@ -290,7 +299,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         });
       }
     }
-
+    
     if (label && opType.includes('Property')) {
       if (label[0] !== label[0].toLowerCase()) {
         warnings.push({
@@ -301,7 +310,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         });
       }
     }
-
+    
+    // Structure warnings
     if (opType === 'deleteClass') {
       warnings.push({
         type: 'structure',
@@ -310,32 +320,33 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         suggestion: 'Review dependencies before confirming deletion'
       });
     }
-
+    
     return warnings;
   };
 
   const loadChanges = async () => {
     setIsLoading(true);
     try {
-
+      // Use MongoDB as single source of truth for change tracking
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
       const url = `${apiBase}/api/ontology/${projectId}/changes/recent?count=100`;
       console.log('[ChangeAssistant] Loading changes from MongoDB:', url);
-
+      
       const response = await authFetch(url);
       const data = await response.json();
-
+      
       console.log('[ChangeAssistant] Response:', data);
       console.log('[ChangeAssistant] Changes count:', data.changes?.length || 0);
-
+      
       if (!data.success) {
         console.error('[ChangeAssistant] Failed to load changes:', data.error);
         setIsLoading(false);
         return;
       }
-
+      
+      // Convert MongoDB format to frontend format (single source - no sync needed)
       const parsedChanges = data.changes.map((change: any) => {
-
+        // Preserve original operation type for accurate rollback
         console.log(change,"change")
         const originalOperationType = change.changeType || change.operationType || '';
         const parsed = {
@@ -361,13 +372,14 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         };
         return parsed;
       });
-
+      
       setChanges(parsedChanges);
       setLastRefresh(new Date());
-
+      
+      // Calculate stats including drafts
       const totalWarnings = [...parsedChanges, ...draftChanges]
         .reduce((sum, c) => sum + (c.warnings?.length || 0), 0);
-
+      
       const newStats: ChangeStats = {
         totalChanges: parsedChanges.length,
         pendingChanges: parsedChanges.filter((c: any) => c.status === 'pending').length,
@@ -386,22 +398,25 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     }
   };
 
+  // Helper functions to map GraphDB data
   const mapChangeTypeFromGraphDB = (operationType: string, entityType: string): ChangeType => {
     const opLower = operationType?.toLowerCase() || '';
     const entityLower = entityType?.toLowerCase() || '';
-
+    
+    // Check operation type first
     if (opLower.includes('class')) return 'class';
     if (opLower.includes('property')) return 'property';
     if (opLower.includes('individual')) return 'individual';
     if (opLower.includes('annotation')) return 'annotation';
-
+    
+    // Then check entity type/category
     if (entityLower.includes('class')) return 'class';
     if (entityLower.includes('property')) return 'property';
     if (entityLower.includes('individual')) return 'individual';
     if (entityLower.includes('annotation')) return 'annotation';
     if (entityLower.includes('axiom')) return 'axiom';
     if (entityLower.includes('import')) return 'import';
-
+    
     return 'axiom';
   };
 
@@ -426,7 +441,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     const diffMin = Math.floor(diffSec / 60);
     const diffHour = Math.floor(diffMin / 60);
     const diffDay = Math.floor(diffHour / 24);
-
+    
     if (diffSec < 60) return 'just now';
     if (diffMin < 60) return `${diffMin}m ago`;
     if (diffHour < 24) return `${diffHour}h ago`;
@@ -454,6 +469,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     }
   };
 
+  // Load change details with comments
   const loadChangeDetails = async (changeId: string) => {
     setDetailsLoading(true);
     setShowDetailsDialog(true);
@@ -461,11 +477,11 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
       const response = await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/details`);
       const data = await response.json();
-
+      
       if (data.success && data.change) {
         setChangeDetails(data.change);
       } else {
-
+        // Fallback: use local change data
         const localChange = changes.find(c => c.id === changeId);
         if (localChange) {
           setChangeDetails({
@@ -476,7 +492,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       }
     } catch (error) {
       console.error('Failed to load change details:', error);
-
+      // Fallback to local data
       const localChange = changes.find(c => c.id === changeId);
       if (localChange) {
         setChangeDetails({
@@ -489,15 +505,16 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     }
   };
 
+  // Add comment to a change
   const addCommentToChange = async (changeId: string, text: string) => {
     if (!text.trim()) return;
-
+    
     try {
-
+      // Get current user info from window or local storage
       const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
       const userId = currentUser?.id || currentUser?.email || 'anonymous';
       const username = currentUser?.username || 'Anonymous';
-
+      
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
       const response = await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${changeId}/comments`, {
         method: 'POST',
@@ -508,11 +525,11 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           username: username
         })
       });
-
+      
       const data = await response.json();
       if (data.success) {
         showNotification('Comment added successfully', 'success');
-
+        // Reload details to show new comment
         loadChangeDetails(changeId);
       } else {
         showNotification('Failed to add comment: ' + (data.error || 'Unknown error'), 'error');
@@ -524,14 +541,14 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   };
 
   const rollbackChange = (changeId: string, change: OntologyChange) => {
-
+    // Show custom confirmation dialog
     const details = [
       `Entity: ${change.entityLabel}`,
       `Action: ${change.action}`,
     ];
     if (change.oldValue) details.push(`Old Value: ${change.oldValue}`);
     if (change.newValue) details.push(`New Value: ${change.newValue}`);
-
+    
     setConfirmDialog({
       isOpen: true,
       title: 'Rollback Change',
@@ -545,16 +562,17 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     setConfirmDialog(prev => ({ ...prev, isOpen: false }));
     setRollbackLoading(changeId);
     setRollbackError(null);
-
+    
+    // Validate required fields
     if (!change.entityUri) {
       showNotification('Cannot rollback: Entity IRI is missing', 'error');
       setRollbackLoading(null);
       return;
     }
-
+    
     try {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-
+      // Use the original operation type for accurate rollback, fallback to generic type
       const rollbackChangeType = change.operationType || change.type;
       console.log('[Rollback] Executing rollback with:', {
         changeId,
@@ -565,11 +583,13 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         entityIRI: change.entityUri,
         entityLabel: change.entityLabel
       });
-
+      
+      // Get current user info
       const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
       const userId = currentUser?.email || 'anonymous';
       const username = currentUser?.username || 'Anonymous';
-
+      
+      // Use a simpler endpoint that accepts changeId in the body instead of URL path
       const response = await authFetch(`${apiBase}/api/ontology/${projectId}/changes/rollback`, { 
         method: 'POST',
         headers: {
@@ -587,18 +607,20 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           username: username
         })
       });
-
+      
       const data = await response.json();
-
+      
       if (data.success) {
         showNotification(data.message || 'Change rolled back successfully!', 'success');
-
+        
+        // Get current user info from window or local storage
         const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
         const username = currentUser?.username || 'Unknown User';
-
+        
+        // Use the entityIRI from the response if provided (updated after rollback), otherwise use original
         const updatedEntityIRI = data.entityIRI || change.entityUri;
         const updatedEntityLabel = data.entityLabel || change.oldValue || change.entityLabel; // Use old value as new label for annotation changes
-
+        
         console.log('[Rollback] Entity info after rollback:', {
           originalEntityIRI: change.entityUri,
           updatedEntityIRI: updatedEntityIRI,
@@ -607,7 +629,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           oldValue: change.newValue,
           newValue: change.oldValue
         });
-
+        
+        // Dispatch event to notify other components about the rollback
         window.dispatchEvent(new CustomEvent('ontologyRollback', {
           detail: {
             projectId,
@@ -623,7 +646,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
             success: true
           }
         }));
-
+        
+        // Increase delay to allow GraphDB to fully process the change before refreshing
         setTimeout(() => {
           loadChanges();
           loadDraftChanges();
@@ -643,7 +667,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
 
   const addComment = async () => {
     if (!selectedChange || !newComment.trim()) return;
-
+    
     try {
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
       await authFetch(`${apiBase}/api/ontology/${projectId}/changes/${selectedChange.id}/comments`, {
@@ -689,6 +713,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     }
   };
 
+  // Filter changes
   const filteredChanges = changes.filter(change => {
     if (filterType !== 'all' && change.type !== filterType) return false;
     if (filterStatus !== 'all' && change.status !== filterStatus) return false;
@@ -728,7 +753,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
 
   return (
     <div className="h-full flex flex-col bg-white">
-      {}
+      {/* Header */}
       <div className="border-b p-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -750,7 +775,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           </div>
         </div>
 
-        {}
+        {/* Stats Cards */}
         <div className="grid grid-cols-4 gap-2 mb-4">
           <div className="bg-yellow-50 p-2 rounded border border-yellow-200">
             <div className="text-xs text-yellow-600 flex items-center gap-1">
@@ -782,7 +807,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           </div>
         </div>
 
-        {}
+        {/* Search and Filters */}
         <div className="space-y-2">
           <div className="relative">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
@@ -794,7 +819,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
               className="w-full pl-9 pr-3 py-2 border rounded text-sm"
             />
           </div>
-
+          
           <div className="flex gap-2">
             <select
               value={filterType}
@@ -809,7 +834,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
               <option value="annotation">Annotations</option>
               <option value="import">Imports</option>
             </select>
-
+            
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value as ChangeStatus | 'all')}
@@ -826,7 +851,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         </div>
       </div>
 
-      {}
+      {/* Tabs */}
       <div className="border-b">
         <div className="flex overflow-x-auto">
           {[
@@ -862,9 +887,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         </div>
       </div>
 
-      {}
+      {/* Content Area */}
       <div className="flex-1 overflow-auto p-4">
-        {}
+        {/* Live Activity Tab */}
         {activeTab === 'live' && (
           <div className="space-y-3">
             <div className="flex items-center gap-2 mb-4">
@@ -872,7 +897,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
               <h3 className="font-medium">Live Activity</h3>
               <span className="text-xs text-gray-500">Real-time updates from collaborators</span>
             </div>
-
+            
             {liveActivity.length === 0 ? (
               <div className="text-center py-12 text-gray-500">
                 <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -911,7 +936,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           </div>
         )}
 
-        {}
+        {/* Drafts Tab */}
         {activeTab === 'drafts' && (
           <div className="space-y-3">
             <div className="flex items-center justify-between mb-4">
@@ -953,8 +978,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                           </span>
                         </div>
                         <p className="text-sm text-gray-600 mt-1">{draft.description}</p>
-
-                        {}
+                        
+                        {/* Show diff for modifications */}
                         {draft.action === 'modified' && (draft.oldValue || draft.newValue) && (
                           <div className="mt-2 p-2 bg-white rounded border border-yellow-200">
                             <div className="text-xs text-gray-500 mb-1 font-medium">Value Change:</div>
@@ -975,8 +1000,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                             </div>
                           </div>
                         )}
-
-                        {}
+                        
+                        {/* Show new value for additions */}
                         {draft.action === 'added' && draft.newValue && (
                           <div className="mt-2 p-2 bg-white rounded border border-yellow-200">
                             <div className="text-xs text-gray-500 mb-1 font-medium">New Value:</div>
@@ -985,14 +1010,14 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                             </span>
                           </div>
                         )}
-
+                        
                         <div className="text-xs text-gray-500 mt-2">
                           {getRelativeTime(draft.timestamp)}
                         </div>
                       </div>
                     </div>
 
-                    {}
+                    {/* Warnings for drafts */}
                     {draft.warnings && draft.warnings.length > 0 && (
                       <div className="mt-3 space-y-2">
                         {draft.warnings.map((warning, idx) => (
@@ -1028,7 +1053,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                     )}
                   </div>
                 ))}
-
+                
                 <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                   <div className="flex items-center gap-2 text-sm text-gray-600">
                     <Info className="w-4 h-4" />
@@ -1087,7 +1112,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                     </div>
                   </div>
 
-                  {}
+                  {/* Conflict Info */}
                   {change.conflicts && change.conflicts.length > 0 && (
                     <div className="mt-2 p-2 bg-orange-100 rounded border border-orange-200">
                       <div className="flex items-center gap-2 text-orange-700 font-medium text-sm mb-1">
@@ -1112,7 +1137,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                     </div>
                   )}
 
-                  {}
+                  {/* Diff View for modifications */}
                   {(change.oldValue || change.newValue) && (
                     <div className="mt-3 p-3 bg-gray-50 rounded-lg border">
                       <div className="text-xs text-gray-500 mb-2 font-medium flex items-center gap-1">
@@ -1169,7 +1194,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                     </div>
                   )}
 
-                  {}
+                  {/* Comments */}
                   {change.comments.length > 0 && (
                     <div className="mt-2 space-y-1">
                       {change.comments.map(comment => (
@@ -1185,7 +1210,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                     </div>
                   )}
 
-                  {}
+                  {/* Action Buttons */}
                   <div className="flex gap-2 mt-3">
                     <button
                       onClick={() => {
@@ -1354,24 +1379,27 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
               </div>
             </div>
 
-            {}
+            {/* Activity Graph - Real data from changes */}
             <ChangeGraph
               data={(() => {
-
+                // Group changes by day of week
                 const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
                 const dayStats: { [key: string]: { additions: number; deletions: number; modifications: number } } = {};
-
+                
+                // Initialize all days
                 dayNames.forEach(day => {
                   dayStats[day] = { additions: 0, deletions: 0, modifications: 0 };
                 });
-
+                
+                // Aggregate changes by day
                 [...changes, ...draftChanges].forEach(change => {
                   const dayOfWeek = dayNames[change.timestamp.getDay()];
                   if (change.action === 'added') dayStats[dayOfWeek].additions++;
                   else if (change.action === 'deleted') dayStats[dayOfWeek].deletions++;
                   else dayStats[dayOfWeek].modifications++;
                 });
-
+                
+                // Reorder to start from Monday
                 const orderedDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
                 return {
                   labels: orderedDays,
@@ -1382,7 +1410,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
               })()}
             />
 
-            {}
+            {/* Author Activity */}
             <AuthorActivityChart
               data={(() => {
                 const authorMap = new Map<string, { additions: number; deletions: number; modifications: number }>();
@@ -1404,7 +1432,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         )}
       </div>
 
-      {}
+      {/* Conflict Resolver Dialog */}
       {showConflictResolver && selectedConflict && (
         <ConflictResolver
           conflict={selectedConflict}
@@ -1416,7 +1444,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         />
       )}
 
-      {}
+      {/* Notification Toast */}
       {notification && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 ${
           notification.type === 'success' ? 'bg-green-100 border border-green-400 text-green-800' :
@@ -1425,13 +1453,18 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         }`}>
           {notification.type === 'success' && <CheckCircle size={18} />}
           {notification.type === 'error' && <AlertTriangle size={18} />}
-          {}
+          {/* {notification.type === 'info' && <Info size={18} />} */}
           <span className="text-sm">{notification.message}</span>
-          {}
+          {/* <button 
+            onClick={() => setNotification({ show: false, type: 'info', message: '' })}
+            className="ml-2 hover:opacity-70"
+          >
+            <X size={16} />
+          </button> */}
         </div>
       )}
 
-      {}
+      {/* Confirmation Dialog */}
       {confirmDialog.isOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-4 w-96 shadow-xl">
@@ -1461,7 +1494,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         </div>
       )}
 
-      {}
+      {/* Details Dialog */}
       {showDetailsDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-4 w-[500px] max-h-[80vh] overflow-hidden flex flex-col">
@@ -1480,7 +1513,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                 <X className="w-5 h-5" />
               </button>
             </div>
-
+            
             {detailsLoading ? (
               <div className="py-8 text-center text-gray-500">
                 <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
@@ -1488,7 +1521,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
               </div>
             ) : changeDetails ? (
               <div className="flex-1 overflow-auto space-y-4">
-                {}
+                {/* Change Info */}
                 <div className="bg-gray-50 rounded-lg p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="text-2xl">{getChangeIcon(changeDetails.entityType?.toLowerCase() || changeDetails.type || 'axiom')}</span>
@@ -1499,7 +1532,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                       </p>
                     </div>
                   </div>
-
+                  
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div>
                       <span className="text-gray-500">Action:</span>
@@ -1531,14 +1564,14 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                       </span>
                     </div>
                   </div>
-
+                  
                   <div className="text-xs text-gray-500 pt-1 border-t">
                     <Clock className="w-3 h-3 inline mr-1" />
                     {changeDetails.timestamp ? new Date(changeDetails.timestamp).toLocaleString() : 'Unknown time'}
                   </div>
                 </div>
-
-                {}
+                
+                {/* Value Changes */}
                 {(changeDetails.oldValue || changeDetails.newValue) && (
                   <div className="bg-gray-50 rounded-lg p-3">
                     <h4 className="font-medium text-sm mb-2 flex items-center gap-1">
@@ -1565,23 +1598,23 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                     </div>
                   </div>
                 )}
-
-                {}
+                
+                {/* Description */}
                 {changeDetails.description && (
                   <div className="bg-gray-50 rounded-lg p-3">
                     <h4 className="font-medium text-sm mb-1">Description</h4>
                     <p className="text-sm text-gray-600">{changeDetails.description}</p>
                   </div>
                 )}
-
-                {}
+                
+                {/* Comments Section */}
                 <div className="bg-gray-50 rounded-lg p-3">
                   <h4 className="font-medium text-sm mb-2 flex items-center gap-1">
                     <MessageSquare className="w-4 h-4" />
                     Comments ({Array.isArray(changeDetails.comments) ? changeDetails.comments.length : 0})
                   </h4>
-
-                  {}
+                  
+                  {/* Existing Comments */}
                   {Array.isArray(changeDetails.comments) && changeDetails.comments.length > 0 ? (
                     <div className="space-y-2 mb-3 max-h-40 overflow-y-auto">
                       {changeDetails.comments.map((comment: any, idx: number) => (
@@ -1599,8 +1632,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                   ) : (
                     <p className="text-sm text-gray-500 mb-3">No comments yet</p>
                   )}
-
-                  {}
+                  
+                  {/* Add Comment */}
                   <div className="border-t pt-2">
                     <textarea
                       value={newComment}
@@ -1628,7 +1661,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                 <p>No details available</p>
               </div>
             )}
-
+            
             <div className="mt-4 pt-3 border-t flex justify-end">
               <button
                 onClick={() => {
@@ -1644,7 +1677,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         </div>
       )}
 
-      {}
+      {/* Comment Dialog */}
       {showCommentDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-4 w-96">

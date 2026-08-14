@@ -47,6 +47,7 @@ public class OntologyQueryController {
     private final OntologyMetadataService ontologyMetadataService;
     private final HierarchyIndexService hierarchyIndexService;
 
+    // Desktop-only — null in cloud. Injected when ontocode.desktop.mode=true.
     @Autowired(required = false) @Nullable
     private DesktopHierarchyService desktopHierarchyService;
 
@@ -89,6 +90,7 @@ public class OntologyQueryController {
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.ReasonerIndividualAssertionMerger reasonerIndividualAssertionMerger;
 
+    /** Desktop: OWLAPI is authoritative; Fuseki may not be synced yet. */
     @Value("${ontocode.desktop.owlapi-first:false}")
     private boolean owlApiFirst;
 
@@ -109,12 +111,16 @@ public class OntologyQueryController {
         return owlApiContext != null && owlApiContext.hasOntology(projectId);
     }
 
+    /**
+     * Desktop owlapi-first: use in-memory OWLAPI when there is no active per-user draft overlay.
+     * On desktop, Fuseki is deferred — always prefer OWLAPI over SPARQL (draft overlay would 503).
+     */
     private boolean preferOwlApiPath(String projectId) {
         if (!owlApiFirst) {
             return false;
         }
         if (desktopMode) {
-
+            // Desktop: OWLAPI is authoritative; Fuseki may not be started yet.
             return owlApiContext != null || desktopOntologyLoader != null;
         }
         if (desktopOntologyLoader == null) {
@@ -128,10 +134,11 @@ public class OntologyQueryController {
         return true;
     }
 
+    /** Desktop owlapi-first: SPARQL failures become warming/202 instead of 503. */
     private ResponseEntity<?> sparqlListFallback(String projectId, Exception e) {
         if (desktopMode && owlApiFirst) {
             ensureOwlApiWarming(projectId);
-
+            // Fuseki is lazy on desktop — never 503 when OWLAPI-first is active; ask client to retry.
             return owlApiWarmingListResponse();
         }
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
@@ -155,6 +162,12 @@ public class OntologyQueryController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
     }
 
+    /**
+     * Desktop owlapi-first: serve from OWLAPI or return a warming response.
+     * Never fall through to Fuseki (deferred on desktop → 503).
+     *
+     * @return response when owlapi-first applies; empty when caller should use SPARQL
+     */
     private Optional<ResponseEntity<?>> owlApiOnlyOrWarming(String projectId, Supplier<ResponseEntity<?>> whenReady) {
         if (!preferOwlApiPath(projectId)) {
             return Optional.empty();
@@ -183,6 +196,7 @@ public class OntologyQueryController {
         }
     }
 
+    /** Desktop: tells the frontend whether the OWLAPI in-memory model is ready. */
     @GetMapping("/cache-status/{projectId:.+}")
     public ResponseEntity<?> cacheStatus(@PathVariable String projectId) {
         Map<String, Object> body = new java.util.LinkedHashMap<>(hierarchyIndexService.statusPayload(projectId));
@@ -207,7 +221,7 @@ public class OntologyQueryController {
             try {
                 topLevel = queryService.topLevelClassCount(projectId);
             } catch (Exception ignored) {
-
+                /* SPARQL may be warming */
             }
             boolean hierarchyReady = topLevel > 0;
             body.put("topLevelClasses", topLevel);
@@ -234,6 +248,10 @@ public class OntologyQueryController {
         }
     }
 
+    /**
+     * Desktop: load the ontology into OWLAPI memory before the UI
+     * runs heavy Fuseki SPARQL. Blocks up to timeoutMs (default 5 min).
+     */
     @org.springframework.web.bind.annotation.PostMapping("/warm/{projectId:.+}")
     public ResponseEntity<?> warmOntology(
             @PathVariable String projectId,
@@ -258,12 +276,14 @@ public class OntologyQueryController {
                 "closure".equalsIgnoreCase(scope)
                         ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
                         : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
-
+        // The MongoDB hierarchy snapshot only ever reflects the main graph — skip it for a
+        // drafter or they'd see the public hierarchy instead of their own uncommitted edits.
+        // Same pattern as classDetails() below.
         String ctxUserId = SparqlQueryContext.getUserId();
         boolean hasDraft = ctxUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
         try {
-
+            // Desktop fast path: OWLAPI in-memory — skip when user has active draft overlay
             if (preferOwlApiPath(projectId)
                     && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
                 var classes = desktopHierarchyService.topLevelClasses(projectId, limit, offset, importsScope);
@@ -286,16 +306,19 @@ public class OntologyQueryController {
                 body.put("truncated", truncated);
                 body.put("hierarchyEngine", "owlapi");
                 body.put("topLevelClasses", topLevelTotal);
-
+                // OWLAPI is authoritative: 0 classes means the ontology is genuinely empty,
+                // not still loading. Always return 200 so the frontend doesn't spin.
                 body.put("hierarchyReady", true);
                 if (offset == 0) body.putAll(desktopHierarchyService.declarationCounts(projectId));
                 return ResponseEntity.ok(body);
             }
-
+            // Trigger lazy OWLAPI load (non-blocking — the frontend's POST /warm is the
+            // authoritative wait mechanism; we just ensure load is queued).
             if (desktopOntologyLoader != null) {
                 desktopOntologyLoader.triggerLazyLoadIfNeeded(projectId);
             }
-
+            // Cloud: precomputed OWLAPI snapshot () — main-graph-only, so a
+            // drafter falls through to the live SPARQL path below instead (draft-scope-aware).
             if (!hasDraft) {
                 Optional<Map<String, Object>> snapshot = hierarchyIndexService.topLevelResponse(projectId, limit);
                 if (snapshot.isPresent()) {
@@ -310,7 +333,12 @@ public class OntologyQueryController {
                     return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
                 }
             }
-
+            // Desktop owlapi-first: while OWLAPI is actively loading, return a "loading" response
+            // instead of running SPARQL. SPARQL misses classes that have only anonymous superclasses
+            // (owl:Restriction patterns) with no explicit rdfs:subClassOf owl:Thing — they appear
+            // as orphans only via the Phase 2 MINUS scan, which can produce incomplete results.
+            // Keeping hierarchyReady:false here ensures the frontend keeps polling until the
+            // authoritative OWLAPI result is available.
             boolean owlapiLoading = desktopOntologyLoader != null && desktopOntologyLoader.isLoading(projectId);
             if (preferOwlApiPath(projectId) && owlapiLoading) {
                 Map<String, Object> pending = new java.util.LinkedHashMap<>();
@@ -322,7 +350,7 @@ public class OntologyQueryController {
                 pending.put("message", "Loading ontology into memory…");
                 return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
             }
-
+            // SPARQL fallback when OWLAPI/snapshot unavailable (e.g. heap-skipped large files)
             var classes = queryService.topLevelClasses(projectId, limit);
             boolean inDesktopMode = desktopOntologyLoader != null;
             if (offset == 0 && classes.isEmpty()) {
@@ -330,9 +358,11 @@ public class OntologyQueryController {
                 try {
                     topCount = queryService.topLevelClassCount(projectId);
                 } catch (Exception ignored) {
-
+                    /* still warming */
                 }
-
+                // In desktop mode, only return 202 while OWLAPI is actively loading; once it's
+                // done (succeeded, failed, or skipped), fall through so we can return a final answer.
+                // In cloud mode, keep the original topCount/graphHasTriples heuristic.
                 boolean shouldReturn202 = owlapiLoading || (!inDesktopMode && (topCount > 0 || graphHasTriples(projectId)));
                 if (shouldReturn202) {
                     Map<String, Object> pending = new java.util.LinkedHashMap<>();
@@ -351,11 +381,14 @@ public class OntologyQueryController {
             body.put("success", true);
             body.put("classes", classes);
             body.put("hierarchyEngine", "sparql");
-
+            // Desktop: once OWLAPI is done (not loading), this is the final answer — always
+            // signal hierarchyReady:true so the frontend stops polling even if SPARQL returned
+            // empty (avoids infinite re-poll when empty SPARQL result returns hierarchyReady:false).
             boolean desktopFinalAnswer = inDesktopMode && !owlapiLoading;
             body.put("hierarchyReady", !classes.isEmpty() || desktopFinalAnswer);
             body.put("topLevelReturned", classes.size());
-
+            // When signalling a final empty answer, explicitly confirm 0 top-level classes
+            // so the frontend retry guard (tlTotal !== 0) does not fire.
             if (desktopFinalAnswer && classes.isEmpty()) {
                 body.put("topLevelTotal", 0);
             }
@@ -369,7 +402,9 @@ public class OntologyQueryController {
     @GetMapping("/classes/all/{projectId:.+}")
     public ResponseEntity<?> allClasses(@PathVariable String projectId,
                                         @RequestParam(defaultValue = "50000") int limit) {
-
+        // Desktop fast path: read the live OWLAPI model so classes added in this session
+        // appear immediately (Fuseki sync is deferred on desktop). Skipped when a draft
+        // overlay is active — draft reads must merge Fuseki state.
         if (preferOwlApiPath(projectId)
                 && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(Map.of("success", true, "classes",
@@ -394,12 +429,13 @@ public class OntologyQueryController {
                 "closure".equalsIgnoreCase(scope)
                         ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
                         : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
-
+        // Desktop fast path — skip when draft overlay is active (reads must merge Fuseki drafts)
         if (preferOwlApiPath(projectId)
                 && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(desktopHierarchyService.children(projectId, parentIri, limit, offset, importsScope));
         }
-
+        // The MongoDB hierarchy snapshot only ever reflects the main graph — skip it for a
+        // drafter, same as topLevel() above, or they'd never see their own draft-only children.
         String childrenCtxUserId = SparqlQueryContext.getUserId();
         boolean childrenHasDraft = childrenCtxUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, childrenCtxUserId);
@@ -432,6 +468,11 @@ public class OntologyQueryController {
         }
     }
 
+    /**
+     * Best-effort children fetch shared by {@code children()} and {@code descendants()} below.
+     * Empty means "not ready yet" (hierarchy index still building, or SPARQL query still
+     * running) — callers must treat that as retry-later, not "no children".
+     */
     private Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> fetchChildrenOrEmpty(
             String projectId, String parentIri,
             org.semanticweb.owlapi.model.parameters.Imports importsScope) {
@@ -459,6 +500,10 @@ public class OntologyQueryController {
 
     private static final int MAX_DESCENDANTS = 5000;
 
+    /**
+     * All asserted descendants of a class (BFS over the same children source used by
+     * /classes/children), for the "delete class + descendants" confirmation dialog.
+     */
     @GetMapping("/classes/descendants/{projectId:.+}")
     public ResponseEntity<?> descendants(@PathVariable String projectId,
                                          @RequestParam String parentIri,
@@ -484,7 +529,7 @@ public class OntologyQueryController {
                 return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED).body(pending);
             }
             for (self.research.ontology.owlEditor.dto.OntologyDto.TreeNode child : kids.get()) {
-                if (child.getId() == null || found.containsKey(child.getId())) continue;
+                if (child.getId() == null || found.containsKey(child.getId())) continue; // already visited (asserted-hierarchy cycle guard)
                 if (found.size() >= MAX_DESCENDANTS) {
                     truncated = true;
                     break;
@@ -642,19 +687,19 @@ public class OntologyQueryController {
         String usageUserId = SparqlQueryContext.getUserId();
         boolean usageHasDraft = usageUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, usageUserId);
-
+        // 1. Desktop fast path: OWLAPI in-memory — skip when user has active draft overlay
         if (!usageHasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classUsage(projectId, classIri)));
         }
-
+        // 2. Cloud fast path: pre-computed MongoDB index — skip when draft is active (index is main-graph-only)
         if (!usageHasDraft && entityUsageIndexService != null) {
             var cached = entityUsageIndexService.getUsage(projectId, classIri);
             if (cached.isPresent()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", cached.get(), "source", "index"));
             }
         }
-
+        // 3. Fallback: live SPARQL query (slower, blank-node traversal)
         return ResponseEntity.ok(Map.of("success", true, "data",
                 queryService.classUsage(projectId, classIri)));
     }
@@ -714,11 +759,20 @@ public class OntologyQueryController {
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri,
                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
-
+        // Skip OWLAPI and MongoDB cache only when the user has an active draft overlay:
+        // OWLAPI only knows the main graph; MongoDB cache is also main-graph-only.
+        // SPARQL path uses buildFromClause which adds FROM <draftGraph> automatically
+        // when SparqlQueryContext.getUserId() is set (done by SparqlQueryContextInterceptor).
+        // A bare userId with NO draft overlay reads the main graph either way, and every
+        // main-graph write path invalidates these caches (per-IRI in OntologyMutationService,
+        // project-wide in execUpdate's derived-cache choke point, publish in
+        // DraftTrackingService) — so cached hits are safe. Forcing live SPARQL here made
+        // every class click on large ontologies run ~20 throttled queries and 504.
         String ctxUserId = SparqlQueryContext.getUserId();
         boolean hasDraft = ctxUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
 
+        // 1. OWLAPI in-memory (desktop / warm cloud) — instant, 
         if (!hasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             Map<String, Object> details = new java.util.LinkedHashMap<>(
                     desktopHierarchyService.classDetails(projectId, classIri));
@@ -726,7 +780,7 @@ public class OntologyQueryController {
                 return ResponseEntity.ok(Map.of("success", true, "data", details));
             }
         }
-
+        // 2. MongoDB persistent cache — survives restarts, shared across pods
         if (!hasDraft && classDetailCacheService != null) {
             var cached = classDetailCacheService.getDetails(projectId, classIri);
             if (cached.isPresent()) {
@@ -739,7 +793,7 @@ public class OntologyQueryController {
                 if (ctx != null) return ResponseEntity.status(499).build();
             }
         } catch (Exception ignored) {}
-
+        // 3. SPARQL fallback — store result in MongoDB for next request
         Map<String, Object> details = queryService.classDetails(projectId, classIri);
         if (!hasDraft && classDetailCacheService != null && !details.isEmpty()) {
             classDetailCacheService.putDetails(projectId, classIri, details);
@@ -747,6 +801,11 @@ public class OntologyQueryController {
         return ResponseEntity.ok(Map.of("success", true, "data", details));
     }
 
+    /**
+     * Fast-path: annotations-only class details. Runs a single SPARQL query
+     * (typically <100ms). UI calls this first to render the Annotations panel
+     * immediately, then fires the full /classes/details call in the background.
+     */
     @GetMapping("/classes/annotations/{projectId}")
     public ResponseEntity<?> classAnnotations(@PathVariable String projectId,
                                               @RequestParam String classIri) {
@@ -754,18 +813,19 @@ public class OntologyQueryController {
         boolean annHasDraft = annCtxUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, annCtxUserId);
 
+        // 1. OWLAPI in-memory
         if (!annHasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classAnnotations(projectId, classIri)));
         }
-
+        // 2. MongoDB — annotations extracted from stored classDetails document
         if (!annHasDraft && classDetailCacheService != null) {
             var cached = classDetailCacheService.getAnnotations(projectId, classIri);
             if (cached.isPresent()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", cached.get()));
             }
         }
-
+        // 3. SPARQL fallback — store as partial doc so subsequent annotation requests hit MongoDB
         Map<String, Object> annotations = queryService.classAnnotations(projectId, classIri);
         if (!annHasDraft && classDetailCacheService != null && !annotations.isEmpty()) {
             classDetailCacheService.putAnnotationsIfAbsent(projectId, classIri, annotations);
@@ -773,6 +833,11 @@ public class OntologyQueryController {
         return ResponseEntity.ok(Map.of("success", true, "data", annotations));
     }
 
+    /**
+     * Batch annotation lookup for the "Render by annotation property" hierarchy display mode.
+     * Body: { "iris": ["iri1", ...], "propertyIri": "http://..." }
+     * Response: { "iri1": "value1", ... }  (only IRIs that have a value are included)
+     */
     @PostMapping("/annotations/batch/{projectId:.+}")
     public ResponseEntity<?> batchAnnotations(@PathVariable String projectId,
                                               @org.springframework.web.bind.annotation.RequestBody
@@ -787,12 +852,12 @@ public class OntologyQueryController {
             if (iris == null || iris.isEmpty()) {
                 return ResponseEntity.ok(Map.of());
             }
-
+            // Guard against unbounded payloads; log if truncated
             if (iris.size() > 5000) {
                 org.slf4j.LoggerFactory.getLogger(getClass()).warn("[batchAnnotations] IRI list truncated from {} to 5000 for project {}", iris.size(), projectId);
                 iris = iris.subList(0, 5000);
             }
-
+            // Filter out blank or syntactically invalid IRIs before passing to backends
             iris = iris.stream()
                 .filter(iri -> iri != null && !iri.isBlank() && (iri.startsWith("http") || iri.startsWith("urn")))
                 .collect(java.util.stream.Collectors.toList());
@@ -814,7 +879,11 @@ public class OntologyQueryController {
     @GetMapping("/classes/instances/{projectId}")
     public ResponseEntity<?> classInstances(@PathVariable String projectId,
                                            @RequestParam String classIri) {
-
+        // On desktop, a mutation patches the OWLAPI in-memory model immediately but Fuseki sync
+        // is deferred (debounced, can take seconds) — the SPARQL path below reads from Fuseki
+        // directly, so it was returning pre-mutation data every time right after adding/removing
+        // an instance. classInstanceCounts (below) already does this correctly; this endpoint
+        // never had the same fast-path wired in.
         Optional<ResponseEntity<?>> owl = owlApiOnlyOrWarming(projectId, () -> {
             if (desktopHierarchyService == null) {
                 throw new IllegalStateException("OWLAPI hierarchy service unavailable");
@@ -825,6 +894,9 @@ public class OntologyQueryController {
             return owl.get();
         }
 
+        // Fallback for when the OWLAPI fast path above isn't available (cloud without fast-open,
+        // or an active per-user draft overlay). reasonerClassInstanceMerger adds inferred
+        // instances on the SPARQL path too.
         String instUserId = SparqlQueryContext.getUserId();
         boolean instHasDraft = instUserId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, instUserId);
@@ -927,7 +999,9 @@ public class OntologyQueryController {
         if (owl.isPresent()) {
             return owl.get();
         }
-
+        // Fallback (no OWLAPI fast path applicable): sync then read via SPARQL. This backs the
+        // SWRL editor's entity picker, which otherwise misses anything created in roughly the
+        // last ~20s on desktop. No-ops on cloud and when already in sync.
         if (projectImportService != null) {
             projectImportService.syncProjectToFuseki(projectId);
         }

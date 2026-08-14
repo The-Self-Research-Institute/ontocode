@@ -35,13 +35,15 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
   const [expandedNodes, setExpandedNodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [treeData, setTreeData] = useState<TreeNode[]>(classHierarchy);
-
+  
+  // Inline class creation state
   const [showInlineCreate, setShowInlineCreate] = useState(false);
   const [inlineCreateType, setInlineCreateType] = useState<'subclass' | 'sibling'>('subclass');
   const [inlineClassName, setInlineClassName] = useState('');
   const [isCreatingClass, setIsCreatingClass] = useState(false);
 
   useEffect(() => {
+    console.log('[ClassSelectorDialog] Class hierarchy updated, nodes:', classHierarchy.length);
     setTreeData(classHierarchy);
   }, [classHierarchy]);
 
@@ -109,51 +111,65 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
     onClose();
   };
 
+  // Handle inline class creation
   const handleInlineAddClass = (type: 'subclass' | 'sibling' | 'individual') => {
-
+    // EntityHierarchy can pass 'individual' but we only handle 'subclass' and 'sibling' for classes
     if (type === 'individual') return;
-
+    
     setInlineCreateType(type);
     setInlineClassName('');
     setShowInlineCreate(true);
   };
 
+  // Submit inline class creation
   const handleInlineCreateSubmit = async () => {
     if (!inlineClassName.trim() || !onAddClass) return;
-
+    
+    console.log('[ClassSelectorDialog] Creating class:', inlineClassName);
     setIsCreatingClass(true);
     try {
       const parentId = selectedClass?.id;
       const type: 'subclass' | 'sibling' = selectedClass ? 'subclass' : 'sibling';
-
+      
+      console.log('[ClassSelectorDialog] Parent:', parentId, 'Type:', type);
+      
+      // Expand parent node to show new class
       if (parentId && !expandedNodes.includes(parentId)) {
+        console.log('[ClassSelectorDialog] Expanding parent node:', parentId);
         setExpandedNodes(prev => [...prev, parentId]);
         if (onToggleNode) {
           await onToggleNode(parentId);
         }
       }
-
+      
+      // Also expand the top class node if creating at root
       const topNodeId = 'http://www.w3.org/2002/07/owl#Thing';
       if (!selectedClass && !expandedNodes.includes(topNodeId)) {
+        console.log('[ClassSelectorDialog] Expanding top node:', topNodeId);
         setExpandedNodes(prev => [...prev, topNodeId]);
         if (onToggleNode) {
           await onToggleNode(topNodeId);
         }
       }
-
+      
+      // Call the class creation handler
+      console.log('[ClassSelectorDialog] Calling handler...');
       await onAddClass(type, parentId, inlineClassName.trim());
-
+      console.log('[ClassSelectorDialog] Handler completed');
+      
+      // Reset form
       setShowInlineCreate(false);
       setInlineClassName('');
     } catch (error) {
       console.error('[ClassSelectorDialog] Failed to create class:', error);
-
+      // Don't close the form on error so user can try again
       setShowInlineCreate(true);
     } finally {
       setIsCreatingClass(false);
     }
   };
 
+  // Cancel inline creation
   const handleInlineCreateCancel = () => {
     setShowInlineCreate(false);
     setInlineClassName('');
@@ -173,10 +189,10 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
             <X size={20} />
           </button>
         </div>
-
+        
         <div className="flex-1 overflow-y-auto">
           <div className="h-full flex flex-col">
-            {}
+            {/* Inline Create Form */}
             {showInlineCreate && (
               <div className="px-3 py-2 bg-amber-50 border-b border-amber-200">
                 <div className="flex items-center gap-2">
@@ -216,7 +232,7 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
                 </div>
               </div>
             )}
-
+            
             <div className="flex-1 overflow-hidden">
               <EntityHierarchy
                 entitiesTab="Classes"
@@ -236,14 +252,14 @@ const ClassSelectorDialog: React.FC<ClassSelectorDialogProps> = ({
         </div>
 
         <div className="px-4 py-3 border-t bg-gray-50 flex justify-end gap-2">
-          <button
-            onClick={handleClose}
+          <button 
+            onClick={handleClose} 
             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50"
           >
             Cancel
           </button>
-          <button
-            onClick={handleSelect}
+          <button 
+            onClick={handleSelect} 
             disabled={!selectedClass}
             className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >

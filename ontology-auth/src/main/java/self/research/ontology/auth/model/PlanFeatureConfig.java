@@ -14,10 +14,10 @@ public class PlanFeatureConfig {
     private String id;
 
     @Indexed(unique = true)
-    private String planId;
+    private String planId;  // FREE, PRO, ENTERPRISE
 
     private int monthlyPrice;
-    private int annualDiscountPercent;
+    private int annualDiscountPercent;  // e.g. 17 → annualPrice = round(monthly * 0.83)
 
     private List<String> features;
     private List<String> limitations;
