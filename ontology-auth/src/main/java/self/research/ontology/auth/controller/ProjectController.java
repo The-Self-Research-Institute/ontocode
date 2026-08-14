@@ -1764,9 +1764,6 @@ public ResponseEntity<?> renameFile(
         // field from. That record's filename was previously only ever set once at import
         // time, so renaming here left the editor's badge/export filename permanently
         // stale even though the file was correctly renamed everywhere else.
-        // Best-effort: the primary rename (above) already succeeded, so a failure
-        // here must not turn a successful rename into a reported 500 — caught and
-        // logged on its own rather than sharing the method's outer try/catch.
         if (renamedInfo != null) {
             try {
                 String compositeProjectId = projectId + "--" + fileId;

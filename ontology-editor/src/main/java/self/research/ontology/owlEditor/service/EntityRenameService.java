@@ -57,14 +57,6 @@ public void renameEntity(String projectId, String oldIri, String newIri) throws 
     IRI oldEntityIri = IRI.create(oldIri);
     IRI newEntityIri = IRI.create(newIri);
 
-    // Avoid exporting the full ontology (heavy and can fail on some backends).
-    // Instead, verify existence with lightweight SPARQL ASK queries and perform
-    // the triple-level DELETE/INSERT rename via SPARQL updates. The ASK checks
-    // must match on rdf:type against the OWL/RDFS entity classes (not "IRI used
-    // anywhere in a triple") so they behave like the OWLAPI signature checks this
-    // replaced — otherwise an IRI that only ever appears as an annotation value
-    // would wrongly block a rename, and a real dangling (non-entity) IRI could be
-    // "renamed" as if it were a declared entity.
     if (!isDeclaredEntity(projectId, oldIri)) {
         throw new IllegalArgumentException("Entity not found: " + oldIri);
     }
@@ -77,11 +69,6 @@ public void renameEntity(String projectId, String oldIri, String newIri) throws 
         "DELETE { <" + oldIri + "> ?p ?o } INSERT { <" + newIri + "> ?p ?o } WHERE { <" + oldIri + "> ?p ?o } ;\n" +
         "DELETE { ?s <" + oldIri + "> ?o } INSERT { ?s <" + newIri + "> ?o } WHERE { ?s <" + oldIri + "> ?o }";
 
-    // applyRawUpdate -> datasetService.execUpdate already routes through
-    // mutationCoordinator.afterMutation, which bumps the mutation version and
-    // evicts+rewarms the OWLAPI cache. Doing our own evict here on top of that
-    // would just re-cold the cache without rewarming it (unlike every other
-    // evict() call site in this codebase), so it stays out.
     ontologyMutationService.applyRawUpdate(projectId, sparql, false, null);
 
     hierarchyIndexService.scheduleBuild(projectId);

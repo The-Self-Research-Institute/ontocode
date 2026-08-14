@@ -1550,12 +1550,6 @@ public class OntologyMutationService {
             // Blank node list head (legacy data) — filter by internal ID via STR()
             // STR(?bnode) behaviour is implementation-specific; in GraphDB it returns the blank node identifier.
             // Worst case this is a no-op (safer than deleting all has-key axioms).
-            // GROUP_CONCAT has no defined member order unless the grouped solutions
-            // were themselves ORDER BY'd first (SPARQL 1.1), so both sides of the
-            // comparison are normalized to alphabetically-sorted property lists —
-            // otherwise this FILTER can silently fail to match a real multi-property
-            // hasKey axiom whenever the aggregation order differs from the order the
-            // id was displayed in, turning "delete key" into a no-op.
             String propsCsv = listNodeId != null ? listNodeId.replace("hasKey_props_", "").replace("\"", "\\\"") : "";
             String sortedPropsCsv = java.util.Arrays.stream(propsCsv.split(","))
                     .map(String::trim)

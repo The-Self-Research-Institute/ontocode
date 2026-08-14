@@ -670,11 +670,6 @@ public class OntologyMetadataService {
             String subText = OwlApiQuerySupport.classExpressionToManchester(ont, subCls);
             String superText = OwlApiQuerySupport.classExpressionToManchester(ont, superCls);
                 Map<String, Object> gci = new LinkedHashMap<>();
-                // No "id" field: deleteGCI/updateGCI match against the real RDF
-                // blank-node id or the full axiom text (see looksLikeBlankNodeId
-                // in OntologyMetadataController); a synthetic per-request index
-                // here would win over "value" on the frontend's `axiom.id ||
-                // axiom.value` and silently desync from both matching schemes.
                 gci.put("subClass", subText);
                 gci.put("superClass", superText);
                 gci.put("value", subText + " SubClassOf " + superText);
