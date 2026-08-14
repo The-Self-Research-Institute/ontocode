@@ -30,7 +30,7 @@ interface Sci2CodeAPI {
 
 class Sci2CodeService {
   private api: Sci2CodeAPI | null = null;
-  private extensionId = 'self.ontocode-extension'; // Use OntoCode's own extension ID
+  private extensionId = 'SelfResearchInstitute.ontocode-extension'; // Use OntoCode's own extension ID
   private initializationAttempted = false;
 
   /**
