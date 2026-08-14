@@ -15,6 +15,10 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Service for tracking changes made to ontologies.
+ * Records all modifications for audit, history, and revert capabilities.
+ */
 @Service
 public class ChangeTrackingService {
 
@@ -23,10 +27,13 @@ public class ChangeTrackingService {
     @Autowired
     private OntologyChangeRepository changeRepository;
 
+    /**
+     * Record a change to the ontology
+     */
     public OntologyChange recordChange(OntologyChange change) {
-        log.info("[SAVE] Recording change - type: {}, entityIRI: {}, oldValue: '{}', newValue: '{}'",
-            change.getChangeType(),
-
+        log.info("[SAVE] Recording change - type: {}, entityIRI: {}, oldValue: '{}', newValue: '{}'", 
+            change.getChangeType(), 
+            // change.getEntityIri(),
             change.getOldValue(),
             change.getNewValue());
         OntologyChange saved = changeRepository.save(change);
@@ -34,17 +41,20 @@ public class ChangeTrackingService {
             saved.getId(),
             saved.getOldValue(),
             saved.getNewValue());
-        log.info("Recorded change: {} by {} for project {}",
-            change.getChangeType(),
-            change.getUsername(),
+        log.info("Recorded change: {} by {} for project {}", 
+            change.getChangeType(), 
+            change.getUsername(), 
             change.getProjectId());
         return saved;
     }
 
+    /**
+     * Record addition of a class
+     */
     public OntologyChange recordAddClass(String projectId, String userId, String username,
                                         OWLClass owlClass, OWLOntology ontology, String sessionId) {
         String label = getLabel(owlClass, ontology);
-
+        
         OntologyChange change = new OntologyChange.Builder(projectId, userId, username, ChangeType.ADD_CLASS)
             .changeCategory("CLASS")
             .entityIRI(owlClass.getIRI().toString())
@@ -52,14 +62,17 @@ public class ChangeTrackingService {
             .description("Added class: " + label)
             .sessionId(sessionId)
             .build();
-
+        
         return recordChange(change);
     }
 
+    /**
+     * Record removal of a class
+     */
     public OntologyChange recordRemoveClass(String projectId, String userId, String username,
                                            OWLClass owlClass, OWLOntology ontology, String sessionId) {
         String label = getLabel(owlClass, ontology);
-
+        
         OntologyChange change = new OntologyChange.Builder(projectId, userId, username, ChangeType.REMOVE_CLASS)
             .changeCategory("CLASS")
             .entityIRI(owlClass.getIRI().toString())
@@ -67,10 +80,13 @@ public class ChangeTrackingService {
             .description("Removed class: " + label)
             .sessionId(sessionId)
             .build();
-
+        
         return recordChange(change);
     }
 
+    /**
+     * Record axiom addition
+     */
     public OntologyChange recordAddAxiom(String projectId, String userId, String username,
                                         OWLAxiom axiom, OWLOntology ontology, String sessionId) {
         OntologyChange change = new OntologyChange.Builder(projectId, userId, username, ChangeType.ADD_AXIOM)
@@ -79,10 +95,13 @@ public class ChangeTrackingService {
             .description("Added axiom: " + formatAxiom(axiom, ontology))
             .sessionId(sessionId)
             .build();
-
+        
         return recordChange(change);
     }
 
+    /**
+     * Record axiom removal
+     */
     public OntologyChange recordRemoveAxiom(String projectId, String userId, String username,
                                            OWLAxiom axiom, OWLOntology ontology, String sessionId) {
         OntologyChange change = new OntologyChange.Builder(projectId, userId, username, ChangeType.REMOVE_AXIOM)
@@ -91,10 +110,13 @@ public class ChangeTrackingService {
             .description("Removed axiom: " + formatAxiom(axiom, ontology))
             .sessionId(sessionId)
             .build();
-
+        
         return recordChange(change);
     }
 
+    /**
+     * Record annotation change
+     */
     public OntologyChange recordAnnotationChange(String projectId, String userId, String username,
                                                  IRI entityIRI, String oldValue, String newValue,
                                                  String annotationType, String sessionId) {
@@ -107,19 +129,28 @@ public class ChangeTrackingService {
             .sessionId(sessionId)
             .metadata("annotationType", annotationType)
             .build();
-
+        
         return recordChange(change);
     }
 
+    /**
+     * Get change history for a project
+     */
     public List<OntologyChange> getProjectHistory(String projectId, int limit) {
         Pageable pageable = PageRequest.of(0, limit);
         return changeRepository.findByProjectIdOrderByTimestampDesc(projectId, pageable);
     }
 
+    /**
+     * Get change history for a specific entity
+     */
     public List<OntologyChange> getEntityHistory(String projectId, String entityIRI) {
         return changeRepository.findByProjectIdAndEntityIRIOrderByTimestampDesc(projectId, entityIRI);
     }
 
+    /**
+     * Get changes by user
+     */
     public List<OntologyChange> getUserChanges(String projectId, String userId) {
         List<OntologyChange> allUserChanges = changeRepository.findByUserIdOrderByTimestampDesc(userId);
         return allUserChanges.stream()
@@ -127,96 +158,127 @@ public class ChangeTrackingService {
             .collect(Collectors.toList());
     }
 
+    /**
+     * Get changes in time range
+     */
     public List<OntologyChange> getChangesInRange(String projectId, LocalDateTime start, LocalDateTime end) {
         return changeRepository.findByProjectIdAndTimestampBetweenOrderByTimestampDesc(projectId, start, end);
     }
 
+    /**
+     * Get recent changes (last N changes)
+     */
     public List<OntologyChange> getRecentChanges(String projectId, int count) {
         Pageable pageable = PageRequest.of(0, count);
         return changeRepository.findRecentChanges(projectId, pageable);
     }
 
+    /**
+     * Get changes by session (grouped changes)
+     */
     public List<OntologyChange> getSessionChanges(String sessionId) {
         return changeRepository.findBySessionIdOrderByTimestampDesc(sessionId);
     }
 
+    /**
+     * Get changes by type
+     */
     public List<OntologyChange> getChangesByType(String projectId, ChangeType changeType) {
         return changeRepository.findByProjectIdAndChangeTypeOrderByTimestampDesc(projectId, changeType);
     }
 
+    /**
+     * Get changes by category
+     */
     public List<OntologyChange> getChangesByCategory(String projectId, String category) {
         return changeRepository.findByProjectIdAndChangeCategoryOrderByTimestampDesc(projectId, category);
     }
 
+    /**
+     * Get change statistics
+     */
     public Map<String, Object> getChangeStatistics(String projectId) {
         List<OntologyChange> allChanges = changeRepository.findByProjectIdOrderByTimestampDesc(projectId);
-
+        
         Map<String, Object> stats = new HashMap<>();
         stats.put("totalChanges", allChanges.size());
         stats.put("revertedChanges", allChanges.stream().filter(OntologyChange::isReverted).count());
-
+        
+        // Count by type
         Map<ChangeType, Long> byType = allChanges.stream()
             .collect(Collectors.groupingBy(OntologyChange::getChangeType, Collectors.counting()));
         stats.put("changesByType", byType);
-
+        
+        // Count by category
         Map<String, Long> byCategory = allChanges.stream()
             .filter(c -> c.getChangeCategory() != null)
             .collect(Collectors.groupingBy(OntologyChange::getChangeCategory, Collectors.counting()));
         stats.put("changesByCategory", byCategory);
-
+        
+        // Count by user
         Map<String, Long> byUser = allChanges.stream()
             .filter(c -> c.getUsername() != null)
             .collect(Collectors.groupingBy(OntologyChange::getUsername, Collectors.counting()));
         stats.put("changesByUser", byUser);
-
+        
+        // Most active day
         Map<String, Long> byDay = allChanges.stream()
             .collect(Collectors.groupingBy(
                 c -> c.getTimestamp().toLocalDate().toString(),
                 Collectors.counting()
             ));
         stats.put("changesByDay", byDay);
-
+        
+        // Recent activity (last 24 hours)
         LocalDateTime yesterday = LocalDateTime.now().minusDays(1);
         long recentChanges = allChanges.stream()
             .filter(c -> c.getTimestamp().isAfter(yesterday))
             .count();
         stats.put("changesLast24Hours", recentChanges);
-
+        
         return stats;
     }
 
+    /**
+     * Revert a change
+     */
     public boolean revertChange(String changeId, String userId, String username) {
         Optional<OntologyChange> changeOpt = changeRepository.findById(changeId);
         if (changeOpt.isEmpty()) {
             log.warn("Change not found: {}", changeId);
             return false;
         }
-
+        
         OntologyChange change = changeOpt.get();
         if (change.isReverted()) {
             log.warn("Change already reverted: {}", changeId);
             return false;
         }
-
+        
+        // Mark as reverted
         change.setReverted(true);
         change.setRevertedBy(username);
         change.setRevertedAt(LocalDateTime.now());
         changeRepository.save(change);
-
+        
+        // Create inverse change
         OntologyChange revertChange = createRevertChange(change, userId, username);
         recordChange(revertChange);
-
+        
         log.info("Reverted change {} by {}", changeId, username);
         return true;
     }
 
+    /**
+     * Create a change that reverts another change
+     */
     private OntologyChange createRevertChange(OntologyChange original, String userId, String username) {
         ChangeType revertType = getRevertType(original.getChangeType());
-
+        
         OntologyChange revert = new OntologyChange.Builder(
-            original.getProjectId(),
-            userId,
-            username,
+            original.getProjectId(), 
+            userId, 
+            username, 
             revertType
         )
             .changeCategory(original.getChangeCategory())
@@ -229,10 +291,13 @@ public class ChangeTrackingService {
             .description("Reverted: " + original.getDescription())
             .metadata("revertedChangeId", original.getId())
             .build();
-
+        
         return revert;
     }
 
+    /**
+     * Get the reverse change type for reversion
+     */
     private ChangeType getRevertType(ChangeType original) {
         switch (original) {
             case ADD_CLASS: return ChangeType.REMOVE_CLASS;
@@ -249,28 +314,39 @@ public class ChangeTrackingService {
         }
     }
 
-    public List<OntologyChange> getChangesBetweenVersions(String projectId,
-                                                          LocalDateTime version1,
+    /**
+     * Compare two versions (find diff)
+     */
+    public List<OntologyChange> getChangesBetweenVersions(String projectId, 
+                                                          LocalDateTime version1, 
                                                           LocalDateTime version2) {
         return changeRepository.findByProjectIdAndTimestampBetweenOrderByTimestampDesc(
-            projectId,
-            version1,
+            projectId, 
+            version1, 
             version2
         );
     }
 
+    /**
+     * Delete all changes for a project
+     */
     public void clearProjectHistory(String projectId) {
         changeRepository.deleteByProjectId(projectId);
         log.info("Cleared change history for project: {}", projectId);
     }
 
+    /**
+     * Export change history
+     */
     public List<Map<String, Object>> exportChangeHistory(String projectId) {
         List<OntologyChange> changes = changeRepository.findByProjectIdOrderByTimestampDesc(projectId);
-
+        
         return changes.stream()
             .map(this::changeToMap)
             .collect(Collectors.toList());
     }
+
+    // Helper methods
 
     private String getLabel(OWLEntity entity, OWLOntology ontology) {
         return ontology.getAnnotationAssertionAxioms(entity.getIRI()).stream()
@@ -291,7 +367,7 @@ public class ChangeTrackingService {
 
     private String formatAxiom(OWLAxiom axiom, OWLOntology ontology) {
         String axiomString = axiom.toString();
-
+        // Simplify for readability
         for (OWLEntity entity : axiom.getSignature()) {
             String label = getLabel(entity, ontology);
             if (!label.isEmpty()) {

@@ -354,7 +354,7 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
 
         {isExpanded && (
           <div className="overflow-y-auto minimal-scrollbar" style={{ maxHeight: selectedChange ? 460 : 340 }}>
-            {}
+            {/* Active Users */}
             <div className="border-b border-gray-200">
               <div className="bg-gray-50 px-4 py-2 flex items-center gap-2 border-b border-gray-200">
                 <Users size={14} className="text-purple-600" />
@@ -385,7 +385,7 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
               )}
             </div>
 
-            {}
+            {/* Activity log */}
             <div>
               <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b border-gray-200">
                 <div className="flex items-center gap-2">
@@ -470,7 +470,7 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                 </>
               )}
 
-              {}
+              {/* Selected change review panel */}
               {selectedChange && (
                 <div className="border-t border-gray-200 bg-gray-50 p-3 space-y-2">
                   <div className="flex items-start justify-between gap-2">

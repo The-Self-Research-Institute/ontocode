@@ -15,9 +15,9 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
   const loadStatistics = async () => {
     setIsLoading(true);
     try {
-
+      // This call expects the backend to return { data: OntologyStatistics }
       const response = await apiClient.get<{ data: OntologyStatistics }>(`/api/ontology/statistics/${projectId}`);
-
+      // This correctly accesses response.data.data (one .data from apiClient, one .data from the API shape)
       setStatistics(response.data);
     } catch (error) {
       console.error('Failed to load statistics:', error);
@@ -27,7 +27,7 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
   };
 
   useEffect(() => {
-
+    // If stats are passed as a prop from Dashboard, use them
     if (initialStats) {
       setStatistics(initialStats);
     } 
@@ -89,7 +89,7 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
     color: string;
   }> = ({ label, value, total, color }) => {
     const percentage = total > 0 ? (value / total) * 100 : 0;
-
+    
     return (
       <div className="mb-4">
         <div className="flex justify-between text-sm mb-2">
@@ -121,7 +121,7 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
       </header>
 
       <div className="p-6 space-y-6">
-        {}
+        {/* Main Metrics */}
         <section>
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: 'var(--color-text)' }}>
             <Package size={20} className="text-purple-600" />
@@ -173,13 +173,13 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
           </div>
         </section>
 
-        {}
+        {/* Axiom Breakdown */}
         <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-black mb-4 flex items-center gap-2">
             <TrendingUp size={20} className="text-purple-600" />
             Axiom Distribution
           </h2>
-
+          
           <div className="space-y-4">
             <ProgressBar
               label="Logical Axioms"
@@ -207,10 +207,10 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
           </div>
         </section>
 
-        {}
+        {/* Axiom Type Details */}
         <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-black mb-4">Axiom Type Breakdown</h2>
-
+          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 bg-gray-50 rounded-lg">
               <div className="flex justify-between items-center mb-2">
@@ -274,10 +274,10 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
           </div>
         </section>
 
-        {}
+        {/* Complexity Metrics */}
         <section className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-black mb-4">Ontology Metrics</h2>
-
+          
           <div className="space-y-3">
             <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
               <span className="text-sm text-black">Average Axioms per Class</span>
@@ -288,14 +288,14 @@ const StatisticsPanel: React.FC<StatisticsPanelProps> = ({ projectId, statistics
                 }
               </span>
             </div>
-
+            
             <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
               <span className="text-sm text-black">Total Properties</span>
               <span className="font-semibold text-black">
                 {(statistics.objectPropertyCount || 0) + (statistics.dataPropertyCount || 0)}
               </span>
             </div>
-
+            
             <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
               <span className="text-sm text-black">Individuals to Classes Ratio</span>
               <span className="font-semibold text-black">

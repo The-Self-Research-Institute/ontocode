@@ -1,4 +1,11 @@
-
+/**
+ * OntoCode hierarchy graph view
+ *
+ * Production rewrite — every toolbar button, search input, context menu and
+ * assertion-mode toggle is now wired to a real handler. The class hierarchy
+ * panel uses the new <ClassHierarchyPanel /> 
+ * (multi-parent, virtualized, keyboard-navigable, etc).
+ */
 
 import React, {
   useCallback,
@@ -33,15 +40,19 @@ import { applyRadialLayout, applyCircularLayout } from './layouts';
 import { ClassHierarchyPanel } from './components/ClassHierarchyPanel';
 import type { OntologyNode, OntologyEdge, EdgeType, NodeType } from './types';
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 interface OntoHierarchyGraphViewProps {
   projectId: string;
-
+  /** Optional ontology display name shown in the header. */
   ontologyName?: string;
-
+  /** Optional pre-supplied data; when omitted the component fetches via REST. */
   initialData?: { nodes: OntologyNode[]; edges: OntologyEdge[] };
-
+  /** Optional asserted-edge subset; used for inferred-only highlighting. */
   assertedEdges?: OntologyEdge[];
-
+  /** Read-only mode disables mutation actions in the context menu. */
   readonly?: boolean;
 }
 
@@ -64,6 +75,10 @@ interface BackendGraphResponse {
   assertedEdges?: OntologyEdge[];
   assertedEdgeIds?: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const NODE_COLORS: Record<string, string> = {
   class: '#FFD700',
@@ -91,6 +106,10 @@ const HIERARCHY_LAYOUTS: ReadonlySet<LayoutType> = new Set([
   'tree-horizontal'
 ]);
 const PRECOMPUTED_LAYOUTS: ReadonlySet<LayoutType> = new Set(['radial', 'circular']);
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
   projectId,
@@ -126,6 +145,7 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // ----- Data fetch -------------------------------------------------------
   const fetchGraphData = useCallback(async () => {
     if (!projectId || initialData) return;
     setLoading(true);
@@ -164,6 +184,7 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
     void fetchGraphData();
   }, [fetchGraphData, initialData]);
 
+  // Sync external prop changes.
   useEffect(() => {
     if (assertedEdgesProp) setAssertedEdges(assertedEdgesProp);
   }, [assertedEdgesProp]);
@@ -171,6 +192,7 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
     if (ontologyName) setOntologyMeta(prev => ({ ...prev, name: ontologyName }));
   }, [ontologyName]);
 
+  // ----- Filtering: assertion mode + search ------------------------------
   const inferredOnlyEdgeIds = useMemo(() => {
     if (!assertedEdges) return new Set<string>();
     const assertedKey = new Set<string>();
@@ -205,6 +227,7 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
     return out;
   }, [nodes, searchTerm]);
 
+  // ----- Vis network instance --------------------------------------------
   useEffect(() => {
     if (!containerRef.current) return;
     if (nodes.length === 0) return;
@@ -255,11 +278,12 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
           forceDirection: HIERARCHY_LAYOUTS.has(layoutType) ? 'vertical' : 'none',
           roundness: 0.4
         },
-
+        // Dim non-matching edges when search is active.
         color: endpointVisible ? style.color : '#cbd5e1'
       } as Edge;
     });
 
+    // Pre-compute custom positions for radial / circular.
     if (PRECOMPUTED_LAYOUTS.has(layoutType) && containerRef.current) {
       const width = containerRef.current.clientWidth || 800;
       const height = containerRef.current.clientHeight || 600;
@@ -300,7 +324,8 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
       interaction: {
         hover: true,
         zoomView: true,
-
+        // Always allow canvas pan; the active tool only changes the cursor and
+        // the click-vs-drag-to-select default — we want pan to work in both.
         dragView: true,
         dragNodes: activeTool !== 'pan',
         tooltipDelay: 100,
@@ -355,12 +380,14 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
     };
   }, [nodes, visibleEdges, matchedNodeIds, layoutType, activeTool, inferredOnlyEdgeIds]);
 
+  // ----- Selection sync ---------------------------------------------------
   useEffect(() => {
     if (!networkRef.current) return;
     if (!selectedNode) return;
     networkRef.current.selectNodes([selectedNode.id], false);
   }, [selectedNode]);
 
+  // ----- Focus / show / mutation handlers --------------------------------
   const focusNode = useCallback(
     (nodeId: string) => {
       const network = networkRef.current;
@@ -422,6 +449,7 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
     [visibleEdges]
   );
 
+  // ----- Toolbar handlers -------------------------------------------------
   const handleZoomIn = useCallback(() => {
     const net = networkRef.current;
     if (!net) return;
@@ -492,12 +520,13 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
     setSelectedNode(null);
   }, [readonly, selectedNode]);
 
+  // ----- Keyboard shortcuts (component-scoped) ---------------------------
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
     const handler = (e: KeyboardEvent): void => {
       const target = e.target as HTMLElement | null;
-
+      // Ignore typing inside text inputs.
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return;
       }
@@ -541,12 +570,14 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
     readonly
   ]);
 
+  // ----- Title computed from ontology meta -------------------------------
   const sidebarTitle = useMemo(() => {
     if (ontologyMeta.name) return `Class hierarchy: ${ontologyMeta.name}`;
     if (ontologyMeta.iri) return `Class hierarchy: ${extractLocalName(ontologyMeta.iri)}`;
     return 'Class hierarchy';
   }, [ontologyMeta]);
 
+  // ----- Render ----------------------------------------------------------
   return (
     <div
       ref={rootRef}
@@ -561,7 +592,7 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
         outline: 'none'
       }}
     >
-      {}
+      {/* Top toolbar */}
       <div
         style={{
           backgroundColor: '#ffffff',
@@ -669,7 +700,7 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
         </button>
       </div>
 
-      {}
+      {/* Secondary toolbar — tools and layout */}
       <div
         style={{
           backgroundColor: '#f8fafc',
@@ -816,7 +847,7 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
         </span>
       </div>
 
-      {}
+      {/* Main content */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
         {showClassTree && (
           <div style={{ width: 320, flexShrink: 0, height: '100%' }}>
@@ -933,6 +964,10 @@ export const OntoHierarchyGraphView: React.FC<OntoHierarchyGraphViewProps> = ({
   );
 };
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function buildLayoutOptions(layout: LayoutType): Options['layout'] {
   if (layout === 'hierarchical' || layout === 'tree-vertical') {
     return {
@@ -972,7 +1007,7 @@ function getEdgeStyle(
   inferredOnly: boolean
 ): { dashes: false | number[]; color: string; arrows: { to: { enabled: boolean; type?: string } } } {
   if (inferredOnly) {
-
+    // Inferred highlight: dashed yellow.
     return {
       dashes: [4, 3],
       color: '#b45309',
@@ -1042,6 +1077,7 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+// Re-export for convenience.
 export type { NodeType };
 
 const topbarSelectStyle: React.CSSProperties = {

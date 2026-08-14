@@ -8,6 +8,14 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Pre-computed entity usage index stored in MongoDB.
+ *
+ * Built once at import time (async), updated on mutation (invalidate affected iris).
+ * Lookup is O(1) vs Fuseki SPARQL which requires blank-node traversal on every request.
+ *
+ * Schema: one document per (projectId, entityIri).
+ */
 @Document(collection = "entity_usage")
 @CompoundIndexes({
     @CompoundIndex(name = "project_iri", def = "{'projectId': 1, 'entityIri': 1}", unique = true)
@@ -15,7 +23,7 @@ import java.util.Map;
 public class EntityUsageDocument {
 
     @Id
-    private String id;
+    private String id; // projectId + "::" + entityIri
 
     private String projectId;
     private String entityIri;

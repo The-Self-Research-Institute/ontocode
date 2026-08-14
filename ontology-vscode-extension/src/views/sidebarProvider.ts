@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { sci2CodeService } from '../services/sci2CodeService';
 
+// Local literal, not imported from extension.ts, to avoid a circular import
+// (extension.ts is what constructs this provider).
 const AUTH_TOKEN_KEY = 'ontocode.authToken';
 
 class SidebarItem extends vscode.TreeItem {
@@ -17,6 +19,13 @@ class SidebarItem extends vscode.TreeItem {
   }
 }
 
+/**
+ * Flat command-launcher list for the OntoCode Activity Bar sidebar — a
+ * discoverability home for features otherwise only reachable via the
+ * Command Palette, a keybinding, or a right-click menu. The citation library
+ * status row is a read-only snapshot (getConnectionStatus() never prompts —
+ * see sci2CodeService.ts) refreshed whenever the view is (re)rendered.
+ */
 export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -32,7 +41,7 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
   }
 
   async getChildren(element?: SidebarItem): Promise<SidebarItem[]> {
-    if (element) {return [];} // flat list, no nesting
+    if (element) return []; // flat list, no nesting
 
     const [status, authToken] = await Promise.all([
       sci2CodeService.getConnectionStatus(),
@@ -47,7 +56,8 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
         { command: 'ontocode.insertCitation', title: 'Insert Citation (Sci2Code)' }
       ),
       new SidebarItem(
-
+        // configureZotero itself now also covers changing the key and
+        // disconnecting once already connected — see zoteroApiService.ts.
         'Configure Zotero API Key',
         new vscode.ThemeIcon('gear'),
         { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' }
@@ -59,6 +69,7 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
       ),
     ];
 
+    // Only meaningful (and only offered) when there's an actual session.
     if (authToken) {
       items.push(
         new SidebarItem(

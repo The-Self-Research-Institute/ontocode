@@ -27,7 +27,7 @@ export const TermsAndConditionsModal: React.FC<Props> = ({ isOpen, onClose }) =>
         aria-labelledby="tnc-title"
         onClick={(e) => e.stopPropagation()}
       >
-        {}
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center">
@@ -50,7 +50,7 @@ export const TermsAndConditionsModal: React.FC<Props> = ({ isOpen, onClose }) =>
           </button>
         </div>
 
-        {}
+        {/* Body */}
         <div className="overflow-y-auto px-6 py-5 text-sm text-gray-700 space-y-5 leading-relaxed">
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-amber-800 text-xs">
             These Terms and Conditions are currently being finalised and will be published before the official
@@ -154,7 +154,7 @@ export const TermsAndConditionsModal: React.FC<Props> = ({ isOpen, onClose }) =>
           </section>
         </div>
 
-        {}
+        {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-200 flex justify-end shrink-0">
           <button
             type="button"

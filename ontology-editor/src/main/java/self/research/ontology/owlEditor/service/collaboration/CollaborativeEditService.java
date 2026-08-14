@@ -16,6 +16,10 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+/**
+ * Core service for managing collaborative editing sessions.
+ * Handles edit operations, conflict resolution, and broadcasting.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -24,40 +28,52 @@ public class CollaborativeEditService {
     private final SimpMessagingTemplate messagingTemplate;
     private final WebSocketEventListener eventListener;
     private final OntologyHistoryService historyService;
-
+    
+    // Operation history per project: projectId -> Queue<EditOperation>
     private final Map<String, Queue<EditOperation>> operationHistory = new ConcurrentHashMap<>();
-
+    
+    // Active locks per project: projectId -> Map<nodeId, LockInfo>
     private final Map<String, Map<String, LockInfo>> projectLocks = new ConcurrentHashMap<>();
-
+    
+    // User colors: userId -> color (hex)
     private final Map<String, String> userColors = new ConcurrentHashMap<>();
-
+    
     private static final String[] COLORS = {
         "#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A", "#98D8C8",
         "#F7DC6F", "#BB8FCE", "#85C1E2", "#F8B739", "#52B788"
     };
-
+    
     private int colorIndex = 0;
 
+    /**
+     * Process an edit operation from a client.
+     * Validates, applies server timestamp, and broadcasts to all clients.
+     */
     public EditOperation processEdit(EditOperation operation) {
-
+        // Add server timestamp
         operation.setServerTimestamp(System.currentTimeMillis());
-
+        
+        // Validate the operation
         if (!validateOperation(operation)) {
             log.warn("Invalid operation rejected: {}", operation);
             return null;
         }
-
+        
+        // Check if node is locked by another user
         if (isLockedByOther(operation.getProjectId(), operation.getNodeId(), operation.getUserId())) {
             log.warn("Edit rejected - node {} locked by another user", operation.getNodeId());
-            sendErrorToUser(operation.getUserId(), operation.getProjectId(),
+            sendErrorToUser(operation.getUserId(), operation.getProjectId(), 
                 "Cannot edit: node is locked by another user");
             return null;
         }
-
+        
+        // Add to operation history
         addToHistory(operation);
-
+        
+        // Broadcast to all clients in the project
         broadcastEdit(operation);
 
+        // Also broadcast graph update for visualization clients
         processEditForGraphUpdate(operation);
 
         log.info("Processed edit: type={}, node={}, user={}",
@@ -66,6 +82,10 @@ public class CollaborativeEditService {
         return operation;
     }
 
+    /**
+     * Broadcast a mutation that was applied through the REST API so that
+     * collaborative clients still receive real-time updates.
+     */
     public void broadcastMutation(String projectId, MutationOp mutation,
                                   String userId, String username) {
         EditOperation.OperationType operationType = convertStringToOperationType(mutation.type());
@@ -96,45 +116,54 @@ public class CollaborativeEditService {
         processEdit(operation);
     }
 
+    /**
+     * Process a presence update (user joined, cursor moved, etc.).
+     */
     public void processPresence(PresenceMessage message) {
-
+        // Assign color to new users
         if (message.getType() == PresenceMessage.PresenceType.USER_JOINED) {
             String color = assignColor(message.getUserId());
             message.setColor(color);
-
+            
+            // Register session
             eventListener.registerSession(
-                message.getSessionId(),
-                message.getProjectId(),
-                message.getUserId(),
+                message.getSessionId(), 
+                message.getProjectId(), 
+                message.getUserId(), 
                 message.getUsername()
             );
         }
-
+        
         message.setTimestamp(System.currentTimeMillis());
-
+        
+        // Broadcast presence update
         messagingTemplate.convertAndSend(
             "/topic/presence/" + message.getProjectId(),
             message
         );
-
-        log.debug("Processed presence: type={}, user={}, project={}",
+        
+        log.debug("Processed presence: type={}, user={}, project={}", 
                 message.getType(), message.getUserId(), message.getProjectId());
     }
 
-    public LockMessage acquireLock(String projectId, String nodeId, String userId,
+    /**
+     * Acquire a lock on a node for editing.
+     */
+    public LockMessage acquireLock(String projectId, String nodeId, String userId, 
                                    String username, String sessionId) {
         Map<String, LockInfo> locks = projectLocks.computeIfAbsent(projectId, k -> new ConcurrentHashMap<>());
-
+        
         LockInfo existingLock = locks.get(nodeId);
-
+        
+        // Check if already locked
         if (existingLock != null && !existingLock.getUserId().equals(userId)) {
-
+            // Check if lock expired
             if (existingLock.getExpiresAt() < System.currentTimeMillis()) {
-
+                // Lock expired, release it
                 locks.remove(nodeId);
                 log.info("Expired lock removed for node {}", nodeId);
             } else {
-
+                // Lock still valid, deny request
                 return LockMessage.builder()
                         .type(LockMessage.LockType.LOCK_DENIED)
                         .projectId(projectId)
@@ -148,11 +177,12 @@ public class CollaborativeEditService {
                         .build();
             }
         }
-
+        
+        // Acquire lock (30 second timeout)
         long expiresAt = System.currentTimeMillis() + 30000;
         LockInfo lock = new LockInfo(userId, username, sessionId, expiresAt);
         locks.put(nodeId, lock);
-
+        
         LockMessage message = LockMessage.builder()
                 .type(LockMessage.LockType.LOCK_ACQUIRED)
                 .projectId(projectId)
@@ -164,22 +194,26 @@ public class CollaborativeEditService {
                 .success(true)
                 .timestamp(System.currentTimeMillis())
                 .build();
-
+        
+        // Broadcast lock acquisition
         messagingTemplate.convertAndSend("/topic/locks/" + projectId, message);
-
+        
         log.info("Lock acquired: node={}, user={}, project={}", nodeId, username, projectId);
-
+        
         return message;
     }
 
+    /**
+     * Release a lock on a node.
+     */
     public void releaseLock(String projectId, String nodeId, String userId, String sessionId) {
         Map<String, LockInfo> locks = projectLocks.get(projectId);
         if (locks == null) return;
-
+        
         LockInfo lock = locks.get(nodeId);
         if (lock != null && lock.getUserId().equals(userId)) {
             locks.remove(nodeId);
-
+            
             LockMessage message = LockMessage.builder()
                     .type(LockMessage.LockType.LOCK_RELEASED)
                     .projectId(projectId)
@@ -189,24 +223,27 @@ public class CollaborativeEditService {
                     .sessionId(sessionId)
                     .timestamp(System.currentTimeMillis())
                     .build();
-
+            
             messagingTemplate.convertAndSend("/topic/locks/" + projectId, message);
-
+            
             log.info("Lock released: node={}, user={}, project={}", nodeId, lock.getUsername(), projectId);
         }
     }
 
+    /**
+     * Release all locks held by a user (on disconnect).
+     */
     public void releaseUserLocks(String projectId, String sessionId) {
         Map<String, LockInfo> locks = projectLocks.get(projectId);
         if (locks == null) return;
-
+        
         List<String> toRelease = new ArrayList<>();
         locks.forEach((nodeId, lock) -> {
             if (lock.getSessionId().equals(sessionId)) {
                 toRelease.add(nodeId);
             }
         });
-
+        
         for (String nodeId : toRelease) {
             LockInfo lock = locks.remove(nodeId);
             if (lock != null) {
@@ -219,53 +256,58 @@ public class CollaborativeEditService {
                         .sessionId(sessionId)
                         .timestamp(System.currentTimeMillis())
                         .build();
-
+                
                 messagingTemplate.convertAndSend("/topic/locks/" + projectId, message);
             }
         }
-
+        
         log.info("Released {} locks for session {}", toRelease.size(), sessionId);
     }
 
+    /**
+     * Get operation history for a project from GraphDB.
+     */
     public List<EditOperation> getHistory(String projectId, int limit) {
-
+        // Read from GraphDB history graph
         List<Map<String, Object>> historyData = historyService.getHistory(projectId, limit);
-
+        
+        // Convert to EditOperation objects
         return historyData.stream()
                 .map(this::convertToEditOperation)
                 .toList();
     }
-
+    
     private EditOperation convertToEditOperation(Map<String, Object> data) {
         EditOperation op = new EditOperation();
-
+        
+        // Convert string operation type to enum
         String typeStr = (String) data.get("type");
         EditOperation.OperationType operationType = convertStringToOperationType(typeStr);
         if (operationType == null) {
             operationType = EditOperation.OperationType.CLASS_MODIFIED;
         }
         op.setType(operationType);
-
-        op.setProjectId("");
+        
+        op.setProjectId(""); // Not stored in GraphDB history
         op.setNodeId((String) data.getOrDefault("nodeId", ""));
         op.setUserId((String) data.get("userId"));
         op.setUsername((String) data.get("username"));
-        op.setSessionId("");
+        op.setSessionId(""); // Not stored in GraphDB history
         op.setTimestamp((Long) data.get("timestamp"));
         op.setServerTimestamp((Long) data.get("serverTimestamp"));
-
+        
         @SuppressWarnings("unchecked")
         Map<String, Object> metadata = (Map<String, Object>) data.get("metadata");
         if (metadata != null) {
             op.setMetadata(metadata);
         }
-
+        
         return op;
     }
-
+    
     private EditOperation.OperationType convertStringToOperationType(String type) {
         if (type == null) return null;
-
+        
         return switch (type) {
             case "createClass" -> EditOperation.OperationType.CLASS_ADDED;
             case "deleteClass" -> EditOperation.OperationType.CLASS_DELETED;
@@ -373,6 +415,9 @@ public class CollaborativeEditService {
         return metadata.isEmpty() ? null : metadata;
     }
 
+    /**
+     * Get active users in a project.
+     */
     public List<Map<String, Object>> getActiveUsers(String projectId) {
         Map<String, WebSocketEventListener.UserSession> sessions = eventListener.getProjectSessions(projectId);
 
@@ -389,6 +434,9 @@ public class CollaborativeEditService {
         return result;
     }
 
+    /**
+     * Broadcast graph update to all clients viewing the graph.
+     */
     public void broadcastGraphUpdate(GraphUpdateMessage update) {
         messagingTemplate.convertAndSend(
             "/topic/graph/" + update.getProjectId(),
@@ -399,6 +447,9 @@ public class CollaborativeEditService {
                 update.getType(), update.getProjectId(), update.getUserId());
     }
 
+    /**
+     * Convert EditOperation to GraphUpdateMessage for graph view clients.
+     */
     public void processEditForGraphUpdate(EditOperation operation) {
         GraphUpdateMessage graphUpdate = convertEditToGraphUpdate(operation);
         if (graphUpdate != null) {
@@ -541,12 +592,14 @@ public class CollaborativeEditService {
                 break;
 
             default:
-
+                // For other operations, no graph update needed
                 return null;
         }
 
         return null;
     }
+
+    // Private helper methods
 
     private boolean validateOperation(EditOperation operation) {
         return operation.getProjectId() != null &&
@@ -558,22 +611,24 @@ public class CollaborativeEditService {
     private boolean isLockedByOther(String projectId, String nodeId, String userId) {
         Map<String, LockInfo> locks = projectLocks.get(projectId);
         if (locks == null) return false;
-
+        
         LockInfo lock = locks.get(nodeId);
         if (lock == null) return false;
-
-        return !lock.getUserId().equals(userId) &&
+        
+        // Check if locked by another user and not expired
+        return !lock.getUserId().equals(userId) && 
                lock.getExpiresAt() > System.currentTimeMillis();
     }
 
     private void addToHistory(EditOperation operation) {
         Queue<EditOperation> history = operationHistory.computeIfAbsent(
-            operation.getProjectId(),
+            operation.getProjectId(), 
             k -> new ConcurrentLinkedQueue<>()
         );
-
+        
         history.offer(operation);
-
+        
+        // Keep last 1000 operations
         while (history.size() > 1000) {
             history.poll();
         }
@@ -592,10 +647,10 @@ public class CollaborativeEditService {
             "message", error,
             "timestamp", System.currentTimeMillis()
         );
-
+        
         messagingTemplate.convertAndSendToUser(
-            userId,
-            "/queue/ontology/" + projectId,
+            userId, 
+            "/queue/ontology/" + projectId, 
             errorMessage
         );
     }
@@ -608,6 +663,7 @@ public class CollaborativeEditService {
         });
     }
 
+    // Inner class for lock information
     private static class LockInfo {
         private final String userId;
         private final String username;

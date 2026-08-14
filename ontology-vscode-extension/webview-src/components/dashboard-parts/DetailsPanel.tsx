@@ -52,6 +52,7 @@ export const DetailsPanel = ({
   onViewOnlyAction,
   isReasonerRunning = false,
   selectedReasoner = "HERMIT",
+  user,
 }: {
   selectedItem: SelectableItem | null;
   entitiesTab: string;
@@ -93,6 +94,7 @@ export const DetailsPanel = ({
   onViewOnlyAction?: () => void;
   isReasonerRunning?: boolean;
   selectedReasoner?: string;
+  user?: { email?: string; username?: string; userId?: string };
 }) => {
   if (!selectedItem) {
     return (
@@ -114,6 +116,7 @@ export const DetailsPanel = ({
     projectId: projectId || "",
     isViewOnly,
     onViewOnlyAction,
+    user,
   };
 
   switch (entitiesTab) {
@@ -152,9 +155,16 @@ export const DetailsPanel = ({
             setIndividuals((prev) => [...prev, newIndividual]);
             markAsUnsaved();
           }}
+          
           onDeleteIndividual={async (id: string) => {
-            await ontologyMutationService.deleteIndividual(projectId || "", id);
-            setIndividuals((prev) => prev.filter((ind) => ind.id !== id));
+            await ontologyMutationService.removeClassAssertion(projectId || "", id, selectedItem.id);
+            setIndividuals((prev) =>
+              prev.map((ind) =>
+                ind.id === id
+                  ? { ...ind, types: (ind.types || []).filter((t) => t !== selectedItem.id) }
+                  : ind,
+              ),
+            );
             markAsUnsaved();
           }}
           onRefreshIndividuals={() => {
@@ -194,6 +204,8 @@ export const DetailsPanel = ({
           item={selectedItem as Individual}
           onUpdate={onUpdate}
           {...sharedProps}
+          userId={user?.email}
+          username={user?.username}
           isReasonerRunning={isReasonerRunning}
           selectedReasoner={selectedReasoner}
           expandedNodes={expandedNodes}
@@ -222,11 +234,20 @@ export const DetailsPanel = ({
           isViewOnly={isViewOnly}
           onViewOnlyAction={onViewOnlyAction}
           annotationProperties={annotationProperties}
+          user={user}
         />
       );
     }
     case "Datatypes":
-      return <DatatypeEditor item={selectedItem as Datatype} onUpdate={onUpdate} {...sharedProps} />;
+      return (
+        <DatatypeEditor
+          item={selectedItem as Datatype}
+          onUpdate={onUpdate}
+          {...sharedProps}
+          userId={user?.email}
+          username={user?.username}
+        />
+      );
     default:
       return (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">

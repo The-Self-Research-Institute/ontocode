@@ -1,4 +1,23 @@
-
+/**
+ * =============================================================================
+ * PLUGIN MARKETPLACE COMPONENT
+ * =============================================================================
+ *
+ * Displays available plugins with REAL data from backend:
+ * - Fetches plugins from /api/plugins
+ * - Shows real download counts and active installs
+ * - Displays actual user ratings (1-5 stars)
+ * - Allows users to rate installed plugins
+ * - Tracks installations/uninstallations
+ *
+ * Organization:
+ * 1. Imports & Type Definitions
+ * 2. Main Component
+ * 3. Data Fetching Functions
+ * 4. Event Handlers
+ * 5. Render Helpers
+ * 6. Main Render JSX
+ */
 
 import React, { useState, useEffect } from "react";
 import { Download, Trash2, Search, Package, X, Star, Clock } from "lucide-react";
@@ -7,9 +26,14 @@ import { RatingModal } from "./RatingModal";
 import { PluginVersionHistory } from "./PluginVersionHistory";
 import { getApiBaseUrl } from "../config/deploymentConfig";
 
+// Resolve API base URL with browser-mode fallback
 function getPluginApiBaseUrl(): string {
   return getApiBaseUrl();
 }
+
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
 
 interface PluginStats {
   pluginId: string;
@@ -42,11 +66,15 @@ interface Plugin {
 interface PluginMarketplaceProps {
   isOpen: boolean;
   onClose: () => void;
-
+  /** Install a plugin. Optional version enables rollback/pinned install. */
   onInstall: (pluginId: string, version?: string) => Promise<void>;
   onUninstall: (pluginId: string) => Promise<void>;
   installedPlugins: Set<string>;
 }
+
+// =============================================================================
+// MAIN COMPONENT
+// =============================================================================
 
 export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   isOpen,
@@ -55,7 +83,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   onUninstall,
   installedPlugins,
 }) => {
-
+  // ---------------------------------------------------------------------------
+  // STATE
+  // ---------------------------------------------------------------------------
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -73,17 +103,29 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
 
   const categories = ["All", "Visualization", "Editor", "Reasoning", "Query", "Import/Export", "Utility"];
 
+  // Show toast helper
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
 
+  // ---------------------------------------------------------------------------
+  // EFFECTS
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     if (isOpen) {
       fetchPluginsWithStats();
     }
   }, [isOpen]);
 
+  // =============================================================================
+  // HELPER FUNCTIONS
+  // =============================================================================
+
+  /**
+   * Compare semantic versions (e.g., "1.2.3" vs "1.2.4")
+   * Returns true if newVersion is greater than currentVersion
+   */
   const isNewerVersion = (newVersion: string, currentVersion: string): boolean => {
     const parseVersion = (v: string) => v.split(".").map((n) => parseInt(n) || 0);
     const [newMajor, newMinor, newPatch] = parseVersion(newVersion);
@@ -94,12 +136,22 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     return newPatch > curPatch;
   };
 
+  /**
+   * Get installed plugin version from pluginLoader
+   */
   const getInstalledVersion = (pluginId: string): string | undefined => {
     const installedPlugins = pluginLoader.getInstalledPlugins();
     const plugin = installedPlugins.find((p) => p.id === pluginId);
     return plugin?.manifest?.version;
   };
 
+  // =============================================================================
+  // DATA FETCHING
+  // =============================================================================
+
+  /**
+   * Fetch all plugins with real stats from backend
+   */
   const fetchPluginsWithStats = async () => {
     setLoading(true);
     try {
@@ -110,8 +162,12 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         headers["Authorization"] = `Bearer ${token}`;
       }
 
+      // Fetch plugins list via gateway
       const apiBaseUrl = getPluginApiBaseUrl();
+      console.log("[PluginMarketplace] Fetching from:", `${apiBaseUrl}/api/plugins?size=50`);
       const response = await fetch(`${apiBaseUrl}/api/plugins?size=50`, { headers });
+
+      console.log("[PluginMarketplace] Response status:", response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -120,9 +176,13 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       }
 
       const data = await response.json();
+      console.log("[PluginMarketplace] Received data:", data);
 
+      // Handle both paginated and non-paginated responses
       const pluginsList = Array.isArray(data) ? data : data.content || [];
+      console.log("[PluginMarketplace] Processing plugins:", pluginsList.length);
 
+      // Fetch real stats for each plugin
       const pluginsWithStats = await Promise.all(
         pluginsList.map(async (p: any) => {
           let stats: PluginStats | undefined;
@@ -158,6 +218,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         }),
       );
 
+      console.log("[PluginMarketplace] Final plugins with stats:", pluginsWithStats);
       setPlugins(pluginsWithStats);
     } catch (error) {
       console.error("[PluginMarketplace] Failed to fetch plugins:", error);
@@ -168,6 +229,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     }
   };
 
+  /**
+   * Refresh stats for a specific plugin after install/uninstall/rating
+   */
   const refreshPluginStats = async (pluginId: string) => {
     try {
       const token = localStorage.getItem("authToken");
@@ -190,11 +254,19 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     }
   };
 
+  // =============================================================================
+  // EVENT HANDLERS
+  // =============================================================================
+
+  /**
+   * Install a plugin
+   */
   const handleInstall = async (pluginId: string) => {
     setInstallingPlugin(pluginId);
     try {
       await onInstall(pluginId);
 
+      // Only mark as installed if onInstall succeeded (no error thrown)
       setPlugins((prev) =>
         prev.map((p) =>
           p.pluginId === pluginId ? { ...p, installed: true, installedVersion: p.version, hasUpdate: false } : p,
@@ -205,19 +277,23 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       showToast("Plugin installed successfully!");
     } catch (error) {
       console.error("Failed to install plugin:", error);
-
+      // Don't mark as installed on error
       showToast(`Failed to install plugin: ${error instanceof Error ? error.message : "Unknown error"}`, "error");
     } finally {
       setInstallingPlugin(null);
     }
   };
 
+  /**
+   * Update a plugin to the latest version
+   */
   const handleUpdate = async (pluginId: string) => {
     setUpdatingPlugin(pluginId);
     try {
-
+      // Uninstall old version
       await pluginLoader.uninstallPlugin(pluginId);
 
+      // Install new version
       await onInstall(pluginId);
 
       setPlugins((prev) =>
@@ -234,6 +310,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     }
   };
 
+  /**
+   * Uninstall a plugin
+   */
   const handleUninstall = async (pluginId: string) => {
     const plugin = plugins.find((p) => p.pluginId === pluginId);
     setUninstallPluginId(pluginId);
@@ -254,7 +333,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       await refreshPluginStats(uninstallPluginId);
     } catch (error) {
       console.error("Failed to uninstall plugin:", error);
-
+      // Use a toast notification instead of alert
       console.error("Failed to uninstall plugin. Please try again.");
     } finally {
       setInstallingPlugin(null);
@@ -267,6 +346,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     setUninstallPluginId(null);
   };
 
+  /**
+   * Open rating modal
+   */
   const handleOpenRating = async (plugin: Plugin) => {
     setRatingPlugin(plugin);
 
@@ -281,6 +363,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     setShowRatingModal(true);
   };
 
+  /**
+   * Submit a rating
+   */
   const handleSubmitRating = async (rating: {
     stars: number;
     review?: string;
@@ -310,12 +395,17 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       const errorMessage = error?.message || "Failed to submit rating";
       showToast(errorMessage, "error");
 
+      // If authentication error, close modal
       if (errorMessage.includes("log in")) {
         setShowRatingModal(false);
         setRatingPlugin(null);
       }
     }
   };
+
+  // =============================================================================
+  // COMPUTED VALUES
+  // =============================================================================
 
   const filteredPlugins = plugins
     .filter((plugin) => {
@@ -342,6 +432,13 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       }
     });
 
+  // =============================================================================
+  // RENDER HELPERS
+  // =============================================================================
+
+  /**
+   * Render star rating display (shows real ratings from backend)
+   */
   const renderStars = (rating: number, totalRatings: number) => {
     return (
       <div className="flex items-center gap-1">
@@ -358,12 +455,18 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     );
   };
 
+  // =============================================================================
+  // MAIN RENDER
+  // =============================================================================
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-2xl max-w-6xl w-full mx-4 h-[90vh] flex flex-col">
-        {}
+        {/* ===================================================================
+            HEADER
+            =================================================================== */}
         <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Package className="w-6 h-6 text-purple-600" />
@@ -374,9 +477,11 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           </button>
         </div>
 
-        {}
+        {/* ===================================================================
+            SEARCH & FILTERS
+            =================================================================== */}
         <div className="border-b border-gray-200 px-6 py-4">
-          {}
+          {/* Search Bar */}
           <div className="flex items-center gap-4 mb-4">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={18} />
@@ -389,7 +494,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
               />
             </div>
 
-            {}
+            {/* Sort Dropdown */}
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as "name" | "downloads" | "rating")}
@@ -401,7 +506,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
             </select>
           </div>
 
-          {}
+          {/* Category Filters */}
           <div className="flex gap-2 overflow-x-auto pb-2">
             {categories.map((category) => (
               <button
@@ -419,10 +524,12 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           </div>
         </div>
 
-        {}
+        {/* ===================================================================
+            PLUGIN LIST
+            =================================================================== */}
         <div className="flex-1 overflow-y-auto p-6">
           {loading ? (
-
+            /* Loading State */
             <div className="flex items-center justify-center h-64">
               <div className="text-center">
                 <Package className="w-12 h-12 text-gray-400 animate-pulse mx-auto mb-4" />
@@ -430,7 +537,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
               </div>
             </div>
           ) : filteredPlugins.length === 0 ? (
-
+            /* Empty State */
             <div className="flex items-center justify-center h-64">
               <div className="text-center">
                 <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -439,14 +546,14 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
               </div>
             </div>
           ) : (
-
+            /* Plugin Grid */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredPlugins.map((plugin) => (
                 <div
                   key={plugin.pluginId}
                   className="border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow"
                 >
-                  {}
+                  {/* Plugin Header */}
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-2">
                       {plugin.icon ? (
@@ -469,11 +576,11 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                     </div>
                   </div>
 
-                  {}
+                  {/* Plugin Info */}
                   <h3 className="text-lg font-semibold text-black mb-2">{plugin.name}</h3>
                   <p className="text-sm text-gray-800 mb-3 line-clamp-2">{plugin.description}</p>
 
-                  {}
+                  {/* Author and Version */}
                   <div className="text-xs text-gray-700 mb-3">
                     <div>by {plugin.author}</div>
                     <div className="flex items-center gap-2">
@@ -486,9 +593,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                     </div>
                   </div>
 
-                  {}
+                  {/* Real Stats from Backend */}
                   <div className="space-y-2 mb-4 bg-gray-50 p-3 rounded">
-                    {}
+                    {/* Rating (REAL DATA) */}
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-800 font-medium">Rating:</span>
                       {plugin.stats ? (
@@ -498,7 +605,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                       )}
                     </div>
 
-                    {}
+                    {/* Downloads (REAL DATA) */}
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-gray-800 font-medium">Downloads:</span>
                       <div className="flex items-center gap-1">
@@ -509,7 +616,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                       </div>
                     </div>
 
-                    {}
+                    {/* Active Installs (REAL DATA) */}
                     {plugin.stats && plugin.stats.activeInstalls > 0 && (
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-gray-800 font-medium">Active Users:</span>
@@ -520,7 +627,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                     )}
                   </div>
 
-                  {}
+                  {/* Action Buttons */}
                   <div className="space-y-2">
                     {plugin.installed ? (
                       <>
@@ -575,7 +682,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         </div>
       </div>
 
-      {}
+      {/* ===================================================================
+          RATING MODAL
+          =================================================================== */}
       {showRatingModal && ratingPlugin && (
         <RatingModal
           pluginId={ratingPlugin.pluginId}
@@ -590,7 +699,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         />
       )}
 
-      {}
+      {/* ===================================================================
+          VERSION HISTORY MODAL
+          =================================================================== */}
       {versionHistoryPlugin && (
         <PluginVersionHistory
           pluginId={versionHistoryPlugin.pluginId}
@@ -599,7 +710,8 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           onClose={() => setVersionHistoryPlugin(null)}
           onInstallVersion={async (pluginId, version) => {
             try {
-
+              // If a different version is already installed, uninstall first so the install
+              // flow registers the new version cleanly.
               if (versionHistoryPlugin.installed) {
                 await pluginLoader.uninstallPlugin(pluginId);
               }
@@ -622,7 +734,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         />
       )}
 
-      {}
+      {/* ===================================================================
+          UNINSTALL CONFIRMATION MODAL
+          =================================================================== */}
       {showUninstallConfirm && uninstallPluginId && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60]">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
@@ -651,7 +765,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         </div>
       )}
 
-      {}
+      {/* ===================================================================
+          TOAST NOTIFICATION
+          =================================================================== */}
       {toast && (
         <div
           className={`fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg z-[70] animate-fade-in ${

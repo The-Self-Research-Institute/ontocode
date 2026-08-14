@@ -16,6 +16,10 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Rate limiting filter to prevent abuse
+ * Implements token bucket algorithm with per-IP rate limiting
+ */
 @Component
 public class RateLimitingFilter extends OncePerRequestFilter {
 
@@ -27,12 +31,15 @@ public class RateLimitingFilter extends OncePerRequestFilter {
 
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
 
+    // Default: 100 requests per minute per IP
     private static final int CAPACITY = 100;
     private static final Duration REFILL_DURATION = Duration.ofMinutes(1);
 
+    // Stricter limits for authentication endpoints
     private static final int AUTH_CAPACITY = 10;
     private static final Duration AUTH_REFILL_DURATION = Duration.ofMinutes(1);
 
+    // Billing mutation endpoints — financial operations, per-user stricter limit
     private static final int BILLING_CAPACITY = 15;
     private static final Duration BILLING_REFILL_DURATION = Duration.ofMinutes(1);
 
@@ -44,7 +51,8 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-
+        
+        // Desktop mode / disabled: skip rate limiting entirely
         if (!rateLimitEnabled) {
             filterChain.doFilter(request, response);
             return;
@@ -53,6 +61,7 @@ public class RateLimitingFilter extends OncePerRequestFilter {
         String clientIp = getClientIP(request);
         String requestUri = request.getRequestURI();
 
+        // Determine rate limit based on endpoint
         Bucket bucket;
         if (isAuthEndpoint(requestUri)) {
             bucket = buckets.computeIfAbsent(clientIp + ":auth", k -> createAuthBucket());
@@ -62,19 +71,23 @@ public class RateLimitingFilter extends OncePerRequestFilter {
             bucket = buckets.computeIfAbsent(clientIp, k -> createBucket());
         }
 
+        // Try to consume a token
         if (bucket.tryConsume(1)) {
-
+            // Add rate limit headers
             response.addHeader("X-Rate-Limit-Remaining", String.valueOf(bucket.getAvailableTokens()));
             filterChain.doFilter(request, response);
         } else {
-
-            response.setStatus(429);
+            // Rate limit exceeded
+            response.setStatus(429); // Too Many Requests
             response.setContentType("application/json");
             response.addHeader("X-Rate-Limit-Retry-After-Seconds", "60");
             response.getWriter().write("{\"error\":\"Rate limit exceeded. Please try again later.\"}");
         }
     }
 
+    /**
+     * Create bucket for regular endpoints
+     */
     private Bucket createBucket() {
         Bandwidth limit = Bandwidth.classic(CAPACITY, Refill.intervally(CAPACITY, REFILL_DURATION));
         return Bucket.builder()
@@ -82,6 +95,9 @@ public class RateLimitingFilter extends OncePerRequestFilter {
                 .build();
     }
 
+    /**
+     * Create bucket for authentication endpoints (stricter)
+     */
     private Bucket createAuthBucket() {
         Bandwidth limit = Bandwidth.classic(AUTH_CAPACITY, Refill.intervally(AUTH_CAPACITY, AUTH_REFILL_DURATION));
         return Bucket.builder()
@@ -89,6 +105,9 @@ public class RateLimitingFilter extends OncePerRequestFilter {
                 .build();
     }
 
+    /**
+     * Check if the endpoint is an authentication endpoint
+     */
     private boolean isAuthEndpoint(String uri) {
         return uri.contains("/auth/login") ||
                uri.contains("/auth/register") ||
@@ -96,12 +115,19 @@ public class RateLimitingFilter extends OncePerRequestFilter {
                uri.contains("/auth/reset-password");
     }
 
+    /**
+     * Billing mutation endpoints — financial operations warrant a tighter per-IP limit
+     * than the general API bucket (15/min vs 100/min).
+     */
     private boolean isBillingMutationEndpoint(HttpServletRequest request) {
         if (!"POST".equalsIgnoreCase(request.getMethod())) return false;
         String uri = request.getRequestURI();
         return uri.startsWith("/api/billing/") && !uri.equals("/api/billing/webhook");
     }
 
+    /**
+     * Create bucket for billing mutation endpoints
+     */
     private Bucket createBillingBucket() {
         Bandwidth limit = Bandwidth.classic(BILLING_CAPACITY, Refill.intervally(BILLING_CAPACITY, BILLING_REFILL_DURATION));
         return Bucket.builder()
@@ -109,15 +135,22 @@ public class RateLimitingFilter extends OncePerRequestFilter {
                 .build();
     }
 
+    /**
+     * Get client IP address from the request.
+     * Uses X-Forwarded-For only when the direct connection comes from a known private/loopback
+     * address (i.e. a trusted reverse proxy). Taking the raw first XFF value is spoofable —
+     * an attacker can set "X-Forwarded-For: 1.2.3.4" to bypass per-IP rate limiting.
+     */
     private String getClientIP(HttpServletRequest request) {
         String remoteAddr = request.getRemoteAddr();
         String xfHeader = request.getHeader("X-Forwarded-For");
         if (xfHeader == null || xfHeader.isBlank()) {
             return remoteAddr;
         }
-
+        // Only trust the XFF header when the TCP connection is from a private/loopback address
+        // (meaning a legitimate reverse proxy is in front, not the public internet).
         if (isTrustedProxy(remoteAddr)) {
-
+            // Take the last entry added by our trusted proxy — not the user-controlled first entry.
             String[] parts = xfHeader.split(",");
             return parts[parts.length - 1].trim();
         }

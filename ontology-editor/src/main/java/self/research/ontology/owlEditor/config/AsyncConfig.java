@@ -16,9 +16,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 @Configuration
 @EnableAsync
 public class AsyncConfig implements AsyncConfigurer {
-
+    
     private static final Logger log = LoggerFactory.getLogger(AsyncConfig.class);
-
+    
     @Bean(name = "owlParsingExecutor")
     public AsyncTaskExecutor owlParsingExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -34,6 +34,14 @@ public class AsyncConfig implements AsyncConfigurer {
         return executor;
     }
 
+    /**
+     * Dedicated lane for building the desktop in-memory OWLAPI model.
+     * Kept narrow (effectively serial) on purpose: a single large parse can use
+     * gigabytes of heap, so running two at once risks OutOfMemoryError. Isolating
+     * it from owlParsingExecutor also means a heavy model build never starves the
+     * import pipeline (and vice versa). CallerRuns applies natural backpressure.
+     */
+    /** Post-import OWLAPI hierarchy snapshot builds (index for cloud web UI). */
     @Bean(name = "hierarchyIndexExecutor")
     public Executor hierarchyIndexExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -49,6 +57,10 @@ public class AsyncConfig implements AsyncConfigurer {
         return executor;
     }
 
+    /**
+     * DL Query reasoning lane — serial by default (max-concurrent=1) because each job
+     * can load a full ontology + reasoner into heap. Isolated from import parsing.
+     */
     @Bean(name = "dlQueryExecutor")
     public Executor dlQueryExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -79,6 +91,12 @@ public class AsyncConfig implements AsyncConfigurer {
         return executor;
     }
 
+    /**
+     * Interactive OWLAPI warm lane — serves a user actively opening a file so the
+     * parse never queues behind background bulk-upload warms on desktopModelExecutor.
+     * Serial (1 thread): only one project is opened interactively at a time, and a
+     * second concurrent parse would double heap pressure.
+     */
     @Bean(name = "desktopInteractiveWarmExecutor")
     public Executor desktopInteractiveWarmExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -94,6 +112,10 @@ public class AsyncConfig implements AsyncConfigurer {
         return executor;
     }
 
+    /**
+     * Dedicated lane for copy-on-switch draft graph copies (full SPARQL INSERT WHERE).
+     * Serial by design: concurrent full-graph copies would double memory/IO pressure.
+     */
     @Bean(name = "draftCopyExecutor")
     public Executor draftCopyExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -113,8 +135,8 @@ public class AsyncConfig implements AsyncConfigurer {
     public Executor getAsyncExecutor() {
         return owlParsingExecutor();
     }
-
-    @Override
+    
+    @Override 
     public AsyncUncaughtExceptionHandler getAsyncUncaughtExceptionHandler() {
         return (throwable, method, params) -> {
             log.error("Async method {} threw exception: {}", method, throwable.getMessage(), throwable);

@@ -5,31 +5,39 @@ import org.hibernate.validator.constraints.Length;
 
 import java.util.List;
 
+/**
+ * Request DTOs for Workspace operations with comprehensive validation
+ */
 public class WorkspaceRequests {
 
+    /**
+     * Create Workspace Request
+     * Validates workspace creation data including XSS prevention and format validation
+     */
     public static class CreateWorkspaceRequest {
-
+        
         @NotBlank(message = "Workspace name is required")
         @Length(min = 1, max = 255, message = "Workspace name must be between 1 and 255 characters")
         @Pattern(
-            regexp = "^[^<>]*$",
+            regexp = "^[^<>]*$", 
             message = "Workspace name cannot contain < or > characters (XSS prevention)"
         )
         private String name;
-
+        
         @Length(max = 1000, message = "Description cannot exceed 1000 characters")
         @Pattern(
-            regexp = "^[^<>]*$",
+            regexp = "^[^<>]*$", 
             message = "Description cannot contain < or > characters (XSS prevention)"
         )
         private String description;
-
+        
         @Pattern(
-            regexp = "^(FREE|PRO|ENTERPRISE)$",
+            regexp = "^(FREE|PRO|ENTERPRISE)$", 
             message = "Invalid subscription plan. Must be FREE, PRO, or ENTERPRISE"
         )
         private String subscriptionPlan;
 
+        // Getters and Setters
         public String getName() {
             return name != null ? name.trim() : null;
         }
@@ -55,18 +63,21 @@ public class WorkspaceRequests {
         }
     }
 
+    /**
+     * Update Workspace Request
+     */
     public static class UpdateWorkspaceRequest {
-
+        
         @Length(min = 1, max = 255, message = "Workspace name must be between 1 and 255 characters")
         @Pattern(
-            regexp = "^[^<>]*$",
+            regexp = "^[^<>]*$", 
             message = "Workspace name cannot contain < or > characters"
         )
         private String name;
-
+        
         @Length(max = 1000, message = "Description cannot exceed 1000 characters")
         @Pattern(
-            regexp = "^[^<>]*$",
+            regexp = "^[^<>]*$", 
             message = "Description cannot contain < or > characters"
         )
         private String description;
@@ -88,15 +99,18 @@ public class WorkspaceRequests {
         }
     }
 
+    /**
+     * Add Member to Workspace Request
+     */
     public static class AddMemberRequest {
-
+        
         @NotBlank(message = "Email is required")
         @Email(
             regexp = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
             message = "Invalid email format (RFC 5322)"
         )
         private String email;
-
+        
         @NotBlank(message = "Role is required")
         @Pattern(
             regexp = "^(OWNER|ADMIN|MEMBER|VIEWER)$",
@@ -121,8 +135,11 @@ public class WorkspaceRequests {
         }
     }
 
+    /**
+     * Update Member Role Request
+     */
     public static class UpdateMemberRoleRequest {
-
+        
         @NotBlank(message = "Role is required")
         @Pattern(
             regexp = "^(OWNER|ADMIN|MEMBER|VIEWER)$",
@@ -139,11 +156,14 @@ public class WorkspaceRequests {
         }
     }
 
+    /**
+     * Update Subscription Plan Request
+     */
     public static class UpdateSubscriptionRequest {
-
+        
         @NotBlank(message = "Subscription plan is required")
         @Pattern(
-            regexp = "^(FREE|PRO|ENTERPRISE)$",
+            regexp = "^(FREE|PRO|ENTERPRISE)$", 
             message = "Invalid subscription plan. Must be FREE, PRO, or ENTERPRISE"
         )
         private String subscriptionPlan;

@@ -3,6 +3,18 @@ import { X, Search, ChevronDown, ChevronRight, Plus, Trash2, ListTree } from 'lu
 import type { TreeNode } from '../../types';
 import apiClient from '../../services/apiClient';
 
+/**
+ * AnnotationPropertyDomainDialog - dialog for selecting annotation property domains
+ * 
+ * Annotation property domain selection:
+ * - Two tabs: "Select Class" (class hierarchy selector) and "Edit raw IRI" (direct IRI input)
+ * - Size: 500x500 in original
+ * - Uses OWLClassSelectorWrapper for class selection
+ * - Uses IRITextEditor for raw IRI input
+ * - Toolbar with Add subclass, Add sibling, Delete class buttons
+ * - Asserted/Inferred/All filter dropdown
+ */
+
 type FilterMode = 'asserted' | 'inferred' | 'all';
 
 interface AnnotationPropertyDomainDialogProps {
@@ -15,7 +27,7 @@ interface AnnotationPropertyDomainDialogProps {
   externalExpandedNodes?: string[];
   title?: string;
   selectedDomains?: string[]; // Already selected domains to exclude/show
-
+  // Toolbar action callbacks - optional, toolbar shown only if at least one is provided
   onAddSubclass?: (parentIri: string) => void;
   onAddSiblingClass?: (siblingIri: string) => void;
   onDeleteClass?: (classIri: string) => void;
@@ -43,6 +55,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
   const [rawIri, setRawIri] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('asserted');
 
+  // Show toolbar if any action callback is provided
   const showToolbar = onAddSubclass || onAddSiblingClass || onDeleteClass;
 
   useEffect(() => {
@@ -55,7 +68,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
       setRawIri('');
       setSearchQuery('');
       setActiveTab('select-class');
-
+      // Auto-expand owl:Thing
       if (classHierarchy.length > 0) {
         const topNode = classHierarchy[0];
         if (!expandedNodes.includes(topNode.id)) {
@@ -129,10 +142,11 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
     onClose();
   };
 
-  const isValidSelection = activeTab === 'select-class'
-    ? selectedClass !== null
+  const isValidSelection = activeTab === 'select-class' 
+    ? selectedClass !== null 
     : rawIri.trim().length > 0;
 
+  // Filter tree nodes by search query
   const filterNodes = (nodes: TreeNode[], query: string): TreeNode[] => {
     if (!query) return nodes;
     const lowerQuery = query.toLowerCase();
@@ -149,11 +163,12 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
 
   const filteredTreeData = filterNodes(treeData, searchQuery);
 
+  // Render class hierarchy tree
   const renderClassTree = (nodes: TreeNode[], level: number = 0): React.ReactNode => {
     return nodes.map(node => {
       const isExpanded = expandedNodes.includes(node.id);
       const isSelected = selectedClass?.id === node.id;
-
+      // Check both actual children and hasChildren flag for lazy loading
       const hasChildren = (node.children && node.children.length > 0) || (node as any).hasChildren;
       const displayLabel = node.label || node.id.split('#').pop() || node.id;
       const isAlreadySelected = selectedDomains.includes(node.id);
@@ -162,8 +177,8 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
         <div key={node.id}>
           <div
             className={`flex items-center gap-1 px-1 py-1 cursor-pointer transition-colors select-none ${
-              isSelected
-                ? 'bg-blue-600 text-white'
+              isSelected 
+                ? 'bg-blue-600 text-white' 
                 : isAlreadySelected
                   ? 'bg-gray-100 text-gray-400'
                   : 'hover:bg-gray-100 text-gray-900'
@@ -177,7 +192,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
               }
             }}
           >
-            {}
+            {/* Expand/Collapse Arrow */}
             {hasChildren ? (
               <button
                 onClick={(e) => {
@@ -194,23 +209,23 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
               <span className="w-5 flex-shrink-0" />
             )}
 
-            {}
+            {/* Class Icon (yellow circle ) */}
             <span className={`w-3 h-3 rounded-full flex-shrink-0 ${
               isSelected ? 'bg-amber-300' : 'bg-amber-400'
             }`} />
 
-            {}
+            {/* Class Label */}
             <span className={`text-sm truncate ${isSelected ? 'font-medium' : ''}`}>
               {displayLabel}
               {isAlreadySelected && <span className="ml-1 text-xs">(already selected)</span>}
             </span>
           </div>
 
-          {}
+          {/* Children */}
           {isExpanded && node.children && node.children.length > 0 && (
             <div>{renderClassTree(node.children!, level + 1)}</div>
           )}
-          {}
+          {/* Loading indicator when expanded but children not loaded yet */}
           {isExpanded && (node as any).hasChildren && (!node.children || node.children.length === 0) && (
             <div style={{ paddingLeft: `${(level + 1) * 16 + 4}px` }} className="px-1 py-1 text-xs text-gray-400 italic">
               Loading...
@@ -230,12 +245,12 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
         if (e.target === e.currentTarget && e.button === 0) handleClose();
       }}
     >
-      <div
-        className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 flex flex-col"
+      <div 
+        className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 flex flex-col" 
         style={{ height: '500px', maxHeight: '85vh' }}
         onClick={e => e.stopPropagation()}
       >
-        {}
+        {/* Header */}
         <div className="px-4 py-3 border-b bg-gray-100 flex justify-between items-center">
           <div className="flex items-center gap-2">
             <span className="w-4 h-4 bg-orange-500 rounded-sm" />
@@ -249,10 +264,10 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
           </button>
         </div>
 
-        {}
+        {/* Toolbar: Add subclass, Add sibling, Delete, Filter dropdown */}
         {showToolbar && (
           <div className="flex items-center gap-1 px-2 py-1.5 border-b bg-gray-50">
-            {}
+            {/* Add Subclass Button */}
             {onAddSubclass && (
               <button
                 onClick={() => selectedClass && onAddSubclass(selectedClass.id)}
@@ -265,8 +280,8 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
                 <span className="sr-only">Add subclass</span>
               </button>
             )}
-
-            {}
+            
+            {/* Add Sibling Button */}
             {onAddSiblingClass && (
               <button
                 onClick={() => selectedClass && onAddSiblingClass(selectedClass.id)}
@@ -279,8 +294,8 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
                 <span className="sr-only">Add sibling class</span>
               </button>
             )}
-
-            {}
+            
+            {/* Delete Class Button */}
             {onDeleteClass && (
               <button
                 onClick={() => selectedClass && onDeleteClass(selectedClass.id)}
@@ -293,10 +308,10 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
               </button>
             )}
 
-            {}
+            {/* Spacer */}
             <div className="flex-1" />
 
-            {}
+            {/* Filter Dropdown - Asserted/Inferred/All */}
             <select
               value={filterMode}
               onChange={(e) => setFilterMode(e.target.value as FilterMode)}
@@ -309,7 +324,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
           </div>
         )}
 
-        {}
+        {/* Tabs */}
         <div className="flex border-b border-gray-200 bg-gray-50">
           <button
             onClick={() => setActiveTab('select-class')}
@@ -333,11 +348,11 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
           </button>
         </div>
 
-        {}
+        {/* Content */}
         <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === 'select-class' && (
             <>
-              {}
+              {/* Search */}
               <div className="px-3 py-2 border-b bg-gray-50">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400" size={14} />
@@ -351,7 +366,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
                 </div>
               </div>
 
-              {}
+              {/* Class Hierarchy */}
               <div className="flex-1 overflow-y-auto p-2 bg-white">
                 {filteredTreeData.length > 0 ? (
                   renderClassTree(filteredTreeData)
@@ -362,7 +377,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
                 )}
               </div>
 
-              {}
+              {/* Selected Class Display */}
               {selectedClass && (
                 <div className="px-3 py-2 border-t bg-gray-50 text-xs">
                   <span className="text-gray-500">Selected: </span>
@@ -391,7 +406,7 @@ const AnnotationPropertyDomainDialog: React.FC<AnnotationPropertyDomainDialogPro
           )}
         </div>
 
-        {}
+        {/* Footer */}
         <div className="px-4 py-3 border-t bg-gray-50 flex justify-end gap-2">
           <button
             onClick={handleClose}

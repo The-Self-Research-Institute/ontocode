@@ -1,5 +1,5 @@
 {
-  "name": "ontocode",
+  "name": "ontocode-extension",
   "displayName": "OntoCode OWL Editor",
   "description": "Edit OWL files with authentication and web-based interface",
   "version": "1.1.0",

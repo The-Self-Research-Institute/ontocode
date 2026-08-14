@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Loader2, Search } from 'lucide-react';
+import { Plus, Trash2, Loader2, Search, Edit3 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, CollaboratorPresenceBar } from './common';
-import { DatatypeDefinitionDialog } from '../dialogs';
 import apiClient from '../../services/apiClient';
 import datatypeDefinitionService, { DatatypeDefinition } from '../../services/datatypeDefinitionService';
-import type { Datatype } from '../../types';
-
+import type { Datatype} from '../../types';
+import ontologyMutationService from '../../services/ontologyMutationService';
+import { notificationService } from '../../services/notificationService';
+import { DatatypeDefinitionDialog, IRIEditorDialog } from '../dialogs';
 interface UsageItem {
   type: string;
   subject: string;
@@ -151,6 +152,7 @@ const DescriptionTab: React.FC<{
     };
   }, [item?.id, projectId]);
 
+  // Auto-reload when a collaborator modifies this datatype's definitions
   useEffect(() => {
     const handleRemoteEdit = (e: Event) => {
       const edit = (e as CustomEvent).detail;
@@ -204,7 +206,7 @@ const DescriptionTab: React.FC<{
 
   return (
     <div className="space-y-3">
-      {}
+      {/* Datatype Definitions Panel */}
       <Panel
         title="Datatype Definitions"
         defaultOpen={true}
@@ -249,7 +251,7 @@ const DescriptionTab: React.FC<{
         </div>
       </Panel>
 
-      {}
+      {/* Add Definition Dialog */}
       <DatatypeDefinitionDialog
         isOpen={isAddDialogOpen}
         onClose={() => setIsAddDialogOpen(false)}
@@ -261,12 +263,15 @@ const DescriptionTab: React.FC<{
 
 const DatatypeEditor: React.FC<{
   item: Datatype;
-  onUpdate: (updatedItem: Datatype) => void;
+  //onUpdate: (updatedItem: Datatype) => void;
+ onUpdate: (updatedItem: Datatype, markUnsaved?: boolean, previousId?: string) => void;
   onAddAnnotation: () => void;
   onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
   activeTheme?: string;
   projectId: string;
+  userId?: string;
+  username?: string;
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
 }> = ({
@@ -279,12 +284,38 @@ const DatatypeEditor: React.FC<{
     projectId,
     isViewOnly = false,
     onViewOnlyAction,
+    userId,
+    username
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('description');
   const [loadingDetails, setLoadingDetails] = useState(false);
-
+const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
   const annotationCount = Object.keys(item.annotations || {}).length;
-
+  
+const handleSaveIRI = async (newIRI: string, newLabel: string) => {
+  try {
+    const iriChanged = newIRI !== item.id;
+    const labelChanged = newLabel !== item.label;
+    const targetIri = iriChanged ? newIRI : item.id;
+const previousId = item.id;
+    if (iriChanged) {
+      await ontologyMutationService.renameEntity(
+        projectId, item.id, newIRI,
+        userId || "anonymous", username || "Anonymous",
+      );
+    }
+    if (iriChanged || labelChanged) {
+      await ontologyMutationService.updateClassLabel(projectId, targetIri, newLabel, userId, username);
+    }
+    if (iriChanged || labelChanged) {
+      const updatedItem = { ...item, id: newIRI, iri: newIRI, label: newLabel };
+      onUpdate(updatedItem as Datatype, true, iriChanged ? previousId : undefined);
+    }
+  } catch (error) {
+    console.error("Failed to update datatype:", error);
+    notificationService.error("Rename Failed", error instanceof Error ? error.message : "Failed to rename entity.");
+  }
+};
   return (
     <div className="flex flex-col h-full bg-white">
       {loadingDetails && (
@@ -294,7 +325,7 @@ const DatatypeEditor: React.FC<{
         </div>
       )}
 
-      {}
+      {/* Header with IRI */}
       <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
           <div className="bg-red-200 text-red-800 p-1 rounded text-xs font-bold">D</div>
@@ -303,10 +334,17 @@ const DatatypeEditor: React.FC<{
             <span className="text-xs text-gray-500 truncate font-mono">{item.id}</span>
           </div>
         </div>
+        <button
+          onClick={isViewOnly ? () => onViewOnlyAction?.() : () => setIsIRIEditorOpen(true)}
+          className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
+          title={isViewOnly ? "View-only: upgrade to edit" : "Edit IRI and Label"}
+        >
+          <Edit3 size={16} />
+        </button>
       </div>
       <CollaboratorPresenceBar entityId={item.id} />
 
-      {}
+      {/* Tabs */}
       <div className="flex border-b border-gray-200 bg-gray-50 flex-shrink-0">
         <button
           onClick={() => setActiveTab('annotations')}
@@ -328,7 +366,7 @@ const DatatypeEditor: React.FC<{
         </button>
       </div>
 
-      {}
+      {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
         {activeTab === 'usage' && (
           <UsageTab datatypeIri={item.id} projectId={projectId} label={item.label} />
@@ -357,6 +395,14 @@ const DatatypeEditor: React.FC<{
           <DescriptionTab item={item} projectId={projectId} onUpdate={onUpdate} />
         )}
       </div>
+                  <IRIEditorDialog
+                isOpen={isIRIEditorOpen}
+                onClose={() => setIsIRIEditorOpen(false)}
+                currentIRI={item.id}
+                currentLabel={item.label}
+               entityType="Datatype"
+                onSave={handleSaveIRI}
+            />
     </div>
   );
 };

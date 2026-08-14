@@ -88,7 +88,7 @@ const EmailVerificationNotice = ({ email, onBackToLogin }: EmailVerificationNoti
         </button>
       </div>
 
-      {}
+      {/* Report Issue floating button */}
       <button
         onClick={() => setIsReportIssueModalOpen(true)}
         className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"

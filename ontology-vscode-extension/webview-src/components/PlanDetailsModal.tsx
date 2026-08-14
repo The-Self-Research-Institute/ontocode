@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
-
+// '/pure' entry: no eager script injection at import time — the default entry's
+// module side-effect races React's commit on first lazy mount (removeChild crash).
 import { loadStripe } from '@stripe/stripe-js/pure';
 import type { StripeElementsOptions } from '@stripe/stripe-js';
 import { X, Check, Crown, Zap, Sparkles, Users, HardDrive, Shield, Rocket, Loader2, CreditCard, CheckCircle, ArrowLeft } from 'lucide-react';
@@ -18,6 +19,7 @@ interface PlanDetailsModalProps {
     currentPlanOnly?: boolean;
 }
 
+// ─── Card update inner form ──────────────────────────────────────────────────
 const UpdateCardForm: React.FC<{
     workspaceId: string;
     onSuccess: () => void;
@@ -88,6 +90,7 @@ const UpdateCardForm: React.FC<{
     );
 };
 
+// ─── Main modal ──────────────────────────────────────────────────────────────
 type View = 'plans' | 'update-card' | 'done';
 
 const PLANS = [
@@ -253,7 +256,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-gradient-to-br from-slate-900 via-violet-950/40 to-slate-900 border border-white/10 rounded-2xl shadow-2xl max-w-5xl w-full h-[90vh] max-h-[760px] flex flex-col overflow-hidden">
 
-                {}
+                {/* ── Header ── */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 flex-shrink-0">
                     <div className="flex items-center gap-3">
                         {view !== 'plans' && (
@@ -284,11 +287,11 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
 
                 <div className="overflow-y-auto flex-1">
 
-                    {}
+                    {/* ── Plans view ── */}
                     {view === 'plans' && (
                         <div className="p-6 space-y-6">
 
-                            {}
+                            {/* Billing interval toggle (controls displayed price + upgrade intent) */}
                             {!currentPlanOnly && <div className="flex justify-center">
                                 <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-1">
                                     <button
@@ -323,7 +326,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                 </div>
                             </div>}
 
-                            {}
+                            {/* Current plan stats card */}
                             <div className={`rounded-xl bg-gradient-to-br ${currentPlan.gradient} p-px`}>
                                 <div className="rounded-xl bg-slate-900/90 p-5">
                                     <div className="flex items-center justify-between mb-4">
@@ -399,7 +402,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                 </div>
                             )}
 
-                            {}
+                            {/* No-Downgrade Policy Warning */}
                             {!currentPlanOnly && subscription.plan && subscription.plan.toLowerCase() !== 'free' && (
                                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
                                     <Shield size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
@@ -419,7 +422,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                                 </p>
                             </div>}
 
-                            {}
+                            {/* Plan comparison */}
                             {!currentPlanOnly && <div>
                                 <h3 className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-widest">Compare Plans</h3>
                                 <div className="grid md:grid-cols-3 gap-4">
@@ -556,7 +559,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                         </div>
                     )}
 
-                    {}
+                    {/* ── Update card view ── */}
                     {view === 'update-card' && stripePromise && elementsOptions && (
                         <div className="p-6">
                             <p className="text-sm text-slate-400 mb-5">
@@ -576,7 +579,7 @@ const PlanDetailsModal: React.FC<PlanDetailsModalProps> = ({
                         </div>
                     )}
 
-                    {}
+                    {/* ── Done view ── */}
                     {view === 'done' && (
                         <div className="p-6 flex flex-col items-center gap-4 py-14">
                             <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center">
