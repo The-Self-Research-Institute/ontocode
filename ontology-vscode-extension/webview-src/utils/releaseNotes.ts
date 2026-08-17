@@ -15,6 +15,18 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0-beta.19",
+    date: "August 14, 2026",
+    title: "Individuals List, Resizable Panel, Editable IRI & Report Panel",
+    highlights: [
+      "TSRI-260: Individuals — Fixed the individuals list getting stuck at 50 after adding more or merging with more than 50 individuals; the full list now shows correctly.",
+      "TSRI-253: Entities Panel — The left panel can now be resized by dragging its edge, for more room to view expanded classes.",
+      "TSRI-243: Class Editor — You can now edit a class's IRI. Clicking edit lets you change the ID portion at the end of the IRI, similar to Protégé.",
+      "TSRI-254: Report Panel — Switching to \"Feature Request\" now updates the panel's title, button, and confirmation message to match, instead of showing generic bug-report wording.",
+    ],
+    videoUrl: "",
+  },
+  {
     version: "1.1.0-beta.18",
     date: "August 8, 2026",
     title: "Graph View — Interaction & Layout Options",

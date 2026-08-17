@@ -27,6 +27,8 @@ EC2_DIR="${EC2_DIR:-}"
 MODE_ARG=""
 CHANGES_ARG=""
 PLATFORM_ARG=""
+REMOTE_BUILD_ARG=0
+REMOTE_BUILD_SUPPORTED=(swrl)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --mode) shift; MODE_ARG="${1:-}"; shift ;;
     --changes|--deploy) shift; CHANGES_ARG="${1:-}"; shift ;;
     --platform) shift; PLATFORM_ARG="${1:-}"; shift ;;
+    --remote-build) REMOTE_BUILD_ARG=1; shift ;;
     *) echo "Unknown arg: $1" >&2; usage 1 ;;
   esac
 done
@@ -55,6 +58,15 @@ else
   for s in "${SERVICES[@]}"; do
     if [[ ! " ${ALL_SERVICES[*]} " == *" $s "* ]]; then
       echo "ERROR: unknown service '$s' in --changes (known: ${ALL_SERVICES[*]})" >&2
+      exit 1
+    fi
+  done
+fi
+
+if [[ $REMOTE_BUILD_ARG -eq 1 ]]; then
+  for s in "${SERVICES[@]}"; do
+    if [[ ! " ${REMOTE_BUILD_SUPPORTED[*]} " == *" $s "* ]]; then
+      echo "ERROR: --remote-build only supports these services today: ${REMOTE_BUILD_SUPPORTED[*]} (got '$s')" >&2
       exit 1
     fi
   done
@@ -164,6 +176,46 @@ branch_web() {
   echo "[progress][$m-web] SSH → ${HOST[$m]} (${DIR[$m]})"
   ssh "${ssh_opts[@]}" "${HOST[$m]}" "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}up -d --pull always && docker compose ${CFLAGS[$m]}ps" || return 1
   echo "[progress][$m-web] $(date '+%H:%M:%S') DONE deploy"
+}
+
+# Builds the image on the target host instead of locally + pushing to a registry.
+# Only for services with a small, known Dockerfile build context (see
+# REMOTE_BUILD_SUPPORTED and docker-compose.remote-build.yml) — avoids local
+# buildx/dockerd entirely, at the cost of running the build on the target box.
+branch_web_remote_build() {
+  local m="$1"
+  local ssh_opts=(-o BatchMode=yes)
+  local rsync_rsh="ssh -o BatchMode=yes"
+  if [[ -n "${SSHKEY[$m]}" ]]; then
+    if [[ ! -f "${SSHKEY[$m]}" ]]; then
+      echo "ERROR: ${m^^}_SSH_KEY is set to '${SSHKEY[$m]}' but that file doesn't exist on this host" >&2
+      return 1
+    fi
+    ssh_opts+=(-i "${SSHKEY[$m]}")
+    rsync_rsh="ssh -o BatchMode=yes -i ${SSHKEY[$m]}"
+  fi
+
+  echo "[progress][$m-web] $(date '+%H:%M:%S') START remote build → ${HOST[$m]}:${DIR[$m]}"
+  echo "[progress][$m-web] rsync build context (pom stubs, shared/, ontology-swrl/)"
+  rsync -azR -e "$rsync_rsh" \
+    --exclude 'target' \
+    --exclude '*.class' \
+    pom.xml \
+    ontology-auth/pom.xml \
+    ontology-gateway/pom.xml \
+    ontology-editor/pom.xml \
+    ontology-plugin-service/pom.xml \
+    ontology-reasoner-worker/pom.xml \
+    shared/ \
+    ontology-swrl/ \
+    Dockerfile.swrl \
+    docker-compose.remote-build.yml \
+    "${HOST[$m]}:${DIR[$m]}/" || return 1
+
+  echo "[progress][$m-web] $(date '+%H:%M:%S') rsync OK — building + starting on remote"
+  ssh "${ssh_opts[@]}" "${HOST[$m]}" \
+    "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml build swrl-service && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml up -d swrl-service && docker compose ${CFLAGS[$m]}ps" || return 1
+  echo "[progress][$m-web] $(date '+%H:%M:%S') DONE remote build+deploy"
 }
 
 sanitize_path_for_linux_tools() {
@@ -399,7 +451,13 @@ for m in "${MODES[@]}"; do
     log="$LOG_DIR/$key.log"
     echo "[progress] launching branch $key (log: $log)"
     case "$p" in
-      web)     ( branch_web "$m" )     > "$log" 2>&1 & ;;
+      web)
+        if [[ $REMOTE_BUILD_ARG -eq 1 ]]; then
+          ( branch_web_remote_build "$m" ) > "$log" 2>&1 &
+        else
+          ( branch_web "$m" ) > "$log" 2>&1 &
+        fi
+        ;;
       desktop) ( branch_desktop "$m" ) > "$log" 2>&1 & ;;
       vscode)  ( branch_vscode "$m" )  > "$log" 2>&1 & ;;
     esac
