@@ -955,65 +955,6 @@ const EntityHierarchy = ({
               💡 <strong>Tip:</strong> Drag &amp; drop to reorganize | <kbd className="px-1 py-0.5 bg-gray-200 rounded">A</kbd> Asserted | <kbd className="px-1 py-0.5 bg-gray-200 rounded">I</kbd> Inferred | <kbd className="px-1 py-0.5 bg-gray-200 rounded">Ctrl+E</kbd> Add subclass
             </div>
           )}
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-secondary)' }} />
-          <input type="text" placeholder={`Search ${currentLabel.toLowerCase()}...`} value={searchQuery} onChange={e => onSearchQueryChange(e.target.value)} //
-            className="w-full pl-8 pr-3 py-1.5 border rounded-md focus:ring-1 text-sm"
-            style={{
-              borderColor: 'var(--color-border)',
-              backgroundColor: 'var(--color-surface)',
-              color: 'var(--color-text)',
-              '--tw-ring-color': 'var(--color-primary)'
-            } as React.CSSProperties} />
-        </div>
-
-        {/* {onSearchOptionsChange && searchOptions && (
-          <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-600">
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={searchOptions.useRegex}
-                onChange={(e) => onSearchOptionsChange({ ...searchOptions, useRegex: e.target.checked })}
-                className="w-3 h-3"
-              />
-              Regex
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={searchOptions.searchAnnotations}
-                onChange={(e) => onSearchOptionsChange({ ...searchOptions, searchAnnotations: e.target.checked })}
-                className="w-3 h-3"
-              />
-              Annotations
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={searchOptions.hideDeprecated}
-                onChange={(e) => onSearchOptionsChange({ ...searchOptions, hideDeprecated: e.target.checked })}
-                className="w-3 h-3"
-              />
-              Hide deprecated
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={searchOptions.hideBuiltins}
-                onChange={(e) => onSearchOptionsChange({ ...searchOptions, hideBuiltins: e.target.checked })}
-                className="w-3 h-3"
-              />
-              Hide built-ins
-            </label>
-          </div>
-        )} */}
-
-        {/* Tips banner
-        {!hideToolbarActions && entitiesTab === 'Classes' && viewMode === 'asserted' && (
-          <div className="mt-2 text-[10px] text-gray-500 bg-blue-50 border border-blue-200 rounded p-2">
-            💡 <strong>Tip:</strong> Drag &amp; drop to reorganize | <kbd className="px-1 py-0.5 bg-gray-200 rounded">A</kbd> Asserted | <kbd className="px-1 py-0.5 bg-gray-200 rounded">I</kbd> Inferred | <kbd className="px-1 py-0.5 bg-gray-200 rounded">Ctrl+E</kbd> Add subclass
-          </div>
-        )} */}
       </div>
 
       {/* Tree/List View */}
