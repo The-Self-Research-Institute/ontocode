@@ -1,4 +1,4 @@
-# 🧩 OntoCode — Ontology VS Code Extension
+# 🧩 OntoCode Studio
 
 **Edit, query, reason over, and visualize OWL/RDF ontologies — collaboratively, right inside VS Code.**
 
