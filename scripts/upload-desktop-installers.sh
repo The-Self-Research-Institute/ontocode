@@ -96,8 +96,19 @@ dmg_arm="$(pick_newest "$DIST"/*arm64*.dmg || true)"
 dmg_x64="$(pick_newest "$DIST"/*x64*.dmg || true)"
 [[ -n "${dmg_x64:-}" ]] && { upload_one "mac-x64" "$dmg_x64" || fail=1; }
 
-appimage="$(pick_newest "$DIST"/*.AppImage || true)"
-[[ -n "${appimage:-}" ]] && { upload_one "linux-x64" "$appimage" || fail=1; }
+appimage_arm="$(pick_newest "$DIST"/*arm64*.AppImage || true)"
+[[ -n "${appimage_arm:-}" ]] && { upload_one "linux-arm64" "$appimage_arm" || fail=1; }
+
+# Exclude arm64 variants so this doesn't grab the wrong architecture by mtime.
+appimage_x64=""
+for f in "$DIST"/*.AppImage; do
+  [[ -f "$f" ]] || continue
+  case "$f" in *arm64*) continue ;; esac
+  if [[ -z "$appimage_x64" || "$f" -nt "$appimage_x64" ]]; then
+    appimage_x64="$f"
+  fi
+done
+[[ -n "${appimage_x64:-}" ]] && { upload_one "linux-x64" "$appimage_x64" || fail=1; }
 
 deb="$(pick_newest "$DIST"/*.deb || true)"
 [[ -n "${deb:-}" ]] && { upload_one "linux-deb" "$deb" || fail=1; }

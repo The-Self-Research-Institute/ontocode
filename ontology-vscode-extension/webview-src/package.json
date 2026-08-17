@@ -25,8 +25,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "sockjs-client": "^1.6.1",
-    "vis-network": "latest",
-    "vscode": "^1.1.37"
+    "vis-network": "latest"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

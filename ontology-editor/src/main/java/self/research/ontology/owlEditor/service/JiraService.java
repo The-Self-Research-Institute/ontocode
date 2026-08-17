@@ -46,7 +46,7 @@ public class JiraService {
     
     @Value("${jira.epic.key:}")
     private String jiraEpicKey;
-    
+
     @Value("${jira.issue.type:Task}")
     private String jiraIssueType;
     
@@ -203,7 +203,7 @@ public class JiraService {
 
         try {
             ObjectNode issueData = buildIssuePayload(summary, description, priority, issueType);
-            
+
             log.info("Creating Jira issue in project {} under epic {} with type {}", jiraProjectKey, jiraEpicKey, issueType);
             log.debug("Jira issue payload: {}", issueData.toPrettyString());
             
@@ -333,7 +333,9 @@ public class JiraService {
         }
 
         // Parent epic (if configured) - Note: Not all projects support parent field
-        // If this fails, the epic can be linked manually or via a different mechanism
+        // If this fails, the epic can be linked manually or via a different mechanism.
+        // jiraEpicKey is environment-specific (see application.properties / docker-compose
+        // JIRA_EPIC_KEY): prod uses TSRI-103, dev uses TSRI-325.
         if (jiraEpicKey != null && !jiraEpicKey.isEmpty()) {
             try {
                 ObjectNode parent = objectMapper.createObjectNode();

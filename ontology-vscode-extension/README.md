@@ -1,9 +1,11 @@
-# 🧩 OntoCode — Ontology VS Code Extension
+# 🧩 OntoCode Studio
 
 **Edit, query, reason over, and visualize OWL/RDF ontologies — collaboratively, right inside VS Code.**
 
 A **VS Code extension** for ontology development, providing a full **visual ontology editor** through a React-based webview: SPARQL/DL querying, an AI-assisted change review workflow, an OWL reasoner, D3-powered graph visualization, real-time team collaboration, and a plugin marketplace.
 This extension is part of the larger [Ontology Platform](../README.md) but can be built and run independently.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red)](https://github.com/sponsors/The-Self-Research-Institute) [![Donate](https://img.shields.io/badge/Donate-selfresearch.org-blueviolet)](https://selfresearch.org/donate)
 
 ![OntoCode ontology graph visualization with AI insights](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/graph-visualization.gif)
 
