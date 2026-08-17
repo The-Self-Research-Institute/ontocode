@@ -1,6 +1,6 @@
 {
   "name": "ontocode-extension",
-  "displayName": "OntoCode OWL Editor",
+  "displayName": "OntoCode Studio",
   "description": "Edit OWL files with authentication and web-based interface",
   "version": "1.1.0",
   "publisher": "SelfResearchInstitute",
@@ -37,7 +37,7 @@
     "webviews": [
       {
         "viewType": "ontocodeEditor",
-        "displayName": "OntoCode Editor",
+        "displayName": "OntoCode Studio Editor",
         "when": "true"
       }
     ],
@@ -45,7 +45,7 @@
       "activitybar": [
         {
           "id": "ontocodeSidebar",
-          "title": "OntoCode",
+          "title": "OntoCode Studio",
           "icon": "images/sidebar-icon.svg"
         }
       ]
@@ -54,7 +54,7 @@
       "ontocodeSidebar": [
         {
           "id": "ontocode.sidebarView",
-          "name": "OntoCode",
+          "name": "OntoCode Studio",
           "icon": "images/sidebar-icon.svg"
         }
       ]
@@ -62,55 +62,55 @@
     "commands": [
       {
         "command": "ontocode.refreshSidebar",
-        "title": "OntoCode: Refresh Sidebar",
-        "category": "OntoCode",
+        "title": "OntoCode Studio: Refresh Sidebar",
+        "category": "OntoCode Studio",
         "icon": "$(refresh)"
       },
       {
         "command": "ontocode.edit",
-        "title": "Edit with OntoCode",
-        "category": "OntoCode"
+        "title": "Edit with OntoCode Studio",
+        "category": "OntoCode Studio"
       },
       {
         "command": "ontocode.editLargeFile",
-        "title": "OntoCode: Edit Ontology File",
-        "category": "OntoCode"
+        "title": "OntoCode Studio: Edit Ontology File",
+        "category": "OntoCode Studio"
       },
       {
         "command": "ontocode.logout",
-        "title": "OntoCode: Logout",
-        "category": "OntoCode"
+        "title": "OntoCode Studio: Logout",
+        "category": "OntoCode Studio"
       },
       {
         "command": "ontocode.insertCitation",
         "title": "Insert Citation (Sci2Code)",
-        "category": "OntoCode",
+        "category": "OntoCode Studio",
         "icon": "$(book)"
       },
       {
         "command": "ontocode.showCollaborationStatus",
-        "title": "OntoCode: Show Collaboration Status",
-        "category": "OntoCode"
+        "title": "OntoCode Studio: Show Collaboration Status",
+        "category": "OntoCode Studio"
       },
       {
         "command": "ontocode.configureZotero",
-        "title": "OntoCode: Configure Zotero API Key",
-        "category": "OntoCode"
+        "title": "OntoCode Studio: Configure Zotero API Key",
+        "category": "OntoCode Studio"
       },
       {
         "command": "ontocode.testZoteroConnection",
-        "title": "OntoCode: Test Zotero Connection",
-        "category": "OntoCode"
+        "title": "OntoCode Studio: Test Zotero Connection",
+        "category": "OntoCode Studio"
       },
       {
         "command": "ontocode.testInvitationFlow",
-        "title": "OntoCode: Test Invitation Flow",
-        "category": "OntoCode"
+        "title": "OntoCode Studio: Test Invitation Flow",
+        "category": "OntoCode Studio"
       },
       {
         "command": "ontocode.openWebview",
         "title": "Open WebView",
-        "category": "OntoCode"
+        "category": "OntoCode Studio"
       }
     ],
     "menus": {
@@ -187,7 +187,7 @@
       }
     ],
     "configuration": {
-      "title": "OntoCode",
+      "title": "OntoCode Studio",
       "properties": {
         "ontocode.zotero.apiKey": {
           "type": "string",

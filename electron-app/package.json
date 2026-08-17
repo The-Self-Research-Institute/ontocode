@@ -30,8 +30,8 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "electron": "^29.0.0",
-    "electron-builder": "^24.0.0"
+    "electron": "^39.8.10",
+    "electron-builder": "^26.15.7"
   },
   "dependencies": {
     "electron-store": "^8.1.0",

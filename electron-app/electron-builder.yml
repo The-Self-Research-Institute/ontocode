@@ -125,9 +125,10 @@ linux:
   maintainer: "OntoCode Studio <pranesh@coretopia.com>"
   description: "OntoCode Studio — OWL Ontology Editor for Desktop"
   desktop:
-    Name: OntoCode Studio
-    Comment: OWL Ontology Editor
-    Categories: Development;Science;
+    entry:
+      Name: OntoCode Studio
+      Comment: OWL Ontology Editor
+      Categories: Development;Science;
 
 # Flatpak is a separate target (needs flatpak-builder on the host).
 # Build with: npm run dist:linux:flatpak
@@ -155,5 +156,5 @@ publish:
   url: https://ontocodeapi.selfresearch.org/api/downloads/updates/win
 
 # ── Build meta ────────────────────────────────────────────────────────────────
-electronVersion: "29.0.0"
+electronVersion: "39.8.10"
 compression: maximum
