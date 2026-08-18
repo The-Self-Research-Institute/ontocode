@@ -156,5 +156,6 @@ publish:
   url: https://ontocodeapi.selfresearch.org/api/downloads/updates/win
 
 # ── Build meta ────────────────────────────────────────────────────────────────
-electronVersion: "39.8.10"
+# electronVersion intentionally omitted — electron-builder auto-detects it from
+# the installed "electron" devDependency, so it can't drift out of sync again.
 compression: maximum

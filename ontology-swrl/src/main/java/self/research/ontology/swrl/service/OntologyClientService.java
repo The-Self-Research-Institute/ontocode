@@ -69,16 +69,40 @@ public class OntologyClientService {
         maxAttempts = 3,
         backoff = @Backoff(delay = 1000, multiplier = 2)
     )
+    /**
+     * Forward the caller's Bearer token to the editor service. The editor
+     * enforces JWT on /api/** when running in docker (require-jwt=true), so an
+     * unauthenticated export call 401s. Outside a request context (or without
+     * a bearer token) no Authorization header is set, matching desktop/dev
+     * where the editor exempts localhost callers.
+     */
+    private String currentAuthorizationHeader() {
+        org.springframework.web.context.request.RequestAttributes attrs =
+            org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+        if (attrs instanceof org.springframework.web.context.request.ServletRequestAttributes servletAttrs) {
+            String auth = servletAttrs.getRequest().getHeader("Authorization");
+            if (auth != null && auth.startsWith("Bearer ")) {
+                return auth;
+            }
+        }
+        return null;
+    }
+
     public OWLOntology fetchOntology(String projectId) throws OWLOntologyCreationException {
         logger.info("Fetching ontology for project: {}", projectId);
         long startTime = System.currentTimeMillis();
 
         try {
+            String authHeader = currentAuthorizationHeader();
             // Stream ontology directly into OWL parser to avoid holding entire byte[] in heap
             OWLOntology ontology = restTemplate.execute(
                 "/api/ontology/export/{projectId}",
                 org.springframework.http.HttpMethod.GET,
-                null,
+                request -> {
+                    if (authHeader != null) {
+                        request.getHeaders().set("Authorization", authHeader);
+                    }
+                },
                 response -> {
                     if (response.getStatusCode() != HttpStatus.OK) {
                         throw new RuntimeException(
