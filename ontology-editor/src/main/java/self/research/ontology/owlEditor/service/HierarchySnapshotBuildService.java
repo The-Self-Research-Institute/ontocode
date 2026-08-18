@@ -199,13 +199,18 @@ public class HierarchySnapshotBuildService {
             }
         }
 
+        // "current" variants are checked before their "original" counterpart — see the
+        // matching comment in DesktopOntologyLoader.findFastestParseSource. Reproduced live:
+        // after a merge, ontology.original.owl lagged behind a freshly-written
+        // ontology.current.owl (missing the merged class), and its priority in this list
+        // meant the hierarchy snapshot was rebuilt from the stale one every time.
         List<String> fastFirst = List.of(
+                "ontology.current.ttl",
+                "ontology.current.owl",
                 "ontology.original.ofn",
                 "ontology.original.ttl",
                 "ontology.original.nt",
-                "ontology.current.ttl",
-                "ontology.original.owl",
-                "ontology.current.owl"
+                "ontology.original.owl"
         );
         for (String name : fastFirst) {
             Path p = dir.resolve(name);
