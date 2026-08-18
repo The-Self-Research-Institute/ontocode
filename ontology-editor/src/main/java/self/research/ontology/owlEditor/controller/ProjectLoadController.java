@@ -1969,8 +1969,18 @@ public class ProjectLoadController {
             storageManager.clearCodeViewCache(projectId);
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
 
-            // Step 4: Store the saved format's cache (preserves the user's edited content)
-            storageManager.storeCodeViewCache(projectId, content, format);
+            // Step 4: Store the saved format's cache (preserves the user's edited content).
+            // For standard RDF formats, cache what was ACTUALLY imported (importBytes), not the
+            // raw `content` the user typed: sanitizeFileOnDisk() or the structural-error retry
+            // above may have rewritten invalid input into valid RDF/XML before it reached GraphDB.
+            // Caching pre-fix `content` here would permanently re-serve that broken document on
+            // every later /export call (including SWRL/SQWRL rule execution), even though GraphDB
+            // itself now holds valid data — every OWLAPI parser fails identically on it forever,
+            // until some unrelated mutation clears the cache. The OWL-API-format branch above
+            // (owlxml/manchester/functional) is exempt: its importBytes were converted to RDF/XML
+            // for GraphDB import, a different format than `format`, so raw `content` is still right.
+            String cachedContent = isOwlApiFormat ? content : new String(importBytes, StandardCharsets.UTF_8);
+            storageManager.storeCodeViewCache(projectId, cachedContent, format);
             log.info("[CODE-VIEW-SAVE] Current format cache restored");
 
             return ResponseEntity.ok(Map.of(
