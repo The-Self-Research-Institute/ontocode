@@ -1,4 +1,4 @@
-name: FOSSA
+name: FOSSA Scanner
 
 on:
   workflow_dispatch:
