@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle, Loader } from "lucide-react";
+import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle, Loader, Lock } from "lucide-react";
 import { useCollaboration } from "../../contexts/CollaborationContext";
 import apiClient from "../../services/apiClient";
 import axiomAnnotationService from "../../services/axiomAnnotationService";
@@ -1676,25 +1676,43 @@ export const CollaboratorPresenceBar: React.FC<{ entityId: string }> = ({ entity
   const viewers = Array.from(state.activeUsers.values()).filter(
     u => u.cursorPosition === entityId
   );
-  if (viewers.length === 0) return null;
+  const lock = state.locks.get(entityId);
+  const isLockActive = lock && lock.expiresAt > Date.now();
+
+  if (viewers.length === 0 && !isLockActive) return null;
+
   return (
     <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 border-b border-indigo-100">
-      <MousePointer2 size={11} className="text-indigo-400 flex-shrink-0" />
-      <span className="text-[10px] text-indigo-500 mr-0.5">Also viewing:</span>
-      {viewers.map(u => (
+      {isLockActive && (
         <span
-          key={u.userId}
-          className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full"
-          style={{ backgroundColor: `${u.color}20`, color: u.color, border: `1px solid ${u.color}60` }}
-          title={u.username}
+          className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full mr-1"
+          style={{ backgroundColor: "#F59E0B20", color: "#B45309", border: "1px solid #F59E0B60" }}
+          title={`Locked by ${lock.username} — editing in progress`}
         >
-          <span
-            className="w-2 h-2 rounded-full flex-shrink-0"
-            style={{ backgroundColor: u.color }}
-          />
-          {u.username}
+          <Lock size={10} className="flex-shrink-0" />
+          Locked by {lock.username}
         </span>
-      ))}
+      )}
+      {viewers.length > 0 && (
+        <>
+          <MousePointer2 size={11} className="text-indigo-400 flex-shrink-0" />
+          <span className="text-[10px] text-indigo-500 mr-0.5">Also viewing:</span>
+          {viewers.map(u => (
+            <span
+              key={u.userId}
+              className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+              style={{ backgroundColor: `${u.color}20`, color: u.color, border: `1px solid ${u.color}60` }}
+              title={u.username}
+            >
+              <span
+                className="w-2 h-2 rounded-full flex-shrink-0"
+                style={{ backgroundColor: u.color }}
+              />
+              {u.username}
+            </span>
+          ))}
+        </>
+      )}
     </div>
   );
 };

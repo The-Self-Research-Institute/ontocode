@@ -20,9 +20,12 @@ import {
   Check,
   Loader2,
   Hash,
+  Lock,
 } from "lucide-react";
 import type { SelectableItem, TreeNode } from '../types';
 import { useCollaboration } from '../contexts/CollaborationContext';
+import { useAuth } from '../custom-hook/useAuth';
+import { notificationService } from '../services/notificationService';
 import InlineRenameInput from './InlineRenameInput';
 
 interface EntityHierarchyProps {
@@ -152,7 +155,29 @@ const EntityHierarchy = ({
   const [draggedItem, setDraggedItem] = useState<SelectableItem | null>(null);
   const [renamingItemId, setRenamingItemId] = useState<string | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
-  const { state: collaborationState, publishCursor } = useCollaboration();
+  const { state: collaborationState, publishCursor, requestLock, releaseLock } = useCollaboration();
+  const { user: currentAuthUser } = useAuth();
+
+  // Renaming can start from several places (double-click, F2, context menu) —
+  // rather than guard each one, acquire/release the lock off renamingItemId itself,
+  // and bail out of a rename that started on a node someone else already holds.
+  useEffect(() => {
+    if (!renamingItemId) return;
+
+    const existingLock = collaborationState.locks.get(renamingItemId);
+    const myUserId = currentAuthUser?.userId || currentAuthUser?.username;
+    if (existingLock && existingLock.userId !== myUserId && existingLock.expiresAt > Date.now()) {
+      notificationService.warning("Locked", `${existingLock.username} is currently editing this — try again shortly.`);
+      setRenamingItemId(null);
+      return;
+    }
+
+    requestLock(renamingItemId);
+    return () => {
+      releaseLock(renamingItemId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renamingItemId]);
 
   // Search input is decoupled from searchQuery so keystrokes stay instant even
   // when the underlying tree filter (Dashboard's filterRecursively, O(materialized
@@ -385,6 +410,8 @@ const EntityHierarchy = ({
     const usersViewingNode = activeUsers.filter(user =>
       user.cursorPosition === item.id || user.selectedNodes?.includes(item.id)
     );
+    const nodeLock = collaborationState.locks.get(item.id);
+    const isNodeLocked = nodeLock && nodeLock.expiresAt > Date.now();
     let Icon, iconClasses;
     let itemType = entitiesTab;
 
@@ -543,6 +570,18 @@ const EntityHierarchy = ({
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Lock indicator — visible before a user even tries to open the editor */}
+        {isNodeLocked && (
+          <div
+            className="flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0"
+            style={{ backgroundColor: "#F59E0B20", border: "1px solid #F59E0B60", color: "#B45309" }}
+            title={`Locked by ${nodeLock!.username} — editing in progress`}
+          >
+            <Lock size={10} />
+            <span>{nodeLock!.username}</span>
           </div>
         )}
 
