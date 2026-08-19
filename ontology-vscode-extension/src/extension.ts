@@ -276,6 +276,8 @@ type ExtensionMessage =
     | { type: 'requestCollaborationStatus' } // Request current collaboration status
     | { type: 'showNotification'; notification: { type: string; title: string; message: string; actions?: string[] } } // System notification
     | { type: 'cursorMoved'; nodeId: string; nodeName: string } // User moved cursor to a node
+    | { type: 'requestLock'; projectId: string; nodeId: string } // Acquire a collaboration lock before editing a node
+    | { type: 'releaseLock'; projectId: string; nodeId: string } // Release a collaboration lock after editing a node
     | { type: 'broadcastCursor'; projectId: string; userId: string; userName: string; position: { x: number; y: number }; timestamp: number } // User cursor position
     | { type: 'importLocalFile'; filePath: string; currentProjectId: string } // Import local OWL file
     | { type: 'uploadOntology'; projectId: string; fileName: string; fileContent: string; ownerEmail?: string; workspaceId?: string; skipDuplicateCheck?: boolean; importMode?: string; partition?: string } // Upload ontology from webview (admin flow)
@@ -925,6 +927,20 @@ class OntoCodePanel {
                                 message.nodeId,
                                 selectedNodes
                             );
+                        }
+                        break;
+                    case 'requestLock':
+                        // Webview is about to let the user edit a node — acquire the lock
+                        if (this.collaborationManager && message.nodeId) {
+                            console.log('[OntoCode] 🔒 Requesting lock on node:', message.nodeId);
+                            this.collaborationManager.requestLock(message.nodeId);
+                        }
+                        break;
+                    case 'releaseLock':
+                        // Webview closed/saved/cancelled an edit — release the lock
+                        if (this.collaborationManager && message.nodeId) {
+                            console.log('[OntoCode] 🔓 Releasing lock on node:', message.nodeId);
+                            this.collaborationManager.releaseLock(message.nodeId);
                         }
                         break;
                     case 'broadcastCursor':

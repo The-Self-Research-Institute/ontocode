@@ -6,6 +6,7 @@ import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
 import type { AnnotationProperty } from '../../types';
+import { useCollaboration } from '../../contexts/CollaborationContext';
 
 interface AnnotationPropertyEditorProps {
   item: AnnotationProperty;
@@ -198,6 +199,34 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
+  const collaboration = useCollaboration();
+
+  // Hold a lock on this entity for as long as the IRI/label editor is open — see
+  // ClassEditor.tsx for the reasoning (this pattern is shared across all detail editors).
+  useEffect(() => {
+    if (!isIRIEditorOpen) return;
+
+    collaboration.requestLock(item.id);
+    const refreshInterval = setInterval(() => {
+      collaboration.requestLock(item.id);
+    }, 15000);
+
+    return () => {
+      clearInterval(refreshInterval);
+      collaboration.releaseLock(item.id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isIRIEditorOpen, item.id]);
+
+  const openIRIEditor = () => {
+    const existingLock = collaboration.state.locks.get(item.id);
+    const myUserId = user?.userId || user?.username;
+    if (existingLock && existingLock.userId !== myUserId && existingLock.expiresAt > Date.now()) {
+      notificationService.warning("Locked", `${existingLock.username} is currently editing this — try again shortly.`);
+      return;
+    }
+    setIsIRIEditorOpen(true);
+  };
 
   const superpropertyLabelLookup = useMemo(() => {
     const map = new Map<string, string>();
@@ -295,7 +324,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
           </div>
         </div>
         <button
-          onClick={isViewOnly ? () => onViewOnlyAction?.() : () => setIsIRIEditorOpen(true)}
+          onClick={isViewOnly ? () => onViewOnlyAction?.() : openIRIEditor}
           className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
           title={isViewOnly ? "View-only: upgrade to edit" : "Edit IRI and Label"}
         >

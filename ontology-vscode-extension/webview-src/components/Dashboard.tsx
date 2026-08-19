@@ -1728,13 +1728,18 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
 
   // Switching ontology files: keep the previous tree visible (dimmed) until new data arrives.
+  // Abort-previous-request + generation-bump is deliberately NOT duplicated here — fetchData
+  // already does both itself at its own entry point. Duplicating it in this effect raced
+  // against fetchData's own setup: this effect fires on its own render/commit schedule, and
+  // when that landed AFTER an inline fetchData() call (e.g. the GraphDB fast-path in
+  // handleLoadProjectFile) had already bumped the generation and installed its controller,
+  // this effect aborted that *very* request and re-bumped the generation out from under it —
+  // permanently marking a legitimate, in-progress load as stale with no retry. That's what
+  // caused a second collaborator opening an already-imported file to hang on the loading
+  // skeleton forever.
   useEffect(() => {
     if (!projectId || projectId === prevProjectIdRef.current) return;
     prevProjectIdRef.current = projectId;
-    fetchDataGenerationRef.current += 1;
-    if (fetchAbortControllerRef.current) {
-      fetchAbortControllerRef.current.abort();
-    }
     setSelectedItem(null);
     setMetadata(null);
     setIsHierarchyLoading(true);

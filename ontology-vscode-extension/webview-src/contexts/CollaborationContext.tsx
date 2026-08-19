@@ -48,6 +48,8 @@ interface CollaborationContextType {
   removeNotification: (id: string) => void;
   clearNotifications: () => void;
   publishCursor: (nodeId: string, nodeLabel: string) => void;
+  requestLock: (nodeId: string) => void;
+  releaseLock: (nodeId: string) => void;
 }
 
 export const CollaborationContext = createContext<CollaborationContextType | undefined>(undefined);
@@ -469,6 +471,24 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
   }, [user?.userId, user?.username]);
 
   const handleLockUpdate = useCallback((lock: any) => {
+    // LOCK_DENIED is broadcast project-wide (same topic as everything else) but
+    // it's only meaningful to whoever asked for the lock — no shared state to
+    // update, just tell that one user why they can't edit.
+    if (lock.type === "LOCK_DENIED") {
+      const myUserId = user?.userId || user?.username;
+      if (lock.userId === myUserId) {
+        addNotification({
+          type: "warning",
+          message: lock.error || `Locked by ${lock.username}`,
+          userId: lock.userId,
+          username: lock.username,
+          userColor: "#F59E0B",
+          timestamp: lock.timestamp,
+        });
+      }
+      return;
+    }
+
     setState((prev) => {
       const newLocks = new Map(prev.locks);
 
@@ -485,6 +505,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
         case "LOCK_RELEASED":
         case "LOCK_EXPIRED":
+        case "LOCK_FORCE_RELEASE":
           newLocks.delete(lock.nodeId);
           break;
       }
@@ -665,6 +686,80 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     [user?.userId, user?.username],
   );
 
+  const requestLock = useCallback(
+    (nodeId: string) => {
+      const projectId = currentProjectRef.current;
+      if (!projectId) return;
+
+      const userId = user?.userId || user?.username || "";
+      const username = user?.username || "";
+
+      if (isBrowserMode()) {
+        const client = stompClientRef.current;
+        if (!client?.connected) return;
+        client.publish({
+          destination: `/app/collab/${projectId}/lock`,
+          body: JSON.stringify({
+            type: "LOCK_REQUEST",
+            projectId,
+            nodeId,
+            userId,
+            username,
+            timestamp: Date.now(),
+          }),
+        });
+      } else if (window.vscode) {
+        window.vscode.postMessage({
+          type: "requestLock",
+          projectId,
+          nodeId,
+        });
+      }
+    },
+    [user?.userId, user?.username],
+  );
+
+  const releaseLock = useCallback(
+    (nodeId: string) => {
+      const projectId = currentProjectRef.current;
+      if (!projectId) return;
+
+      const userId = user?.userId || user?.username || "";
+      const username = user?.username || "";
+
+      if (isBrowserMode()) {
+        const client = stompClientRef.current;
+        if (!client?.connected) return;
+        client.publish({
+          destination: `/app/collab/${projectId}/lock`,
+          body: JSON.stringify({
+            type: "LOCK_RELEASED",
+            projectId,
+            nodeId,
+            userId,
+            username,
+            timestamp: Date.now(),
+          }),
+        });
+      } else if (window.vscode) {
+        window.vscode.postMessage({
+          type: "releaseLock",
+          projectId,
+          nodeId,
+        });
+      }
+
+      // Release optimistically client-side too — mirrors how CollaborationManager.web.ts's
+      // releaseLock behaves, so the UI doesn't wait on a round trip to unblock itself.
+      setState((prev) => {
+        const newLocks = new Map(prev.locks);
+        newLocks.delete(nodeId);
+        return { ...prev, locks: newLocks };
+      });
+    },
+    [user?.userId, user?.username],
+  );
+
   const setCurrentProject = useCallback(
     (projectId: string | null) => {
       currentProjectRef.current = projectId;
@@ -698,8 +793,19 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       removeNotification,
       clearNotifications,
       publishCursor,
+      requestLock,
+      releaseLock,
     }),
-    [state, setCurrentProject, addNotification, removeNotification, clearNotifications, publishCursor],
+    [
+      state,
+      setCurrentProject,
+      addNotification,
+      removeNotification,
+      clearNotifications,
+      publishCursor,
+      requestLock,
+      releaseLock,
+    ],
   );
 
   return <CollaborationContext.Provider value={value}>{children}</CollaborationContext.Provider>;
