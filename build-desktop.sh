@@ -7,6 +7,19 @@ JARS_DIR="$SCRIPT_DIR/electron-app/resources/backend/jars"
 DESKTOP_VERSION="1.0.0"
 SWRL_VERSION="1.0.0"
 
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/scripts/check-jdk-prereqs.sh"
+require_jdk_prereqs   # sets JDK17_HOME / JDK21_HOME, or exits with a clear message
+
+# desktop.jar (auth+editor+plugin) needs 21; swrl.jar needs 17 (Drools/MVEL vs newer JDKs).
+# Switching JAVA_HOME per phase below means one command builds both correctly regardless
+# of whatever JDK happens to be active in the calling shell.
+use_jdk() {
+    export JAVA_HOME="$1"
+    export PATH="$JAVA_HOME/bin:$PATH"
+    hash -r 2>/dev/null || true
+}
+
 KNOWN_PLATFORMS="win mac linux all"
 PLATFORM=""
 
@@ -85,6 +98,7 @@ echo ""
 mkdir -p "$JARS_DIR"
 
 if $run_desktop; then
+    use_jdk "$JDK21_HOME"
     step "Maven — install shared modules"
     cd "$SCRIPT_DIR"
     mvn install -pl shared/common-models,shared/common-utils -DskipTests -q
@@ -111,6 +125,7 @@ if $run_desktop; then
 fi
 
 if $run_swrl; then
+    use_jdk "$JDK17_HOME"
     step "Maven — ontology-swrl (separate JVM, owlapi 4.x)"
     cd "$SCRIPT_DIR"
     mvn package -pl ontology-swrl -DskipTests -q
@@ -121,7 +136,10 @@ if $run_swrl; then
         "swrl"
 fi
 
-if $run_ui; then
+if $run_ui && ! $run_pack; then
+    # Skipped when run_pack is also set: the npm dist:* scripts used by the pack step
+    # below already run build:electron themselves — doing it here too would just build
+    # the same UI twice.
     step "Building React UI"
     cd "$SCRIPT_DIR/ontology-vscode-extension/webview-src"
     npm run build:electron
@@ -132,11 +150,18 @@ fi
 if $run_pack; then
     step "Packaging Electron app — $PLATFORM"
     cd "$SCRIPT_DIR/electron-app"
+    # Route through the npm dist scripts, not `electron-builder` directly: that skips
+    # prepare-resources.js (JRE download/embed, fuseki-server.jar + mongod copy) entirely,
+    # which only "worked" before because those resources happened to already exist on disk
+    # from an earlier manual run. A truly first-time run would silently ship a broken
+    # installer missing its bundled runtime.
+    # DIST_TARGET lets callers point at the dev update URL, e.g.:
+    #   DIST_TARGET_SUFFIX=":dev" bash build-desktop.sh win
     case "$PLATFORM" in
-        win)   electron-builder --win ;;
-        mac)   electron-builder --mac ;;
-        linux) electron-builder --linux ;;
-        all)   electron-builder --win --mac --linux ;;
+        win)   npm run "dist:win${DIST_TARGET_SUFFIX:-}" ;;
+        mac)   npm run "dist:mac${DIST_TARGET_SUFFIX:-}" ;;
+        linux) npm run "dist:linux${DIST_TARGET_SUFFIX:-}" ;;
+        all)   npm run "dist:win${DIST_TARGET_SUFFIX:-}" && npm run "dist:mac${DIST_TARGET_SUFFIX:-}" && npm run "dist:linux${DIST_TARGET_SUFFIX:-}" ;;
     esac
     echo "  ✓ Electron app packaged"
     cd "$SCRIPT_DIR"
