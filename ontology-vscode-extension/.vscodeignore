@@ -28,3 +28,5 @@ out.txt
 *.mp4
 images/gifs/**
 images/screenshots/**
+.env
+.env.*

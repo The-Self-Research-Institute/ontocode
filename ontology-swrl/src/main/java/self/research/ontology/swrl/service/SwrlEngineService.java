@@ -223,10 +223,11 @@ public class SwrlEngineService {
         }
     }
 
-    public SwrlRule createRule(String projectId, String ruleName, String ruleText, 
+    public SwrlRule createRule(String projectId, String ruleName, String ruleText,
                               String comment, String category) {
         long startTime = System.currentTimeMillis();
         engineLog.info("[CREATE_RULE] Starting project={} ruleName={}", projectId, ruleName);
+        SwrlRule rule = null;
         try {
             // Check for duplicate rule name
             if (ruleRepository.existsByProjectIdAndRuleName(projectId, ruleName)) {
@@ -240,7 +241,7 @@ public class SwrlEngineService {
             }
 
             // Create and save rule
-            SwrlRule rule = new SwrlRule(projectId, ruleName, ruleText);
+            rule = new SwrlRule(projectId, ruleName, ruleText);
             rule.setComment(comment);
             rule.setCategory(category);
             rule = ruleRepository.save(rule);
@@ -255,18 +256,33 @@ public class SwrlEngineService {
             engine.createSWRLRule(ruleName, resolvedText);
 
             logger.info("Created SWRL rule: {} for project: {}", ruleName, projectId);
-            
+
             if (meterRegistry != null) {
-                meterRegistry.counter("swrl.rules.created", 
+                meterRegistry.counter("swrl.rules.created",
                     "projectId", projectId).increment();
             }
-            
+
             long totalDuration = System.currentTimeMillis() - startTime;
             perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} duration={}ms", projectId, ruleName, totalDuration);
             engineLog.info("[CREATE_RULE] Completed in {}ms project={} rule={}", totalDuration, projectId, ruleName);
             return rule;
 
         } catch (Exception e) {
+            // rule is only non-null once ruleRepository.save() above succeeded, so it's
+            // already persisted even though the engine never accepted it (fetchOntology,
+            // namespace setup, or engine.createSWRLRule threw after the save). Left as-is,
+            // that orphaned document would permanently block this rule name via
+            // existsByProjectIdAndRuleName on every future attempt, even though nothing
+            // usable was ever added to the rule engine and the user sees this as a
+            // straightforward failure — roll it back so the name is free to retry.
+            if (rule != null && rule.getId() != null) {
+                try {
+                    ruleRepository.deleteById(rule.getId());
+                } catch (Exception cleanupEx) {
+                    logger.warn("Failed to roll back orphaned rule {} for project {} after create failure",
+                            rule.getId(), projectId, cleanupEx);
+                }
+            }
             long totalDuration = System.currentTimeMillis() - startTime;
             logger.error("Failed to create rule {} for project {} after {}ms", ruleName, projectId, totalDuration, e);
             perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} status=error duration={}ms", projectId, ruleName, totalDuration);

@@ -300,7 +300,7 @@ type DuplicatePromptResult = { action: DuplicatePromptAction; copyName?: string 
 
 export async function activate(context: vscode.ExtensionContext) {
     console.log('OntoCode extension is now active!');
-    console.log('[OntoCode] Extension can handle URIs like: vscode://self.ontocode-extension/invite?token=xxx');
+    console.log('[OntoCode] Extension can handle URIs like: vscode://SelfResearchInstitute.ontocode-studio/invite?token=xxx');
 
     // Initialize issue report service with default URL
     issueReportService.setEditorUrl(OWL_EDITOR_URL);

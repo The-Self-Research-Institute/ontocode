@@ -136,18 +136,24 @@ public class HierarchyIndexService {
                 });
     }
 
-    public void scheduleBuild(String projectId) {
+    public java.util.concurrent.CompletableFuture<Void> scheduleBuild(String projectId) {
         if (!snapshotEnabled || !buildService.isEnabled()) {
-            return;
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
         }
 
         if (desktopMode && ontologyCache != null && ontologyCache.has(projectId)) {
-            return;
+            return java.util.concurrent.CompletableFuture.completedFuture(null);
         }
         String revision = Instant.now().toString();
         log.info("[HierarchyIndex] Scheduling snapshot build for {}", projectId);
 
-        hierarchyIndexExecutor.execute(() -> buildService.buildAndStore(projectId, revision));
+        // Submit to the executor directly (not CompletableFuture.runAsync's default pool) —
+        // buildAndStore lives on this same bean, so an @Async self-invocation would be
+        // bypassed anyway; wrapping in CompletableFuture here only adds a completion signal
+        // for callers (e.g. ProjectImportService) that need to chain a cache eviction after
+        // the snapshot is actually rebuilt, not just scheduled.
+        return java.util.concurrent.CompletableFuture.runAsync(
+                () -> buildService.buildAndStore(projectId, revision), hierarchyIndexExecutor);
     }
 
     public void markStale(String projectId) {

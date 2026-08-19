@@ -864,7 +864,21 @@ public class ProjectImportService {
             if (hierarchyIndexService != null) {
                 try {
                     hierarchyIndexService.evict(projectId);
-                    hierarchyIndexService.scheduleBuild(projectId);
+                    // topLevelClassCacheService was already evicted above (line ~851), but that
+                    // eviction races the snapshot rebuild below: a request landing in the gap
+                    // between eviction and rebuild completion repopulates the cache by reading
+                    // the not-yet-rebuilt (stale) snapshot, and nothing evicts it again — so the
+                    // tree can permanently show pre-import/pre-merge data even though status
+                    // correctly reports COMPLETED/hierarchyReady with a fresh hierarchyBuiltAt.
+                    // Re-evict once the rebuild actually finishes to close that window.
+                    hierarchyIndexService.scheduleBuild(projectId).whenCompleteAsync((v, ex) -> {
+                        if (topLevelClassCacheService != null) {
+                            topLevelClassCacheService.evict(projectId);
+                        }
+                        if (ex != null) {
+                            log.warn("[Import {}] Hierarchy snapshot build failed: {}", projectId, ex.getMessage());
+                        }
+                    }, metadataExecutor);
                     log.info("[Import {}] Scheduled hierarchy snapshot build", projectId);
                 } catch (Exception hx) {
                     log.warn("[Import {}] Hierarchy snapshot schedule failed (non-fatal): {}", projectId, hx.getMessage());

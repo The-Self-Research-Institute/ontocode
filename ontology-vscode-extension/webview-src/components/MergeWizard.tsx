@@ -15,6 +15,31 @@ import {
 } from "lucide-react";
 import apiClient, { getBaseUrl } from "../services/apiClient";
 
+// Large ontologies can legitimately take a while to download, but a stalled
+// connection with no timeout hangs the fetch (and the UI's loading state)
+// forever. Bounding it lets the existing catch/finally blocks reset the UI
+// and let the user retry.
+const MERGE_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs = MERGE_DOWNLOAD_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      throw new Error(`Download timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 interface MergeConflict {
   entityIRI: string;
   entityType: string;
@@ -252,7 +277,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
         // The current loaded file is NOT affected.
         console.log("[MergeWizard] Downloading merged file from temp project:", tempProjectId);
 
-        const downloadRes = await fetch(
+        const downloadRes = await fetchWithTimeout(
           `${getBaseUrl()}/api/ontology/files/${encodeURIComponent(tempProjectId)}/download`,
           {
             headers: {
@@ -369,7 +394,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
     try {
       const downloadProjectId = mergeResult?.targetProjectId || projectId;
       // Use the existing download endpoint to get the merged ontology
-      const response = await fetch(`${getBaseUrl()}/api/ontology/files/${downloadProjectId}/download`, {
+      const response = await fetchWithTimeout(`${getBaseUrl()}/api/ontology/files/${downloadProjectId}/download`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("authToken")}`,
         },
