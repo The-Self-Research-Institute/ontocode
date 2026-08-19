@@ -41,10 +41,14 @@ public class OntologyClientService {
         this.editorServiceUrl = editorServiceUrl;
         
         // ✅ FIXED: Use RestTemplate instead of blocking WebClient
+        // Read timeout matches the editor's own /api/ontology/warm timeoutMs=300000 convention
+        // for large-ontology operations — a 30s timeout here made SWRL rule creation fail with
+        // an opaque "I/O error ... null" on any real-world-sized ontology (e.g. GO-basic's
+        // ~13k classes took 105s+ to export), even though the fetch itself was succeeding.
         this.restTemplate = restTemplateBuilder
             .rootUri(editorServiceUrl)
             .setConnectTimeout(Duration.ofSeconds(10))
-            .setReadTimeout(Duration.ofSeconds(30))
+            .setReadTimeout(Duration.ofSeconds(300))
             .build();
             
         logger.info("Initialized OntologyClientService with URL: {}", editorServiceUrl);

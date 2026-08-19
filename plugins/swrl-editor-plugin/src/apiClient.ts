@@ -83,7 +83,11 @@ class ApiClient {
         const body = await response.text();
         if (body) {
           const parsed = JSON.parse(body);
-          detail = parsed.error || parsed.message || body;
+          // parsed.error is a boolean flag on this API's error shape ({error:true,
+          // message:"..."}), not a description — `error || message` picked the boolean
+          // first (truthy) and `new Error(true)` below stringified it to the literal
+          // text "true", discarding the real message entirely. Prefer the string field.
+          detail = parsed.message || (typeof parsed.error === 'string' ? parsed.error : '') || body;
         }
       } catch { /* ignore parse failure */ }
       throw new Error(detail || `Request failed (${response.status})`);
