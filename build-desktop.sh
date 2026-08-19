@@ -175,7 +175,7 @@ echo "   SUCCESS!"
 if $run_pack; then
     echo ""
     echo "Packaged installer is in:"
-    echo "  electron-app/dist/"
+    echo "  electron-app/dist-electron/"
 fi
 echo "============================================"
 echo ""

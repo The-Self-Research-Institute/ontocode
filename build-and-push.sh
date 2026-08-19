@@ -87,11 +87,20 @@ build() {
     echo " Started    : $(ts)"
     local _t0
     _t0=$(date +%s)
+    local build_args=()
+    if [[ "$tag" == "ontocode-web" ]]; then
+        if [[ "$VERSION" == "dev" ]]; then
+            build_args=(--build-arg "API_BASE_URL=https://ontocodedevapi.selfresearch.org")
+        else
+            build_args=(--build-arg "API_BASE_URL=https://ontocodeapi.selfresearch.org")
+        fi
+    fi
     # shellcheck disable=SC2086
     docker buildx build \
         --platform "$BUILD_PLATFORMS" \
         -t "$REGISTRY/$tag:$VERSION" \
         -f "$file" \
+        "${build_args[@]}" \
         $extra \
         --push \
         --progress=plain \
