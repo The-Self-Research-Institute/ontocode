@@ -212,7 +212,6 @@ remote-dev-release.log
 # WSL / remote-build dev tooling (personal iteration scripts, not part of the product)
 scripts/remote-*.sh
 scripts/probe-remote-*.sh
-scripts/check-jdk-prereqs.sh
 scripts/check-windows-prereqs.ps1
 scripts/check-wsl-prereqs.sh
 scripts/check-env-deploy-keys.py
