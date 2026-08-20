@@ -1,5 +1,3 @@
----
-
 # 3rd-Party Software for [ontocode](https://github.com/The-Self-Research-Institute/ontocode)
 
 The following 3rd-party software packages may be used by or distributed with **ontocode**.  Any information relevant to third-party vendors listed below are collected using common, reasonable means.
