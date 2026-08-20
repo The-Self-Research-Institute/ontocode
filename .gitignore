@@ -111,13 +111,20 @@ scripts/load-test/
 
 # Electron — compiled plugin bundles (build artifacts)
 electron-app/resources/backend/plugin-bundles/
-# Root-level markdown docs (internal one-off notes/guides) — keep only files actually
-# linked from README.md tracked
-/*.md
-!/README.md
-!/LAUNCHER_README.md
-!/INSTALLATION_GUIDE.md
-!/CITATIONS.md
+# Markdown docs, repo-wide — keep only README.md (any folder), CONTRIBUTING.md
+# and THIRD_PARTY_NOTICES.md (root only), CHANGELOG.md for the VS Code extension
+# (Marketplace auto-detects it by filename for the listing's changelog tab —
+# functional, not just internal notes), and the three docs/ files linked directly
+# from README.md. Everything else is internal notes, kept on disk locally but
+# never tracked.
+*.md
+!README.md
+!/CONTRIBUTING.md
+!/ontology-vscode-extension/CHANGELOG.md
+!/docs/LAUNCHER_README.md
+!/docs/INSTALLATION_GUIDE.md
+!/docs/CITATIONS.md
+!/THIRD_PARTY_NOTICES.md
 
 # One-off personal/ops scripts (account admin, diagnostics, cleanup) — not part of the product
 scripts/add-remove-member.js
@@ -212,7 +219,6 @@ remote-dev-release.log
 # WSL / remote-build dev tooling (personal iteration scripts, not part of the product)
 scripts/remote-*.sh
 scripts/probe-remote-*.sh
-scripts/check-jdk-prereqs.sh
 scripts/check-windows-prereqs.ps1
 scripts/check-wsl-prereqs.sh
 scripts/check-env-deploy-keys.py
@@ -860,3 +866,27 @@ scripts/upload-linux-desktop-via-ec2.md
 scripts/upload-win-exe-via-ec2.md
 shared/common-utils/src/main/java/self/research/ontology/common/ReasoningFriendlyErrors.md
 shared/common-utils/src/main/java/self/research/ontology/common/ReasoningHeapMonitor.md
+
+# scratch/temp files, never tracked
+/tmp/
+
+# personal recordings, notes, and logs — never tracked
+*.mp4
+!ontocode-flathub-demo.mp4
+*.docx
+*.xlsx
+pranesh_*.txt
+log.txt
+log.txts
+deploy-log.txt
+temp-runimport.txt
+ontocode-logs.txt
+
+# huge test ontologies — too large to track in git (225MB/237MB), kept local-only
+test-data/go-plus (1).owl
+test-data/mondo.owl
+
+# accidental command-output dumps / manual test scratch pages
+ontology-vscode-extension/out.txt
+ontology-vscode-extension/test-collaboration.html
+ontology-vscode-extension/test-invitation-helper.js

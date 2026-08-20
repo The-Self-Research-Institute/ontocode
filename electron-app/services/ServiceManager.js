@@ -437,6 +437,29 @@ async function ensureBaseCdsArchive(javaBinPath) {
     }
 }
 
+// The JVM creates the CDS archive (*.jsa) read-only after -XX:ArchiveClassesAtExit
+// completes. On Windows, fs.rmSync can't delete a read-only file even with force:true
+// (that flag only swallows ENOENT, not EPERM) — unlike POSIX unlink, which only cares
+// about the containing directory's permissions. Clear the attribute recursively first.
+function removeCdsDir(dir) {
+    try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return;
+    } catch (err) {
+        if (err.code !== 'EPERM' && err.code !== 'EACCES') throw err;
+    }
+    const clearReadOnly = (p) => {
+        const stat = fs.statSync(p);
+        if (stat.isDirectory()) {
+            fs.readdirSync(p).forEach((entry) => clearReadOnly(path.join(p, entry)));
+        } else {
+            fs.chmodSync(p, 0o666);
+        }
+    };
+    clearReadOnly(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+}
+
 async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPath) {
     const extractedDir = path.join(cdsDir, 'extracted');
     const extractedJar = path.join(extractedDir, path.basename(originalJar));
@@ -453,7 +476,7 @@ async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPat
     const isFresh = recorded && recorded.javaBin === javaBinPath && recorded.jarFingerprint === jarFingerprint;
     if (fs.existsSync(cdsDir) && !isFresh) {
         log('info', `[${name}] CDS cache missing/stale (JVM or jar changed) — regenerating`);
-        fs.rmSync(cdsDir, { recursive: true, force: true });
+        removeCdsDir(cdsDir);
     }
 
     await ensureBaseCdsArchive(javaBinPath);
@@ -476,6 +499,13 @@ async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPat
         log('info', `[${name}] Training CDS archive (one-time — this launch only, adds ~15-25s)…`);
         const trainingLog = path.join(cdsDir, 'training.log');
         await runToCompletion(javaBinPath, [
+            // Capped well below the real runtime heap (heaps.desktopXmx can be several GB) —
+            // this run only boots Spring once to record loaded classes, then exits immediately
+            // (spring.context.exit=onRefresh). Letting it inherit the JVM's unbounded default
+            // heap sizing made this one-time step the single heaviest allocation in the whole
+            // startup sequence, which is exactly what silently took the process down on a
+            // memory-constrained machine — no exception, no crash dialog, just gone.
+            '-Xmx512m',
             `-XX:ArchiveClassesAtExit=${archiveFile}`,
             '-Dspring.context.exit=onRefresh',
             '-jar', extractedJar,
