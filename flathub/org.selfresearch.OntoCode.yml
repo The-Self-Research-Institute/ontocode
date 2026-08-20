@@ -44,7 +44,7 @@ modules:
         strip-components: 1
       - type: git
         url: https://github.com/The-Self-Research-Institute/ontocode.git
-        commit: REPLACE_WITH_COMMIT_SHA_AFTER_PUSH
+        commit: f20c0c60bfc7d61ca8b2b52463ae46b92e89e7f1
         dest: upstream-src
       - type: script
         dest-filename: ontocode-desktop-wrapper.sh
