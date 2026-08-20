@@ -85,7 +85,7 @@ RUN mkdir -p /workspace/projects && \
     echo "CSP patch complete."
 
 # Copy and prepare the entrypoint script (fallback CSP patch for any re-downloads)
-COPY --from=builder /app/docker-entrypoint.sh /entrypoint.sh
+COPY --from=builder /app/scripts/docker-entrypoint.sh /entrypoint.sh
 RUN dos2unix /entrypoint.sh 2>/dev/null || sed -i 's/\r$//' /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
