@@ -118,6 +118,7 @@ electron-app/resources/backend/plugin-bundles/
 !/LAUNCHER_README.md
 !/INSTALLATION_GUIDE.md
 !/CITATIONS.md
+!/THIRD_PARTY_NOTICES.md
 
 # One-off personal/ops scripts (account admin, diagnostics, cleanup) — not part of the product
 scripts/add-remove-member.js
@@ -859,3 +860,9 @@ scripts/upload-linux-desktop-via-ec2.md
 scripts/upload-win-exe-via-ec2.md
 shared/common-utils/src/main/java/self/research/ontology/common/ReasoningFriendlyErrors.md
 shared/common-utils/src/main/java/self/research/ontology/common/ReasoningHeapMonitor.md
+
+# scratch/temp files, never tracked
+/tmp/
+
+# orphaned/dev-note docs in scripts/ — kept locally, not tracked
+scripts/*.md
