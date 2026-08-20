@@ -1087,7 +1087,7 @@ export const MultiSelectItem: React.FC<{
     const [showExplanation, setShowExplanation] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [showAnnotations, setShowAnnotations] = useState(false);
-    const [copied, setCopied] = useState(false);
+    const [copied, setCopied] = useState<'iri' | 'fragment' | null>(null);
     const [isHovered, setIsHovered] = useState(false);
     const [justType, setJustType] = useState<'regular' | 'laconic'>('laconic');
     const [limitJustifications, setLimitJustifications] = useState(true);
@@ -1156,8 +1156,19 @@ export const MultiSelectItem: React.FC<{
 
     const handleCopyIri = () => {
         navigator.clipboard.writeText(displayItem).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
+            setCopied('iri');
+            setTimeout(() => setCopied(null), 1500);
+        }).catch(() => {});
+    };
+    // The local name after the last '#' or '/' — e.g. copying '396458002' instead of
+    // the full 'http://.../ontology#396458002'. Useful when cross-referencing IRIs
+    // against external systems that only care about the fragment (a long-requested,
+    // never-implemented feature in Protégé — see issue #938).
+    const handleCopyFragment = () => {
+        const fragment = displayItem.split(/[#/]/).pop() || displayItem;
+        navigator.clipboard.writeText(fragment).then(() => {
+            setCopied('fragment');
+            setTimeout(() => setCopied(null), 1500);
         }).catch(() => {});
     };
     // Check if this is an inverse property expression
@@ -1444,10 +1455,17 @@ export const MultiSelectItem: React.FC<{
                         <div className="flex items-start gap-2">
                             <span className="font-mono text-gray-700 break-all flex-1 leading-relaxed select-all text-[10px]">{item}</span>
                             <button onClick={handleCopyIri}
+                                title="Copy the full IRI"
                                 className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                                    copied ? 'bg-green-100 border-green-300 text-green-700' : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-100'
+                                    copied === 'iri' ? 'bg-green-100 border-green-300 text-green-700' : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-100'
                                 }`}
-                            >{copied ? '✓ Copied' : 'Copy IRI'}</button>
+                            >{copied === 'iri' ? '✓ Copied' : 'Copy IRI'}</button>
+                            <button onClick={handleCopyFragment}
+                                title="Copy just the local name (fragment) after the last # or /"
+                                className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                                    copied === 'fragment' ? 'bg-green-100 border-green-300 text-green-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'
+                                }`}
+                            >{copied === 'fragment' ? '✓ Copied' : 'Copy Fragment'}</button>
                         </div>
                     </div>
                 </div>
