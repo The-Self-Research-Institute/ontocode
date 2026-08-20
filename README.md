@@ -5,6 +5,7 @@
 A **microservices-based ontology editing platform** with a **VS Code extension** and **web editor** for ontology authoring, visualization, reasoning, and collaboration.
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red)](https://github.com/sponsors/The-Self-Research-Institute) [![Donate](https://img.shields.io/badge/Donate-selfresearch.org-blueviolet)](https://selfresearch.org/donate)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FThe-Self-Research-Institute%2Fontocode.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FThe-Self-Research-Institute%2Fontocode?ref=badge_shield)
 
 ---
 
@@ -393,3 +394,6 @@ See also [CITATION.cff](CITATION.cff), [CITATIONS.md](CITATIONS.md), and [refere
 ## License
 
 [AGPL v3 License](LICENSE)
+
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FThe-Self-Research-Institute%2Fontocode.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FThe-Self-Research-Institute%2Fontocode?ref=badge_large)
