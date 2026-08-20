@@ -29,7 +29,8 @@ import java.util.Map;
 public class OntologyClientService {
 
     private static final Logger logger = LoggerFactory.getLogger(OntologyClientService.class);
-    
+    private static final int DIAGNOSTIC_CAPTURE_LIMIT = 4096;
+
     private final RestTemplate restTemplate;
     private final String editorServiceUrl;
 
@@ -40,10 +41,14 @@ public class OntologyClientService {
         this.editorServiceUrl = editorServiceUrl;
         
         // ✅ FIXED: Use RestTemplate instead of blocking WebClient
+        // Read timeout matches the editor's own /api/ontology/warm timeoutMs=300000 convention
+        // for large-ontology operations — a 30s timeout here made SWRL rule creation fail with
+        // an opaque "I/O error ... null" on any real-world-sized ontology (e.g. GO-basic's
+        // ~13k classes took 105s+ to export), even though the fetch itself was succeeding.
         this.restTemplate = restTemplateBuilder
             .rootUri(editorServiceUrl)
             .setConnectTimeout(Duration.ofSeconds(10))
-            .setReadTimeout(Duration.ofSeconds(30))
+            .setReadTimeout(Duration.ofSeconds(300))
             .build();
             
         logger.info("Initialized OntologyClientService with URL: {}", editorServiceUrl);
@@ -110,9 +115,22 @@ public class OntologyClientService {
                         );
                     }
                     OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-                    try (InputStream is = response.getBody()) {
+                    // Mirror only the first DIAGNOSTIC_CAPTURE_LIMIT bytes into a small in-memory
+                    // buffer as the parser reads, so a parse failure can log what the editor
+                    // actually sent instead of just "6 parsers tried, all failed". Bounded to a
+                    // few KB regardless of ontology size, so it doesn't reintroduce the full-heap
+                    // buffering this streaming approach was written to avoid.
+                    java.io.ByteArrayOutputStream headCapture =
+                        new java.io.ByteArrayOutputStream(DIAGNOSTIC_CAPTURE_LIMIT);
+                    try (InputStream raw = response.getBody();
+                         InputStream is = new BoundedTeeInputStream(raw, headCapture, DIAGNOSTIC_CAPTURE_LIMIT)) {
                         return manager.loadOntologyFromOntologyDocument(is);
                     } catch (OWLOntologyCreationException e) {
+                        logger.error(
+                            "OWL parse failure for project {}. First {} bytes of the exported document:\n{}",
+                            projectId, headCapture.size(),
+                            headCapture.toString(java.nio.charset.StandardCharsets.UTF_8)
+                        );
                         throw new RuntimeException("OWL parsing error", e);
                     }
                 },
@@ -242,6 +260,40 @@ public class OntologyClientService {
 
     public String getEditorServiceUrl() {
         return editorServiceUrl;
+    }
+}
+
+/**
+ * Mirrors up to {@code limit} bytes read through it into {@code capture}, then passes reads
+ * through untouched. Used to grab a diagnostic head-sample of a streamed ontology document
+ * without buffering the whole thing in heap.
+ */
+class BoundedTeeInputStream extends java.io.FilterInputStream {
+    private final java.io.ByteArrayOutputStream capture;
+    private final int limit;
+
+    BoundedTeeInputStream(InputStream in, java.io.ByteArrayOutputStream capture, int limit) {
+        super(in);
+        this.capture = capture;
+        this.limit = limit;
+    }
+
+    @Override
+    public int read() throws java.io.IOException {
+        int b = super.read();
+        if (b != -1 && capture.size() < limit) {
+            capture.write(b);
+        }
+        return b;
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws java.io.IOException {
+        int n = super.read(b, off, len);
+        if (n > 0 && capture.size() < limit) {
+            capture.write(b, off, Math.min(n, limit - capture.size()));
+        }
+        return n;
     }
 }
 

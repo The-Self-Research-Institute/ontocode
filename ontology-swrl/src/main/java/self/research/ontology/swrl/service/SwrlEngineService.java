@@ -94,6 +94,27 @@ public class SwrlEngineService {
         }
     }
 
+    /**
+     * Translates SWRLAPI's "Invalid SWRL atom predicate '...'" into a message naming the
+     * actual problem (an undeclared class/property) instead of a bare syntax error, since
+     * that's the message a user reads. Returns null when the exception message doesn't match —
+     * i.e. it's some other, genuine parse error.
+     */
+    private ValidationResult unknownEntityResult(String exceptionMessage) {
+        String msg = exceptionMessage != null ? exceptionMessage : "";
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("Invalid SWRL atom predicate '([^']+)'").matcher(msg);
+        if (!m.find()) return null;
+        String missing = m.group(1);
+        return new ValidationResult(false,
+            "Unknown class or property '" + missing + "'",
+            List.of(
+                "'" + missing + "' does not exist in this ontology.",
+                "To infer new class membership: create the class '" + missing + "' first using the Entities panel, then use it in this rule.",
+                "To use an existing class: check the spelling against the Entities panel."
+            ));
+    }
+
     public ValidationResult validateRule(String projectId, String ruleText) {
         long startTime = System.currentTimeMillis();
         engineLog.info("[VALIDATE] Starting validation project={} ruleLength={}", projectId, ruleText.length());
@@ -121,24 +142,21 @@ public class SwrlEngineService {
             try {
                 validationEngine.createSWRLRule(tempName, resolvedText);
             } catch (SWRLParseException parseEx) {
-                // Re-throw so the outer catch block handles it with enhanced suggestions
+                // SWRLAPI throws SWRLParseException (not a bare Exception) for an unbound
+                // atom predicate too — e.g. "Invalid SWRL atom predicate 'hasAge'" when hasAge
+                // isn't declared in the ontology. Check for that pattern here as well, or this
+                // case never reaches the friendly translation below and the user sees the raw
+                // "Syntax error: Invalid SWRL atom predicate '...'" instead.
+                ValidationResult unknownEntity = unknownEntityResult(parseEx.getMessage());
+                if (unknownEntity != null) return unknownEntity;
+                // Otherwise a genuine syntax error — re-throw so the outer catch block handles
+                // it with enhanced suggestions.
                 throw parseEx;
             } catch (Exception createEx) {
                 // createSWRLRule throws a non-parse exception when a class/property name in
                 // the rule does not exist in the ontology (e.g. "Invalid SWRL atom predicate").
-                String msg = createEx.getMessage() != null ? createEx.getMessage() : createEx.getClass().getSimpleName();
-                java.util.regex.Matcher m = java.util.regex.Pattern
-                        .compile("Invalid SWRL atom predicate '([^']+)'").matcher(msg);
-                if (m.find()) {
-                    String missing = m.group(1);
-                    return new ValidationResult(false,
-                        "Unknown class or property '" + missing + "'",
-                        List.of(
-                            "'" + missing + "' does not exist in this ontology.",
-                            "To infer new class membership: create the class '" + missing + "' first using the Entities panel, then use it in this rule.",
-                            "To use an existing class: check the spelling against the Entities panel."
-                        ));
-                }
+                ValidationResult unknownEntity = unknownEntityResult(createEx.getMessage());
+                if (unknownEntity != null) return unknownEntity;
                 throw createEx;
             }
 
@@ -223,10 +241,11 @@ public class SwrlEngineService {
         }
     }
 
-    public SwrlRule createRule(String projectId, String ruleName, String ruleText, 
+    public SwrlRule createRule(String projectId, String ruleName, String ruleText,
                               String comment, String category) {
         long startTime = System.currentTimeMillis();
         engineLog.info("[CREATE_RULE] Starting project={} ruleName={}", projectId, ruleName);
+        SwrlRule rule = null;
         try {
             // Check for duplicate rule name
             if (ruleRepository.existsByProjectIdAndRuleName(projectId, ruleName)) {
@@ -240,7 +259,7 @@ public class SwrlEngineService {
             }
 
             // Create and save rule
-            SwrlRule rule = new SwrlRule(projectId, ruleName, ruleText);
+            rule = new SwrlRule(projectId, ruleName, ruleText);
             rule.setComment(comment);
             rule.setCategory(category);
             rule = ruleRepository.save(rule);
@@ -255,18 +274,33 @@ public class SwrlEngineService {
             engine.createSWRLRule(ruleName, resolvedText);
 
             logger.info("Created SWRL rule: {} for project: {}", ruleName, projectId);
-            
+
             if (meterRegistry != null) {
-                meterRegistry.counter("swrl.rules.created", 
+                meterRegistry.counter("swrl.rules.created",
                     "projectId", projectId).increment();
             }
-            
+
             long totalDuration = System.currentTimeMillis() - startTime;
             perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} duration={}ms", projectId, ruleName, totalDuration);
             engineLog.info("[CREATE_RULE] Completed in {}ms project={} rule={}", totalDuration, projectId, ruleName);
             return rule;
 
         } catch (Exception e) {
+            // rule is only non-null once ruleRepository.save() above succeeded, so it's
+            // already persisted even though the engine never accepted it (fetchOntology,
+            // namespace setup, or engine.createSWRLRule threw after the save). Left as-is,
+            // that orphaned document would permanently block this rule name via
+            // existsByProjectIdAndRuleName on every future attempt, even though nothing
+            // usable was ever added to the rule engine and the user sees this as a
+            // straightforward failure — roll it back so the name is free to retry.
+            if (rule != null && rule.getId() != null) {
+                try {
+                    ruleRepository.deleteById(rule.getId());
+                } catch (Exception cleanupEx) {
+                    logger.warn("Failed to roll back orphaned rule {} for project {} after create failure",
+                            rule.getId(), projectId, cleanupEx);
+                }
+            }
             long totalDuration = System.currentTimeMillis() - startTime;
             logger.error("Failed to create rule {} for project {} after {}ms", ruleName, projectId, totalDuration, e);
             perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} status=error duration={}ms", projectId, ruleName, totalDuration);

@@ -34,11 +34,30 @@ async function getAuthToken() {
 const EXPORT_POLL_INTERVAL_MS = 3000;
 const EXPORT_MAX_POLL_MS = 60 * 60 * 1000;
 
+// Per-request network timeout. Separate from EXPORT_MAX_POLL_MS, which bounds
+// the whole export job (legitimately long for big ontologies) — this catches
+// a single stalled/dead connection (e.g. dropped socket) that would otherwise
+// never resolve or reject, hanging the renderer's await indefinitely.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30_000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+        }
+        throw err;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function submitExportJob(projectId, format) {
     const t = await getAuthToken();
     const headers = { 'Content-Type': 'application/json' };
     if (t) headers['Authorization'] = `Bearer ${t}`;
-    const res = await fetch(`${DESKTOP_API}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}`, {
+    const res = await fetchWithTimeout(`${DESKTOP_API}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}`, {
         method: 'POST',
         headers,
     });
@@ -55,8 +74,13 @@ async function waitForExportJob(jobId) {
     const deadline = Date.now() + EXPORT_MAX_POLL_MS;
     // eslint-disable-next-line no-constant-condition
     while (true) {
-        const res = await fetch(`${DESKTOP_API}/api/ontology/export-async/status/${jobId}`, { headers });
-        const data = await res.json().catch(() => null);
+        // A single poll timing out (dropped connection, brief backend hiccup) shouldn't
+        // fail the whole export — only the overall deadline below should give up.
+        let data = null;
+        try {
+            const res = await fetchWithTimeout(`${DESKTOP_API}/api/ontology/export-async/status/${jobId}`, { headers }, 15_000);
+            data = await res.json().catch(() => null);
+        } catch (_) { /* transient — retry on next poll unless deadline passed */ }
         if (data && data.status === 'COMPLETED') return;
         if (data && data.status === 'ERROR') throw new Error(data.error || 'Export failed.');
         if (Date.now() >= deadline) throw new Error('Export is taking much longer than expected. Please try again later.');
@@ -85,7 +109,7 @@ async function exportOntologyViaJob(projectId, format, filename) {
     const headers = {};
     if (t) headers['Authorization'] = `Bearer ${t}`;
 
-    const response = await fetch(`${DESKTOP_API}/api/ontology/export-async/download/${jobId}`, { headers });
+    const response = await fetchWithTimeout(`${DESKTOP_API}/api/ontology/export-async/download/${jobId}`, { headers }, 5 * 60_000);
     if (!response.ok) throw new Error(`Export download failed (${response.status}).`);
 
     const blob = await response.blob();

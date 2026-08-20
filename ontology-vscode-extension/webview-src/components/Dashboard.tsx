@@ -2423,6 +2423,35 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
   const [isDownloadingCodeView, setIsDownloadingCodeView] = useState(false);
+  // Tracks the in-flight Code View download's requestId so the real
+  // "downloadOntologyComplete"/"downloadOntologyFailed" host reply can clear
+  // the spinner (previously this used a fixed 3s cooldown that cleared the
+  // spinner regardless of whether the download had actually finished).
+  const codeViewDownloadRequestIdRef = useRef(0);
+  const pendingCodeViewDownloadRef = useRef<{ requestId: number; filename: string } | null>(null);
+  const codeViewDownloadSafetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handleCodeViewDownloadMessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (!message || (message.type !== "downloadOntologyComplete" && message.type !== "downloadOntologyFailed")) return;
+      const pending = pendingCodeViewDownloadRef.current;
+      if (!pending || message.requestId !== pending.requestId) return;
+      if (codeViewDownloadSafetyTimeoutRef.current) {
+        clearTimeout(codeViewDownloadSafetyTimeoutRef.current);
+        codeViewDownloadSafetyTimeoutRef.current = null;
+      }
+      pendingCodeViewDownloadRef.current = null;
+      setIsDownloadingCodeView(false);
+      if (message.type === "downloadOntologyComplete") {
+        notificationService.success("Export Complete", `${pending.filename} downloaded`);
+      } else if (!message.cancelled) {
+        notificationService.error("Export Failed", message.error || `Could not export ${pending.filename}`);
+      }
+    };
+    window.addEventListener("message", handleCodeViewDownloadMessage);
+    return () => window.removeEventListener("message", handleCodeViewDownloadMessage);
+  }, []);
   // Large-file guard: CodeHighlighter materializes per-line gutter elements and
   // scans the whole document for fold ranges, so past this size the webview
   // freezes. Above the cap we show a read-only preview of the head of the file
@@ -12572,12 +12601,20 @@ const updateItemInState = useCallback(
     const filename = `${projectId}.${ext}`;
     const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(projectId)}?format=${codeViewFormat}`;
     if (window.vscode) {
+      codeViewDownloadRequestIdRef.current += 1;
+      const requestId = codeViewDownloadRequestIdRef.current;
+      pendingCodeViewDownloadRef.current = { requestId, filename };
       setIsDownloadingCodeView(true);
-      window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId, format: codeViewFormat });
-      notificationService.success("Export Started", `Downloading ${filename}`);
-      // No requestId/completion message wired up for this path (unlike the main
-      // toolbar Export button) — fall back to a fixed cooldown before allowing another click.
-      setTimeout(() => setIsDownloadingCodeView(false), 3000);
+      window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId, format: codeViewFormat, requestId });
+      notificationService.info("Exporting…", `${filename} — this can take a few minutes for large ontologies`);
+      if (codeViewDownloadSafetyTimeoutRef.current) clearTimeout(codeViewDownloadSafetyTimeoutRef.current);
+      codeViewDownloadSafetyTimeoutRef.current = setTimeout(() => {
+        if (pendingCodeViewDownloadRef.current?.requestId === requestId) {
+          pendingCodeViewDownloadRef.current = null;
+          setIsDownloadingCodeView(false);
+          notificationService.error("Export Timed Out", `${filename} export did not finish in time. Please try again.`);
+        }
+      }, 60 * 60 * 1000);
     } else {
       window.open(url, "_blank");
     }

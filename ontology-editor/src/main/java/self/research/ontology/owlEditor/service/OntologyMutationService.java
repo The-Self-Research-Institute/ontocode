@@ -361,11 +361,18 @@ public class OntologyMutationService {
             requireDraftCopyReady(projectId, userId);
             datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
         } else {
+            // Mark dirty BEFORE the write: execUpdate() synchronously triggers
+            // OwlApiMutationCoordinator.afterMutation(), which rewarms the in-memory
+            // OWLAPI model right away by checking this same dirty marker to decide
+            // whether to re-export from Fuseki or reuse the on-disk cache. Marking
+            // dirty afterward meant the rewarm ran before the marker existed, so it
+            // reloaded the stale pre-write on-disk ontology — visible as an edit
+            // (e.g. an IRI rename) reverting to its old value shortly after saving.
+            markDirtyAfterRawWrite(projectId);
             datasetService.execUpdate(projectId, sparql);
             if (mainGraphRevisionService != null) {
                 mainGraphRevisionService.incrementRevision(projectId);
             }
-            markDirtyAfterRawWrite(projectId);
         }
         topLevelCacheService.evict(projectId);
         invalidatePublicCodeViewCache(projectId, draft);
@@ -417,11 +424,18 @@ public class OntologyMutationService {
             requireDraftCopyReady(projectId, userId);
             datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
         } else {
+            // Mark dirty BEFORE the write: execUpdate() synchronously triggers
+            // OwlApiMutationCoordinator.afterMutation(), which rewarms the in-memory
+            // OWLAPI model right away by checking this same dirty marker to decide
+            // whether to re-export from Fuseki or reuse the on-disk cache. Marking
+            // dirty afterward meant the rewarm ran before the marker existed, so it
+            // reloaded the stale pre-write on-disk ontology — visible as an edit
+            // (e.g. an IRI rename) reverting to its old value shortly after saving.
+            markDirtyAfterRawWrite(projectId);
             datasetService.execUpdate(projectId, sparql);
             if (mainGraphRevisionService != null) {
                 mainGraphRevisionService.incrementRevision(projectId);
             }
-            markDirtyAfterRawWrite(projectId);
         }
         topLevelCacheService.evict(projectId);
         invalidatePublicCodeViewCache(projectId, draft);

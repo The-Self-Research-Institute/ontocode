@@ -446,13 +446,20 @@ public class DesktopOntologyLoader {
             }
         }
 
+        // "current" variants are checked before their "original" counterpart: this list
+        // assumes whatever exists is already mutually consistent, but a merge/reimport can
+        // leave ontology.original.owl on disk lagging behind a freshly-written
+        // ontology.current.owl — reproduced live: after a merge, original.owl still missed
+        // the merged class while current.owl had it, and original.owl's priority here served
+        // the stale one. Freshness beats the format-based "fastest to parse" heuristic when
+        // they conflict — a stale-but-fast parse is strictly worse than a correct one.
         List<String> fastFirst = List.of(
+            "ontology.current.ttl",
+            "ontology.current.owl",
             "ontology.original.ofn",
             "ontology.original.ttl",
             "ontology.original.nt",
-            "ontology.current.ttl",
-            "ontology.original.owl",
-            "ontology.current.owl"
+            "ontology.original.owl"
         );
         for (String name : fastFirst) {
             Path p = dir.resolve(name);

@@ -23,6 +23,28 @@ const proxy    = require('./services/ProxyServer');
 const autoUpdater = require('./services/AutoUpdater');
 const detectJava = require('./scripts/detect-java');
 
+// ── Crash safety net ───────────────────────────────────────────────────────────
+// Without this, an uncaught exception or unhandled rejection anywhere in the main
+// process (e.g. during backend startup) kills the process with zero trace: no
+// dialog, no log line, no Windows crash event — it just silently disappears a
+// few seconds after the splash screen appears.
+function writeCrashLog(label, err) {
+    try {
+        const dir = app.getPath('userData');
+        fs.mkdirSync(dir, { recursive: true });
+        const line = `[${new Date().toISOString()}] ${label}: ${err && err.stack ? err.stack : err}\n`;
+        fs.appendFileSync(path.join(dir, 'crash.log'), line);
+    } catch (_) { /* best effort — never let logging itself crash the crash handler */ }
+}
+process.on('uncaughtException', (err) => {
+    writeCrashLog('uncaughtException', err);
+    dialog.showErrorBox('OntoCode Studio crashed', String(err && err.stack ? err.stack : err));
+    app.exit(1);
+});
+process.on('unhandledRejection', (err) => {
+    writeCrashLog('unhandledRejection', err);
+});
+
 // ── Dev mode ─────────────────────────────────────────────────────────────────
 // Set ELECTRON_IS_DEV=1 to skip bundled service startup and point at Docker.
 // ELECTRON_DEV_API_URL overrides the backend URL (default: http://localhost:8083).
@@ -387,13 +409,19 @@ app.whenReady().then(async () => {
             await proxy.start(svcMgr.DESKTOP_PORT, svcMgr.SWRL_PORT);
             sendSplashLog('ok', `Routing proxy ready on port ${proxy.PROXY_PORT}`);
         } catch (err) {
-            if (splashWindow) splashWindow.close();
-            await dialog.showMessageBox({
+            // Persist the real error regardless of whether the dialog below is ever seen —
+            // closing the splash window drops BrowserWindow count to 0, which fires
+            // 'window-all-closed' or delays enough for app.quit() to tear down the message
+            // box before it finishes painting, leaving just the title chrome visible.
+            writeCrashLog('startupFailed', err);
+            const detail = `Failed to start backend services:\n\n${err.message}\n\nCheck the logs in:\n${app.getPath('userData')}/logs`;
+            await dialog.showMessageBox(splashWindow || undefined, {
                 type: 'error',
                 title: 'Startup failed',
-                message: `Failed to start backend services:\n\n${err.message}\n\nCheck the logs in:\n${app.getPath('userData')}/logs`,
+                message: detail,
                 buttons: ['OK'],
             });
+            if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
             app.quit();
             return;
         }
