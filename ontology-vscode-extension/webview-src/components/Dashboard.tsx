@@ -1762,6 +1762,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
+  // Mirrors `metadata` for code (like the WebSocket message listener further
+  // down) that runs inside a closure attached before this state last changed —
+  // reading `metadata` directly there can see a stale value from a previous
+  // file. See classHierarchyRef below for the matching mirror + full context.
+  const metadataRef = useRef<OntologyMetadata | null>(null);
+  useEffect(() => {
+    metadataRef.current = metadata;
+  }, [metadata]);
   const [ontologyImports, setOntologyImports] = useState<string[]>([]);
   const [generalClassAxioms, setGeneralClassAxioms] = useState<
     Array<{
@@ -2326,6 +2334,21 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
 
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
+  // Mirrors `classHierarchy` for the WebSocket message listener further down.
+  // That listener is set up inside a useEffect whose dependency array doesn't
+  // include classHierarchy/metadata (adding them would make it tear down and
+  // reattach the socket listener on every single hierarchy update, which is
+  // its own can of worms). Without this, the listener's IMPORT_COMPLETED
+  // handler kept reading classHierarchy/metadata from whatever they were when
+  // the listener was last attached — e.g. the PREVIOUS file's non-empty
+  // hierarchy — even after handleLoadProjectFile had already reset both to
+  // empty/null for a newly created file. That made the "is this project
+  // already loaded?" check wrongly say yes for a brand-new file, skip calling
+  // fetchData entirely, and leave every loading spinner stuck forever.
+  const classHierarchyRef = useRef<TreeNode[]>([]);
+  useEffect(() => {
+    classHierarchyRef.current = classHierarchy;
+  }, [classHierarchy]);
   const [topLevelTruncated, setTopLevelTruncated] = useState(false);
   const [topLevelTotal, setTopLevelTotal] = useState(0);
   const [isLoadingMoreTopLevel, setIsLoadingMoreTopLevel] = useState(false);
@@ -6884,7 +6907,6 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
         setPendingImportProjectId(message.projectId);
         console.log("[Dashboard] Set pendingImportProjectIdRef.current to:", pendingImportProjectIdRef.current);
-        setIsExpectingFileReady(true);
         setImportReadyToBrowse(false);
         setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
         setBackgroundImportProgress(0);
@@ -6894,9 +6916,15 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         }
         if (isDesktop()) {
           // Desktop: block with loading dialog
+          setIsExpectingFileReady(true);
           setShowLoadingChoice(true);
-        } else {
-          // Webapp: stay in project library — import card shows live progress
+        }  else if (!hasUserSelectedFileRef.current) {
+          // Webapp, first file this session: stay in project library — import
+          // card shows live progress. Only do this before the user has ever
+          // selected a file — if they're already inside the editor (e.g.
+          // creating a new file while another file is open), this just flashes
+          // Project Library in and out for a second before the editor takes
+          // back over, which is exactly the bug being fixed here.
           setShowProjectSelector(true);
         }
         // Don't fetch projects yet - wait for upload to complete
@@ -7021,30 +7049,57 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           } else {
             console.log("[Dashboard] ⚠️ fileReady received but no initialProjectId, cannot refresh");
           }
-
           if (initialProjectId && message.projectId === initialProjectId) {
-            // If this fileReady came from creating/uploading a new file into the project,
-            // auto-load it so the user sees it immediately instead of requiring a manual click.
-            if (message.uploadedFileId && message.uploadedFileName) {
-              console.log(
-                "[Dashboard] 📂 New file created in project, auto-loading:",
-                message.uploadedFileId,
-                message.uploadedFileName,
-              );
-              // Wait for the file list refresh to complete, then load the new file
-              fetchProjects();
-              // Use a small delay to let the file list state update.
-              // Guard with isMountedRef so navigation away before the timer fires
-              // does not re-set selectedFileId in App.tsx via onFileSelected.
-              setTimeout(() => {
-                if (!isMountedRef.current) return;
-                handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
-              }, 200);
-            } else {
-              console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
-              fetchProjects();
+            // If this exact file is already being loaded by an in-flight
+            // handleLoadProjectFile call (e.g. we just created it ourselves,
+            // and that call is already waiting via pendingImportProjectIdRef
+            // for this very fileReady signal), don't re-trigger a redundant
+            // load here. That redundant call gets silently dropped by
+            // handleLoadProjectFile's own re-entrancy guard anyway — but this
+            // branch used to `break` unconditionally right after, which meant
+            // the message never reached the pendingImportProjectIdRef-matching
+            // branch below that the original call actually needed to call
+            // fetchData() and clear its loading flags. Net effect: creating a
+            // new file while already inside another open file left every
+            // loading spinner stuck forever, until a hard refresh bypassed
+            // this whole path.
+            const alreadyHandling =
+              !!message.uploadedFileId &&
+              fileLoadingRef.current &&
+              lastLoadedFileRef.current === message.uploadedFileId;
+
+            if (!alreadyHandling) {
+              // If this fileReady came from creating/uploading a new file into the project,
+              // auto-load it so the user sees it immediately instead of requiring a manual click.
+              if (message.uploadedFileId && message.uploadedFileName) {
+                console.log(
+                  "[Dashboard] 📂 New file created in project, auto-loading:",
+                  message.uploadedFileId,
+                  message.uploadedFileName,
+                );
+                // Wait for the file list refresh to complete, then load the new file
+                fetchProjects();
+                // Use a small delay to let the file list state update.
+                // Guard with isMountedRef so navigation away before the timer fires
+                // does not re-set selectedFileId in App.tsx via onFileSelected.
+                setTimeout(() => {
+                  if (!isMountedRef.current) return;
+                  handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
+                }, 200);
+              } else {
+                console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
+                fetchProjects();
+              }
+              break;
             }
-            break;
+
+            console.log(
+              "[Dashboard] fileReady for a file already being loaded via handleLoadProjectFile — " +
+                "not double-triggering, falling through so the pendingImportProjectIdRef branch below can complete it:",
+              message.uploadedFileId,
+            );
+            // Deliberately no `break` here — fall through to the
+            // pendingImportProjectIdRef-matching branch below.
           }
           if (
             initialProjectId &&
@@ -7363,8 +7418,9 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
                 // after the first load completes (loadingPromiseRef is null at that point),
                 // which would cause infinite reload loops.
                 const owlThingChildren =
-                  classHierarchy.find((n) => n.id === "http://www.w3.org/2002/07/owl#Thing")?.children?.length ?? 0;
-                if (targetProjectId === projectId && owlThingChildren > 0 && metadata) {
+                  classHierarchyRef.current.find((n) => n.id === "http://www.w3.org/2002/07/owl#Thing")?.children
+                    ?.length ?? 0;
+                if (targetProjectId === projectId && owlThingChildren > 0 && metadataRef.current) {
                   console.log("[Dashboard] IMPORT_COMPLETED: project already loaded, skipping redundant fetch");
                   cleanupUI();
                   setIsInitialLoading(false);
@@ -11008,15 +11064,13 @@ const updateItemInState = useCallback(
         }
       }
 
-      // For parent label, compute via functional state accessor.
-      let parentLabel = activeSelectedItem.label;
-      if (type === "sibling") {
-        setClassHierarchy((currentHierarchy) => {
-          const parent = findParentNode(currentHierarchy, activeSelectedItem.id);
-          parentLabel = parent?.label || "owl:Thing";
-          return currentHierarchy; // No change
-        });
-      }
+     // Show the class you selected, not its parent — "Sibling Of: Sub2" reads
+      // more naturally to users than naming the shared parent ("Pizza"), even
+      // though the new class is still actually created under that same parent.
+      // This is purely a display label; handleCreateClass independently
+      // recomputes the real parent for actual placement, so this change has no
+      // effect on where the class actually ends up.
+      const parentLabel = activeSelectedItem.label;
 
       setAddClassType(type);
       setClassParentLabel(parentLabel);
@@ -11042,9 +11096,6 @@ const updateItemInState = useCallback(
           if (type === "subclass" && selectedItem?.id) {
             parentIri = selectedItem.id;
           } else if (type === "sibling" && selectedItem?.id) {
-            // Use functional update to find parent without dependency
-            let foundParentIri = "http://www.w3.org/2002/07/owl#Thing";
-            setClassHierarchy((currentHierarchy) => {
               const findParent = (
                 nodes: TreeNode[],
                 targetId: string,
@@ -11059,12 +11110,9 @@ const updateItemInState = useCallback(
                 }
                 return null;
               };
-              const parent = findParent(currentHierarchy, selectedItem.id);
-              foundParentIri = parent?.id || "http://www.w3.org/2002/07/owl#Thing";
-              return currentHierarchy; // No change yet
-            });
-            parentIri = foundParentIri;
-          }
+              const parent = findParent(classHierarchy, selectedItem.id);
+              parentIri = parent?.id || "http://www.w3.org/2002/07/owl#Thing";
+            }
 
           // Call backend API with user info
           await ontologyMutationService.createClass(
@@ -11225,7 +11273,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create entity. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved, refreshProperties, loadChildren],
+    [projectId, selectedItem, addClassType, entitiesTab, metadata, classHierarchy, markAsUnsaved, refreshProperties, loadChildren],
   );
 
   const handleCreateObjectProperty = useCallback(
