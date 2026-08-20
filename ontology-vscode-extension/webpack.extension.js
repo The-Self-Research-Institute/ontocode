@@ -29,12 +29,7 @@ const pick = (...keys) => {
 
 const config = {
   target: 'node', // vscode extensions run in a Node.js-context 📖 https://webpack.js.org/configuration/node/
-  cache: {
-    type: 'filesystem',
-    buildDependencies: {
-      config: [__filename]
-    }
-  },
+  cache: false, // was filesystem cache keyed only on this file's mtime — didn't invalidate when ENV_FILE content changed, serving stale CLOUD_GATEWAY_URL values across builds
   entry: './src/extension.ts', // the entry point of this extension
   output: {
     path: path.resolve(__dirname, 'dist'),

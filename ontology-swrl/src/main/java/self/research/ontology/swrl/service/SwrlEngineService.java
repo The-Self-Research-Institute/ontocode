@@ -94,6 +94,27 @@ public class SwrlEngineService {
         }
     }
 
+    /**
+     * Translates SWRLAPI's "Invalid SWRL atom predicate '...'" into a message naming the
+     * actual problem (an undeclared class/property) instead of a bare syntax error, since
+     * that's the message a user reads. Returns null when the exception message doesn't match —
+     * i.e. it's some other, genuine parse error.
+     */
+    private ValidationResult unknownEntityResult(String exceptionMessage) {
+        String msg = exceptionMessage != null ? exceptionMessage : "";
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("Invalid SWRL atom predicate '([^']+)'").matcher(msg);
+        if (!m.find()) return null;
+        String missing = m.group(1);
+        return new ValidationResult(false,
+            "Unknown class or property '" + missing + "'",
+            List.of(
+                "'" + missing + "' does not exist in this ontology.",
+                "To infer new class membership: create the class '" + missing + "' first using the Entities panel, then use it in this rule.",
+                "To use an existing class: check the spelling against the Entities panel."
+            ));
+    }
+
     public ValidationResult validateRule(String projectId, String ruleText) {
         long startTime = System.currentTimeMillis();
         engineLog.info("[VALIDATE] Starting validation project={} ruleLength={}", projectId, ruleText.length());
@@ -121,24 +142,21 @@ public class SwrlEngineService {
             try {
                 validationEngine.createSWRLRule(tempName, resolvedText);
             } catch (SWRLParseException parseEx) {
-                // Re-throw so the outer catch block handles it with enhanced suggestions
+                // SWRLAPI throws SWRLParseException (not a bare Exception) for an unbound
+                // atom predicate too — e.g. "Invalid SWRL atom predicate 'hasAge'" when hasAge
+                // isn't declared in the ontology. Check for that pattern here as well, or this
+                // case never reaches the friendly translation below and the user sees the raw
+                // "Syntax error: Invalid SWRL atom predicate '...'" instead.
+                ValidationResult unknownEntity = unknownEntityResult(parseEx.getMessage());
+                if (unknownEntity != null) return unknownEntity;
+                // Otherwise a genuine syntax error — re-throw so the outer catch block handles
+                // it with enhanced suggestions.
                 throw parseEx;
             } catch (Exception createEx) {
                 // createSWRLRule throws a non-parse exception when a class/property name in
                 // the rule does not exist in the ontology (e.g. "Invalid SWRL atom predicate").
-                String msg = createEx.getMessage() != null ? createEx.getMessage() : createEx.getClass().getSimpleName();
-                java.util.regex.Matcher m = java.util.regex.Pattern
-                        .compile("Invalid SWRL atom predicate '([^']+)'").matcher(msg);
-                if (m.find()) {
-                    String missing = m.group(1);
-                    return new ValidationResult(false,
-                        "Unknown class or property '" + missing + "'",
-                        List.of(
-                            "'" + missing + "' does not exist in this ontology.",
-                            "To infer new class membership: create the class '" + missing + "' first using the Entities panel, then use it in this rule.",
-                            "To use an existing class: check the spelling against the Entities panel."
-                        ));
-                }
+                ValidationResult unknownEntity = unknownEntityResult(createEx.getMessage());
+                if (unknownEntity != null) return unknownEntity;
                 throw createEx;
             }
 

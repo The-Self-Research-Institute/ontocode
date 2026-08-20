@@ -241,6 +241,48 @@ function validateBackendBundles() {
     throw new Error(lines.join('\n'));
 }
 
+// Mongo exit code 62 ("NeedDowngrade") means the on-disk data files were written by a
+// different, incompatible MongoDB version than the one we're bundling now — e.g. a user
+// updates the app and our bundled mongod version changed since their last local database
+// was created. This is only ever a problem for someone already on disk with the OLD
+// format; it must never trigger for the common case (same version, or a brand-new
+// install), so we only react to it AFTER a real start attempt fails with exactly this code.
+const MONGO_EXIT_NEED_DOWNGRADE = 62;
+
+async function attemptStartMongo(dataDir) {
+    const logFile = path.join(LOGS_DIR, 'mongo.log');
+    const proc = spawnService('MongoDB', mongoBin(), [
+        '--dbpath', dataDir,
+        '--port',   String(MONGO_PORT),
+        '--logpath', logFile,
+        '--logappend',
+        '--bind_ip', '127.0.0.1',
+    ], {});
+
+    let onEarlyExit, onSpawnError, exitCode = null;
+    const earlyDeath = new Promise((_, reject) => {
+        onEarlyExit = (code) => { exitCode = code; reject(new Error(`MongoDB exited with code ${code} before becoming ready`)); };
+        onSpawnError = (err) => reject(new Error(`MongoDB failed to start: ${err.message}`));
+        proc.once('exit', onEarlyExit);
+        proc.once('error', onSpawnError);
+    });
+    try {
+        await Promise.race([
+            waitForTcp('127.0.0.1', MONGO_PORT, 30000, 'MongoDB'),
+            earlyDeath,
+        ]);
+        proc.removeListener('exit', onEarlyExit);
+        proc.removeListener('error', onSpawnError);
+        return proc;
+    } catch (err) {
+        proc.removeListener('exit', onEarlyExit);
+        proc.removeListener('error', onSpawnError);
+        await stopProcess(proc, 'MongoDB', 4000);
+        err.mongoExitCode = exitCode;
+        throw err;
+    }
+}
+
 async function startMongo() {
     log('info', 'Starting MongoDB…');
 
@@ -251,15 +293,24 @@ async function startMongo() {
             log('info', `Removed stale MongoDB lock: ${mongoLock}`);
         }
     } catch (_) {}
-    const logFile = path.join(LOGS_DIR, 'mongo.log');
-    mongoProcess = spawnService('MongoDB', mongoBin(), [
-        '--dbpath', MONGO_DATA_DIR,
-        '--port',   String(MONGO_PORT),
-        '--logpath', logFile,
-        '--logappend',
-        '--bind_ip', '127.0.0.1',
-    ], {});
-    await waitForTcp('127.0.0.1', MONGO_PORT, 30000, 'MongoDB');
+
+    try {
+        mongoProcess = await attemptStartMongo(MONGO_DATA_DIR);
+    } catch (err) {
+        if (err.mongoExitCode !== MONGO_EXIT_NEED_DOWNGRADE) throw err;
+
+        // Existing data is from an incompatible MongoDB version. Back it up (never delete)
+        // and retry once against a fresh directory — this is the ONLY path that ever
+        // touches an existing user's data dir, and only after a real failure confirms it's
+        // actually needed.
+        const backupDir = `${MONGO_DATA_DIR}.incompatible-${Date.now()}`;
+        log('warn', `MongoDB data at ${MONGO_DATA_DIR} is from an incompatible version (exit 62). `
+            + `Backing up to ${backupDir} and starting fresh — original data is preserved, not deleted.`);
+        fs.renameSync(MONGO_DATA_DIR, backupDir);
+        fs.mkdirSync(MONGO_DATA_DIR, { recursive: true });
+        mongoProcess = await attemptStartMongo(MONGO_DATA_DIR);
+        log('warn', `Recovered from incompatible MongoDB data. Previous data backed up at: ${backupDir}`);
+    }
     log('ok', `MongoDB ready on port ${MONGO_PORT}`);
 }
 
@@ -386,6 +437,29 @@ async function ensureBaseCdsArchive(javaBinPath) {
     }
 }
 
+// The JVM creates the CDS archive (*.jsa) read-only after -XX:ArchiveClassesAtExit
+// completes. On Windows, fs.rmSync can't delete a read-only file even with force:true
+// (that flag only swallows ENOENT, not EPERM) — unlike POSIX unlink, which only cares
+// about the containing directory's permissions. Clear the attribute recursively first.
+function removeCdsDir(dir) {
+    try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return;
+    } catch (err) {
+        if (err.code !== 'EPERM' && err.code !== 'EACCES') throw err;
+    }
+    const clearReadOnly = (p) => {
+        const stat = fs.statSync(p);
+        if (stat.isDirectory()) {
+            fs.readdirSync(p).forEach((entry) => clearReadOnly(path.join(p, entry)));
+        } else {
+            fs.chmodSync(p, 0o666);
+        }
+    };
+    clearReadOnly(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+}
+
 async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPath) {
     const extractedDir = path.join(cdsDir, 'extracted');
     const extractedJar = path.join(extractedDir, path.basename(originalJar));
@@ -402,7 +476,7 @@ async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPat
     const isFresh = recorded && recorded.javaBin === javaBinPath && recorded.jarFingerprint === jarFingerprint;
     if (fs.existsSync(cdsDir) && !isFresh) {
         log('info', `[${name}] CDS cache missing/stale (JVM or jar changed) — regenerating`);
-        fs.rmSync(cdsDir, { recursive: true, force: true });
+        removeCdsDir(cdsDir);
     }
 
     await ensureBaseCdsArchive(javaBinPath);
@@ -425,6 +499,13 @@ async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPat
         log('info', `[${name}] Training CDS archive (one-time — this launch only, adds ~15-25s)…`);
         const trainingLog = path.join(cdsDir, 'training.log');
         await runToCompletion(javaBinPath, [
+            // Capped well below the real runtime heap (heaps.desktopXmx can be several GB) —
+            // this run only boots Spring once to record loaded classes, then exits immediately
+            // (spring.context.exit=onRefresh). Letting it inherit the JVM's unbounded default
+            // heap sizing made this one-time step the single heaviest allocation in the whole
+            // startup sequence, which is exactly what silently took the process down on a
+            // memory-constrained machine — no exception, no crash dialog, just gone.
+            '-Xmx512m',
             `-XX:ArchiveClassesAtExit=${archiveFile}`,
             '-Dspring.context.exit=onRefresh',
             '-jar', extractedJar,

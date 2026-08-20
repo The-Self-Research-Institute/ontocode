@@ -41,6 +41,15 @@ public class DesktopDownloadController {
 
     private static final Logger log = LoggerFactory.getLogger(DesktopDownloadController.class);
 
+    // Serializes delete-then-insert per platform. Without this, two uploads to the same
+    // platform close together (e.g. a version-fix re-upload fired right after the original)
+    // can interleave: A deletes, B deletes (no-op, A hasn't inserted yet), A inserts, B
+    // inserts — leaving two documents — or worse orderings can leave the platform's delete
+    // running after the only insert, leaving none at all. Reproduced live: a platform's
+    // GridFS document vanished entirely after two of our own upload scripts raced this way.
+    private final java.util.concurrent.ConcurrentHashMap<String, Object> uploadLocks =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
     @Autowired
     private GridFsTemplate gridFsTemplate;
 
@@ -161,11 +170,6 @@ public class DesktopDownloadController {
             @RequestParam(required = false) String releaseNotes,
             @RequestParam("file") MultipartFile file) {
         try {
-            gridFsTemplate.delete(new Query(
-                Criteria.where("metadata.platform").is(platform)
-                        .and("metadata.bucket").is(DesktopDownloadService.BUCKET)
-            ));
-
             MessageDigest sha512 = MessageDigest.getInstance("SHA-512");
             String resolvedVersion = version != null && !version.isBlank() ? version.trim() : "1.0.0";
             org.bson.Document metadata = new org.bson.Document();
@@ -176,6 +180,8 @@ public class DesktopDownloadController {
             metadata.put("releaseNotes", releaseNotes != null ? releaseNotes : "");
             metadata.put("publishedAt", Instant.now().toString());
 
+            // Read/hash outside the lock — only the delete-then-insert swap below needs to be
+            // serialized per platform to close the race described above.
             Path tempFile = Files.createTempFile("ontocode-installer-", "-" + filename);
             String sha512Base64;
             try (InputStream raw = file.getInputStream();
@@ -186,11 +192,18 @@ public class DesktopDownloadController {
             metadata.put("sha512", sha512Base64);
 
             ObjectId id;
-            try (InputStream raw = Files.newInputStream(tempFile)) {
-                id = gridFsTemplate.store(raw, filename,
-                    detectContentType(filename), metadata);
-            } finally {
-                Files.deleteIfExists(tempFile);
+            Object lock = uploadLocks.computeIfAbsent(platform, k -> new Object());
+            synchronized (lock) {
+                gridFsTemplate.delete(new Query(
+                    Criteria.where("metadata.platform").is(platform)
+                            .and("metadata.bucket").is(DesktopDownloadService.BUCKET)
+                ));
+                try (InputStream raw = Files.newInputStream(tempFile)) {
+                    id = gridFsTemplate.store(raw, filename,
+                        detectContentType(filename), metadata);
+                } finally {
+                    Files.deleteIfExists(tempFile);
+                }
             }
             log.info("[DesktopDownload] Uploaded {} v{} for platform {} — id={}", filename,
                 metadata.get("version"), platform, id);
@@ -213,10 +226,13 @@ public class DesktopDownloadController {
     @DeleteMapping("/{platform}")
     @PreAuthorize("hasRole('ROLE_ADMIN')")
     public ResponseEntity<?> delete(@PathVariable String platform) {
-        gridFsTemplate.delete(new Query(
-            Criteria.where("metadata.platform").is(platform)
-                    .and("metadata.bucket").is(DesktopDownloadService.BUCKET)
-        ));
+        Object lock = uploadLocks.computeIfAbsent(platform, k -> new Object());
+        synchronized (lock) {
+            gridFsTemplate.delete(new Query(
+                Criteria.where("metadata.platform").is(platform)
+                        .and("metadata.bucket").is(DesktopDownloadService.BUCKET)
+            ));
+        }
         return ResponseEntity.ok(Map.of("success", true, "deleted", platform));
     }
 

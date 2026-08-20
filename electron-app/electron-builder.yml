@@ -55,6 +55,21 @@ win:
   # certificateFile: ${CSC_LINK}
   # certificatePassword: ${CSC_KEY_PASSWORD}
 
+# Microsoft Store / local side-load package. Built separately via `dist:win:appx`,
+# not part of the default `dist:win` (nsis) target.
+# identityName/publisher/publisherDisplayName below are placeholders for local
+# test-signed builds — electron-builder self-signs when no real cert is configured.
+# Replace all three with the exact values Partner Center assigns once the app name
+# is reserved there (Publisher ID, Package/Identity Name, Publisher Display Name) —
+# they must match character-for-character or Store certification rejects the package.
+appx:
+  identityName: ontocode-desktop
+  publisher: "CN=OntoCode Studio Test"
+  publisherDisplayName: OntoCode Studio
+  applicationId: OntoCodeStudio
+  # capabilities defaults to ['runFullTrust'], required for Electron's child-process
+  # spawning (bundled MongoDB + two JVMs) and normal file I/O — do not remove.
+
 nsis:
   oneClick: false
   perMachine: false

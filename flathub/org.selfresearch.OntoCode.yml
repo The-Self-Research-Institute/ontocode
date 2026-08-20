@@ -39,8 +39,8 @@ modules:
       # since that endpoint is overwritten on every upload. Verified live
       # and confirmed matching sha256 via local flatpak-builder test build.
       - type: archive
-        url: https://github.com/The-Self-Research-Institute/ontocode/releases/download/desktop-v1.1.0-beta.18/ontocode-desktop-linux-x64-v1.1.0-beta.18.tar.gz
-        sha256: 31a19b3b10226c1c35671567dc3d69f88f3cf9cfc741711a4cbfce820e107c51
+        url: https://github.com/The-Self-Research-Institute/ontocode/releases/download/desktop-v1.1.0-beta.19/ontocode-desktop-linux-x64-v1.1.0-beta.19.tar.gz
+        sha256: 6d79c2a533f1e3f8a3d5c55463a2348ca3c0bb16b1505e9b859164645d6f1fbf
         strip-components: 1
       - type: file
         path: org.selfresearch.OntoCode.desktop
