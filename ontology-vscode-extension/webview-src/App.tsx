@@ -1006,7 +1006,23 @@ const AppContent = () => {
           fileContent: message.fileContent,
           fileSize: message.fileSize,
         });
-      } else if (message.type === "clearInvitationState") {
+        // Clear any currently-open file/project so routing falls through to
+        // ProjectDashboard, which is the only component that reads `pendingFile`
+        // and offers to upload it. Without this, if a file is already open the
+        // router keeps resolving to "dashboard" with the OLD file, and the new
+        // file just sits in state unused — a silent no-op from the user's POV.
+        setSelectedProjectId(null);
+        setSelectedFileId(null);
+        setSelectedFileName("");
+        navigateTo({
+          view: "projectDashboard",
+          projectId: null,
+          projectName: "",
+          fileId: null,
+          fileName: "",
+        });
+      }
+       else if (message.type === "clearInvitationState") {
         console.log("[App] 🧹 Clearing existing invitation state for new invitation");
         setInviteToken(null);
         setInviteEmail(null);
