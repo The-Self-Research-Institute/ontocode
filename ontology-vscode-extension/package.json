@@ -239,7 +239,7 @@
     "test:cloud": "cross-env ENV_FILE=.env.cloud-test npm run bundle:all",
     "analyze:extension": "cross-env ANALYZE=true webpack --config webpack.extension.js --mode production",
     "analyze:web": "cross-env ANALYZE=true webpack --config webpack.config.js --mode production",
-    "check:size": "node check-bundle-size.js",
+    "check:size": "node scripts/check-bundle-size.js",
     "package": "vsce package",
     "package:check": "vsce package && node -e \"const fs=require('fs');const files=fs.readdirSync('.');const vsix=files.find(f=>f.endsWith('.vsix'));if(vsix){const stats=fs.statSync(vsix);const mb=(stats.size/(1024*1024)).toFixed(2);console.log(`\\n📦 VSIX Size: ${mb} MB (${stats.size.toLocaleString()} bytes)`);console.log(`⚠️  Default limit: 25 MB`);console.log(`🔴 Hard limit: 50 MB\\n`);if(stats.size>50*1024*1024)console.log('❌ EXCEEDS HARD LIMIT!');else if(stats.size>25*1024*1024)console.log('⚠️  EXCEEDS DEFAULT LIMIT');}else{console.log('No .vsix file found');}\""
   },

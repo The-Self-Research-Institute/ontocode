@@ -1,0 +1,511 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdf:RDF
+   xmlns:obo="http://purl.obolibrary.org/obo/"
+   xmlns:owl="http://www.w3.org/2002/07/owl#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSensingDevice">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Sensing Device</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A material device used to acquire environmental measurements.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000040"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000008">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">temporal region</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Occurrent part of time.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000003"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/PM25MassConcentrationQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">PM2.5 Mass Concentration Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Mass concentration quality of fine particulate matter with aerodynamic diameter of 2.5 micrometers or less.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasSourceRecordCarrier">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">has source record carrier</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Links a source record to the carrier in which it is stored or borne.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSourceRecord"/>
+    <rdfs:range rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSourceRecordCarrier"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/IlluminanceMeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Illuminance Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about illuminance quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/PM25MeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">PM2.5 Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about PM2.5 mass concentration quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMedium">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Medium</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A material environmental medium that can bear measurable environmental physical qualities.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000040"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasSourceRecord">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">has source record</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Links a measurement datum to the source record supporting it.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+    <rdfs:range rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSourceRecord"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/IAO_0000027">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">data entity</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Information content entity that is data.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000030"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/AirEnvironmentalMedium">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Air Environmental Medium</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Air as an environmental medium that can bear particulate, gas, temperature, and humidity qualities.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMedium"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Physical Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A specifically dependent physical quality of an environmental medium or context that can be measured.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000019"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000020">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">specifically dependent continuant</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Continuant that depends on one specific bearer.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000002"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/usesAssignmentRule">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">uses assignment rule</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Links a daily summary assignment process to the rule specification it follows.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/DailySummaryAssignmentProcess"/>
+    <rdfs:range rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/DailyAssignmentRuleSpecification"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/DailyAssignmentRuleSpecification">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Daily Assignment Rule Specification</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A plan specification that directs how observations are assigned to local days or other summary windows.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000104"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSourceRecord">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Source Record</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A data entity representing a raw or provenance-preserving environmental source record.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000027"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasObservationTemporalInterval">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">has observation temporal interval</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Links a datum to its observation, exposure, or summary temporal interval.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+    <rdfs:range rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/ObservationTemporalInterval"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/RelativeHumidityMeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Relative Humidity Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about relative humidity quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasLongitude">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has longitude</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Longitude coordinate for environmental context/site.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalContextSite"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasInterpretationMode">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has interpretation mode</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Interpretation mode such as lower-is-better, range-is-normal, or context-dependent.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasHealthLowValue">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has health low value</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Lower health/interpretation threshold where relevant.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/RO_0000052">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">inheres in</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Relates a specifically dependent continuant to the bearer in which it inheres.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="http://purl.obolibrary.org/obo/BFO_0000020"/>
+    <rdfs:range rdf:resource="http://purl.obolibrary.org/obo/BFO_0000004"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000001">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">entity</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">BFO top-level class.</obo:IAO_0000115>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/AirTemperatureQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Air Temperature Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Temperature quality of air.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/IAO_0000030">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">information content entity</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Generically dependent continuant that is about something.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000031"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasAbsoluteEventTimestamp">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has absolute event timestamp</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Timestamp for the real observation or event time.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#dateTime"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasHealthHighValue">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has health high value</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Upper health/interpretation threshold where relevant.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/RO_0002233">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">has input</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Relates a process to an input that participates in it.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="http://purl.obolibrary.org/obo/BFO_0000015"/>
+    <rdfs:range rdf:resource="http://purl.obolibrary.org/obo/BFO_0000001"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSourceRecordCarrier">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Source Record Carrier</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A material or digital bearer that carries environmental source record information, such as a database row, file, or device memory record.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000178"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/IlluminanceQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Illuminance Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Illuminance quality of a light environmental context.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/RO_0000053">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">bearer of</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Relates an independent continuant to a specifically dependent continuant it bears.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="http://purl.obolibrary.org/obo/BFO_0000004"/>
+    <rdfs:range rdf:resource="http://purl.obolibrary.org/obo/BFO_0000020"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000015">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">process</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Occurrent that has temporal parts and unfolds in time.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000003"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasEnvironmentalContext">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">has environmental context</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Links a datum to the environmental context/site of observation.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+    <rdfs:range rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalContextSite"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasLatitude">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has latitude</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Latitude coordinate for environmental context/site.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalContextSite"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Measurement Field Specification</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A directive information entity used as app/database configuration for a measurement field, including unit, range, threshold, and interpretation details.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000033"/>
+    <rdfs:comment xml:lang="en">Use registry rows, not OWL individuals, to configure units, thresholds, valid ranges, API fields, and interpretation rules.</rdfs:comment>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/COMeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">CO Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about CO concentration quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasApiOrMethodField">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has API or method field</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">API field name, database column, or method field used to obtain this variable.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/AirTemperatureMeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Air Temperature Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about air temperature quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/RelativeHumidityQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Relative Humidity Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Relative humidity quality of air.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/RO_0002234">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">has output</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Relates a process to an output produced by it.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="http://purl.obolibrary.org/obo/BFO_0000015"/>
+    <rdfs:range rdf:resource="http://purl.obolibrary.org/obo/BFO_0000001"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000004">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">independent continuant</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Continuant that can exist by itself.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000002"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/acquiresFromDevice">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">acquires from device</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Links an acquisition process to the sensing device used for acquisition.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalDataAcquisitionProcess"/>
+    <rdfs:range rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSensingDevice"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000040">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">material entity</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Independent continuant that has material parts.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000004"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/v1.3-webvowl-light">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Ontology"/>
+    <rdfs:label xml:lang="en">Personal Ecology Ontology MVP IAO App Profile V1.3 WebVOWL-Light</rdfs:label>
+    <owl:versionInfo xml:lang="en">1.3 webvowl-light</owl:versionInfo>
+    <rdfs:comment xml:lang="en">Visualization-light, no-import PEO app profile. Native BFO/IAO/RO PURLs are referenced only for the selected upper terms and properties. No owl:imports, no OWL restrictions, no individuals, no unionOf/intersectionOf axioms.</rdfs:comment>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000202">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">temporal interval</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Temporal region with interval-like extension.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000008"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasFieldSpecification">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">has field specification</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Links a measurement datum to its app/database field specification.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+    <rdfs:range rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/CO2MeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">CO₂ Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about CO₂ concentration quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about an environmental physical quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000032"/>
+    <rdfs:comment xml:lang="en">V1.3 WebVOWL-light deliberately avoids OWL restrictions. Enforce required fields with the registry, SHACL, or database constraints.</rdfs:comment>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasUnitLabel">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has unit label</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Human-readable unit label attached to the measurement datum.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/SoundLevelQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Sound Level Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Sound level quality of an acoustic environmental context.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasValidDataHighValue">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has valid data high value</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Highest physically or operationally valid value for the field.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasValidDataLowValue">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has valid data low value</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Lowest physically or operationally valid value for the field.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasIngestionTimestamp">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has ingestion timestamp</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Timestamp at which the source record entered the database/app.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSourceRecord"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#dateTime"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000002">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">continuant</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Entity that persists, endures, or continues through time.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000001"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/IAO_0000104">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">plan specification</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Directive information entity specifying actions to achieve objectives.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000033"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000003">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">occurrent</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Entity that unfolds or happens in time.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000001"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000031">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">generically dependent continuant</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Continuant that can be concretized in different bearers.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000002"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/IAO_0000109">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">measurement datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Data item that is the result of a measurement process.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000027"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/CO2ConcentrationQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">CO₂ Concentration Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Carbon dioxide concentration quality of air.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/IAO_0000032">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">scalar measurement datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Measurement datum consisting of a scalar value and unit.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000109"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalDataAcquisitionProcess">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Data Acquisition Process</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A process that acquires environmental source records and produces environmental measurement data.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000015"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasSourceTypeLabel">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has source type label</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Source type label such as sensor, API, manual entry, database, or software pipeline.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalSourceRecord"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/IAO_0000033">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">directive information entity</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Information content entity that directs or prescribes action.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/IAO_0000030"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasRegistryIdentifier">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has registry identifier</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Stable registry identifier for ontology and app mapping.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="http://purl.obolibrary.org/obo/BFO_0000001"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasAssignmentTimestamp">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has assignment timestamp</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Timestamp at which a datum or summary was assigned to a daily summary window.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/DailySummaryAssignmentProcess"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#dateTime"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/IAO_0000178">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">material information bearer</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Material entity that bears information.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000040"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/PM10MassConcentrationQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">PM10 Mass Concentration Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Mass concentration quality of particulate matter with aerodynamic diameter of 10 micrometers or less.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/DailySummaryAssignmentProcess">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Daily Summary Assignment Process</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A process that assigns observations to daily summaries according to a daily assignment rule specification.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000015"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/COConcentrationQuality">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">CO Concentration Quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Carbon monoxide concentration quality of air.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalPhysicalQuality"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/AcousticEnvironmentalContextSite">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Acoustic Environmental Context Site</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">An environmental context site relevant to acoustic or sound-level observation.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalContextSite"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/IAO_0000221">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+    <rdfs:label xml:lang="en">is quality measurement of</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Relates a measurement datum to the quality it measures.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="http://purl.obolibrary.org/obo/IAO_0000109"/>
+    <rdfs:range rdf:resource="http://purl.obolibrary.org/obo/BFO_0000019"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/PM10MeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">PM10 Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about PM10 mass concentration quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasContextScope">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has context scope</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Context scope for the field, such as indoor, outdoor, personal, ambient, acoustic, or light.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementFieldSpecification"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000029">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">site</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Independent continuant that can be occupied by material entities.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000004"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="http://purl.obolibrary.org/obo/BFO_0000019">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">quality</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Specifically dependent continuant that is measurable or observable.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000020"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/property/hasDecimalValue">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+    <rdfs:label xml:lang="en">has decimal value</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">Decimal value of an environmental measurement datum.</obo:IAO_0000115>
+    <rdfs:domain rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+    <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/ObservationTemporalInterval">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Observation Temporal Interval</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A temporal interval corresponding to observation, exposure, acquisition, or summary assignment timing.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000202"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/LightEnvironmentalContextSite">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Light Environmental Context Site</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">An environmental context site relevant to light or illuminance observation.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalContextSite"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/SoundLevelMeasurementDatum">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Sound Level Measurement Datum</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A scalar measurement datum about sound level quality.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalMeasurementDatum"/>
+  </rdf:Description>
+  <rdf:Description rdf:about="https://w3id.org/peo/mvp-iao-app-profile/EnvironmentalContextSite">
+    <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+    <rdfs:label xml:lang="en">Environmental Context Site</rdfs:label>
+    <obo:IAO_0000115 xml:lang="en">A site or contextual region within which environmental qualities are observed.</obo:IAO_0000115>
+    <rdfs:subClassOf rdf:resource="http://purl.obolibrary.org/obo/BFO_0000029"/>
+  </rdf:Description>
+</rdf:RDF>
