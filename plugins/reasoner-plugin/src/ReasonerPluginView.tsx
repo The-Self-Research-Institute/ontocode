@@ -77,6 +77,15 @@ interface ReasonerPluginProps {
   onSelectReasoner?: (reasoner: string) => void;
   onToggleSync?: () => void;
   isReasonerSynced?: boolean;
+    // Reports freshly-computed inferred hierarchies back to the parent so other
+  // views (e.g. the Entities tab's "Inferred" toggle) can display them too —
+  // this plugin previously only kept classification results in its own local
+  // state, so a successful run here never reached anywhere else in the app.
+  onInferredHierarchyChange?: (data: {
+    classHierarchy: any[];
+    objectPropertyHierarchy: any[];
+    dataPropertyHierarchy: any[];
+  }) => void;
 }
 
 interface ClassNode {
@@ -247,7 +256,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   onStopReasoner: dashboardStopReasoner,
   onSelectReasoner: dashboardSelectReasoner,
   onToggleSync: dashboardToggleSync,
-  isReasonerSynced: dashboardIsReasonerSynced
+  isReasonerSynced: dashboardIsReasonerSynced,
+  onInferredHierarchyChange
 }) => {
   const resolvedApiBaseUrl =
     (apiBaseUrl && apiBaseUrl.trim().length > 0 ? apiBaseUrl.trim() : undefined) ||
@@ -538,6 +548,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         setEquivalentClasses(result.equivalentClasses || []);
         setUnsatisfiableClasses(result.unsatisfiableClasses || []);
         
+                // Report results up to the parent so the Entities tab's "Inferred"
+        // toggle reflects this run too, not just this plugin's own display.
+        onInferredHierarchyChange?.({
+          classHierarchy: result.classHierarchy || [],
+          objectPropertyHierarchy: result.objectPropertyHierarchy || result.objectProperties || [],
+          dataPropertyHierarchy: result.dataPropertyHierarchy || result.dataProperties || [],
+        });
         // Generate explanations for classes. Guarded: a throw here (e.g. an
         // unexpected field shape from the async classify/status payload) must
         // not prevent the inferred-axioms fetch below from running.
