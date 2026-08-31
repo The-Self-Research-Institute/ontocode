@@ -120,6 +120,8 @@ electron-app/resources/backend/plugin-bundles/
 *.md
 !README.md
 !/CONTRIBUTING.md
+!/CODE_OF_CONDUCT.md
+!/SECURITY.md
 !/ontology-vscode-extension/CHANGELOG.md
 !/docs/LAUNCHER_README.md
 !/docs/INSTALLATION_GUIDE.md

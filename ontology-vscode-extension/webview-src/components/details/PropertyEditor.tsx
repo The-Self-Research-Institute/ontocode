@@ -5,6 +5,7 @@ import { ManchesterSyntaxEditor, PropertyChainDialog, IRIEditorDialog } from '..
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
+import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { Property } from '../../types';
 
 type PropertyUsageItem = {
@@ -181,6 +182,34 @@ const PropertyEditor: React.FC<{
     const [inferredDetails, setInferredDetails] = useState<any>(null);
     const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
     const [classLabelLookup, setClassLabelLookup] = useState<Map<string, string>>(new Map());
+    const collaboration = useCollaboration();
+
+    // Hold a lock on this entity for as long as the IRI/label editor is open — see
+    // ClassEditor.tsx for the reasoning (this pattern is shared across all detail editors).
+    useEffect(() => {
+        if (!isIRIEditorOpen) return;
+
+        collaboration.requestLock(item.id);
+        const refreshInterval = setInterval(() => {
+            collaboration.requestLock(item.id);
+        }, 15000);
+
+        return () => {
+            clearInterval(refreshInterval);
+            collaboration.releaseLock(item.id);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isIRIEditorOpen, item.id]);
+
+    const openIRIEditor = () => {
+        const existingLock = collaboration.state.locks.get(item.id);
+        const myUserId = user?.userId || user?.username;
+        if (existingLock && existingLock.userId !== myUserId && existingLock.expiresAt > Date.now()) {
+            notificationService.warning("Locked", `${existingLock.username} is currently editing this — try again shortly.`);
+            return;
+        }
+        setIsIRIEditorOpen(true);
+    };
 
     // Domain (and object-property Range) items are class IRIs — resolve them to labels for
     // display, same as AnnotationPropertyEditor does for super-property IRIs. Without this,
@@ -431,7 +460,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                     </div>
                 </div>
                 <button
-                    onClick={isViewOnly ? () => onViewOnlyAction?.() : () => setIsIRIEditorOpen(true)}
+                    onClick={isViewOnly ? () => onViewOnlyAction?.() : openIRIEditor}
                     className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
                     title={isViewOnly ? "View-only: upgrade to edit" : "Edit IRI and Label"}
                 >

@@ -502,10 +502,24 @@ export class CollaborationManager implements ICollaborationManager {
 
                     console.log('Lock update:', lock);
 
+                    // LOCK_DENIED is broadcast to the whole project (same channel as
+                    // everything else here) but it's only meaningful to whoever asked —
+                    // don't touch shared state, and don't notify anyone else's UI.
+                    if (lock.type === LockType.LOCK_DENIED) {
+                        if (lock.userId === this.userId && this.onLockUpdate) {
+                            this.onLockUpdate(lock);
+                        }
+                        return;
+                    }
+
                     // Update locks state
                     if (lock.type === LockType.LOCK_ACQUIRED) {
                         this.state.locks.set(lock.nodeId, lock);
-                    } else if (lock.type === LockType.LOCK_RELEASED || lock.type === LockType.LOCK_EXPIRED) {
+                    } else if (
+                        lock.type === LockType.LOCK_RELEASED ||
+                        lock.type === LockType.LOCK_EXPIRED ||
+                        lock.type === LockType.LOCK_FORCE_RELEASE
+                    ) {
                         this.state.locks.delete(lock.nodeId);
                     }
 

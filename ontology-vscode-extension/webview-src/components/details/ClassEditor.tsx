@@ -10,6 +10,7 @@ import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
 import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '../../utils/desktop';
 import { useAuth } from '../../custom-hook/useAuth';
+import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
@@ -286,6 +287,7 @@ const ClassEditor: React.FC<{
 }> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction }) => {
   // Get current user for tracking mutations
   const { user } = useAuth();
+  const collaboration = useCollaboration();
 
   // Always-latest ref for `item` — lets the annotations-fetch effect below detect whether
   // a newer edit (e.g. via the annotation add/edit dialog) landed while its own request was
@@ -393,6 +395,34 @@ const ClassEditor: React.FC<{
 
   // IRI Editor State
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
+
+  // Hold a lock on this entity for as long as the IRI/label editor is open, so a
+  // collaborator can't silently overwrite the same rename. Refreshed periodically
+  // since the server-side lock has a 30s TTL; released on close or unmount.
+  useEffect(() => {
+    if (!isIRIEditorOpen) return;
+
+    collaboration.requestLock(item.id);
+    const refreshInterval = setInterval(() => {
+      collaboration.requestLock(item.id);
+    }, 15000);
+
+    return () => {
+      clearInterval(refreshInterval);
+      collaboration.releaseLock(item.id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isIRIEditorOpen, item.id]);
+
+  const openIRIEditor = () => {
+    const existingLock = collaboration.state.locks.get(item.id);
+    const myUserId = user?.userId || user?.username;
+    if (existingLock && existingLock.userId !== myUserId && existingLock.expiresAt > Date.now()) {
+      notificationService.warning("Locked", `${existingLock.username} is currently editing this — try again shortly.`);
+      return;
+    }
+    setIsIRIEditorOpen(true);
+  };
 
 const handleSaveIRI = async (newIRI: string, newLabel: string) => {
   try {
@@ -2181,7 +2211,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
           </div>
         </div>
         <button
-          onClick={() => setIsIRIEditorOpen(true)}
+          onClick={openIRIEditor}
           className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
           title="Edit IRI and Label"
         >

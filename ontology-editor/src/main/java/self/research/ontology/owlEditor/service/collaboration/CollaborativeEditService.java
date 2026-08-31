@@ -164,7 +164,7 @@ public class CollaborativeEditService {
                 log.info("Expired lock removed for node {}", nodeId);
             } else {
                 // Lock still valid, deny request
-                return LockMessage.builder()
+                LockMessage denied = LockMessage.builder()
                         .type(LockMessage.LockType.LOCK_DENIED)
                         .projectId(projectId)
                         .nodeId(nodeId)
@@ -175,6 +175,14 @@ public class CollaborativeEditService {
                         .error("Node is locked by " + existingLock.getUsername())
                         .timestamp(System.currentTimeMillis())
                         .build();
+
+                // Broadcast so the requester actually hears back — previously this was
+                // only ever returned to the (ignored) caller, so a denial was silent.
+                messagingTemplate.convertAndSend("/topic/locks/" + projectId, denied);
+                log.info("Lock denied: node={}, requestedBy={}, heldBy={}, project={}",
+                        nodeId, username, existingLock.getUsername(), projectId);
+
+                return denied;
             }
         }
         
