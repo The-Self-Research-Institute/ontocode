@@ -7,7 +7,7 @@ base-version: '25.08'
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.openjdk21
   - org.freedesktop.Sdk.Extension.openjdk17
-  - org.freedesktop.Sdk.Extension.node20
+  - org.freedesktop.Sdk.Extension.node24
 command: ontocode-desktop
 separate-locales: false
 
@@ -15,34 +15,23 @@ finish-args:
   - --share=network
   - --share=ipc
   - --socket=wayland
-  - --socket=x11
+  - --socket=fallback-x11
   - --device=dri
 
 modules:
   - name: ontocode-desktop
     buildsystem: simple
     build-options:
-      # openjdk21's bin/ has mvn (bundled by the extension itself) + java/javac/jlink;
-      # node20's bin/ has node/npm. JAVA_HOME defaults to 21 — the one ontology-swrl
-      # build-command below overrides both JAVA_HOME and PATH for its JDK 17 requirement.
-      append-path: /usr/lib/sdk/openjdk21/bin:/usr/lib/sdk/node20/bin
+      append-path: /usr/lib/sdk/openjdk21/bin:/usr/lib/sdk/node24/bin
       env:
         JAVA21_HOME: /usr/lib/sdk/openjdk21/jvm/openjdk-21
         JAVA17_HOME: /usr/lib/sdk/openjdk17/jvm/openjdk-17
         JAVA_HOME: /usr/lib/sdk/openjdk21/jvm/openjdk-21
-        # electron-app/scripts/prepare-resources.js reads JAVA21_HOME/JAVA17_HOME
-        # itself to jlink the two custom JREs (see JLINK_MODULES in that file) —
-        # nothing further to do here, no jlink invocation needed in this manifest.
         XDG_CACHE_HOME: /run/build/ontocode-desktop/flatpak-node/cache
         npm_config_cache: /run/build/ontocode-desktop/flatpak-node/npm-cache
-        npm_config_nodedir: /usr/lib/sdk/node20
+        npm_config_nodedir: /usr/lib/sdk/node24
         npm_config_offline: 'true'
     build-commands:
-      # ── 1. Java backend — Maven, fully offline against the pre-seeded
-      #      m2-offline/ repo (see generated/maven-offline-notes.md for exactly
-      #      how that repo's contents were derived and validated end-to-end;
-      #      the `install -N` step and the auth/editor artifactId names — auth,
-      #      owlEditor — are not typos, see that file). ──────────────────────
       - >-
         export JAVA_HOME="$JAVA21_HOME" &&
         export PATH="$JAVA_HOME/bin:$PATH" &&
@@ -59,12 +48,9 @@ modules:
       - mkdir -p electron-app/resources/backend/jars
       - cp ontology-desktop/target/ontology-desktop-1.0.0.jar electron-app/resources/backend/jars/desktop.jar
       - cp ontology-swrl/target/ontology-swrl-1.0.0.jar electron-app/resources/backend/jars/swrl.jar
-
-      # ── 2. Pre-seed Fuseki + MongoDB at the exact repo-relative paths
-      #      prepare-resources.js's copyIfExists() checks first, so its own
-      #      network-download fallback never triggers. ─────────────────────
       - mkdir -p fuseki-docker
-      - cp fuseki-src/fuseki-server.jar fuseki-docker/fuseki-server.jar
+      - (cd jena-src && export JAVA_HOME="$JAVA21_HOME" && export PATH="$JAVA_HOME/bin:$PATH" && mvn install -pl 'jena-fuseki2/jena-fuseki-server,!jena-fuseki2/jena-fuseki-ui' -am -DskipTests -q -o -Dmaven.javadoc.skip=true -Dsource.skip=true -Dmaven.source.skip=true -Dmaven.repo.local="$PWD/../m2-offline")
+      - cp jena-src/jena-fuseki2/jena-fuseki-server/target/jena-fuseki-server-6.1.0.jar fuseki-docker/fuseki-server.jar
       - >-
         mkdir -p data/mongodb/bin/linux-x64 data/mongodb/bin/linux-arm64 &&
         if [ -d mongo-src-x64 ]; then
@@ -77,22 +63,11 @@ modules:
           cp "$f" data/mongodb/bin/linux-arm64/mongod &&
           chmod +x data/mongodb/bin/linux-arm64/mongod;
         fi
-
-      # ── 3. React UI (vite), offline via the node20 extension + generated
-      #      npm sources. ──────────────────────────────────────────────────
       - npm --prefix ontology-vscode-extension/webview-src install --offline
       - npm --prefix ontology-vscode-extension/webview-src run build:electron
-
-      # ── 4. Electron app deps, then prepare-resources.js (jlinks both JREs,
-      #      wires up the jars/fuseki/mongo staged above — nothing left for
-      #      it to download), then package with electron-builder --dir
-      #      (skips AppImage/deb, which is what would need extra
-      #      network-fetched helper binaries). ───────────────────────────
       - npm --prefix electron-app install --offline
       - npm --prefix electron-app run prepare-resources
       - (cd electron-app && ./node_modules/.bin/electron-builder --linux --dir -c.npmRebuild=false -c.electronDist=/run/build/ontocode-desktop/flatpak-node/cache/electron/electron-v43.4.0-linux-x64.zip)
-
-      # ── 5. Install into /app ─────────────────────────────────────────────
       - mkdir -p /app/ontocode-desktop
       - cp -r electron-app/dist-electron/linux-unpacked/* /app/ontocode-desktop/
       - chmod +x /app/ontocode-desktop/ontocode-desktop
@@ -101,23 +76,16 @@ modules:
       - install -Dm644 packaging/linux/org.selfresearch.OntoCode.metainfo.xml /app/share/metainfo/org.selfresearch.OntoCode.metainfo.xml
       - install -Dm644 packaging/linux/org.selfresearch.OntoCode.png /app/share/icons/hicolor/512x512/apps/org.selfresearch.OntoCode.png
     sources:
-      # Whole monorepo. Pinned to origin/main's tip as of 2026-08-22 — the
-      # local dev checkout used to generate the sources below was actually 2
-      # commits ahead of this (unpushed), but those 2 commits don't touch any
-      # pom.xml/package-lock.json, so the generated/*.json files are still
-      # accurate against this commit. NOT the desktop-v1.1.0-beta.19 release
-      # tag. Before an actual Flathub submission, re-pin this to a real
-      # release tag and regenerate every generated/*.json against that tag's
-      # lockfiles/poms (flatpak-node-generator for the two npm projects; see
-      # generated/maven-offline-notes.md for the Maven side).
       - type: git
         url: https://github.com/The-Self-Research-Institute/ontocode.git
-        commit: cc27db0a2a0f3c80c35052da9a6774e92c974363
+        tag: desktop-v1.1.0-beta.20
+        commit: 15b50d1e2d0af090a5148b27380e47aca625305d
 
-      - type: archive
-        url: https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-6.1.0.tar.gz
-        sha512: 75457f45d14397876a41ed51abe7ae5d2f1e708dfe1315765f858158bc5c6813bc036ec1539ddc4dffd26201f5cc31fadec299ca5c3dc2548b723513ed31d326
-        dest: fuseki-src
+      - type: git
+        url: https://github.com/apache/jena.git
+        tag: jena-6.1.0
+        commit: 564d2042d5b134753f8a142e3087db859d19de90
+        dest: jena-src
 
       - type: archive
         url: https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-6.0.29.tgz
@@ -133,23 +101,18 @@ modules:
         only-arches:
           - aarch64
 
-      # flatpak-node-generator output — npm deps for both Node projects we
-      # build (electron-app itself, and the webview-src React UI it bundles).
       - generated/generated-sources-electron-app.json
       - generated/generated-sources-webview-src.json
-
-      # Hand-generated offline Maven repo (no polished generator tool exists
-      # for Maven the way flatpak-node-generator exists for npm — see
-      # generated/maven-offline-notes.md for how this was produced and
-      # validated against a real, from-scratch, fully-offline build). Every
-      # third-party jar/pom the reactor needs, laid out under m2-offline/ so
-      # `mvn -o -Dmaven.repo.local=m2-offline` above never touches the network.
       - generated/generated-maven-sources.json
       - generated/generated-maven-metadata.json
+      - generated/generated-jena-maven-sources.json
 
       - type: script
         dest-filename: ontocode-desktop-wrapper.sh
         commands:
           - |
             #!/bin/sh
-            exec zypak-wrapper /app/ontocode-desktop/ontocode-desktop "$@"
+            if [ -n "$WAYLAND_DISPLAY" ]; then
+              export XDG_SESSION_TYPE=wayland
+            fi
+            exec zypak-wrapper /app/ontocode-desktop/ontocode-desktop --ozone-platform-hint=auto "$@"

@@ -368,7 +368,9 @@ npm run bundle:extension
 
 ## Contributing
 
-Contributions are welcome. Fork the repository, create a feature branch, and submit a pull request.
+Contributions are welcome. Fork the repository, create a feature branch, and submit a pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for the process and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
+
+Found a security issue? See [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
 ---
 

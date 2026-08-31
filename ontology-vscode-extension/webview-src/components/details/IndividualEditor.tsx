@@ -6,6 +6,7 @@ import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDial
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
+import { useCollaboration } from '../../contexts/CollaborationContext';
 
 interface UsageItem {
   type: string;
@@ -306,7 +307,36 @@ const IndividualEditor: React.FC<{
   const [editorTitle, setEditorTitle] = useState("");
   const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
-  const handleAddAssertion = async (data?: { 
+  const collaboration = useCollaboration();
+
+  // Hold a lock on this entity for as long as the IRI/label editor is open — see
+  // ClassEditor.tsx for the reasoning (this pattern is shared across all detail editors).
+  useEffect(() => {
+    if (!isIRIEditorOpen) return;
+
+    collaboration.requestLock(item.id);
+    const refreshInterval = setInterval(() => {
+      collaboration.requestLock(item.id);
+    }, 15000);
+
+    return () => {
+      clearInterval(refreshInterval);
+      collaboration.releaseLock(item.id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isIRIEditorOpen, item.id]);
+
+  const openIRIEditor = () => {
+    const existingLock = collaboration.state.locks.get(item.id);
+    const myUserId = userId || username;
+    if (existingLock && existingLock.userId !== myUserId && existingLock.expiresAt > Date.now()) {
+      notificationService.warning("Locked", `${existingLock.username} is currently editing this — try again shortly.`);
+      return;
+    }
+    setIsIRIEditorOpen(true);
+  };
+
+  const handleAddAssertion = async (data?: {
     propertyLabel: string; 
     targetLabel: string; 
     isObjectProperty: boolean;
@@ -548,7 +578,7 @@ const IndividualEditor: React.FC<{
     </div>
   </div>
 <button
-  onClick={() => setIsIRIEditorOpen(true)}
+  onClick={openIRIEditor}
   className="p-1.5 hover:bg-gray-200 rounded text-gray-600 hover:text-purple-600 flex-shrink-0"
   title="Edit IRI and Label"
 >
