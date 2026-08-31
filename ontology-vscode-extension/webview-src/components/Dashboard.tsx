@@ -2653,7 +2653,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       id: "Classes",
       label: "Classes",
       icon: Package,
-      count: Number((metadata as any)?.classCount) || 0,
+      //count: Number((metadata as any)?.classCount) || 0,
+      count: Math.max(
+  Number((metadata as any)?.classCount) || 0,
+  classHierarchy.length > 0 ? countNodes(classHierarchy) : 0,
+),
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
@@ -3398,6 +3402,59 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainTab]);
+  // The reasoner's classify endpoint returns a FLAT list (each item has iri/depth/
+  // label/childrenCount), not the nested {id, children, hasChildren} tree shape
+  // the Entities tab's tree component expects (same shape as the asserted
+  // hierarchy). This rebuilds a proper nested tree from that flat list using
+  // each item's `depth` to figure out parent/child relationships.
+  function buildInferredTreeFromFlatList(
+    flat: any[],
+    rootOverride?: { id: string; label: string },
+  ): TreeNode[] {
+    if (!Array.isArray(flat)) return [];
+    const roots: TreeNode[] = [];
+    const stack: { node: TreeNode; depth: number }[] = [];
+
+    for (const item of flat) {
+      const node: TreeNode = {
+        id: item.iri || item.id,
+        label: item.label,
+        children: [],
+        hasChildren: (item.childrenCount || 0) > 0,
+        annotations: item.annotations || {},
+      } as TreeNode;
+
+      while (stack.length > 0 && stack[stack.length - 1].depth >= item.depth) {
+        stack.pop();
+      }
+
+      if (stack.length === 0) {
+        roots.push(node);
+      } else {
+        (stack[stack.length - 1].node.children as TreeNode[]).push(node);
+      }
+
+      stack.push({ node, depth: item.depth });
+    }
+
+    // Wrap the depth-0 roots under a synthetic root node so the Inferred view
+    // visually matches the Asserted view. Defaults to owl:Thing (correct for
+    // Classes), but callers building Object/Data Property trees pass the
+    // correct root instead (owl:topObjectProperty / owl:topDataProperty).
+    const root = rootOverride || {
+      id: "http://www.w3.org/2002/07/owl#Thing",
+      label: "owl:Thing",
+    };
+    return [
+      {
+        id: root.id,
+        label: root.label,
+        children: roots,
+        hasChildren: roots.length > 0,
+        annotations: {},
+      } as TreeNode,
+    ];
+  }
 
   const startReasoner = useCallback(async () => {
     if (!projectId) {
@@ -3416,6 +3473,27 @@ const Dashboard: React.FC<DashboardProps> = ({
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const results = await fetchReasonerBundle(reasonerType);
       setReasonerResults(results);
+            console.log("[Dashboard] reasoner bundle:", results);
+      console.log("[Dashboard] FIRST inferred class item:", JSON.stringify((results as any)?.classHierarchy?.[0], null, 2));
+
+      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
+      const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.objectPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
+      );
+      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.dataPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topDataProperty", label: "owl:topDataProperty" },
+      );
+      if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
+        setInferredClassHierarchy(bundleClassHierarchy);
+      }
+      if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
+        setInferredObjectPropertyHierarchy(bundleObjectPropertyHierarchy);
+      }
+      if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
+        setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
+      }
 
       // Realize individuals (inferred types) after classification
       try {
@@ -3450,14 +3528,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       // This ensures we have the full depth across the full hierarchy, not just the bundle's view
       console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
 
-      // Load hierarchies sequentially to avoid overwhelming GraphDB
-      await loadInferredHierarchy();
-      await loadInferredObjectPropertyHierarchy();
-      await loadInferredDataPropertyHierarchy();
+      // Load hierarchies sequentially to avoid overwhelming GraphDB — skip the
+      // ones we already populated directly from the classify bundle above.
+      if (!Array.isArray(bundleClassHierarchy) || bundleClassHierarchy.length === 0) {
+        await loadInferredHierarchy();
+      }
+      if (!Array.isArray(bundleObjectPropertyHierarchy) || bundleObjectPropertyHierarchy.length === 0) {
+        await loadInferredObjectPropertyHierarchy();
+      }
+      if (!Array.isArray(bundleDataPropertyHierarchy) || bundleDataPropertyHierarchy.length === 0) {
+        await loadInferredDataPropertyHierarchy();
+      }
       await loadInferredAnnotationPropertyHierarchy();
       await loadInferredDatatypes();
       await loadInferredIndividuals();
-
       console.log("[Dashboard] ✅ All inferred hierarchies processed");
 
       // Refresh class instances if user is viewing Individuals by Class
@@ -8140,10 +8224,18 @@ const updateItemInState = useCallback(
 
     console.log("[Dashboard] Classes tab active, view mode:", currentHierarchyViewMode);
     if (currentHierarchyViewMode === "inferred") {
-      // Always load full recursive hierarchy from API when in inferred mode
-      // to ensure we have the full hierarchy depth
-      console.log("[Dashboard] Loading inferred hierarchy from API...");
-      loadInferredHierarchy();
+      if (inferredClassHierarchy.length > 0) {
+        // Already have results from a successful Reasoner tab run (reported via
+        // onInferredHierarchyChange) — don't overwrite them by re-fetching from
+        // this separate API, which can disagree with the Reasoner tab's own
+        // consistency check and reasoner choice, wiping out good data.
+        console.log("[Dashboard] Inferred hierarchy already available, skipping API re-fetch");
+      } else {
+        // Always load full recursive hierarchy from API when in inferred mode
+        // to ensure we have the full hierarchy depth
+        console.log("[Dashboard] Loading inferred hierarchy from API...");
+        loadInferredHierarchy();
+      }
     } else {
       console.log("[Dashboard] Refreshing asserted hierarchy...");
       refreshClassHierarchy();
@@ -8389,21 +8481,31 @@ const updateItemInState = useCallback(
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "ObjectProperties") return;
     console.log("[Dashboard] ObjectProperties tab active, view mode:", hierarchyViewModes.ObjectProperties);
     if (hierarchyViewModes.ObjectProperties === "inferred") {
-      // Always reload to ensure fresh data from the reasoner
-      console.log("[Dashboard] Loading inferred object property hierarchy from API...");
-      loadInferredObjectPropertyHierarchy();
+      if (inferredObjectPropertyHierarchy.length > 0) {
+        console.log("[Dashboard] Inferred object property hierarchy already available, skipping API re-fetch");
+      } else {
+        console.log("[Dashboard] Loading inferred object property hierarchy from API...");
+        loadInferredObjectPropertyHierarchy();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, hierarchyViewModes.ObjectProperties]);
 
   // Load inferred data property hierarchy when switching to inferred mode
+  // Load inferred data property hierarchy when switching to inferred mode
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "DataProperties") return;
     console.log("[Dashboard] DataProperties tab active, view mode:", hierarchyViewModes.DataProperties);
     if (hierarchyViewModes.DataProperties === "inferred") {
-      // Always reload to ensure fresh data from the reasoner
-      console.log("[Dashboard] Loading inferred data property hierarchy from API...");
-      loadInferredDataPropertyHierarchy();
+      if (inferredDataPropertyHierarchy.length > 0) {
+        // Already have results from a successful Reasoner run — don't
+        // overwrite them by re-fetching from this separate (job-based) API,
+        // same issue we hit and fixed for the Classes tab.
+        console.log("[Dashboard] Inferred data property hierarchy already available, skipping API re-fetch");
+      } else {
+        console.log("[Dashboard] Loading inferred data property hierarchy from API...");
+        loadInferredDataPropertyHierarchy();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties]);
@@ -9377,9 +9479,29 @@ const updateItemInState = useCallback(
       // Debounce reasoner re-run to avoid too many calls
       setTimeout(async () => {
         try {
-          const reasonerType = normalizeReasonerType(selectedReasoner);
-          const results = await fetchReasonerBundle(reasonerType);
-          setReasonerResults(results);
+               const reasonerType = normalizeReasonerType(selectedReasoner);
+      const results = await fetchReasonerBundle(reasonerType);
+      setReasonerResults(results);
+
+      // The classify response already contains a working hierarchy — this is
+      // literally what successfully powers the Reasoner tab's own display.
+      // Use it directly for the Entities tab's "Inferred" toggle too, instead
+      // of relying solely on the separate /reasoner/inferred-class-hierarchy
+      // endpoint below — that one doesn't reliably honor the requested
+      // reasonerType and can report a false "inconsistent", wiping out a
+      // perfectly good result we already have right here.
+      const bundleClassHierarchy = (results as any)?.classHierarchy;
+      const bundleObjectPropertyHierarchy = (results as any)?.objectPropertyHierarchy;
+      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList((results as any)?.objectPropertyHierarchy);
+      if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
+        setInferredClassHierarchy(bundleClassHierarchy);
+      }
+      if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
+        setInferredObjectPropertyHierarchy(bundleObjectPropertyHierarchy);
+      }
+      if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
+        setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
+      }
           console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
         } catch (error) {
           console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
@@ -10535,11 +10657,14 @@ const updateItemInState = useCallback(
       console.error("Failed to refresh properties:", error);
     }
   }, [projectId]);
-
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "ObjectProperties") return;
     if (hierarchyViewModes.ObjectProperties === "inferred") {
-      loadInferredObjectPropertyHierarchy();
+      if (inferredObjectPropertyHierarchy.length > 0) {
+        console.log("[Dashboard] Inferred object property hierarchy already available, skipping API re-fetch (2nd effect)");
+      } else {
+        loadInferredObjectPropertyHierarchy();
+      }
     } else {
       refreshProperties();
     }
@@ -10555,7 +10680,11 @@ const updateItemInState = useCallback(
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "DataProperties") return;
     if (hierarchyViewModes.DataProperties === "inferred") {
-      loadInferredDataPropertyHierarchy();
+      if (inferredDataPropertyHierarchy.length > 0) {
+        console.log("[Dashboard] Inferred data property hierarchy already available, skipping API re-fetch (2nd effect)");
+      } else {
+        loadInferredDataPropertyHierarchy();
+      }
     } else {
       refreshProperties();
     }
@@ -15650,6 +15779,16 @@ const updateItemInState = useCallback(
                   onSelectReasoner={handleSelectReasoner}
                   onToggleSync={toggleReasonerSync}
                   isReasonerSynced={isReasonerSynced}
+                  onInferredHierarchyChange={(data: { classHierarchy: any[]; objectPropertyHierarchy: any[]; dataPropertyHierarchy: any[] }) => {
+                    // A successful reasoner run inside the plugin only updated its
+                    // own local display before — this callback (added alongside
+                    // the plugin's onInferredHierarchyChange prop) is what actually
+                    // makes those results show up in the Entities tab's "Inferred"
+                    // toggle too, by updating the same state that toggle reads.
+                    setInferredClassHierarchy(data.classHierarchy);
+                    setInferredObjectPropertyHierarchy(data.objectPropertyHierarchy);
+                    setInferredDataPropertyHierarchy(data.dataPropertyHierarchy);
+                  }}
                 />
               </div>
             </div>

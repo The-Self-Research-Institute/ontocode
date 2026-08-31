@@ -980,16 +980,7 @@ const EntityHierarchy = ({
               <span>Loading {currentLabel.toLowerCase()}…</span>
             </div>
           </div>
-        ) : (viewMode === 'inferred' && !isReasonerRunning) ? (
-          <div className="p-4 text-center text-gray-600">
-            <p className="mb-2 flex items-center justify-center gap-2">
-              <span className="text-2xl">🔍</span>
-              <span>No inferred {currentLabel.toLowerCase()} hierarchy available</span>
-            </p>
-            <p className="text-xs text-gray-500 mb-3">Run the reasoner to generate the inferred hierarchy</p>
-            <p className="text-xs text-gray-400">Go to the <strong>Reasoner</strong> tab and click <strong>Start</strong></p>
-          </div>
-        ) : filteredData && filteredData.length > 0 ? (
+                ) : filteredData && filteredData.length > 0 ? (
           <div className="ontocode-fade-in">{renderHierarchyBody()}</div>
         ) :
           (searchQuery ? (
