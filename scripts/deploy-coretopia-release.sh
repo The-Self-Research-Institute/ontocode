@@ -20,7 +20,7 @@ usage() {
 ALL_SERVICES=(fuseki graphdb auth gateway editor reasoner-worker swrl plugin plugin-init web)
 
 DEFAULT_ALL_SERVICES=(auth gateway editor reasoner-worker swrl plugin plugin-init web)
-ALL_PLATFORMS=(web vscode desktop)
+ALL_PLATFORMS=(web vscode windows linux mac)
 
 EC2_DIR="${EC2_DIR:-}"
 
@@ -43,7 +43,7 @@ done
 
 [[ -n "$MODE_ARG" ]]     || { echo "ERROR: --mode dev|prod|all is required" >&2; usage 1; }
 [[ -n "$CHANGES_ARG" ]]  || { echo "ERROR: --changes|--deploy <service,...>|all is required" >&2; usage 1; }
-[[ -n "$PLATFORM_ARG" ]] || { echo "ERROR: --platform <web,vscode,desktop>|all is required" >&2; usage 1; }
+[[ -n "$PLATFORM_ARG" ]] || { echo "ERROR: --platform <web,vscode,windows,linux,mac>|all is required" >&2; usage 1; }
 
 case "$MODE_ARG" in
   all)  MODES=(dev prod) ;;
@@ -131,7 +131,7 @@ _wsl_flags=()
 for p in "${PLATFORMS[@]}"; do
   case "$p" in
     web) _wsl_flags+=(--web) ;;
-    desktop) _wsl_flags+=(--desktop) ;;
+    windows|linux|mac) _wsl_flags+=(--desktop) ;;
     vscode) _wsl_flags+=(--vscode) ;;
   esac
 done
@@ -143,7 +143,7 @@ if [[ -x "$ROOT/scripts/check-wsl-prereqs.sh" ]] || [[ -f "$ROOT/scripts/check-w
 else
   _needs_host_jdk=0
   for p in "${PLATFORMS[@]}"; do
-    [[ "$p" == "desktop" ]] && _needs_host_jdk=1
+    case "$p" in windows|linux|mac) _needs_host_jdk=1 ;; esac
   done
   if [[ $_needs_host_jdk -eq 1 ]]; then
     require_jdk_prereqs
@@ -338,61 +338,14 @@ upload_installer() {
   echo "   Public download: $api_base/api/downloads/$platform"
 }
 
-branch_desktop() {
-  local m="$1"
-  local host_platform
-  host_platform="$(host_desktop_platform)"
-  local api_base="${API[$m]}"
-  local fail=0
-  local built_native=0
-
-  echo "[progress][$m-desktop] $(date '+%H:%M:%S') START (host=$host_platform)"
-
-  if [[ "$host_platform" == "linux" ]]; then
-    if ensure_linux_nodejs; then
-      echo "[progress][$m-desktop] Building native 'linux' installer"
-      if build_desktop "linux"; then
-        echo "[progress][$m-desktop] $(date '+%H:%M:%S') native linux build OK"
-        built_native=1
-      else
-        echo "ERROR: desktop linux build failed" >&2
-        fail=1
-      fi
-    else
-      echo "[progress][$m-desktop] No Linux Node.js — skipping Linux installer"
-      echo "          Install with: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
-      fail=1
-    fi
-  else
-    echo "[progress][$m-desktop] Building native '$host_platform' installer"
-    build_desktop "$host_platform" || { echo "ERROR: desktop $host_platform build failed" >&2; return 1; }
-    built_native=1
-    echo "[progress][$m-desktop] $(date '+%H:%M:%S') native $host_platform build OK"
-  fi
-
-  if [[ "$host_platform" == "linux" ]] && is_wsl; then
-    echo "[progress][$m-desktop] WSL detected — Linux then Windows (shared electron-app/resources — not parallel by design)"
-    if build_desktop_win_via_windows_host; then
-      echo "[progress][$m-desktop] $(date '+%H:%M:%S') Windows installer build OK"
-
-      if [[ $built_native -eq 0 ]]; then fail=0; fi
-    else
-      echo "[progress][$m-desktop] Windows installer build skipped/failed"
-      echo "          Tip: run from Windows: build-and-push.cmd --mode $m --platform desktop --deploy all"
-    fi
-  elif [[ "$host_platform" == "linux" ]]; then
-    echo "[progress][$m-desktop] Pure Linux host — Linux installer only (no Windows .exe here)"
-  fi
-
-  echo "[progress][$m-desktop] $(date '+%H:%M:%S') uploading available installers..."
+upload_windows_installer() {
+  local api_base="$1"
   local DIST="$ROOT/electron-app/dist-electron"
   shopt -s nullglob
-
   local win=( "$DIST"/*[Ss]etup*.exe )
   if [[ ${#win[@]} -eq 0 ]]; then
     win=( "$DIST"/*Setup*x64*.exe )
   fi
-
   local win_filtered=()
   local _w
   for _w in "${win[@]+"${win[@]}"}"; do
@@ -400,23 +353,130 @@ branch_desktop() {
     win_filtered+=("$_w")
   done
   win=("${win_filtered[@]+"${win_filtered[@]}"}")
-  [[ ${#win[@]} -gt 0 ]] && { local f; f=$(ls -t "${win[@]}" | head -1); upload_installer "$api_base" "windows-x64" "$f" "$(basename "$f")" || fail=1; }
-  local dmg_arm=( "$DIST"/*arm64*.dmg )
-  [[ ${#dmg_arm[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_arm[@]}" | head -1); upload_installer "$api_base" "mac-arm64" "$f" "$(basename "$f")" || fail=1; }
-  local dmg_x64=( "$DIST"/*x64*.dmg )
-  [[ ${#dmg_x64[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_x64[@]}" | head -1); upload_installer "$api_base" "mac-x64" "$f" "$(basename "$f")" || fail=1; }
-  local appimages=( "$DIST"/*.AppImage )
-  [[ ${#appimages[@]} -gt 0 ]] && { local f; f=$(ls -t "${appimages[@]}" | head -1); upload_installer "$api_base" "linux-x64" "$f" "$(basename "$f")" || fail=1; }
-  local debs=( "$DIST"/*.deb )
-  [[ ${#debs[@]} -gt 0 ]] && { local f; f=$(ls -t "${debs[@]}" | head -1); upload_installer "$api_base" "linux-deb" "$f" "$(basename "$f")" || fail=1; }
   shopt -u nullglob
-
-  if [[ $fail -eq 0 ]]; then
-    echo "[progress][$m-desktop] $(date '+%H:%M:%S') DONE"
-  else
-    echo "[progress][$m-desktop] $(date '+%H:%M:%S') finished with warnings/errors (see above)"
+  if [[ ${#win[@]} -eq 0 ]]; then
+    echo "ERROR: no Windows installer found in $DIST" >&2
+    return 1
   fi
+  local f; f=$(ls -t "${win[@]}" | head -1)
+  upload_installer "$api_base" "windows-x64" "$f" "$(basename "$f")"
+}
+
+upload_linux_installers() {
+  local api_base="$1"
+  local DIST="$ROOT/electron-app/dist-electron"
+  local fail=0
+  shopt -s nullglob
+  local appimages=( "$DIST"/*.AppImage )
+  local debs=( "$DIST"/*.deb )
+  shopt -u nullglob
+  if [[ ${#appimages[@]} -eq 0 && ${#debs[@]} -eq 0 ]]; then
+    echo "ERROR: no Linux installer (.AppImage/.deb) found in $DIST" >&2
+    return 1
+  fi
+  [[ ${#appimages[@]} -gt 0 ]] && { local f; f=$(ls -t "${appimages[@]}" | head -1); upload_installer "$api_base" "linux-x64" "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#debs[@]} -gt 0 ]] && { local f; f=$(ls -t "${debs[@]}" | head -1); upload_installer "$api_base" "linux-deb" "$f" "$(basename "$f")" || fail=1; }
   return $fail
+}
+
+upload_mac_installers() {
+  local api_base="$1"
+  local DIST="$ROOT/electron-app/dist-electron"
+  local fail=0
+  shopt -s nullglob
+  local dmg_arm=( "$DIST"/*arm64*.dmg )
+  local dmg_x64=( "$DIST"/*x64*.dmg )
+  shopt -u nullglob
+  if [[ ${#dmg_arm[@]} -eq 0 && ${#dmg_x64[@]} -eq 0 ]]; then
+    echo "ERROR: no macOS installer (.dmg) found in $DIST" >&2
+    return 1
+  fi
+  [[ ${#dmg_arm[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_arm[@]}" | head -1); upload_installer "$api_base" "mac-arm64" "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#dmg_x64[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_x64[@]}" | head -1); upload_installer "$api_base" "mac-x64" "$f" "$(basename "$f")" || fail=1; }
+  return $fail
+}
+
+# One platform per call — explicit, no host-detection ambiguity about which
+# installer(s) a bare `--platform desktop` would produce.
+branch_desktop_windows() {
+  local m="$1"
+  local api_base="${API[$m]}"
+  local host_platform
+  host_platform="$(host_desktop_platform)"
+  echo "[progress][$m-windows] $(date '+%H:%M:%S') START (host=$host_platform)"
+
+  case "$host_platform" in
+    win)
+      build_desktop "win" || { echo "ERROR: windows build failed" >&2; return 1; }
+      ;;
+    linux)
+      if is_wsl; then
+        build_desktop_win_via_windows_host || { echo "ERROR: windows build via WSL cross-call to the Windows host failed" >&2; return 1; }
+      else
+        echo "ERROR: can't build a Windows installer from a plain Linux host — run this from Windows, or from WSL (it cross-builds via the Windows host)" >&2
+        return 1
+      fi
+      ;;
+    *)
+      echo "ERROR: can't build a Windows installer from '$host_platform' — run this from Windows or WSL instead" >&2
+      return 1
+      ;;
+  esac
+
+  echo "[progress][$m-windows] $(date '+%H:%M:%S') build OK — uploading"
+  if upload_windows_installer "$api_base"; then
+    echo "[progress][$m-windows] $(date '+%H:%M:%S') DONE"
+  else
+    echo "[progress][$m-windows] $(date '+%H:%M:%S') finished with errors (see above)"
+    return 1
+  fi
+}
+
+branch_desktop_linux() {
+  local m="$1"
+  local api_base="${API[$m]}"
+  local host_platform
+  host_platform="$(host_desktop_platform)"
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') START (host=$host_platform)"
+
+  if [[ "$host_platform" != "linux" ]]; then
+    echo "ERROR: can't build a Linux installer from '$host_platform' — run this from Linux or WSL instead" >&2
+    return 1
+  fi
+
+  ensure_linux_nodejs || return 1
+  build_desktop "linux" || { echo "ERROR: linux build failed" >&2; return 1; }
+
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') build OK — uploading"
+  if upload_linux_installers "$api_base"; then
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') DONE"
+  else
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') finished with errors (see above)"
+    return 1
+  fi
+}
+
+branch_desktop_mac() {
+  local m="$1"
+  local api_base="${API[$m]}"
+  local host_platform
+  host_platform="$(host_desktop_platform)"
+  echo "[progress][$m-mac] $(date '+%H:%M:%S') START (host=$host_platform)"
+
+  if [[ "$host_platform" != "mac" ]]; then
+    echo "ERROR: can't build a macOS installer from '$host_platform' — this only works on a Mac host (no cross-build)" >&2
+    return 1
+  fi
+
+  build_desktop "mac" || { echo "ERROR: mac build failed" >&2; return 1; }
+
+  echo "[progress][$m-mac] $(date '+%H:%M:%S') build OK — uploading"
+  if upload_mac_installers "$api_base"; then
+    echo "[progress][$m-mac] $(date '+%H:%M:%S') DONE"
+  else
+    echo "[progress][$m-mac] $(date '+%H:%M:%S') finished with errors (see above)"
+    return 1
+  fi
 }
 
 branch_vscode() {
@@ -458,7 +518,9 @@ for m in "${MODES[@]}"; do
           ( branch_web "$m" ) > "$log" 2>&1 &
         fi
         ;;
-      desktop) ( branch_desktop "$m" ) > "$log" 2>&1 & ;;
+      windows) ( branch_desktop_windows "$m" ) > "$log" 2>&1 & ;;
+      linux)   ( branch_desktop_linux "$m" )   > "$log" 2>&1 & ;;
+      mac)     ( branch_desktop_mac "$m" )     > "$log" 2>&1 & ;;
       vscode)  ( branch_vscode "$m" )  > "$log" 2>&1 & ;;
     esac
     BRANCH_PID["$key"]=$!
