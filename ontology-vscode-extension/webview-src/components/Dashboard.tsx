@@ -6991,6 +6991,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
 
       if (message.type === "showLoading") {
         console.log("[Dashboard] showLoading received - file upload starting for project:", message.projectId);
+        const wasAlreadySelectedBefore = hasUserSelectedFileRef.current;
         setHasUserSelectedFile(true);
         hasUserSelectedFileRef.current = true;
         pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
