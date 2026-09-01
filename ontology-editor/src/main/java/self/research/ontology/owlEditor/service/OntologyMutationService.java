@@ -29,6 +29,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.Set;
 
 @Service
 public class OntologyMutationService {
@@ -177,12 +178,11 @@ public class OntologyMutationService {
 
         log.info("[MUTATION] Applying {} mutations for project={}", ops.size(), projectId);
         long mutationStart = System.currentTimeMillis();
-        
-        String sparql = PREFIXES + "\n" + ops.stream()
+                String sparql = PREFIXES + "\n" + ops.stream()
                 .map(op -> toUpdate(projectId, op))
                 .filter(s -> s != null && !s.isBlank()) // Filter out empty statements
                 .collect(Collectors.joining("\n;\n"));
-        
+
         // Check if we have any actual statements after filtering
         if (sparql.trim().equals(PREFIXES.trim())) {
             String opTypes = ops.stream().map(MutationOp::type).collect(Collectors.joining(", "));
@@ -562,7 +562,7 @@ public class OntologyMutationService {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> owl:disjointWith <" + op.target() + "> .\n"
                 + "}";
-        } else if (type.equals("deleteDisjointWith")) {
+       } else if (type.equals("deleteDisjointWith")) {
             // Handle both named IRIs and blank nodes
             if (isBlankNodeRef(op.target())) {
                 // For blank nodes, use DELETE/WHERE pattern
@@ -570,10 +570,29 @@ public class OntologyMutationService {
                     + "WHERE { <" + op.iri() + "> owl:disjointWith ?target .\n"
                     + "  FILTER(isBlank(?target) && str(?target) = \"" + op.target() + "\") }";
             } else {
-                // Pattern-match delete, not DELETE DATA — see deleteSubClassOf.
-                return "DELETE { <" + op.iri() + "> owl:disjointWith <" + op.target() + "> }\n"
-                    + "WHERE { <" + op.iri() + "> owl:disjointWith <" + op.target() + "> }";
+                // owl:disjointWith is symmetric, but stored as a single directional
+                // triple — it could be <iri> disjointWith <target> OR the reverse.
+                // Deleting only one direction silently no-ops if the data happens to
+                // be stored the other way, which is exactly what was happening after
+                // deleteFromAllDisjointClasses re-inserts a pair (direction not
+                // guaranteed to match what the frontend later requests).
+                return "DELETE { <" + op.iri() + "> owl:disjointWith <" + op.target() + "> .\n"
+                    + "         <" + op.target() + "> owl:disjointWith <" + op.iri() + "> . }\n"
+                    + "WHERE { { <" + op.iri() + "> owl:disjointWith <" + op.target() + "> } \n"
+                    + "        UNION\n"
+                    + "        { <" + op.target() + "> owl:disjointWith <" + op.iri() + "> } }";
             }
+        } else if (type.equals("deleteFromAllDisjointClasses")) {
+            // On desktop this is patched directly in OwlApiMutationPatcher, and this
+            // SPARQL text is only ever used there as a fallback if that patch fails.
+            // On web (no in-memory OWLAPI model), this SPARQL is what actually runs.
+            //
+            // Removing one class from an n-ary group must not erase disjointness
+            // between every OTHER pair in that group — so we unpack the whole group
+            // into its individual pairwise relationships, drop only the (iri,target)
+            // pair being deleted, and re-insert every remaining pair as its own
+            // owl:disjointWith triple.
+            return buildDeleteFromAllDisjointClassesSparql(projectId, op.iri(), op.target());
         } else if (type.equals("updateDisjointWith")) {
             // Update operation: replace old target with new target
             // op.value contains the old target IRI, op.target contains the new target IRI
@@ -1201,6 +1220,85 @@ public class OntologyMutationService {
             }
             default -> "";
         };
+    }
+
+        /**
+     * Builds SPARQL to remove one (classIri, targetIri) pair from an owl:AllDisjointClasses
+     * axiom's member list. Unpacks the whole group into every individual pairwise
+     * relationship it represents, drops only the pair being deleted, and re-inserts
+     * every other pair as its own owl:disjointWith triple — so unrelated pairs in the
+     * same group are never affected.
+     */
+    private String buildDeleteFromAllDisjointClassesSparql(String projectId, String classIri, String targetIri) {
+        String findQuery = PREFIXES + """
+            SELECT ?member WHERE {
+              ?axiom a owl:AllDisjointClasses ;
+                     owl:members ?list .
+              ?list rdf:rest*/rdf:first ?member .
+              FILTER EXISTS { ?list rdf:rest*/rdf:first <%s> }
+              FILTER EXISTS { ?list rdf:rest*/rdf:first <%s> }
+            }
+            """.formatted(classIri, targetIri);
+
+        List<String> members = new ArrayList<>();
+        try {
+            var result = datasetService.execSelect(projectId, findQuery);
+            while (result.hasNext()) {
+                var binding = result.next();
+                members.add(binding.getValue("member").stringValue());
+            }
+        } catch (Exception e) {
+            log.error("[MUTATION] Failed to find AllDisjointClasses axiom for classIri={}, targetIri={}: {}",
+                    classIri, targetIri, e.getMessage());
+            throw new RuntimeException("Could not locate the disjoint-classes group to update", e);
+        }
+
+        if (members.isEmpty()) {
+            log.warn("[MUTATION] No AllDisjointClasses axiom found containing both {} and {} — falling back to simple pairwise delete",
+                    classIri, targetIri);
+            return "DELETE { <" + classIri + "> owl:disjointWith <" + targetIri + "> }\n"
+                 + "WHERE  { <" + classIri + "> owl:disjointWith <" + targetIri + "> }";
+        }
+
+        StringBuilder sparql = new StringBuilder();
+        sparql.append("""
+            DELETE {
+              ?axiom a owl:AllDisjointClasses .
+              ?axiom owl:members ?list .
+              ?node rdf:first ?first .
+              ?node rdf:rest ?rest .
+            }
+            WHERE {
+              ?axiom a owl:AllDisjointClasses ;
+                     owl:members ?list .
+              ?list rdf:rest* ?node .
+              ?node rdf:first ?first .
+              ?node rdf:rest ?rest .
+              FILTER EXISTS { ?list rdf:rest*/rdf:first <%s> }
+              FILTER EXISTS { ?list rdf:rest*/rdf:first <%s> }
+            }
+            """.formatted(classIri, targetIri));
+
+        List<String> pairInserts = new ArrayList<>();
+        for (int i = 0; i < members.size(); i++) {
+            for (int j = i + 1; j < members.size(); j++) {
+                String m1 = members.get(i);
+                String m2 = members.get(j);
+                boolean isDeletedPair = (m1.equals(classIri) && m2.equals(targetIri))
+                        || (m1.equals(targetIri) && m2.equals(classIri));
+                if (!isDeletedPair) {
+                    pairInserts.add("  <" + m1 + "> owl:disjointWith <" + m2 + "> .");
+                }
+            }
+        }
+
+        if (!pairInserts.isEmpty()) {
+            sparql.append(";\nINSERT DATA {\n");
+            sparql.append(String.join("\n", pairInserts));
+            sparql.append("\n}");
+        }
+
+        return sparql.toString();
     }
 
     private String buildRestrictionSparql(MutationOp op, boolean isDataRestriction) {

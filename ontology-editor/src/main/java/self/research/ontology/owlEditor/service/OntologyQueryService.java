@@ -2861,7 +2861,7 @@ public class OntologyQueryService {
         // feeds. Presentation ordering (previously ORDER BY ?label) is done in Java.
         CompletableFuture<TupleQueryResult> namedAxiomsFuture = queryAsync(SparqlQueryContext.wrap(() -> {
             String q = PREFIXES + """
-                SELECT DISTINCT ?kind ?target ?label WHERE {
+                SELECT DISTINCT ?kind ?target ?label ?isGroup WHERE {
                   {
                     <%1$s> rdfs:subClassOf ?target .
                     BIND("sub" AS ?kind)
@@ -2879,21 +2879,26 @@ public class OntologyQueryService {
                            && !STRSTARTS(STR(?target), "http://ontocode.org/restriction/"))
                   } UNION {
                     {
-                      { <%1$s> owl:disjointWith ?target . }
+                      { <%1$s> owl:disjointWith ?target . BIND(false AS ?isGroup) }
                       UNION
-                      { ?target owl:disjointWith <%1$s> . }
+                      { ?target owl:disjointWith <%1$s> . BIND(false AS ?isGroup) }
                       UNION
                       {
                         ?allDisjoint a owl:AllDisjointClasses ;
                                      owl:members ?list .
                         ?list rdf:rest*/rdf:first <%1$s> .
                         ?list rdf:rest*/rdf:first ?target .
+                        BIND(true AS ?isGroup)
                       }
                     }
                     BIND("disjoint" AS ?kind)
                     FILTER(isIRI(?target) && ?target != <%1$s>)
                   }
-                  OPTIONAL { ?target rdfs:label ?label }
+                  OPTIONAL {
+                    SELECT ?target (SAMPLE(?lbl) AS ?label) WHERE {
+                      ?target rdfs:label ?lbl .
+                    } GROUP BY ?target
+                  }
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
@@ -3022,7 +3027,11 @@ public class OntologyQueryService {
                     BIND("disjoint" AS ?kind)
                     FILTER(isIRI(?target) && ?target != <%1$s>)
                   }
-                  OPTIONAL { ?target rdfs:label ?label }
+                OPTIONAL {
+                    SELECT ?target (SAMPLE(?lbl) AS ?label) WHERE {
+                      ?target rdfs:label ?lbl .
+                    } GROUP BY ?target
+                  }
                 }
                 """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
@@ -3220,8 +3229,11 @@ WHERE {
                     axiom.put("type", "EquivalentTo");
                     equivAxioms.add(axiom);
                 }
-                case "disjoint" -> {
+                 case "disjoint" -> {
                     axiom.put("type", "DisjointWith");
+                    if (sol.hasBinding("isGroup") && "true".equals(literal(sol, "isGroup"))) {
+                        axiom.put("isAllDisjointClasses", "true");
+                    }
                     disjointAxioms.add(axiom);
                 }
                 default -> { }
