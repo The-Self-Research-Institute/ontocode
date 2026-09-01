@@ -107,10 +107,27 @@ public class CollaborativeEditController {
         String sessionId = headerAccessor.getSessionId();
         message.setSessionId(sessionId);
         message.setProjectId(projectId);
-        
-        log.debug("Lock operation for project {} from session {}: {}", 
+
+        // Same FREE-plan/ownership gate as handleEdit — locking was previously
+        // ungated, so a FREE non-owner could lock nodes on a project they don't own.
+        Map<String, Object> attrs = headerAccessor.getSessionAttributes();
+        if (attrs != null) {
+            String plan = (String) attrs.getOrDefault("plan", "FREE");
+            String userId = (String) attrs.get("userId");
+            if ("FREE".equalsIgnoreCase(plan) && !workspaceOwnershipService.isUserOwnerOfProject(userId, projectId)) {
+                log.warn("[WS-Auth] FREE plan user {} blocked from locking in project {}", userId, projectId);
+                messagingTemplate.convertAndSendToUser(
+                    sessionId, "/queue/errors",
+                    Map.of("error", "Your current plan is Free. Upgrade to Pro to edit ontologies.",
+                           "requiresUpgrade", true)
+                );
+                return;
+            }
+        }
+
+        log.debug("Lock operation for project {} from session {}: {}",
                 projectId, sessionId, message.getType());
-        
+
         if (message.getType() == LockMessage.LockType.LOCK_REQUEST) {
             collaborativeEditService.acquireLock(
                 projectId, 

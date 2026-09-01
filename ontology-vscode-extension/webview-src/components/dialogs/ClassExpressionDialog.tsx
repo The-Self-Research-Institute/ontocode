@@ -420,14 +420,28 @@ const localName = (iri: string): string => {
     }
   };
 
+  // A blank line (one or more empty/whitespace-only lines) separates multiple
+  // expressions for bulk entry. A single newline stays pure formatting — Manchester
+  // Syntax already ignores whitespace within one expression, so multi-line layout
+  // of a single complex expression (as in the placeholder example below) keeps
+  // working exactly as before. This sidesteps the comma/semicolon-separator
+  // ambiguity that stalled the same feature request upstream in Protégé (issue
+  // #1262): those characters are already meaningful inside Manchester Syntax
+  // itself (e.g. `{a, b}` enumerations), a blank line never is.
+  const splitManchesterExpressions = (text: string): string[] =>
+    text
+      .split(/\n\s*\n+/)
+      .map((block) => block.trim())
+      .filter((block) => block.length > 0);
+
   useEffect(() => {
     if (!projectId || activeTab !== 'classExpression') {
       setManchesterParseError(null);
       setManchesterParseOk(false);
       return;
     }
-    const expr = manchesterExpression.trim();
-    if (!expr) {
+    const expressions = splitManchesterExpressions(manchesterExpression);
+    if (expressions.length === 0) {
       setManchesterParseError(null);
       setManchesterParseOk(false);
       return;
@@ -435,12 +449,16 @@ const localName = (iri: string): string => {
     if (parseTimerRef.current) clearTimeout(parseTimerRef.current);
     parseTimerRef.current = setTimeout(async () => {
       try {
-        const result = await expressionService.parseExpression(projectId, expr);
-        if (result.success) {
+        const results = await Promise.all(
+          expressions.map((expr) => expressionService.parseExpression(projectId, expr))
+        );
+        const firstFailure = results.findIndex((r) => !r.success);
+        if (firstFailure === -1) {
           setManchesterParseError(null);
           setManchesterParseOk(true);
         } else {
-          setManchesterParseError(result.error || 'Invalid Manchester expression');
+          const prefix = expressions.length > 1 ? `Expression ${firstFailure + 1}: ` : '';
+          setManchesterParseError(prefix + (results[firstFailure].error || 'Invalid Manchester expression'));
           setManchesterParseOk(false);
         }
       } catch (err: unknown) {
@@ -495,20 +513,43 @@ const localName = (iri: string): string => {
           };
         }
         break;
-      case 'classExpression':
-        expression = manchesterExpression.trim();
-        if (!expression) {
+      case 'classExpression': {
+        const expressions = splitManchesterExpressions(manchesterExpression);
+        if (expressions.length === 0) {
           notificationService.warning('Expression Required', 'Enter a Manchester class expression');
           return;
         }
         if (projectId) {
-          const result = await expressionService.parseExpression(projectId, expression);
-          if (!result.success) {
-            notificationService.error('Invalid Expression', result.error || 'Could not parse Manchester expression');
+          const results = await Promise.all(
+            expressions.map((expr) => expressionService.parseExpression(projectId, expr))
+          );
+          const firstFailure = results.findIndex((r) => !r.success);
+          if (firstFailure !== -1) {
+            const prefix = expressions.length > 1 ? `Expression ${firstFailure + 1}: ` : '';
+            notificationService.error('Invalid Expression', prefix + (results[firstFailure].error || 'Could not parse Manchester expression'));
             return;
           }
         }
+        if (expressions.length > 1) {
+          // Multiple expressions confirmed as one axiom set — submit each in turn
+          // rather than routing through the single-expression `expression` variable
+          // below, then close once all have saved.
+          setIsSavingConfirm(true);
+          try {
+            for (const expr of expressions) {
+              await onConfirm(expr, undefined);
+            }
+            handleClose();
+          } catch (error) {
+            console.error('[ClassExpressionDialog] bulk onConfirm failed:', error);
+          } finally {
+            setIsSavingConfirm(false);
+          }
+          return;
+        }
+        expression = expressions[0];
         break;
+      }
       case 'dataRestriction':
         console.log('[ClassExpressionDialog] dataRestriction case - calling buildDataRestriction');
         expression = buildDataRestriction();
@@ -1170,20 +1211,33 @@ const localName = (iri: string): string => {
                     setManchesterExpression(e.target.value);
                     setManchesterParseOk(false);
                   }}
-                  placeholder={"e.g., Pizza and (hasTopping some Cheese)\n      not VegetarianPizza\n      {IndividualA, IndividualB}"}
+                  onKeyDown={(e) => {
+                    // Ctrl+Enter / Cmd+Enter confirms (matches Protégé's own shortcut) —
+                    // plain Enter still inserts a newline so multi-line formatting and
+                    // blank-line-separated bulk entry both keep working.
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && isOkEnabled) {
+                      e.preventDefault();
+                      handleConfirm();
+                    }
+                  }}
+                  placeholder={"e.g., Pizza and (hasTopping some Cheese)\n      not VegetarianPizza\n      {IndividualA, IndividualB}\n\nLeave a blank line to add another expression at once.\nCtrl+Enter (Cmd+Enter on Mac) to confirm."}
                   className="flex-1 p-4 border border-gray-300 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none bg-white text-black"
                 />
                 {projectId && manchesterExpression.trim() && (
                   <div className={`mt-2 flex items-center gap-2 text-xs px-2 py-1 rounded ${
                     manchesterParseError ? 'bg-red-50 text-red-700' : manchesterParseOk ? 'bg-green-50 text-green-700' : 'text-gray-500'
                   }`}>
-                    {manchesterParseError ? (
-                      <><AlertCircle size={14} /> {manchesterParseError}</>
-                    ) : manchesterParseOk ? (
-                      <><CheckCircle2 size={14} /> Valid Manchester expression</>
-                    ) : (
-                      <span>Validating…</span>
-                    )}
+                    {(() => {
+                      const count = splitManchesterExpressions(manchesterExpression).length;
+                      const label = count > 1 ? `${count} expressions` : 'Manchester expression';
+                      return manchesterParseError ? (
+                        <><AlertCircle size={14} /> {manchesterParseError}</>
+                      ) : manchesterParseOk ? (
+                        <><CheckCircle2 size={14} /> Valid {label}</>
+                      ) : (
+                        <span>Validating {count > 1 ? `${count} expressions` : ''}…</span>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -1192,6 +1246,9 @@ const localName = (iri: string): string => {
                 <p className="text-xs text-amber-800 mb-2">
                   Full Manchester syntax is validated against your ontology signature (OWLAPI parser).
                   Supports <span className="font-mono">and</span>, <span className="font-mono">or</span>, <span className="font-mono">not</span>, <span className="font-mono">some</span>, <span className="font-mono">only</span>, cardinality, and <span className="font-mono">{'{a, b}'}</span> enumerations.
+                </p>
+                <p className="text-xs text-amber-800 mb-2">
+                  Separate multiple expressions with a <strong>blank line</strong> to add them all at once — a single newline still just formats one expression. Press <span className="font-mono">Ctrl+Enter</span> (<span className="font-mono">Cmd+Enter</span> on Mac) to confirm without leaving the keyboard.
                 </p>
                 <p className="text-xs text-amber-700">Use the <strong>Restriction</strong> tab for guided restriction building with pickers.</p>
               </div>
