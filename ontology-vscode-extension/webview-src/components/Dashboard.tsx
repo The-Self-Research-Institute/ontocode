@@ -1659,33 +1659,42 @@ const Dashboard: React.FC<DashboardProps> = ({
     },
     [],
   );
-
   const countNodes = (nodes: any[]): number => {
-    let count = 0;
-    for (const node of nodes) {
-      // Don't count owl:Thing/owl:Nothing (class root) or the synthetic owl:top*Property
-      // root nodes (object/data property trees always include one, even with zero real
-      // properties) in the total — none of these represent a real user-defined entity.
-      const id = node.id || node.iri;
-      if (
-        id !== "http://www.w3.org/2002/07/owl#Thing" &&
-        id !== "owl:Thing" &&
-        id !== "http://www.w3.org/2002/07/owl#Nothing" &&
-        id !== "owl:Nothing" &&
-        id !== "http://www.w3.org/2002/07/owl#topObjectProperty" &&
-        id !== "owl:topObjectProperty" &&
-        id !== "http://www.w3.org/2002/07/owl#topDataProperty" &&
-        id !== "owl:topDataProperty"
-      ) {
-        count++;
-      }
-      if (node.children && node.children.length > 0) {
-        count += countNodes(node.children);
-      }
-    }
-    return count;
-  };
+    // OWL class/property hierarchies are DAGs, not trees — a node can be
+    // reachable from more than one parent (multiple inheritance), so a plain
+    // recursive counter would count the same entity once per path to it.
+    // Track visited IDs in a Set to count each distinct entity exactly once,
+    // no matter how many branches lead to it.
+    const seen = new Set<string>();
 
+    const walk = (nodeList: any[]) => {
+      for (const node of nodeList) {
+        // Don't count owl:Thing/owl:Nothing (class root) or the synthetic owl:top*Property
+        // root nodes (object/data property trees always include one, even with zero real
+        // properties) in the total — none of these represent a real user-defined entity.
+        const id = node.id || node.iri;
+        if (
+          id &&
+          id !== "http://www.w3.org/2002/07/owl#Thing" &&
+          id !== "owl:Thing" &&
+          id !== "http://www.w3.org/2002/07/owl#Nothing" &&
+          id !== "owl:Nothing" &&
+          id !== "http://www.w3.org/2002/07/owl#topObjectProperty" &&
+          id !== "owl:topObjectProperty" &&
+          id !== "http://www.w3.org/2002/07/owl#topDataProperty" &&
+          id !== "owl:topDataProperty"
+        ) {
+          seen.add(id);
+        }
+        if (node.children && node.children.length > 0) {
+          walk(node.children);
+        }
+      }
+    };
+
+    walk(nodes);
+    return seen.size;
+  };
   const showToast = useCallback(
     (message: string, type: "success" | "error" | "info" | "warning" = "info") => {
       collaboration.addNotification({
@@ -2658,11 +2667,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       id: "Classes",
       label: "Classes",
       icon: Package,
-      //count: Number((metadata as any)?.classCount) || 0,
-      count: Math.max(
-  Number((metadata as any)?.classCount) || 0,
-  classHierarchy.length > 0 ? countNodes(classHierarchy) : 0,
-),
+      // Trust backend metadata as the source of truth when available — it
+      // reflects the whole ontology, unlike classHierarchy, which can be
+      // partially loaded/collapsed in the UI on larger ontologies. Only fall
+      // back to counting the (now deduplicated) tree when metadata is missing.
+      count:
+        Number((metadata as any)?.classCount) > 0
+          ? Number((metadata as any)?.classCount)
+          : classHierarchy.length > 0
+            ? countNodes(classHierarchy)
+            : 0,
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
@@ -7004,17 +7018,13 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         if (window.vscode && message.projectId) {
           window.vscode.postMessage({ type: "getQueueStatus", projectId: message.projectId });
         }
+        setIsExpectingFileReady(true);  // unconditional again — needed by fetchData's fresh-import check regardless of platform
         if (isDesktop()) {
           // Desktop: block with loading dialog
-          setIsExpectingFileReady(true);
           setShowLoadingChoice(true);
-        }  else if (!hasUserSelectedFileRef.current) {
+        } else if (!wasAlreadySelectedBefore) {
           // Webapp, first file this session: stay in project library — import
-          // card shows live progress. Only do this before the user has ever
-          // selected a file — if they're already inside the editor (e.g.
-          // creating a new file while another file is open), this just flashes
-          // Project Library in and out for a second before the editor takes
-          // back over, which is exactly the bug being fixed here.
+          // card shows live progress.
           setShowProjectSelector(true);
         }
         // Don't fetch projects yet - wait for upload to complete
