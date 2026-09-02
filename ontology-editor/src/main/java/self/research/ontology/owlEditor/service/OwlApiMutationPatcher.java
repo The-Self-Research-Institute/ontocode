@@ -13,6 +13,8 @@ import self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.stream.Collectors;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -33,6 +35,7 @@ public class OwlApiMutationPatcher {
             "addSubClassOf", "deleteSubClassOf", "updateSubClassOf", "deleteAxiom",
             "addEquivalentClass", "deleteEquivalentClass", "updateEquivalentClass",
             "addDisjointWith", "deleteDisjointWith", "updateDisjointWith",
+            "deleteFromAllDisjointClasses",
             "addAnnotation", "deleteAnnotation", "updateAnnotation", "updateClassLabel",
             "createIndividual", "deleteIndividual",
             "addClassAssertion", "removeClassAssertion",
@@ -218,6 +221,43 @@ public class OwlApiMutationPatcher {
                 toRemove.add(df.getOWLDisjointClassesAxiom(a.get(), b.get()));
                 yield true;
             }
+              case "deleteFromAllDisjointClasses" -> {
+                    Optional<OWLClass> a = namedClass(op.iri(), df);
+                    Optional<OWLClass> b = namedClass(op.target(), df);
+                    if (a.isEmpty() || b.isEmpty()) yield false;
+
+                    // Find the OWLDisjointClassesAxiom (pairwise or n-ary AllDisjointClasses —
+                    // OWLAPI represents both the same way) that contains both classes.
+                    Optional<OWLDisjointClassesAxiom> found = ontology.disjointClassesAxioms(a.get())
+                            .filter(ax -> ax.classExpressions().anyMatch(ce -> ce.equals(b.get())))
+                            .findFirst();
+                    if (found.isEmpty()) yield false;
+
+                    OWLDisjointClassesAxiom oldAxiom = found.get();
+                    toRemove.add(oldAxiom);
+
+                    List<OWLClass> members = oldAxiom.classExpressions()
+                            .filter(ce -> !ce.isAnonymous())
+                            .map(OWLClassExpression::asOWLClass)
+                            .collect(Collectors.toList());
+
+                    // Deleting one pair from an n-ary group must not erase disjointness
+                    // between every OTHER pair in that group. Unpack the whole group into
+                    // its individual pairwise relationships, drop only the (a,b) pair being
+                    // deleted, and re-add every remaining pair as its own disjointWith axiom.
+                    for (int i = 0; i < members.size(); i++) {
+                        for (int j = i + 1; j < members.size(); j++) {
+                            OWLClass m1 = members.get(i);
+                            OWLClass m2 = members.get(j);
+                            boolean isDeletedPair = (m1.equals(a.get()) && m2.equals(b.get()))
+                                    || (m1.equals(b.get()) && m2.equals(a.get()));
+                            if (!isDeletedPair) {
+                                toAdd.add(df.getOWLDisjointClassesAxiom(m1, m2));
+                            }
+                        }
+                    }
+                    yield true;
+                }
             case "updateDisjointWith" -> {
                 Optional<OWLClass> sub = namedClass(op.iri(), df);
                 Optional<OWLClass> oldD = namedClass(op.value(), df);

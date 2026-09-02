@@ -234,16 +234,24 @@ public class DesktopHierarchyService {
         }
         details.put("equivalentClassesAxioms", equivalentClassesAxioms);
 
-        // disjointClassesAxioms: named disjoint classes only
-        List<OWLClassExpression> disjointExprs = ont.disjointClassesAxioms(cls)
-            .flatMap(ax -> ax.classExpressions())
-            .filter(ce -> !ce.equals(cls) && !ce.isAnonymous())
-            .collect(Collectors.toList());
+      
+        // disjointClassesAxioms: named disjoint classes only. Tag entries that came from an
+        // n-ary owl:AllDisjointClasses axiom (3+ members) so the frontend calls the correct
+        // delete method — a simple pairwise DELETE/WHERE silently no-ops against this shape.
         List<Map<String, Object>> disjointClassesAxioms = new ArrayList<>();
-        for (int i = 0; i < disjointExprs.size(); i++) {
-            Map<String, Object> m = classExpressionToAxiomMap(ont, disjointExprs.get(i), "dis_" + i);
-            m.put("type", "DisjointWith");
-            disjointClassesAxioms.add(m);
+        Set<String> seenDisjointIris = new LinkedHashSet<>();
+        for (OWLDisjointClassesAxiom ax : ont.disjointClassesAxioms(cls).collect(Collectors.toList())) {
+            List<OWLClassExpression> members = ax.classExpressions().collect(Collectors.toList());
+            boolean isAllDisjointClasses = members.size() >= 3;
+            for (OWLClassExpression ce : members) {
+                if (ce.equals(cls) || ce.isAnonymous()) continue;
+                String iri = ce.asOWLClass().getIRI().toString();
+                if (!seenDisjointIris.add(iri)) continue;
+                Map<String, Object> m = classExpressionToAxiomMap(ont, ce, "dis_" + disjointClassesAxioms.size());
+                m.put("type", "DisjointWith");
+                m.put("isAllDisjointClasses", isAllDisjointClasses);
+                disjointClassesAxioms.add(m);
+            }
         }
         details.put("disjointClassesAxioms", disjointClassesAxioms);
 
@@ -300,32 +308,7 @@ public class DesktopHierarchyService {
         org.semanticweb.owlapi.model.parameters.Imports imp =
                 org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
 
-        // --- AllDisjointClasses members (merge into disjoint list) ---
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> disjointAxioms = (List<Map<String, Object>>) details
-                .computeIfAbsent("disjointClassesAxioms", k -> new ArrayList<>());
-        Set<String> seenDisjoint = disjointAxioms.stream()
-                .map(m -> String.valueOf(m.get("id")))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        for (OWLDisjointClassesAxiom ax : ont.getAxioms(AxiomType.DISJOINT_CLASSES, imp)) {
-            List<OWLClassExpression> members = ax.classExpressions().collect(Collectors.toList());
-            if (members.size() < 3 || !members.contains(cls)) {
-                continue;
-            }
-            for (OWLClassExpression ce : members) {
-                if (ce.equals(cls) || ce.isAnonymous()) {
-                    continue;
-                }
-                String iri = ce.asOWLClass().getIRI().toString();
-                if (seenDisjoint.add(iri)) {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("id", iri);
-                    m.put("type", "DisjointWith");
-                    m.put("definition", getLabel(ont, ce.asOWLClass().getIRI()));
-                    disjointAxioms.add(m);
-                }
-            }
-        }
+        
 
         // --- disjointUnionOf ---
         List<Map<String, Object>> disjointUnionAxioms = new ArrayList<>();
