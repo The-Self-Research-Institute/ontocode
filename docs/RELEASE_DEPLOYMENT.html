@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OntoCode — Release Deployment (web, VS Code, desktop, Flatpak)</title>
+<style>
+  html, body {
+    background: #ffffff;
+    color: #000000;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 32px 80px 32px;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    color: #000000;
+    line-height: 1.25;
+    margin-top: 2em;
+    margin-bottom: 0.6em;
+    font-weight: 700;
+  }
+  h1 { font-size: 1.9em; border-bottom: 1px solid #000; padding-bottom: 0.3em; margin-top: 0; }
+  h2 { font-size: 1.5em; border-bottom: 1px solid #000; padding-bottom: 0.2em; }
+  h3 { font-size: 1.2em; }
+  h4 { font-size: 1.05em; }
+  p, ul, ol, table { margin: 0.7em 0; }
+  ul, ol { padding-left: 1.8em; }
+  li { margin: 0.25em 0; }
+  a { color: #000000; text-decoration: underline; }
+  a:hover { text-decoration: none; }
+  hr { border: none; border-top: 1px solid #000; margin: 2em 0; }
+  blockquote {
+    margin: 1em 0;
+    padding: 0.5em 1em;
+    border-left: 3px solid #000;
+    background: #ffffff;
+  }
+  blockquote p { margin: 0.3em 0; }
+  code, pre, kbd, samp {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.92em;
+  }
+  code {
+    background: #ffffff;
+    border: 1px solid #000;
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+  pre {
+    background: #ffffff;
+    color: #000000;
+    border: 1px solid #000;
+    border-radius: 2px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    line-height: 1.45;
+    white-space: pre;
+  }
+  pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: #000;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1em 0;
+  }
+  th, td {
+    border: 1px solid #000;
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { font-weight: 700; background: #ffffff; }
+  .callout {
+    border: 1px solid #000;
+    padding: 10px 14px;
+    margin: 1em 0;
+  }
+  .callout strong:first-child { display: inline-block; margin-right: 6px; }
+  @media print {
+    body { padding: 20px; max-width: 100%; font-size: 11pt; }
+    pre, code { font-size: 10pt; }
+    a { color: #000; text-decoration: none; }
+    h1, h2 { page-break-after: avoid; }
+    pre, blockquote, table { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Release Deployment</h1>
+
+<p>One script drives web, desktop, and the VS Code extension: <code>scripts/deploy-coretopia-release.sh</code> (Windows: <code>scripts/deploy-coretopia-release.ps1</code>). Flatpak is separate and manual — Flathub's own review process doesn't fit the same automated push/upload flow.</p>
+
+<h2>Prerequisites (once)</h2>
+
+<p>Create <code>.env.deploy</code> at the repo root (gitignored) with whichever of these the target mode/platform needs:</p>
+
+<pre>DEV_EC2_HOST=ubuntu@&lt;dev-ip&gt;
+DEV_API_BASE=https://ontocodedevapi.selfresearch.org
+DEV_SSH_KEY=/path/to/dev-key.pem        # optional if ssh-agent already has it
+
+EC2_HOST=ubuntu@&lt;prod-ip&gt;               # prod SSH target
+API_BASE=https://ontocodeapi.selfresearch.org   # defaults to this if unset
+PROD_SSH_KEY=/path/to/prod-key.pem
+
+ADMIN_USER=...                          # required for desktop installer uploads
+ADMIN_PASSWORD=...
+
+DOCKER_REGISTRY=ontocode                # defaults shown
+DEV_VERSION=dev
+PROD_VERSION=latest</pre>
+
+<p>The script runs <code>check-jdk-prereqs.sh</code> / <code>check-wsl-prereqs.sh</code> automatically and will tell you what's missing (JDK 17/21, Linux Node inside WSL, etc.) before it starts building.</p>
+
+<h2>Usage</h2>
+
+<pre>./scripts/deploy-coretopia-release.sh --mode &lt;dev|prod|all&gt; --changes &lt;service,...|all&gt; --platform &lt;web,vscode,windows,linux,mac|all&gt;</pre>
+
+<ul>
+  <li><code>--mode all</code> runs dev and prod in parallel — no dev-first gate, so only use it once dev is already verified.</li>
+  <li><code>--changes</code> takes any of <code>fuseki graphdb auth gateway editor reasoner-worker swrl plugin plugin-init web</code>, or <code>all</code> (which expands to the 8 app services, not the two DB containers).</li>
+  <li><code>--platform</code> takes any of <code>web vscode windows linux mac</code>, or <code>all</code>. Each desktop platform is explicit now — there's no ambiguous <code>desktop</code> value that silently builds whatever the host happens to support; ask for <code>windows</code>, <code>linux</code>, or <code>mac</code> by name and the script fails loudly if the current host can't build that one (e.g. <code>mac</code> only works on a Mac host, <code>windows</code> needs native Windows or WSL cross-building into a Windows host).</li>
+  <li>All requested <code>mode &times; platform</code> combinations run <strong>in parallel</strong> as background branches, with live progress printed every 8s and a pass/fail summary at the end.</li>
+</ul>
+
+<h2>Dev deployment — quick reference, one command per platform</h2>
+
+<p>All five target the dev EC2 host / dev API (<code>DEV_EC2_HOST</code>, <code>DEV_API_BASE</code> from <code>.env.deploy</code>), tagged <code>dev</code>, not <code>latest</code>:</p>
+
+<pre># Web (Docker services) — dev
+./scripts/deploy-coretopia-release.sh --mode dev --changes web --platform web
+
+# VS Code extension (.vsix) — dev
+./scripts/deploy-coretopia-release.sh --mode dev --changes web --platform vscode
+
+# Desktop — Windows .exe (run from Windows, or from WSL which cross-builds via the Windows host)
+./scripts/deploy-coretopia-release.sh --mode dev --changes web --platform windows
+
+# Desktop — Linux (AppImage/deb) — run from a Linux host or WSL
+./scripts/deploy-coretopia-release.sh --mode dev --changes web --platform linux
+
+# Desktop — macOS (.dmg) — must run on a Mac host, no cross-build
+./scripts/deploy-coretopia-release.sh --mode dev --changes web --platform mac</pre>
+
+<p>Or combine any of them in a single call, e.g. <code>--platform web,vscode,windows,linux</code> builds/deploys all four to dev in parallel (from a WSL host, which can do both windows and linux at once). Swap <code>--mode dev</code> for <code>--mode prod</code> only after dev is verified — <code>--mode all</code> runs both with no gate in between.</p>
+
+<h2>Web (Docker services)</h2>
+
+<pre>./scripts/deploy-coretopia-release.sh --mode prod --changes web --platform web</pre>
+
+<ol>
+  <li><code>build-and-push.sh</code> builds each requested service's image (<code>docker buildx</code>, respects <code>BUILD_PLATFORMS</code>, default <code>linux/amd64</code>) and pushes to the registry.</li>
+  <li>SSHes into the target host and runs <code>docker compose ... up -d --pull always</code>, then <code>docker compose ps</code> to confirm.</li>
+  <li>Prod uses <code>docker-compose.production.yml</code> + <code>docker-compose.r6i-xlarge.yml</code>; dev uses plain <code>docker-compose.yml</code>.</li>
+</ol>
+
+<p><code>--remote-build</code> is a separate mode (currently only for <code>swrl</code>) that rsyncs the build context to the target host and builds there instead of pushing a local image — useful when the local machine shouldn't run <code>buildx</code> at all.</p>
+
+<h2>Desktop (Windows / Linux / macOS installers)</h2>
+
+<pre>./scripts/deploy-coretopia-release.sh --mode prod --changes web --platform windows
+./scripts/deploy-coretopia-release.sh --mode prod --changes web --platform linux
+./scripts/deploy-coretopia-release.sh --mode prod --changes web --platform mac</pre>
+
+<p>Each platform is its own explicit branch (<code>branch_desktop_windows</code> / <code>branch_desktop_linux</code> / <code>branch_desktop_mac</code>) — no host auto-detection deciding what you get:</p>
+
+<ul>
+  <li><strong><code>windows</code>:</strong> on native Windows, builds <code>npm run dist:win</code> directly. From WSL, cross-calls into the Windows host (<code>cmd.exe</code>/<code>powershell.exe</code>) to run it there instead — both builds share <code>electron-app/resources</code> so this can't run in parallel with a <code>linux</code> build on the same box. From a plain (non-WSL) Linux or Mac host, it fails immediately with an error telling you to run it from Windows or WSL instead, rather than silently skipping.</li>
+  <li><strong><code>linux</code>:</strong> only runs on a Linux host (native or WSL); needs a real Linux Node/npm on <code>PATH</code>, not the Windows one — the script checks and tells you the exact <code>apt-get</code> command if it's missing. Builds via <code>npm run dist:linux</code>. Fails immediately on Windows/Mac hosts.</li>
+  <li><strong><code>mac</code>:</strong> only runs on a Mac host (<code>npm run dist:mac</code> — no cross-build support). Fails immediately on Windows/Linux hosts.</li>
+</ul>
+
+<p>Each branch uploads only the installer type it actually built (<code>windows-x64</code> .exe, <code>linux-x64</code> .AppImage + <code>linux-deb</code> .deb, or <code>mac-arm64</code>/<code>mac-x64</code> .dmg) via <code>POST /api/downloads/upload</code> (logs in as <code>ADMIN_USER</code>/<code>ADMIN_PASSWORD</code> first, then uploads with an explicit <code>platform=</code> tag — never let this default, that's caused silent version mismatches before). Each upload prints the public download URL.</p>
+
+<p>Flatpak is <strong>not</strong> built or uploaded by this script — see below.</p>
+
+<h2>VS Code extension (OntoCode Studio)</h2>
+
+<pre>./scripts/deploy-coretopia-release.sh --mode dev --changes web --platform vscode</pre>
+
+<ol>
+  <li>For <code>--mode dev</code>, generates <code>ontology-vscode-extension/.env.dev-release</code> pointing <code>CLOUD_GATEWAY_URL</code>/<code>CLOUD_EDITOR_URL</code>/<code>CLOUD_PLUGIN_URL</code> at <code>DEV_API_BASE</code> (prod uses the checked-in <code>.env.prod-release</code> as-is — verify it points at prod, not dev, before running this in prod mode).</li>
+  <li><code>npm run bundle:all</code> (webview + plugin bundles) using that env file.</li>
+  <li><code>npm run package</code> &rarr; produces the <code>.vsix</code>.</li>
+</ol>
+
+<p>This only packages the <code>.vsix</code> locally — publishing it to the VS Code Marketplace (<code>vsce publish</code>) is a separate, manual step this script does not do.</p>
+
+<h2>Flatpak (Linux, via Flathub)</h2>
+
+<p>Not part of the script above — Flathub builds and hosts the package themselves once a submission PR is merged, so "deploying" here means keeping the submission correct, not pushing a build.</p>
+
+<ol>
+  <li>Cut a GitHub Release with the Linux tarball asset (<code>ontocode-desktop-linux-x64-v&lt;version&gt;.tar.gz</code>) that the manifest's <code>type: archive</code> source points at, plus the <code>packaging/linux/</code> desktop entry, metainfo, and icon files it fetches individually.</li>
+  <li>Update <code>org.selfresearch.OntoCode.yml</code> (in the <code>kkpranesh/flathub</code> fork, branch <code>org.selfresearch.OntoCode</code>) if the release tag, sha256 sums, or runtime/base versions changed.</li>
+  <li>Push to the fork branch — this only updates the linked PR if the PR is currently <strong>open</strong>; pushes while it's closed don't sync (verified this the hard way — see the PR history).</li>
+  <li>Test locally before relying on review comments to catch it: <code>flatpak-builder --force-clean --user --install-deps-from=flathub build-dir org.selfresearch.OntoCode.yml</code>, then <code>flatpak run</code> the result and exercise the golden path.</li>
+  <li>Flathub's <code>submission-checker</code> bot manages the PR (labels, auto-closes on an incomplete checklist) — only a maintainer can reopen a PR it closed; commenting to ask, not reopening yourself, is the only path available to a submitter.</li>
+</ol>
+
+<h2>Notes carried over from real deploys</h2>
+
+<ul>
+  <li>Never run this concurrently with another deploy touching the same services/host — a prior race here corrupted an upload.</li>
+  <li><code>--changes all</code> does <strong>not</strong> include <code>fuseki</code>/<code>graphdb</code> — those are data-holding containers and are deliberately excluded from the "all services" shorthand.</li>
+  <li>After any change to <code>build-and-push.sh</code>/<code>.bat</code>, <code>docker-compose*.yml</code>, or this script, update this doc to match.</li>
+</ul>
+
+</body>
+</html>
