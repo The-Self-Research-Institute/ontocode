@@ -2,6 +2,8 @@ export interface ReleaseNote {
 
   version: string;
 
+  webVersion?: string;
+
   date: string;
 
   title?: string;
@@ -14,6 +16,26 @@ export interface ReleaseNote {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+
+    {
+    version: "1.2.1-beta.1",
+    webVersion: "1.2.1",
+    date: "September 4, 2026",
+    highlights: [
+      "TSRI-356: Share with Members — Fixed sharing a project with multiple members at once failing with a false \"user not found\" error.",
+    ],
+    videoUrl: "",
+  },
+  {
+    version: "1.2.0-beta.1",
+    webVersion: "1.2.0",
+    date: "August 20, 2026",
+    highlights: [
+      "TSRI-293: VOWL — Fixed Collapse followed by Fit to Screen hanging, requiring an extra click before the full graph appears.",
+      "TSRI-151: Class Hierarchy — Fixed sibling creation often selecting the wrong class instead of the intended one.",
+    ],
+    videoUrl: "",
+  },
   {
     version: "1.1.0-beta.19",
     date: "August 14, 2026",

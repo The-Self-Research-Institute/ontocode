@@ -2,7 +2,7 @@
   "name": "ontocode-studio",
   "displayName": "OntoCode Studio",
   "description": "Edit OWL files with authentication and web-based interface",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "publisher": "SelfResearchInstitute",
   "license": "AGPL-3.0-only",
   "icon": "images/icon.png",

@@ -31,7 +31,7 @@ export const AppVersionBadge: React.FC<AppVersionBadgeProps> = ({
 
   if (!version) return null;
 
-  const edition = editionLabel ?? (isDesktop() ? "Desktop" : "Web Beta");
+  const edition = editionLabel ?? (isDesktop() ? "Desktop" : "Web ");
   const styles = variantClasses[variant];
 
   return (
