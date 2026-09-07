@@ -358,8 +358,19 @@ upload_windows_installer() {
     echo "ERROR: no Windows installer found in $DIST" >&2
     return 1
   fi
-  local f; f=$(ls -t "${win[@]}" | head -1)
-  upload_installer "$api_base" "windows-x64" "$f" "$(basename "$f")"
+
+  local win_arm64=() win_x64=()
+  local _w2
+  for _w2 in "${win[@]}"; do
+    case "$_w2" in
+      *arm64*) win_arm64+=("$_w2") ;;
+      *)       win_x64+=("$_w2") ;;
+    esac
+  done
+  local fail=0
+  [[ ${#win_x64[@]}   -gt 0 ]] && { local f; f=$(ls -t "${win_x64[@]}"   | head -1); upload_installer "$api_base" "windows-x64"   "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#win_arm64[@]} -gt 0 ]] && { local f; f=$(ls -t "${win_arm64[@]}" | head -1); upload_installer "$api_base" "windows-arm64" "$f" "$(basename "$f")" || fail=1; }
+  return $fail
 }
 
 upload_linux_installers() {
@@ -369,13 +380,25 @@ upload_linux_installers() {
   shopt -s nullglob
   local appimages=( "$DIST"/*.AppImage )
   local debs=( "$DIST"/*.deb )
+  local flatpaks=( "$DIST"/*.flatpak )
   shopt -u nullglob
-  if [[ ${#appimages[@]} -eq 0 && ${#debs[@]} -eq 0 ]]; then
-    echo "ERROR: no Linux installer (.AppImage/.deb) found in $DIST" >&2
+  if [[ ${#appimages[@]} -eq 0 && ${#debs[@]} -eq 0 && ${#flatpaks[@]} -eq 0 ]]; then
+    echo "ERROR: no Linux installer (.AppImage/.deb/.flatpak) found in $DIST" >&2
     return 1
   fi
-  [[ ${#appimages[@]} -gt 0 ]] && { local f; f=$(ls -t "${appimages[@]}" | head -1); upload_installer "$api_base" "linux-x64" "$f" "$(basename "$f")" || fail=1; }
-  [[ ${#debs[@]} -gt 0 ]] && { local f; f=$(ls -t "${debs[@]}" | head -1); upload_installer "$api_base" "linux-deb" "$f" "$(basename "$f")" || fail=1; }
+
+  local appimg_arm64=() appimg_x64=()
+  local _ai
+  for _ai in "${appimages[@]+"${appimages[@]}"}"; do
+    case "$_ai" in
+      *arm64*) appimg_arm64+=("$_ai") ;;
+      *)       appimg_x64+=("$_ai") ;;
+    esac
+  done
+  [[ ${#appimg_x64[@]}   -gt 0 ]] && { local f; f=$(ls -t "${appimg_x64[@]}"   | head -1); upload_installer "$api_base" "linux-x64"    "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#appimg_arm64[@]} -gt 0 ]] && { local f; f=$(ls -t "${appimg_arm64[@]}" | head -1); upload_installer "$api_base" "linux-arm64"  "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#debs[@]}         -gt 0 ]] && { local f; f=$(ls -t "${debs[@]}"        | head -1); upload_installer "$api_base" "linux-deb"    "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#flatpaks[@]}     -gt 0 ]] && { local f; f=$(ls -t "${flatpaks[@]}"    | head -1); upload_installer "$api_base" "linux-flatpak" "$f" "$(basename "$f")" || fail=1; }
   return $fail
 }
 
@@ -446,6 +469,16 @@ branch_desktop_linux() {
 
   ensure_linux_nodejs || return 1
   build_desktop "linux" || { echo "ERROR: linux build failed" >&2; return 1; }
+
+  if command -v flatpak-builder >/dev/null 2>&1; then
+    echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too"
+    if ! ( cd "$ROOT/electron-app" && npm run dist:linux:flatpak ); then
+      echo "WARNING: flatpak build failed — continuing with AppImage/deb only" >&2
+    fi
+  else
+    echo "[progress][$m-linux] flatpak-builder not installed — skipping flatpak bundle"
+    echo "          Install with: sudo apt-get install -y flatpak flatpak-builder && flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak install -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08"
+  fi
 
   echo "[progress][$m-linux] $(date '+%H:%M:%S') build OK — uploading"
   if upload_linux_installers "$api_base"; then
