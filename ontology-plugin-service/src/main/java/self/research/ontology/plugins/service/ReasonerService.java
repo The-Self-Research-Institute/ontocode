@@ -10,6 +10,9 @@ import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.semanticweb.owl.explanation.api.Explanation;
 import org.semanticweb.owl.explanation.api.ExplanationGenerator;
+import org.semanticweb.owl.explanation.api.ExplanationGeneratorFactory;
+import org.semanticweb.owl.explanation.api.NullExplanationProgressMonitor;
+import org.semanticweb.owl.explanation.impl.laconic.LaconicExplanationGeneratorFactory;
 import org.semanticweb.owl.explanation.impl.blackbox.checker.InconsistentOntologyExplanationGeneratorFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,7 +75,12 @@ public class ReasonerService {
     // heuristics above — only runs as a fallback when those find nothing.
     @Value("${ontocode.reasoner.justification-timeout-ms:15000}")
     private long JUSTIFICATION_TIMEOUT_MS;
-
+    // How many independent minimal justifications to search for, matching
+    // Protégé's "Explanation 1 / Explanation 2 / ..." panel. Each additional
+    // justification costs another hitting-set-tree branch of re-checks, so
+    // keep this modest.
+    @Value("${ontocode.reasoner.max-justifications:5}")
+    private int MAX_JUSTIFICATIONS;
     /**
      * Create or get cached reasoner for an ontology
      */
@@ -609,33 +617,123 @@ public class ReasonerService {
             ? iri.substring(splitIndex + 1)
             : iri;
     }
-
-    /**
-     * Real justification finder — same black-box algorithm Protégé's own
-     * Explanation panel uses (via owlexplanation / OWL Explanation Workbench),
-     * for inconsistency patterns the syntactic heuristics elsewhere in this class
-     * don't recognize. Explains Thing ⊑ Nothing (equivalent to "inconsistent"
-     * for a justification search) and returns the first minimal axiom set found,
-     * rendered as readable strings.
-     */
-    private List<String> findGeneralJustification(OWLOntology ontology) {
+    
+     private List<Map<String, Object>> findJustifications(OWLOntology ontology, int limit) {
+        OWLOntology reasoningOntology = stripSwrlRules(ontology);
         InconsistentOntologyExplanationGeneratorFactory factory =
             new InconsistentOntologyExplanationGeneratorFactory(
                 new ReasonerFactory(), DATA_FACTORY, OWLManager::createOWLOntologyManager, JUSTIFICATION_TIMEOUT_MS);
-        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(ontology);
+        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology);
         OWLAxiom entailment = DATA_FACTORY.getOWLSubClassOfAxiom(DATA_FACTORY.getOWLThing(), DATA_FACTORY.getOWLNothing());
-        Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, 1);
+        Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
+
         if (explanations.isEmpty()) {
             return Collections.emptyList();
         }
-        Explanation<OWLAxiom> justification = explanations.iterator().next();
-        List<String> lines = new ArrayList<>();
-        for (OWLAxiom axiom : justification.getAxioms()) {
-            lines.add(renderAxiom(axiom, ontology));
-        }
-        return lines;
-    }
 
+        List<Set<OWLAxiom>> allAxiomSets = explanations.stream()
+            .map(Explanation::getAxioms)
+            .collect(Collectors.toList());
+
+        List<Map<String, Object>> justifications = new ArrayList<>();
+        int i = 1;
+        for (Explanation<OWLAxiom> explanation : explanations) {
+            Map<String, Object> justification = new HashMap<>();
+            justification.put("label", "Explanation " + i++);
+
+            List<Map<String, Object>> axiomEntries = new ArrayList<>();
+            for (OWLAxiom axiom : explanation.getAxioms()) {
+                long membershipCount = allAxiomSets.stream()
+                    .filter(set -> set.contains(axiom))
+                    .count();
+
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("text", renderAxiom(axiom, ontology));
+                entry.put("membershipNote",
+                    membershipCount == allAxiomSets.size() ? "In ALL other justifications"
+                    : membershipCount == 1 ? "In NO other justifications"
+                    : "In " + (membershipCount - 1) + " other justifications");
+                axiomEntries.add(entry);
+            }
+            justification.put("axioms", axiomEntries);
+            justifications.add(justification);
+        }
+        return justifications;
+    }
+        /**
+     * Same black-box search as findJustifications, but wraps the generator in
+     * LaconicExplanationGeneratorFactory — owlexplanation's own built-in mode
+     * that trims each axiom in a justification down to just the part actually
+     * responsible for the contradiction, dropping unrelated conjuncts/restrictions
+     * that were just "along for the ride." Prevents users over-repairing their
+     * ontology by deleting more than the entailment actually requires.
+     */
+          private List<Map<String, Object>> findLaconicJustifications(OWLOntology ontology, int limit) {
+        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+
+        InconsistentOntologyExplanationGeneratorFactory baseFactory =
+            new InconsistentOntologyExplanationGeneratorFactory(
+                new ReasonerFactory(), DATA_FACTORY, OWLManager::createOWLOntologyManager, JUSTIFICATION_TIMEOUT_MS);
+
+        ExplanationGeneratorFactory<OWLAxiom> laconicFactory =
+            new LaconicExplanationGeneratorFactory<OWLAxiom>(baseFactory, OWLManager::createOWLOntologyManager);
+
+        ExplanationGenerator<OWLAxiom> generator = laconicFactory.createExplanationGenerator(reasoningOntology);
+        OWLAxiom entailment = DATA_FACTORY.getOWLSubClassOfAxiom(DATA_FACTORY.getOWLThing(), DATA_FACTORY.getOWLNothing());
+        Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
+
+        if (explanations.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Set<OWLAxiom>> allAxiomSets = explanations.stream()
+            .map(Explanation::getAxioms)
+            .collect(Collectors.toList());
+
+        List<Map<String, Object>> justifications = new ArrayList<>();
+        int i = 1;
+        for (Explanation<OWLAxiom> explanation : explanations) {
+            Map<String, Object> justification = new HashMap<>();
+            justification.put("label", "Explanation " + i++);
+
+            List<Map<String, Object>> axiomEntries = new ArrayList<>();
+            for (OWLAxiom axiom : explanation.getAxioms()) {
+                long membershipCount = allAxiomSets.stream()
+                    .filter(set -> set.contains(axiom))
+                    .count();
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("text", renderAxiom(axiom, ontology));
+                entry.put("membershipNote",
+                    membershipCount == allAxiomSets.size() ? "In ALL other justifications"
+                    : membershipCount == 1 ? "In NO other justifications"
+                    : "In " + (membershipCount - 1) + " other justifications");
+                axiomEntries.add(entry);
+            }
+            justification.put("axioms", axiomEntries);
+            justifications.add(justification);
+        }
+        return justifications;
+    }
+/**
+ * HermiT (and the owlexplanation entailment checker it powers) cannot load
+ * ontologies containing SWRL rules with built-in atoms like swrlb:greaterThan
+ * — it throws IllegalArgumentException during normalization. Class-level
+ * disjointness/consistency reasoning never needs the SWRL rules anyway, so
+ * strip them from a throwaway copy before handing the ontology to HermiT.
+ */
+
+private OWLOntology stripSwrlRules(OWLOntology ontology) {
+    Set<OWLAxiom> axioms = ontology.getAxioms().stream()
+        .filter(ax -> ax.getAxiomType() != AxiomType.SWRL_RULE)
+        .collect(Collectors.toSet());
+    try {
+        OWLOntologyManager mgr = OWLManager.createOWLOntologyManager();
+        return mgr.createOntology(axioms);
+    } catch (OWLOntologyCreationException e) {
+        log.warn("Failed to strip SWRL rules, falling back to original ontology", e);
+        return ontology;
+    }
+}
     /**
      * Renders an arbitrary OWL axiom in plain English, matching the style used
      * elsewhere in this class ("X Type Y", "X SubClassOf Y", "DisjointClasses: ...").
@@ -1044,13 +1142,21 @@ public class ReasonerService {
             return stats;
         }
     }
-    
+        public Map<String, Object> explainInconsistency(OWLOntology ontology, ReasonerType type) {
+        return explainInconsistency(ontology, type, MAX_JUSTIFICATIONS, "regular");
+    }
+
+    public Map<String, Object> explainInconsistency(OWLOntology ontology, ReasonerType type, int maxJustifications) {
+        return explainInconsistency(ontology, type, maxJustifications, "regular");
+    }
+
     /**
      * Explain why the ontology is inconsistent
      * Returns detailed information about contradictions and problematic axioms
      */
-    public Map<String, Object> explainInconsistency(OWLOntology ontology, ReasonerType type) {
-        OWLReasoner reasoner = getReasoner(ontology, type);
+    public Map<String, Object> explainInconsistency(OWLOntology ontology, ReasonerType type, int maxJustifications, String mode) {
+        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLReasoner reasoner = createReasoner(reasoningOntology, type);
         Map<String, Object> explanation = new HashMap<>();
         
         try {
@@ -1116,30 +1222,37 @@ public class ReasonerService {
                 log.error("Error checking property violations", e);
             }
 
-            // 3.5. Fallback: real black-box justification search for whatever the
-            // syntactic heuristics above don't recognize (cardinality restrictions,
-            // functional/inverse-functional properties, sameAs/differentFrom clashes,
-            // datatype restrictions, complex anonymous class expressions, ...). Only
-            // runs when the fast heuristics found nothing, since justification search
-            // re-checks consistency on candidate axiom subsets internally and is far
-            // slower than the syntactic closure above.
-            if (causes.size() == 1) {
-                try {
-                    List<String> justification = findGeneralJustification(ontology);
-                    if (!justification.isEmpty()) {
-                        Map<String, Object> cause = new HashMap<>();
-                        cause.put("type", "GENERAL_JUSTIFICATION");
-                        cause.put("severity", "ERROR");
-                        cause.put("title", "Minimal Inconsistency Justification");
-                        cause.put("description", "A minimal set of asserted axioms that together make the "
-                            + "ontology inconsistent, found via black-box justification search — the same "
-                            + "technique Protégé's Explanation panel uses — rather than the pattern checks above");
-                        cause.put("axioms", justification);
-                        causes.add(cause);
-                    }
-                } catch (Exception e) {
-                    log.error("Error running general justification search", e);
+             // 3.5. Real black-box justification search — same technique Protégé's own
+            // Explanation panel uses. Runs unconditionally (not just as a fallback)
+            // so multiple independent root causes surface exactly like Protégé's
+            // "Explanation 1 / Explanation 2" panels, even when the syntactic
+            // heuristics above already found something (they usually find only one
+            // path to the contradiction; this can find several). Bounded by
+            // MAX_JUSTIFICATIONS and JUSTIFICATION_TIMEOUT_MS so it can't run away
+            // on large ontologies.
+            try {
+                List<Map<String, Object>> justifications = "laconic".equals(mode)
+                    ? findLaconicJustifications(ontology, maxJustifications)
+                    : findJustifications(ontology, maxJustifications);
+                if (!justifications.isEmpty()) {
+                    Map<String, Object> cause = new HashMap<>();
+                    cause.put("type", "JUSTIFICATIONS");
+                    cause.put("severity", "ERROR");
+                    cause.put("title", "laconic".equals(mode)
+                        ? "Laconic Inconsistency Justifications"
+                        : "Minimal Inconsistency Justifications");
+                    cause.put("description", "laconic".equals(mode)
+                        ? "Each axiom below has been trimmed to just the part actually responsible for the "
+                            + "contradiction, with unrelated conjuncts or restrictions removed."
+                        : "Minimal sets of asserted axioms that each independently make "
+                            + "the ontology inconsistent. Each explanation below is a self-contained, provably "
+                            + "sufficient cause — removing any single axiom from it would resolve that path.");
+                    cause.put("justifications", justifications);
+                    causes.add(cause);
                 }
+                
+            } catch (Exception e) {
+                log.error("Error running justification search", e);
             }
 
             // 4. General recommendations

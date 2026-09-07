@@ -653,30 +653,53 @@ public class ReasonerController {
      * Explain why the ontology is inconsistent
      * POST /api/reasoner/{projectId}/explain-inconsistency
      */
-    @PostMapping("/{projectId}/explain-inconsistency")
-    public ResponseEntity<Map<String, Object>> explainInconsistency(
-            @PathVariable String projectId,
-            @RequestBody Map<String, String> request
-    ) {
-        try {
-            String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            log.info("Explaining inconsistency for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.putAll(explanation);
-            
-            return ResponseEntity.ok(result);
-            
-        } catch (Exception e) {
-            return reasoningFailure(e, projectId, "explaining inconsistency");
+   @PostMapping("/{projectId}/explain-inconsistency")
+public ResponseEntity<Map<String, Object>> explainInconsistency(
+        @PathVariable String projectId,
+        @RequestBody Map<String, String> request
+) {
+    try {
+        String requestedReasonerType = request.getOrDefault("reasonerType", "HERMIT");
+        ReasonerType requestedType = ReasonerType.valueOf(requestedReasonerType.toUpperCase());
+
+        // Justification search needs a DL-complete reasoner; ELK/Structural
+        // can't power axiom pinpointing. Silently upgrade for this call only.
+        ReasonerType type = (requestedType == ReasonerType.ELK || requestedType == ReasonerType.STRUCTURAL)
+            ? ReasonerType.HERMIT
+            : requestedType;
+
+        if (type != requestedType) {
+            log.info("Explain-inconsistency: upgrading reasoner {} -> {} for project {}",
+                requestedType, type, projectId);
         }
+
+        int maxJustifications = 10;
+        if (request.containsKey("maxJustifications")) {
+            maxJustifications = Integer.parseInt(request.get("maxJustifications"));
+        }
+
+        String mode = request.getOrDefault("mode", "regular");
+
+        log.info("Explaining inconsistency for project: {} with {} (mode={})", projectId, type, mode);
+
+        OWLOntology ontology = loadOntology(projectId);
+
+        Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type, maxJustifications, mode);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("usedReasoner", type.getDisplayName());
+        if (type != requestedType) {
+            result.put("reasonerUpgraded", true);
+        }
+        result.putAll(explanation);
+
+        return ResponseEntity.ok(result);
+
+    } catch (Exception e) {
+        return reasoningFailure(e, projectId, "explaining inconsistency");
     }
+}
 
     /**
      * Get inferred axioms
