@@ -166,7 +166,7 @@ flatpak:
 # ── Auto-update (electron-updater generic provider) ─────────────────────────────
 publish:
   provider: generic
-  url: https://ontocodeapi.selfresearch.org/api/downloads/updates/win
+  url: https://${env.ONTOCODE_UPDATE_HOST}/api/downloads/updates/${os}
 
 # ── Build meta ────────────────────────────────────────────────────────────────
 # electronVersion intentionally omitted — electron-builder auto-detects it from

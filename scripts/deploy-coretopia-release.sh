@@ -28,7 +28,17 @@ MODE_ARG=""
 CHANGES_ARG=""
 PLATFORM_ARG=""
 REMOTE_BUILD_ARG=0
-REMOTE_BUILD_SUPPORTED=(swrl)
+REMOTE_BUILD_SUPPORTED=("${DEFAULT_ALL_SERVICES[@]}")
+
+declare -A COMPOSE_SERVICE_NAME=(
+  [auth]=auth [gateway]=gateway [editor]=owl-editor [reasoner-worker]=reasoner-worker
+  [swrl]=swrl-service [plugin]=plugin-service [plugin-init]=plugin-init [web]=webapp
+)
+declare -A REMOTE_BUILD_DOCKERFILE=(
+  [auth]=Dockerfile.auth [gateway]=Dockerfile.gateway [editor]=Dockerfile.editor
+  [reasoner-worker]=Dockerfile.reasoner-worker [swrl]=Dockerfile.swrl
+  [plugin]=Dockerfile.plugin [plugin-init]=Dockerfile.plugin-init [web]=Dockerfile.webapp
+)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -195,26 +205,44 @@ branch_web_remote_build() {
     rsync_rsh="ssh -o BatchMode=yes -i ${SSHKEY[$m]}"
   fi
 
+  if [[ "$m" == "dev" ]]; then
+    local s
+    for s in "${SERVICES[@]}"; do
+      if [[ "$s" == "reasoner-worker" ]]; then
+        echo "ERROR: reasoner-worker isn't part of docker-compose.yml (dev) at all — only docker-compose.production.yml. --remote-build --mode dev can't deploy it." >&2
+        return 1
+      fi
+    done
+  fi
+
+  local compose_services=() dockerfiles=() s
+  for s in "${SERVICES[@]}"; do
+    compose_services+=("${COMPOSE_SERVICE_NAME[$s]}")
+    dockerfiles+=("${REMOTE_BUILD_DOCKERFILE[$s]}")
+  done
+
+  local rsync_paths=(pom.xml shared/ ontology-auth/ ontology-gateway/ ontology-editor/ \
+    ontology-swrl/ ontology-plugin-service/ ontology-reasoner-worker/ \
+    "${dockerfiles[@]}" docker-compose.remote-build.yml)
+  if [[ " ${SERVICES[*]} " == *" web "* ]]; then
+    rsync_paths+=(ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/)
+  fi
+  if [[ " ${SERVICES[*]} " == *" plugin-init "* ]]; then
+    rsync_paths+=(plugins/ scripts/package.json scripts/manage-plugins.js)
+  fi
+
   echo "[progress][$m-web] $(date '+%H:%M:%S') START remote build → ${HOST[$m]}:${DIR[$m]}"
-  echo "[progress][$m-web] rsync build context (pom stubs, shared/, ontology-swrl/)"
+  echo "[progress][$m-web] rsync build context (${SERVICES[*]})"
   rsync -azR -e "$rsync_rsh" \
     --exclude 'target' \
     --exclude '*.class' \
-    pom.xml \
-    ontology-auth/pom.xml \
-    ontology-gateway/pom.xml \
-    ontology-editor/pom.xml \
-    ontology-plugin-service/pom.xml \
-    ontology-reasoner-worker/pom.xml \
-    shared/ \
-    ontology-swrl/ \
-    Dockerfile.swrl \
-    docker-compose.remote-build.yml \
+    --exclude 'node_modules' \
+    "${rsync_paths[@]}" \
     "${HOST[$m]}:${DIR[$m]}/" || return 1
 
-  echo "[progress][$m-web] $(date '+%H:%M:%S') rsync OK — building + starting on remote"
+  echo "[progress][$m-web] $(date '+%H:%M:%S') rsync OK — building + starting on remote: ${compose_services[*]}"
   ssh "${ssh_opts[@]}" "${HOST[$m]}" \
-    "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml build swrl-service && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml up -d swrl-service && docker compose ${CFLAGS[$m]}ps" || return 1
+    "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml build ${compose_services[*]} && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml up -d ${compose_services[*]} && docker compose ${CFLAGS[$m]}ps" || return 1
   echo "[progress][$m-web] $(date '+%H:%M:%S') DONE remote build+deploy"
 }
 
@@ -284,11 +312,12 @@ is_wsl() {
 }
 
 build_desktop() {
-  local platform="$1"
-  ( cd "$ROOT/electron-app" && npm run "dist:$platform" )
+  local platform="$1" update_host="$2"
+  ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run "dist:$platform" )
 }
 
 build_desktop_win_via_windows_host() {
+  local update_host="$1"
   if ! command -v cmd.exe >/dev/null 2>&1 && ! command -v powershell.exe >/dev/null 2>&1; then
     echo "[progress][desktop] Windows host tools not available from WSL — skipping win installer"
     return 1
@@ -302,9 +331,9 @@ build_desktop_win_via_windows_host() {
   echo "          path: $win_electron"
 
   if command -v cmd.exe >/dev/null 2>&1; then
-    cmd.exe /c "cd /d \"${win_electron}\" && npm run dist:win" || return 1
+    cmd.exe /c "set ONTOCODE_UPDATE_HOST=${update_host}&& cd /d \"${win_electron}\" && npm run dist:win" || return 1
   else
-    powershell.exe -NoProfile -Command "Set-Location -LiteralPath '${win_electron}'; npm run dist:win" || return 1
+    powershell.exe -NoProfile -Command "\$env:ONTOCODE_UPDATE_HOST='${update_host}'; Set-Location -LiteralPath '${win_electron}'; npm run dist:win" || return 1
   fi
 }
 
@@ -424,17 +453,18 @@ upload_mac_installers() {
 branch_desktop_windows() {
   local m="$1"
   local api_base="${API[$m]}"
+  local update_host="${api_base#https://}"
   local host_platform
   host_platform="$(host_desktop_platform)"
   echo "[progress][$m-windows] $(date '+%H:%M:%S') START (host=$host_platform)"
 
   case "$host_platform" in
     win)
-      build_desktop "win" || { echo "ERROR: windows build failed" >&2; return 1; }
+      build_desktop "win" "$update_host" || { echo "ERROR: windows build failed" >&2; return 1; }
       ;;
     linux)
       if is_wsl; then
-        build_desktop_win_via_windows_host || { echo "ERROR: windows build via WSL cross-call to the Windows host failed" >&2; return 1; }
+        build_desktop_win_via_windows_host "$update_host" || { echo "ERROR: windows build via WSL cross-call to the Windows host failed" >&2; return 1; }
       else
         echo "ERROR: can't build a Windows installer from a plain Linux host — run this from Windows, or from WSL (it cross-builds via the Windows host)" >&2
         return 1
@@ -458,6 +488,7 @@ branch_desktop_windows() {
 branch_desktop_linux() {
   local m="$1"
   local api_base="${API[$m]}"
+  local update_host="${api_base#https://}"
   local host_platform
   host_platform="$(host_desktop_platform)"
   echo "[progress][$m-linux] $(date '+%H:%M:%S') START (host=$host_platform)"
@@ -468,11 +499,11 @@ branch_desktop_linux() {
   fi
 
   ensure_linux_nodejs || return 1
-  build_desktop "linux" || { echo "ERROR: linux build failed" >&2; return 1; }
+  build_desktop "linux" "$update_host" || { echo "ERROR: linux build failed" >&2; return 1; }
 
   if command -v flatpak-builder >/dev/null 2>&1; then
     echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too"
-    if ! ( cd "$ROOT/electron-app" && npm run dist:linux:flatpak ); then
+    if ! ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:flatpak ); then
       echo "WARNING: flatpak build failed — continuing with AppImage/deb only" >&2
     fi
   else
@@ -492,6 +523,7 @@ branch_desktop_linux() {
 branch_desktop_mac() {
   local m="$1"
   local api_base="${API[$m]}"
+  local update_host="${api_base#https://}"
   local host_platform
   host_platform="$(host_desktop_platform)"
   echo "[progress][$m-mac] $(date '+%H:%M:%S') START (host=$host_platform)"
@@ -501,7 +533,7 @@ branch_desktop_mac() {
     return 1
   fi
 
-  build_desktop "mac" || { echo "ERROR: mac build failed" >&2; return 1; }
+  build_desktop "mac" "$update_host" || { echo "ERROR: mac build failed" >&2; return 1; }
 
   echo "[progress][$m-mac] $(date '+%H:%M:%S') build OK — uploading"
   if upload_mac_installers "$api_base"; then
