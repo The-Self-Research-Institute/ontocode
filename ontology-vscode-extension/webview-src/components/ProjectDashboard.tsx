@@ -62,6 +62,353 @@ import {
   parseProjectRole,
 } from "../utils/roles";
 
+
+type ProjectShareRole = "VIEWER" | "DRAFT_EDITOR" | "EDITOR";
+type ShareWithMode = "none" | "all" | "specific";
+
+interface WorkspaceMemberOption {
+  userId: string;
+  username: string;
+  email: string;
+  role?: string;
+  status?: string;
+}
+
+interface ShareMemberSelection {
+  email: string;
+  role: ProjectShareRole;
+}
+
+interface ShareSelection {
+  shareWith: ShareWithMode;
+  members: ShareMemberSelection[];
+}
+
+const EMPTY_SHARE_SELECTION: ShareSelection = { shareWith: "none", members: [] };
+
+const SHARE_MEMBER_SEARCH_THRESHOLD = 5;
+
+const shareNormalizeEmail = (email?: string | null) => (email || "").trim().toLowerCase();
+
+const isActiveWorkspaceMemberOption = (member: WorkspaceMemberOption) =>
+  String(member.status || "ACTIVE").toUpperCase() === "ACTIVE" && !!member.userId && !!member.email;
+
+const isPrivilegedMemberOption = (member: WorkspaceMemberOption) =>
+  member.role?.toUpperCase() === "OWNER" || member.role?.toUpperCase() === "ADMIN";
+
+interface ShareWithSelectorProps {
+  workspaceId?: string;
+ 
+  excludeEmails?: string[];
+  
+  autoIncludePrivileged?: boolean;
+  selection: ShareSelection;
+  onSelectionChange: (selection: ShareSelection) => void;
+  refreshKey?: number | string;
+  noMembersHint?: string;
+}
+
+const ShareWithSelector: React.FC<ShareWithSelectorProps> = ({
+  workspaceId,
+  excludeEmails = [],
+  autoIncludePrivileged = false,
+  selection,
+  onSelectionChange,
+  refreshKey,
+  noMembersHint = "Invite another member to the workspace first, or use All Workspace Members.",
+}) => {
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMemberOption[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [membersLoadError, setMembersLoadError] = useState<string | null>(null);
+  const [memberSearch, setMemberSearch] = useState("");
+
+  const excludeSet = useMemo(() => new Set(excludeEmails.map(shareNormalizeEmail)), [excludeEmails]);
+
+  const loadWorkspaceMembers = async () => {
+    if (!workspaceId) {
+      setWorkspaceMembers([]);
+      setMembersLoadError("Select a workspace before choosing specific members.");
+      return;
+    }
+    try {
+      setLoadingMembers(true);
+      setMembersLoadError(null);
+      const response = await apiClient.get(`/api/workspaces/${workspaceId}`);
+      const workspaceData = response?.data || response;
+      const members: WorkspaceMemberOption[] = workspaceData?.members || [];
+      const filtered = members
+        .filter(isActiveWorkspaceMemberOption)
+        .filter((member) => !excludeSet.has(shareNormalizeEmail(member.email)))
+        .map((member) => ({
+          ...member,
+          email: member.email.trim(),
+          username: member.username || member.email.split("@")[0],
+        }))
+        .sort((a, b) => a.username.localeCompare(b.username, undefined, { sensitivity: "base" }));
+      setWorkspaceMembers(filtered);
+    } catch (error) {
+      console.error("Error loading workspace members:", error);
+      setWorkspaceMembers([]);
+      setMembersLoadError("Could not load workspace members. Try again.");
+    } finally {
+      setLoadingMembers(false);
+    }
+  };
+
+  useEffect(() => {
+    loadWorkspaceMembers();
+    setMemberSearch("");
+  }, [workspaceId, refreshKey]);
+
+  useEffect(() => {
+    if (!autoIncludePrivileged || selection.shareWith !== "specific") return;
+    const privileged = workspaceMembers.filter(isPrivilegedMemberOption);
+    if (privileged.length === 0) return;
+
+    const existingEmails = new Set(selection.members.map((m) => shareNormalizeEmail(m.email)));
+    const missing = privileged.filter((p) => !existingEmails.has(shareNormalizeEmail(p.email)));
+    if (missing.length === 0) return;
+
+    onSelectionChange({
+      shareWith: selection.shareWith,
+      members: [
+        ...missing.map((m) => ({ email: m.email.trim(), role: "EDITOR" as ProjectShareRole })),
+        ...selection.members,
+      ],
+    });
+  }, [autoIncludePrivileged, workspaceMembers, selection.shareWith]);
+
+  const setMode = (mode: ShareWithMode) => {
+    onSelectionChange({ shareWith: mode, members: mode === "specific" ? selection.members : [] });
+  };
+
+  const toggleMember = (email: string, privileged = false) => {
+    if (privileged) return;
+    const normalizedEmail = shareNormalizeEmail(email);
+    const isSelected = selection.members.some((m) => shareNormalizeEmail(m.email) === normalizedEmail);
+
+    if (isSelected) {
+      onSelectionChange({
+        ...selection,
+        members: selection.members.filter((m) => shareNormalizeEmail(m.email) !== normalizedEmail),
+      });
+    } else {
+      onSelectionChange({
+        ...selection,
+        members: [...selection.members, { email: email.trim(), role: "VIEWER" }],
+      });
+    }
+  };
+
+  const getMemberRole = (email: string): ProjectShareRole =>
+    selection.members.find((m) => shareNormalizeEmail(m.email) === shareNormalizeEmail(email))?.role || "VIEWER";
+
+  const setMemberRole = (email: string, role: ProjectShareRole) => {
+    const normalizedEmail = shareNormalizeEmail(email);
+    onSelectionChange({
+      ...selection,
+      members: selection.members.map((m) => (shareNormalizeEmail(m.email) === normalizedEmail ? { ...m, role } : m)),
+    });
+  };
+
+  const hasShareableMembers = workspaceMembers.length > 0;
+  const shareableMemberCount = workspaceMembers.length;
+
+  const visibleMembers = useMemo(() => {
+    const query = memberSearch.trim().toLowerCase();
+    const filtered = query
+      ? workspaceMembers.filter(
+          (member) =>
+            member.username.toLowerCase().includes(query) || member.email.toLowerCase().includes(query),
+        )
+      : workspaceMembers;
+
+    const privileged = filtered.filter(isPrivilegedMemberOption);
+    const regular = filtered.filter((m) => !isPrivilegedMemberOption(m));
+    return [...privileged, ...regular];
+  }, [workspaceMembers, memberSearch]);
+
+  return (
+    <div className="space-y-3">
+      <label className="flex items-start gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
+        <input
+          type="radio"
+          name="shareWith"
+          value="none"
+          checked={selection.shareWith === "none"}
+          onChange={() => setMode("none")}
+          className="mt-0.5"
+        />
+        <div>
+          <div className="font-medium text-gray-900">Only me</div>
+          <div className="text-sm text-gray-500">No one else will be added</div>
+        </div>
+      </label>
+
+      <label className="flex items-start gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
+        <input
+          type="radio"
+          name="shareWith"
+          value="all"
+          checked={selection.shareWith === "all"}
+          onChange={() => setMode("all")}
+          className="mt-0.5"
+        />
+        <div>
+          <div className="font-medium text-gray-900 flex items-center gap-2">
+            <Users size={16} />
+            All Workspace Members
+          </div>
+          <div className="text-sm text-gray-500">
+            {loadingMembers ? (
+              "Checking active workspace members..."
+            ) : shareableMemberCount === 0 ? (
+              "No other active members to add yet."
+            ) : (
+              <>
+                {shareableMemberCount} active workspace member{shareableMemberCount === 1 ? "" : "s"} will be added as{" "}
+                <strong>Viewer</strong>
+              </>
+            )}
+          </div>
+          {autoIncludePrivileged && (selection.shareWith === "all" || selection.shareWith === "specific") && (
+            <p className="text-xs text-gray-500 mt-1 leading-snug">
+              The workspace owner and workspace admins are always given at least <strong>Editor</strong> on shared
+              projects. Only the workspace owner can remove them from the project later.
+            </p>
+          )}
+        </div>
+      </label>
+
+      <label
+        className={`flex items-start gap-3 p-3 border border-gray-200 rounded-lg ${
+          hasShareableMembers ? "cursor-pointer hover:bg-gray-50" : "opacity-60 cursor-not-allowed"
+        }`}
+      >
+        <input
+          type="radio"
+          name="shareWith"
+          value="specific"
+          checked={selection.shareWith === "specific"}
+          disabled={!hasShareableMembers && !loadingMembers}
+          onChange={() => setMode("specific")}
+          className="mt-0.5"
+        />
+        <div className="flex-1">
+          <div className="font-medium text-gray-900 flex items-center gap-2">
+            Specific Members
+            {selection.shareWith === "specific" && selection.members.length > 0 && (
+              <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full">
+                {selection.members.length} selected
+              </span>
+            )}
+          </div>
+          <div className="text-sm text-gray-500">Choose active workspace members and their project role</div>
+          {autoIncludePrivileged && selection.shareWith === "specific" && workspaceMembers.some(isPrivilegedMemberOption) && (
+            <p className="text-xs text-purple-600 mt-1">Owner and admins are always included with Editor access.</p>
+          )}
+          {!hasShareableMembers && !loadingMembers && <p className="text-xs text-gray-500 mt-1">{noMembersHint}</p>}
+        </div>
+      </label>
+
+      {selection.shareWith === "specific" && (
+        <div className="ml-8 space-y-3 border border-gray-200 rounded-lg p-3 bg-gray-50">
+          {workspaceMembers.length >= SHARE_MEMBER_SEARCH_THRESHOLD && !loadingMembers && !membersLoadError && (
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="search"
+                value={memberSearch}
+                onChange={(e) => setMemberSearch(e.target.value)}
+                placeholder="Search by name or email"
+                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              />
+            </div>
+          )}
+
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {loadingMembers ? (
+              <div className="text-center text-sm text-gray-500 py-4">Loading members...</div>
+            ) : membersLoadError ? (
+              <div className="space-y-3 py-2">
+                <p className="text-sm text-red-600">{membersLoadError}</p>
+                <button
+                  type="button"
+                  onClick={() => loadWorkspaceMembers()}
+                  className="text-sm font-medium text-purple-600 hover:text-purple-700"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : workspaceMembers.length === 0 ? (
+              <p className="text-center text-sm text-gray-500 py-4">
+                No other active members are available in this workspace.
+              </p>
+            ) : visibleMembers.length === 0 ? (
+              <p className="text-center text-sm text-gray-500 py-4">No members match your search.</p>
+            ) : (
+              visibleMembers.map((member) => {
+                const privileged = autoIncludePrivileged && isPrivilegedMemberOption(member);
+                const isSelected =
+                  privileged ||
+                  selection.members.some((m) => shareNormalizeEmail(m.email) === shareNormalizeEmail(member.email));
+                const roleBadgeLabel = member.role?.toUpperCase() === "OWNER" ? "Owner" : "Admin";
+
+                return (
+                  <div
+                    key={member.userId || member.email}
+                    className={`flex items-center gap-2 p-2 rounded border ${
+                      privileged
+                        ? "bg-purple-50 border-purple-100"
+                        : "bg-white hover:bg-gray-50 border-transparent hover:border-gray-200"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleMember(member.email, privileged)}
+                      disabled={privileged}
+                      className="rounded text-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <div className="text-sm flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-gray-900 truncate">{member.username}</span>
+                        {isPrivilegedMemberOption(member) && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-purple-100 text-purple-700 flex-shrink-0">
+                            {roleBadgeLabel}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-gray-500 text-xs truncate">{member.email}</div>
+                    </div>
+                    {privileged ? (
+                      <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded-lg font-medium shrink-0">
+                        Editor
+                      </span>
+                    ) : (
+                      <select
+                        value={getMemberRole(member.email)}
+                        onChange={(e) => setMemberRole(member.email, e.target.value as ProjectShareRole)}
+                        disabled={!isSelected}
+                        className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:text-gray-400 shrink-0"
+                      >
+                        <option value="VIEWER">Viewer</option>
+                        <option value="DRAFT_EDITOR">Draft Editor</option>
+                        <option value="EDITOR">Editor</option>
+                      </select>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
 interface ProjectMember {
   userId: string;
   username: string;
@@ -153,9 +500,9 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [savingProject, setSavingProject] = useState(false);
   const [projectSettingsTab, setProjectSettingsTab] = useState<"general" | "members" | "danger">("general");
   const [showAddMemberForm, setShowAddMemberForm] = useState(false);
-  const [newMemberEmail, setNewMemberEmail] = useState("");
-  const [newMemberRole, setNewMemberRole] = useState("VIEWER");
-  const [addingMember, setAddingMember] = useState(false);
+  const [addMemberSelection, setAddMemberSelection] = useState<ShareSelection>(EMPTY_SHARE_SELECTION);
+  const [addMemberSelectorKey, setAddMemberSelectorKey] = useState(0);
+  const [addingMembers, setAddingMembers] = useState(false);
 
   // Toast notification state
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "warning" | "info" } | null>(null);
@@ -799,24 +1146,69 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     }
   };
 
-  // Add member to project
-  const handleAddProjectMember = async () => {
-    if (!projectSettingsModal || !newMemberEmail.trim()) return;
+  
+  const getAvailableWorkspaceMembersForProject = () => {
+    if (!projectSettingsModal) return [];
+    const projectMemberEmails = new Set(
+      projectSettingsModal.members?.map((m) => m.email.toLowerCase()) || [],
+    );
+    return teamMembers.filter(
+      (member) => member.status === "ACTIVE" && !projectMemberEmails.has(member.email.toLowerCase()),
+    );
+  };
+
+  
+  const handleAddSelectedMembers = async () => {
+    if (!projectSettingsModal) return;
+    if (addMemberSelection.shareWith === "none") {
+      setShowAddMemberForm(false);
+      return;
+    }
+
+    const membersToAdd =
+      addMemberSelection.shareWith === "all"
+        ? getAvailableWorkspaceMembersForProject().map((m) => ({ email: m.email, role: "VIEWER" as const }))
+        : addMemberSelection.members;
+
+    if (membersToAdd.length === 0) {
+      showToast("Select at least one member to add, or choose a different sharing option.", "warning");
+      return;
+    }
 
     try {
-      setAddingMember(true);
+      setAddingMembers(true);
 
-      // Backend expects `email` (see ProjectController.AddMemberRequest)
-      await apiClient.post(`/api/projects/${projectSettingsModal.projectId}/members`, {
-        email: newMemberEmail.trim(),
-        role: newMemberRole,
-      });
-
-      showToast(`Member added successfully`, "success");
+      // Backend expects `email` (see ProjectController.AddMemberRequest) — one call per member.
+      const results: PromiseSettledResult<any>[] = [];
+      for (const m of membersToAdd) {
+        try {
+          const res = await apiClient.post(`/api/projects/${projectSettingsModal.projectId}/members`, {
+            email: m.email,
+            role: m.role,
+          });
+          results.push({ status: "fulfilled", value: res });
+        } catch (err) {
+          results.push({ status: "rejected", reason: err });
+        }
+      }
+      const failures = results.filter((r) => r.status === "rejected").length;
+      if (failures === 0) {
+        showToast(
+          membersToAdd.length === 1
+            ? "Access shared with 1 member successfully"
+            : `Access shared with ${membersToAdd.length} members successfully`,
+          "success",
+        );
+      } else {
+        showToast(
+          `Shared access with ${membersToAdd.length - failures} of ${membersToAdd.length} members. ${failures} failed.`,
+          "warning",
+        );
+      }
 
       // Reset form
-      setNewMemberEmail("");
-      setNewMemberRole("VIEWER");
+      setAddMemberSelection(EMPTY_SHARE_SELECTION);
+      setAddMemberSelectorKey((k) => k + 1);
       setShowAddMemberForm(false);
 
       // Refresh project data
@@ -827,34 +1219,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       setProjectSettingsModal(updatedProject);
       loadData();
     } catch (error: any) {
-      console.error("Error adding project member:", error);
-      showToast(error?.error || error?.message || "Failed to add member", "error");
+      console.error("Error adding project member(s):", error);
+      showToast(error?.error || error?.message || "Failed to add members", "error");
     } finally {
-      setAddingMember(false);
+      setAddingMembers(false);
     }
-  };
-
-  // Get available workspace members (not already in project)
-  const getAvailableTeamMembers = () => {
-    if (!projectSettingsModal) return [];
-
-    const projectMemberUsernames = new Set(projectSettingsModal.members?.map((m) => m.username.toLowerCase()) || []);
-
-    return teamMembers.filter((member) => {
-      if (projectMemberUsernames.has(member.username.toLowerCase()) || member.status !== "ACTIVE") {
-        return false;
-      }
-      // Workspace owner/admins always get implicit access to shared projects
-      // (backend auto-links them — see applyImplicitWorkspaceLeadershipEditors),
-      // but that backfill only runs at project creation or after the first
-      // member is added. Until then they aren't literally in project.members
-      // yet, so exclude them here too rather than offering a redundant
-      // "add" that's already guaranteed.
-      return !member.roles.some((r) => {
-        const upper = r.toUpperCase();
-        return upper === "OWNER" || upper === "ADMIN";
-      });
-    });
   };
 
   const filteredProjects = useMemo(() => {
@@ -1729,77 +2098,53 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                     </p>
                     {canManageOpenProject && (
                       <button
-                        onClick={() => setShowAddMemberForm(!showAddMemberForm)}
+                        onClick={() => {
+                          if (showAddMemberForm) {
+                            setAddMemberSelection(EMPTY_SHARE_SELECTION);
+                          }
+                          setShowAddMemberForm(!showAddMemberForm);
+                        }}
                         className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
                       >
                         <UserPlus size={16} />
-                        {showAddMemberForm ? "Cancel" : "Add Member"}
+                        {showAddMemberForm ? "Cancel" : "Share with Members"}
                       </button>
                     )}
                   </div>
 
-                  {/* Add Member Form */}
+                  {/* Add Member — same "Share with" picker used in Create New Project */}
                   {showAddMemberForm && (
-                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 space-y-3">
-                      <h4 className="font-medium text-gray-900">Add New Member</h4>
-                      {getAvailableTeamMembers().length > 0 ? (
-                        <>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Select workspace member (by email)</label>
-                            <select
-                              value={newMemberEmail}
-                              onChange={(e) => setNewMemberEmail(e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                              disabled={addingMember}
-                            >
-                              <option value="">-- Select a workspace member --</option>
-                              {getAvailableTeamMembers().map((member) => (
-                                <option key={member.id} value={member.email}>
-                                  {member.username} ({member.email})
-                                </option>
-                              ))}
-                            </select>
-                            <p className="text-xs text-gray-500 mt-1">User must already belong to the workspace. Project role is separate from workspace role.</p>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Project role</label>
-                            <select
-                              value={newMemberRole}
-                              onChange={(e) => setNewMemberRole(e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                              disabled={addingMember}
-                            >
-                              <option value="VIEWER">Viewer — public view only, no edits</option>
-                              <option value="EDITOR">Editor — direct edits + draft access</option>
-                              <option value="DRAFT_EDITOR">Draft Editor — view public + draft + raise PR</option>
-                            </select>
-                          </div>
-                          <button
-                            onClick={handleAddProjectMember}
-                            disabled={addingMember || !newMemberEmail.trim()}
-                            className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                          >
-                            {addingMember ? (
-                              <>
-                                <Loader2 size={16} className="animate-spin" />
-                                Adding...
-                              </>
-                            ) : (
-                              <>
-                                <UserPlus size={16} />
-                                Add Member
-                              </>
-                            )}
-                          </button>
-                        </>
-                      ) : (
-                        <div className="text-center py-4">
-                          <p className="text-gray-600 mb-2">All workspace members have been added to this project.</p>
-                          <p className="text-sm text-gray-500">
-                            Invite more members to the workspace to add them here.
-                          </p>
-                        </div>
-                      )}
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 space-y-4">
+                      <h4 className="font-medium text-gray-900">Share with</h4>
+                      <ShareWithSelector
+                        workspaceId={user?.workspaceId}
+                        excludeEmails={projectSettingsModal.members?.map((m) => m.email) || []}
+                        selection={addMemberSelection}
+                        onSelectionChange={setAddMemberSelection}
+                        refreshKey={addMemberSelectorKey}
+                        noMembersHint="All active workspace members are already on this project."
+                        autoIncludePrivileged
+                      />
+                      <button
+                        onClick={handleAddSelectedMembers}
+                        disabled={
+                          addingMembers ||
+                          (addMemberSelection.shareWith === "specific" && addMemberSelection.members.length === 0)
+                        }
+                        className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {addingMembers ? (
+                          <>
+                            <Loader2 size={16} className="animate-spin" />
+                            Sharing...
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={16} />
+                            Share Access
+                          </>
+                        )}
+                      </button>
                     </div>
                   )}
 

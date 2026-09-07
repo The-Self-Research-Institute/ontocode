@@ -1,0 +1,33 @@
+services:
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+  owl-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+  reasoner-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.reasoner-worker
+  swrl-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.swrl
+  plugin-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin
+  plugin-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.plugin-init
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp

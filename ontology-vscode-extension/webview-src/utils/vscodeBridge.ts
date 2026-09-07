@@ -318,41 +318,99 @@ function handleBrowserMessage(message: any) {
                 if (!fileData) return;
 
                 if (message.projectId) {
-                    // Workspace flow: save to project library (GridFS) first, then let
-                    // handleLoadProjectFile handle the GraphDB import via fileReady.
+
+                    // Workspace flow: check for an existing file with the same name first —
+
+                    // without this, opening a file that's already in the project's library
+
+                    // creates a duplicate copy every time.
+
                     try {
+
+                        const checkResp: any = await apiClient.get(
+                            `/api/projects/${message.projectId}/files/check?fileName=${encodeURIComponent(fileData.fileName)}`
+                        );
+
+                        if (checkResp?.exists === true) {
+                            const existing = checkResp.existingFile || {};
+                            const existingFileId = existing.fileId || existing.id || null;
+                            const existingFileName = existing.fileName || existing.name || fileData.fileName;
+
+                            if (existingFileId) {
+                                postToSelf({
+                                    type: 'fileReady',
+                                    projectId: message.projectId,
+                                    uploadedFileId: existingFileId,
+                                    uploadedFileName: existingFileName,
+                                });
+                                return;
+                            }
+                        }
+
                         const fileContent = fileData.isBase64 ? fileData.fileContent : fileContentToBase64(fileData.fileContent);
+
                         let contentStr = fileContent;
+
                         if (/^[A-Za-z0-9+/=]+$/.test(contentStr)) {
+
                             const binaryStr = atob(contentStr);
+
                             const bytes = new Uint8Array(binaryStr.length);
+
                             for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
                             contentStr = new TextDecoder().decode(bytes);
+
                         }
+
                         const fileBlob = new Blob([contentStr], { type: 'application/rdf+xml' });
+
                         const formData = new FormData();
+
                         formData.append('file', fileBlob, fileData.fileName);
+
                         formData.append('fileName', fileData.fileName);
+
                         formData.append('fileType', 'owl');
+
                         const respData: any = await apiClient.post(`/api/projects/${message.projectId}/files`, formData);
+
                         const uploadedFileId = respData?.fileId || respData?.id;
+
                         const uploadedFileName = respData?.filename || fileData.fileName;
+
                         postToSelf({
+
                             type: 'fileReady',
+
                             projectId: message.projectId,
+
                             uploadedFileId,
+
                             uploadedFileName,
+
                         });
+
                     } catch (err: any) {
+
                         const errData = err?.data || err?.response?.data;
+
                         if (err?.status === 413 || err?.response?.status === 413) {
+
                             const detail = errData?.message || errData?.error || 'Storage limit exceeded. Please upgrade your plan or delete existing files.';
+
                             notificationService.error('Storage Limit Exceeded', detail);
+
                         } else {
+
                             notificationService.error('Upload Failed', errData?.error || err?.message || 'File upload to project failed');
+
                         }
+
                     }
-                } else {
+
+                }
+                else {
                     // No project context yet — store as pending so the user can pick
                     // a project and the upload will trigger via handleProjectSelected.
                     postToSelf({

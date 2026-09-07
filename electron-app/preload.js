@@ -371,28 +371,93 @@ contextBridge.exposeInMainWorld('vscode', {
 
             case 'openLocalFile':
             case 'importLocalFile':
-
                 (async () => {
                     try {
                         const result = await ipcRenderer.invoke('file:open');
-                        if (result) {
-                            window.dispatchEvent(new MessageEvent('message', {
-                                data: {
-                                    type: 'pendingFileUpload',
-                                    fileName: result.fileName,
-                                    fileContent: result.fileContent, // base64 from main
-                                    fileSize: result.fileSize,
-                                    importMode: message.importMode,
-                                    partition: message.partition,
-                                }
-                            }));
+                        if (!result) return;
+                        if (result.focusOnly) {
+                            // Already-open file — main process already sent 'desktop:focus-file'.
+                            return;
                         }
+
+                        if (message.projectId) {
+                            // Already inside a project's file — check for an existing file with
+                            // the same name before uploading. Without this, re-opening a file
+                            // that's already in the library creates a duplicate copy every time.
+                            try {
+                                const token = await ipcRenderer.invoke('auth:get');
+
+                                const checkResp = await fetch(
+                                    `${DESKTOP_API}/api/projects/${message.projectId}/files/check?fileName=${encodeURIComponent(result.fileName)}`,
+                                    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+                                );
+                                const checkData = await checkResp.json().catch(() => ({}));
+
+                                if (checkData?.exists === true) {
+                                    const existing = checkData.existingFile || {};
+                                    const existingFileId = existing.fileId || existing.id || null;
+                                    const existingFileName = existing.fileName || existing.name || result.fileName;
+
+                                    if (existingFileId) {
+                                        window.dispatchEvent(new MessageEvent('message', {
+                                            data: {
+                                                type: 'fileReady',
+                                                projectId: message.projectId,
+                                                uploadedFileId: existingFileId,
+                                                uploadedFileName: existingFileName,
+                                            }
+                                        }));
+                                        return;
+                                    }
+                                    // Duplicate flagged but no id resolvable — fall through to upload
+                                    // rather than silently doing nothing.
+                                }
+
+                                const blob = new Blob([result.fileContent], { type: 'application/rdf+xml' });
+                                const formData = new FormData();
+                                formData.append('file', blob, result.fileName);
+                                formData.append('fileName', result.fileName);
+                                formData.append('fileType', 'owl');
+
+                                const resp = await fetch(`${DESKTOP_API}/api/projects/${message.projectId}/files`, {
+                                    method: 'POST',
+                                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                                    body: formData,
+                                });
+                                const data = await resp.json().catch(() => ({}));
+                                if (!resp.ok) throw new Error(data?.error || `Upload failed (${resp.status})`);
+
+                                window.dispatchEvent(new MessageEvent('message', {
+                                    data: {
+                                        type: 'fileReady',
+                                        projectId: message.projectId,
+                                        uploadedFileId: data.fileId || data.id,
+                                        uploadedFileName: data.filename || result.fileName,
+                                    }
+                                }));
+                            } catch (err) {
+                                console.error('[Preload] openLocalFile direct upload failed', err);
+                            }
+                            return;
+                        }
+
+                        // No project context — user opened this from Project Dashboard
+                        // with nothing currently active. Fall back to pendingFileUpload.
+                        window.dispatchEvent(new MessageEvent('message', {
+                            data: {
+                                type: 'pendingFileUpload',
+                                fileName: result.fileName,
+                                fileContent: result.fileContent,
+                                fileSize: result.fileSize,
+                                importMode: message.importMode,
+                                partition: message.partition,
+                            }
+                        }));
                     } catch (err) {
                         console.error('[Preload] file:open failed', err);
                     }
                 })();
                 break;
-
             case 'downloadFile': {
 
                 const blob = new Blob([message.content], { type: 'application/octet-stream' });
@@ -428,13 +493,70 @@ contextBridge.exposeInMainWorld('vscode', {
                 break;
             }
 
-            case 'uploadOntology':
-            case 'uploadFileToProject':
-            case 'uploadOntologyContent':
+           case 'uploadFileToProject': {
+    (async () => {
+        try {
+            const token = await ipcRenderer.invoke('auth:get');
 
-                if (message.projectId) startImportPoller(message.projectId);
-                console.log('[Preload] Upload message – handled by React browser-mode:', message.type);
-                break;
+            const checkResp = await fetch(
+                `${DESKTOP_API}/api/projects/${message.projectId}/files/check?fileName=${encodeURIComponent(message.fileName)}`,
+                { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+            );
+            const checkData = await checkResp.json().catch(() => ({}));
+
+            if (checkData?.exists === true) {
+                const existing = checkData.existingFile || {};
+                const existingFileId = existing.fileId || existing.id || null;
+                const existingFileName = existing.fileName || existing.name || message.fileName;
+
+                if (existingFileId) {
+                    window.dispatchEvent(new MessageEvent('message', {
+                        data: {
+                            type: 'fileReady',
+                            projectId: message.projectId,
+                            uploadedFileId: existingFileId,
+                            uploadedFileName: existingFileName,
+                        }
+                    }));
+                    return;
+                }
+                // Duplicate flagged but no id resolvable — fall through to upload
+                // rather than silently doing nothing.
+            }
+
+            const blob = new Blob([message.fileContent], { type: 'application/rdf+xml' });
+            const formData = new FormData();
+            formData.append('file', blob, message.fileName);
+            formData.append('fileName', message.fileName);
+            formData.append('fileType', 'owl');
+
+            const resp = await fetch(`${DESKTOP_API}/api/projects/${message.projectId}/files`, {
+                method: 'POST',
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                body: formData,
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(data?.error || `Upload failed (${resp.status})`);
+
+            window.dispatchEvent(new MessageEvent('message', {
+                data: {
+                    type: 'fileReady',
+                    projectId: message.projectId,
+                    uploadedFileId: data.fileId || data.id,
+                    uploadedFileName: data.filename || message.fileName,
+                }
+            }));
+        } catch (err) {
+            console.error('[Preload] uploadFileToProject failed', err);
+        }
+    })();
+    break;
+}
+case 'uploadOntology':
+case 'uploadOntologyContent':
+    if (message.projectId) startImportPoller(message.projectId);
+    console.log('[Preload] Upload message – handled by React browser-mode:', message.type);
+    break;
 
             case 'cursorMoved':
             case 'broadcastCursor':

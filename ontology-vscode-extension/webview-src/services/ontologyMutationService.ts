@@ -348,6 +348,20 @@ export const ontologyMutationService = {
   },
 
   /**
+ * Remove one class from an owl:AllDisjointClasses axiom's member list.
+ * A plain deleteDisjointWith silently no-ops here — there is no simple
+ * pairwise triple to match when 3+ classes are declared disjoint together.
+ */
+  async deleteFromAllDisjointClasses(projectId: string, classIri: string, disjointClassIri: string,
+    userId?: string, username?: string): Promise<void> {
+    await this.applyMutations(projectId, [{
+      type: 'deleteFromAllDisjointClasses',
+      iri: classIri,
+      target: disjointClassIri
+    }], undefined, userId, username);
+  },
+
+  /**
    * Create a new individual (named individual)
    */
   async createIndividual(projectId: string, iri: string, label: string, classIri: string): Promise<void> {

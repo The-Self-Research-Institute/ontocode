@@ -2768,7 +2768,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     // WebVOWL parity: it drops nodes in a small 800×600 box and lets repulsion
     // INFLATE the graph — expansion untangles, contraction locks tangles in.
     // Compress our seeded layout to a compact disc before the settle.
-    if (visualizationType === 'vowl' && usePhysics && (!hasSavedPositions || bigExpansion)) {
+    const forceRecompress = visualizationType === 'vowl' && !!viewportFitToken;
+
+    if (visualizationType === 'vowl' && usePhysics && (!hasSavedPositions || bigExpansion || forceRecompress)) {
       const placed = simNodes.filter(n => n.x != null && n.y != null);
       if (placed.length > 2) {
         const cx = placed.reduce((s, n) => s + n.x!, 0) / placed.length;
@@ -6573,6 +6575,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         const tx = w / 2 - scale * ((minX + maxX) / 2);
         const ty = h / 2 - scale * ((minY + maxY) / 2);
+
+        // Guard against garbage results from mid-render/torn-down state
+        // (e.g. a second Expand All firing while the previous D3 rebuild is in flight)
+        if (!Number.isFinite(scale) || !Number.isFinite(tx) || !Number.isFinite(ty) || scale <= 0) {
+          return null;
+        }
+
         return d3.zoomIdentity.translate(tx, ty).scale(scale);
       }
     }
@@ -6606,10 +6615,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     const bw = Math.max(1, maxX - minX);
     const bh = Math.max(1, maxY - minY);
     let scale = Math.min(0.9 / Math.max(bw / w, bh / h), 2);
-    // Never zoom out so far that a class circle is tiny on screen
-    scale = Math.max(scale, 0.55);
+    // // Never zoom out so far that a class circle is tiny on screen
+    // scale = Math.max(scale, 0.55);
     const tx = w / 2 - scale * ((minX + maxX) / 2);
     const ty = h / 2 - scale * ((minY + maxY) / 2);
+
+    // Guard against garbage results from mid-render/torn-down state
+    // (e.g. a second Expand All firing while the previous D3 rebuild is in flight)
+    if (!Number.isFinite(scale) || !Number.isFinite(tx) || !Number.isFinite(ty) || scale <= 0) {
+      return null;
+    }
+
     return d3.zoomIdentity.translate(tx, ty).scale(scale);
   }, [visualizationType, filteredEdges, settings.nodeSize]);
 
@@ -6618,14 +6634,20 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       webglCamRef.current?.fitAll();
       return;
     }
-    if (svgRef.current && zoomRef.current) {
+    if (svgRef.current && zoomRef.current && gRef.current) {
+      // Skip if the graph hasn't actually rendered anything yet (mid-rebuild) —
+      // prevents a stale fit timer from computing a garbage bounding box while
+      // a second Expand All click is tearing down / rebuilding the D3 scene.
+      const nodeCount = gRef.current.querySelectorAll('.node').length;
+      if (nodeCount === 0) return;
+
       const target = computeSmartFitTransform();
       if (!target) return;
       const svg = d3.select(svgRef.current);
       cameraTransition(svg).call(zoomRef.current.transform as any, target);
     }
   };
-  const handleFitRef = useRef<() => void>(() => {});
+  const handleFitRef = useRef<() => void>(() => { });
   handleFitRef.current = handleFit;
 
   // Expand All / deep dive / ±1 bump viewportFitToken; SVG re-uses the
@@ -6633,9 +6655,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   useEffect(() => {
     if (!viewportFitToken || webglActive) return;
     userInteractedRef.current = false;
-    const t1 = setTimeout(() => handleFitRef.current(), 450);
+    // Only fit once, after the layout has actually finished settling. Fitting
+    // twice (an early "guess" + a later correction) caused a visible
+    // zoom-out-then-zoom-in jump, since the graph's spread keeps changing
+    // while physics is still running between the two timers.
     const t2 = setTimeout(() => handleFitRef.current(), 1800);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
+    return () => { clearTimeout(t2); };
   }, [viewportFitToken, webglActive]);
 
   // Switching SVG modes leaves the camera wherever the previous mode was — static

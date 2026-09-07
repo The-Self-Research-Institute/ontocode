@@ -1659,33 +1659,42 @@ const Dashboard: React.FC<DashboardProps> = ({
     },
     [],
   );
-
   const countNodes = (nodes: any[]): number => {
-    let count = 0;
-    for (const node of nodes) {
-      // Don't count owl:Thing/owl:Nothing (class root) or the synthetic owl:top*Property
-      // root nodes (object/data property trees always include one, even with zero real
-      // properties) in the total — none of these represent a real user-defined entity.
-      const id = node.id || node.iri;
-      if (
-        id !== "http://www.w3.org/2002/07/owl#Thing" &&
-        id !== "owl:Thing" &&
-        id !== "http://www.w3.org/2002/07/owl#Nothing" &&
-        id !== "owl:Nothing" &&
-        id !== "http://www.w3.org/2002/07/owl#topObjectProperty" &&
-        id !== "owl:topObjectProperty" &&
-        id !== "http://www.w3.org/2002/07/owl#topDataProperty" &&
-        id !== "owl:topDataProperty"
-      ) {
-        count++;
-      }
-      if (node.children && node.children.length > 0) {
-        count += countNodes(node.children);
-      }
-    }
-    return count;
-  };
+    // OWL class/property hierarchies are DAGs, not trees — a node can be
+    // reachable from more than one parent (multiple inheritance), so a plain
+    // recursive counter would count the same entity once per path to it.
+    // Track visited IDs in a Set to count each distinct entity exactly once,
+    // no matter how many branches lead to it.
+    const seen = new Set<string>();
 
+    const walk = (nodeList: any[]) => {
+      for (const node of nodeList) {
+        // Don't count owl:Thing/owl:Nothing (class root) or the synthetic owl:top*Property
+        // root nodes (object/data property trees always include one, even with zero real
+        // properties) in the total — none of these represent a real user-defined entity.
+        const id = node.id || node.iri;
+        if (
+          id &&
+          id !== "http://www.w3.org/2002/07/owl#Thing" &&
+          id !== "owl:Thing" &&
+          id !== "http://www.w3.org/2002/07/owl#Nothing" &&
+          id !== "owl:Nothing" &&
+          id !== "http://www.w3.org/2002/07/owl#topObjectProperty" &&
+          id !== "owl:topObjectProperty" &&
+          id !== "http://www.w3.org/2002/07/owl#topDataProperty" &&
+          id !== "owl:topDataProperty"
+        ) {
+          seen.add(id);
+        }
+        if (node.children && node.children.length > 0) {
+          walk(node.children);
+        }
+      }
+    };
+
+    walk(nodes);
+    return seen.size;
+  };
   const showToast = useCallback(
     (message: string, type: "success" | "error" | "info" | "warning" = "info") => {
       collaboration.addNotification({
@@ -1767,6 +1776,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [availableProjects, setAvailableProjects] = useState<any[]>([]);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
   const [metadata, setMetadata] = useState<OntologyMetadata | null>(null);
+  // Mirrors `metadata` for code (like the WebSocket message listener further
+  // down) that runs inside a closure attached before this state last changed —
+  // reading `metadata` directly there can see a stale value from a previous
+  // file. See classHierarchyRef below for the matching mirror + full context.
+  const metadataRef = useRef<OntologyMetadata | null>(null);
+  useEffect(() => {
+    metadataRef.current = metadata;
+  }, [metadata]);
   const [ontologyImports, setOntologyImports] = useState<string[]>([]);
   const [generalClassAxioms, setGeneralClassAxioms] = useState<
     Array<{
@@ -2331,6 +2348,21 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isDlQueryLoading, setIsDlQueryLoading] = useState(false);
 
   const [classHierarchy, setClassHierarchy] = useState<TreeNode[]>([]);
+  // Mirrors `classHierarchy` for the WebSocket message listener further down.
+  // That listener is set up inside a useEffect whose dependency array doesn't
+  // include classHierarchy/metadata (adding them would make it tear down and
+  // reattach the socket listener on every single hierarchy update, which is
+  // its own can of worms). Without this, the listener's IMPORT_COMPLETED
+  // handler kept reading classHierarchy/metadata from whatever they were when
+  // the listener was last attached — e.g. the PREVIOUS file's non-empty
+  // hierarchy — even after handleLoadProjectFile had already reset both to
+  // empty/null for a newly created file. That made the "is this project
+  // already loaded?" check wrongly say yes for a brand-new file, skip calling
+  // fetchData entirely, and leave every loading spinner stuck forever.
+  const classHierarchyRef = useRef<TreeNode[]>([]);
+  useEffect(() => {
+    classHierarchyRef.current = classHierarchy;
+  }, [classHierarchy]);
   const [topLevelTruncated, setTopLevelTruncated] = useState(false);
   const [topLevelTotal, setTopLevelTotal] = useState(0);
   const [isLoadingMoreTopLevel, setIsLoadingMoreTopLevel] = useState(false);
@@ -2635,7 +2667,16 @@ const Dashboard: React.FC<DashboardProps> = ({
       id: "Classes",
       label: "Classes",
       icon: Package,
-      count: Number((metadata as any)?.classCount) || 0,
+      // Trust backend metadata as the source of truth when available — it
+      // reflects the whole ontology, unlike classHierarchy, which can be
+      // partially loaded/collapsed in the UI on larger ontologies. Only fall
+      // back to counting the (now deduplicated) tree when metadata is missing.
+      count:
+        Number((metadata as any)?.classCount) > 0
+          ? Number((metadata as any)?.classCount)
+          : classHierarchy.length > 0
+            ? countNodes(classHierarchy)
+            : 0,
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
@@ -3380,6 +3421,59 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainTab]);
+  // The reasoner's classify endpoint returns a FLAT list (each item has iri/depth/
+  // label/childrenCount), not the nested {id, children, hasChildren} tree shape
+  // the Entities tab's tree component expects (same shape as the asserted
+  // hierarchy). This rebuilds a proper nested tree from that flat list using
+  // each item's `depth` to figure out parent/child relationships.
+  function buildInferredTreeFromFlatList(
+    flat: any[],
+    rootOverride?: { id: string; label: string },
+  ): TreeNode[] {
+    if (!Array.isArray(flat)) return [];
+    const roots: TreeNode[] = [];
+    const stack: { node: TreeNode; depth: number }[] = [];
+
+    for (const item of flat) {
+      const node: TreeNode = {
+        id: item.iri || item.id,
+        label: item.label,
+        children: [],
+        hasChildren: (item.childrenCount || 0) > 0,
+        annotations: item.annotations || {},
+      } as TreeNode;
+
+      while (stack.length > 0 && stack[stack.length - 1].depth >= item.depth) {
+        stack.pop();
+      }
+
+      if (stack.length === 0) {
+        roots.push(node);
+      } else {
+        (stack[stack.length - 1].node.children as TreeNode[]).push(node);
+      }
+
+      stack.push({ node, depth: item.depth });
+    }
+
+    // Wrap the depth-0 roots under a synthetic root node so the Inferred view
+    // visually matches the Asserted view. Defaults to owl:Thing (correct for
+    // Classes), but callers building Object/Data Property trees pass the
+    // correct root instead (owl:topObjectProperty / owl:topDataProperty).
+    const root = rootOverride || {
+      id: "http://www.w3.org/2002/07/owl#Thing",
+      label: "owl:Thing",
+    };
+    return [
+      {
+        id: root.id,
+        label: root.label,
+        children: roots,
+        hasChildren: roots.length > 0,
+        annotations: {},
+      } as TreeNode,
+    ];
+  }
 
   const startReasoner = useCallback(async () => {
     if (!projectId) {
@@ -3398,6 +3492,27 @@ const Dashboard: React.FC<DashboardProps> = ({
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const results = await fetchReasonerBundle(reasonerType);
       setReasonerResults(results);
+            console.log("[Dashboard] reasoner bundle:", results);
+      console.log("[Dashboard] FIRST inferred class item:", JSON.stringify((results as any)?.classHierarchy?.[0], null, 2));
+
+      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
+      const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.objectPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
+      );
+      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.dataPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topDataProperty", label: "owl:topDataProperty" },
+      );
+      if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
+        setInferredClassHierarchy(bundleClassHierarchy);
+      }
+      if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
+        setInferredObjectPropertyHierarchy(bundleObjectPropertyHierarchy);
+      }
+      if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
+        setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
+      }
 
       // Realize individuals (inferred types) after classification
       try {
@@ -3432,14 +3547,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       // This ensures we have the full depth across the full hierarchy, not just the bundle's view
       console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
 
-      // Load hierarchies sequentially to avoid overwhelming GraphDB
-      await loadInferredHierarchy();
-      await loadInferredObjectPropertyHierarchy();
-      await loadInferredDataPropertyHierarchy();
+      // Load hierarchies sequentially to avoid overwhelming GraphDB — skip the
+      // ones we already populated directly from the classify bundle above.
+      if (!Array.isArray(bundleClassHierarchy) || bundleClassHierarchy.length === 0) {
+        await loadInferredHierarchy();
+      }
+      if (!Array.isArray(bundleObjectPropertyHierarchy) || bundleObjectPropertyHierarchy.length === 0) {
+        await loadInferredObjectPropertyHierarchy();
+      }
+      if (!Array.isArray(bundleDataPropertyHierarchy) || bundleDataPropertyHierarchy.length === 0) {
+        await loadInferredDataPropertyHierarchy();
+      }
       await loadInferredAnnotationPropertyHierarchy();
       await loadInferredDatatypes();
       await loadInferredIndividuals();
-
       console.log("[Dashboard] ✅ All inferred hierarchies processed");
 
       // Refresh class instances if user is viewing Individuals by Class
@@ -6884,12 +7005,12 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
 
       if (message.type === "showLoading") {
         console.log("[Dashboard] showLoading received - file upload starting for project:", message.projectId);
+        const wasAlreadySelectedBefore = hasUserSelectedFileRef.current;
         setHasUserSelectedFile(true);
         hasUserSelectedFileRef.current = true;
         pendingImportProjectIdRef.current = message.projectId; // Track which project is being imported
         setPendingImportProjectId(message.projectId);
         console.log("[Dashboard] Set pendingImportProjectIdRef.current to:", pendingImportProjectIdRef.current);
-        setIsExpectingFileReady(true);
         setImportReadyToBrowse(false);
         setLoadingProjectName(message.fileName || message.projectId || "Processing file upload...");
         setBackgroundImportProgress(0);
@@ -6897,11 +7018,13 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         if (window.vscode && message.projectId) {
           window.vscode.postMessage({ type: "getQueueStatus", projectId: message.projectId });
         }
+        setIsExpectingFileReady(true);  // unconditional again — needed by fetchData's fresh-import check regardless of platform
         if (isDesktop()) {
           // Desktop: block with loading dialog
           setShowLoadingChoice(true);
-        } else {
-          // Webapp: stay in project library — import card shows live progress
+        } else if (!wasAlreadySelectedBefore) {
+          // Webapp, first file this session: stay in project library — import
+          // card shows live progress.
           setShowProjectSelector(true);
         }
         // Don't fetch projects yet - wait for upload to complete
@@ -7026,30 +7149,57 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           } else {
             console.log("[Dashboard] ⚠️ fileReady received but no initialProjectId, cannot refresh");
           }
-
           if (initialProjectId && message.projectId === initialProjectId) {
-            // If this fileReady came from creating/uploading a new file into the project,
-            // auto-load it so the user sees it immediately instead of requiring a manual click.
-            if (message.uploadedFileId && message.uploadedFileName) {
-              console.log(
-                "[Dashboard] 📂 New file created in project, auto-loading:",
-                message.uploadedFileId,
-                message.uploadedFileName,
-              );
-              // Wait for the file list refresh to complete, then load the new file
-              fetchProjects();
-              // Use a small delay to let the file list state update.
-              // Guard with isMountedRef so navigation away before the timer fires
-              // does not re-set selectedFileId in App.tsx via onFileSelected.
-              setTimeout(() => {
-                if (!isMountedRef.current) return;
-                handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
-              }, 200);
-            } else {
-              console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
-              fetchProjects();
+            // If this exact file is already being loaded by an in-flight
+            // handleLoadProjectFile call (e.g. we just created it ourselves,
+            // and that call is already waiting via pendingImportProjectIdRef
+            // for this very fileReady signal), don't re-trigger a redundant
+            // load here. That redundant call gets silently dropped by
+            // handleLoadProjectFile's own re-entrancy guard anyway — but this
+            // branch used to `break` unconditionally right after, which meant
+            // the message never reached the pendingImportProjectIdRef-matching
+            // branch below that the original call actually needed to call
+            // fetchData() and clear its loading flags. Net effect: creating a
+            // new file while already inside another open file left every
+            // loading spinner stuck forever, until a hard refresh bypassed
+            // this whole path.
+            const alreadyHandling =
+              !!message.uploadedFileId &&
+              fileLoadingRef.current &&
+              lastLoadedFileRef.current === message.uploadedFileId;
+
+            if (!alreadyHandling) {
+              // If this fileReady came from creating/uploading a new file into the project,
+              // auto-load it so the user sees it immediately instead of requiring a manual click.
+              if (message.uploadedFileId && message.uploadedFileName) {
+                console.log(
+                  "[Dashboard] 📂 New file created in project, auto-loading:",
+                  message.uploadedFileId,
+                  message.uploadedFileName,
+                );
+                // Wait for the file list refresh to complete, then load the new file
+                fetchProjects();
+                // Use a small delay to let the file list state update.
+                // Guard with isMountedRef so navigation away before the timer fires
+                // does not re-set selectedFileId in App.tsx via onFileSelected.
+                setTimeout(() => {
+                  if (!isMountedRef.current) return;
+                  handleLoadProjectFile(message.uploadedFileId, message.uploadedFileName);
+                }, 200);
+              } else {
+                console.log("[Dashboard] File list updated for project, skipping ontology load:", message.projectId);
+                fetchProjects();
+              }
+              break;
             }
-            break;
+
+            console.log(
+              "[Dashboard] fileReady for a file already being loaded via handleLoadProjectFile — " +
+                "not double-triggering, falling through so the pendingImportProjectIdRef branch below can complete it:",
+              message.uploadedFileId,
+            );
+            // Deliberately no `break` here — fall through to the
+            // pendingImportProjectIdRef-matching branch below.
           }
           if (
             initialProjectId &&
@@ -7368,8 +7518,9 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
                 // after the first load completes (loadingPromiseRef is null at that point),
                 // which would cause infinite reload loops.
                 const owlThingChildren =
-                  classHierarchy.find((n) => n.id === "http://www.w3.org/2002/07/owl#Thing")?.children?.length ?? 0;
-                if (targetProjectId === projectId && owlThingChildren > 0 && metadata) {
+                  classHierarchyRef.current.find((n) => n.id === "http://www.w3.org/2002/07/owl#Thing")?.children
+                    ?.length ?? 0;
+                if (targetProjectId === projectId && owlThingChildren > 0 && metadataRef.current) {
                   console.log("[Dashboard] IMPORT_COMPLETED: project already loaded, skipping redundant fetch");
                   cleanupUI();
                   setIsInitialLoading(false);
@@ -8089,10 +8240,18 @@ const updateItemInState = useCallback(
 
     console.log("[Dashboard] Classes tab active, view mode:", currentHierarchyViewMode);
     if (currentHierarchyViewMode === "inferred") {
-      // Always load full recursive hierarchy from API when in inferred mode
-      // to ensure we have the full hierarchy depth
-      console.log("[Dashboard] Loading inferred hierarchy from API...");
-      loadInferredHierarchy();
+      if (inferredClassHierarchy.length > 0) {
+        // Already have results from a successful Reasoner tab run (reported via
+        // onInferredHierarchyChange) — don't overwrite them by re-fetching from
+        // this separate API, which can disagree with the Reasoner tab's own
+        // consistency check and reasoner choice, wiping out good data.
+        console.log("[Dashboard] Inferred hierarchy already available, skipping API re-fetch");
+      } else {
+        // Always load full recursive hierarchy from API when in inferred mode
+        // to ensure we have the full hierarchy depth
+        console.log("[Dashboard] Loading inferred hierarchy from API...");
+        loadInferredHierarchy();
+      }
     } else {
       console.log("[Dashboard] Refreshing asserted hierarchy...");
       refreshClassHierarchy();
@@ -8338,21 +8497,31 @@ const updateItemInState = useCallback(
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "ObjectProperties") return;
     console.log("[Dashboard] ObjectProperties tab active, view mode:", hierarchyViewModes.ObjectProperties);
     if (hierarchyViewModes.ObjectProperties === "inferred") {
-      // Always reload to ensure fresh data from the reasoner
-      console.log("[Dashboard] Loading inferred object property hierarchy from API...");
-      loadInferredObjectPropertyHierarchy();
+      if (inferredObjectPropertyHierarchy.length > 0) {
+        console.log("[Dashboard] Inferred object property hierarchy already available, skipping API re-fetch");
+      } else {
+        console.log("[Dashboard] Loading inferred object property hierarchy from API...");
+        loadInferredObjectPropertyHierarchy();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, hierarchyViewModes.ObjectProperties]);
 
   // Load inferred data property hierarchy when switching to inferred mode
+  // Load inferred data property hierarchy when switching to inferred mode
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "DataProperties") return;
     console.log("[Dashboard] DataProperties tab active, view mode:", hierarchyViewModes.DataProperties);
     if (hierarchyViewModes.DataProperties === "inferred") {
-      // Always reload to ensure fresh data from the reasoner
-      console.log("[Dashboard] Loading inferred data property hierarchy from API...");
-      loadInferredDataPropertyHierarchy();
+      if (inferredDataPropertyHierarchy.length > 0) {
+        // Already have results from a successful Reasoner run — don't
+        // overwrite them by re-fetching from this separate (job-based) API,
+        // same issue we hit and fixed for the Classes tab.
+        console.log("[Dashboard] Inferred data property hierarchy already available, skipping API re-fetch");
+      } else {
+        console.log("[Dashboard] Loading inferred data property hierarchy from API...");
+        loadInferredDataPropertyHierarchy();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mainTab, entitiesTab, hierarchyViewModes.DataProperties]);
@@ -9326,9 +9495,29 @@ const updateItemInState = useCallback(
       // Debounce reasoner re-run to avoid too many calls
       setTimeout(async () => {
         try {
-          const reasonerType = normalizeReasonerType(selectedReasoner);
-          const results = await fetchReasonerBundle(reasonerType);
-          setReasonerResults(results);
+               const reasonerType = normalizeReasonerType(selectedReasoner);
+      const results = await fetchReasonerBundle(reasonerType);
+      setReasonerResults(results);
+
+      // The classify response already contains a working hierarchy — this is
+      // literally what successfully powers the Reasoner tab's own display.
+      // Use it directly for the Entities tab's "Inferred" toggle too, instead
+      // of relying solely on the separate /reasoner/inferred-class-hierarchy
+      // endpoint below — that one doesn't reliably honor the requested
+      // reasonerType and can report a false "inconsistent", wiping out a
+      // perfectly good result we already have right here.
+      const bundleClassHierarchy = (results as any)?.classHierarchy;
+      const bundleObjectPropertyHierarchy = (results as any)?.objectPropertyHierarchy;
+      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList((results as any)?.objectPropertyHierarchy);
+      if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
+        setInferredClassHierarchy(bundleClassHierarchy);
+      }
+      if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
+        setInferredObjectPropertyHierarchy(bundleObjectPropertyHierarchy);
+      }
+      if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
+        setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
+      }
           console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
         } catch (error) {
           console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
@@ -10484,11 +10673,14 @@ const updateItemInState = useCallback(
       console.error("Failed to refresh properties:", error);
     }
   }, [projectId]);
-
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "ObjectProperties") return;
     if (hierarchyViewModes.ObjectProperties === "inferred") {
-      loadInferredObjectPropertyHierarchy();
+      if (inferredObjectPropertyHierarchy.length > 0) {
+        console.log("[Dashboard] Inferred object property hierarchy already available, skipping API re-fetch (2nd effect)");
+      } else {
+        loadInferredObjectPropertyHierarchy();
+      }
     } else {
       refreshProperties();
     }
@@ -10504,7 +10696,11 @@ const updateItemInState = useCallback(
   useEffect(() => {
     if (!projectId || mainTab !== "Entities" || entitiesTab !== "DataProperties") return;
     if (hierarchyViewModes.DataProperties === "inferred") {
-      loadInferredDataPropertyHierarchy();
+      if (inferredDataPropertyHierarchy.length > 0) {
+        console.log("[Dashboard] Inferred data property hierarchy already available, skipping API re-fetch (2nd effect)");
+      } else {
+        loadInferredDataPropertyHierarchy();
+      }
     } else {
       refreshProperties();
     }
@@ -11013,15 +11209,13 @@ const updateItemInState = useCallback(
         }
       }
 
-      // For parent label, compute via functional state accessor.
-      let parentLabel = activeSelectedItem.label;
-      if (type === "sibling") {
-        setClassHierarchy((currentHierarchy) => {
-          const parent = findParentNode(currentHierarchy, activeSelectedItem.id);
-          parentLabel = parent?.label || "owl:Thing";
-          return currentHierarchy; // No change
-        });
-      }
+     // Show the class you selected, not its parent — "Sibling Of: Sub2" reads
+      // more naturally to users than naming the shared parent ("Pizza"), even
+      // though the new class is still actually created under that same parent.
+      // This is purely a display label; handleCreateClass independently
+      // recomputes the real parent for actual placement, so this change has no
+      // effect on where the class actually ends up.
+      const parentLabel = activeSelectedItem.label;
 
       setAddClassType(type);
       setClassParentLabel(parentLabel);
@@ -11047,9 +11241,6 @@ const updateItemInState = useCallback(
           if (type === "subclass" && selectedItem?.id) {
             parentIri = selectedItem.id;
           } else if (type === "sibling" && selectedItem?.id) {
-            // Use functional update to find parent without dependency
-            let foundParentIri = "http://www.w3.org/2002/07/owl#Thing";
-            setClassHierarchy((currentHierarchy) => {
               const findParent = (
                 nodes: TreeNode[],
                 targetId: string,
@@ -11064,12 +11255,9 @@ const updateItemInState = useCallback(
                 }
                 return null;
               };
-              const parent = findParent(currentHierarchy, selectedItem.id);
-              foundParentIri = parent?.id || "http://www.w3.org/2002/07/owl#Thing";
-              return currentHierarchy; // No change yet
-            });
-            parentIri = foundParentIri;
-          }
+              const parent = findParent(classHierarchy, selectedItem.id);
+              parentIri = parent?.id || "http://www.w3.org/2002/07/owl#Thing";
+            }
 
           // Call backend API with user info
           await ontologyMutationService.createClass(
@@ -11230,7 +11418,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create entity. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addClassType, entitiesTab, metadata, markAsUnsaved, refreshProperties, loadChildren],
+    [projectId, selectedItem, addClassType, entitiesTab, metadata, classHierarchy, markAsUnsaved, refreshProperties, loadChildren],
   );
 
   const handleCreateObjectProperty = useCallback(
@@ -15607,6 +15795,16 @@ const updateItemInState = useCallback(
                   onSelectReasoner={handleSelectReasoner}
                   onToggleSync={toggleReasonerSync}
                   isReasonerSynced={isReasonerSynced}
+                  onInferredHierarchyChange={(data: { classHierarchy: any[]; objectPropertyHierarchy: any[]; dataPropertyHierarchy: any[] }) => {
+                    // A successful reasoner run inside the plugin only updated its
+                    // own local display before — this callback (added alongside
+                    // the plugin's onInferredHierarchyChange prop) is what actually
+                    // makes those results show up in the Entities tab's "Inferred"
+                    // toggle too, by updating the same state that toggle reads.
+                    setInferredClassHierarchy(data.classHierarchy);
+                    setInferredObjectPropertyHierarchy(data.objectPropertyHierarchy);
+                    setInferredDataPropertyHierarchy(data.dataPropertyHierarchy);
+                  }}
                 />
               </div>
             </div>

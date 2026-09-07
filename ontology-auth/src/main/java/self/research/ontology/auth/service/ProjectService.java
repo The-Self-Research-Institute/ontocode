@@ -321,31 +321,31 @@ public class ProjectService {
      * Add a member to a project
      */
     public Project addMember(String projectId, String userId, String targetUserId, String targetUsername, String targetEmail, String role) {
-        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
-        if (projectOpt.isEmpty()) {
-            throw new IllegalArgumentException("Project not found");
-        }
-        
-        Project project = projectOpt.get();
-        
-        // Check permissions: project owner, or workspace owner / workspace admin
-        if (!canManageProject(project, userId)) {
-            throw new SecurityException("Only project owner or a workspace owner/admin can add members");
-        }
-
-        String normalizedRole = role == null ? "" : role.toUpperCase();
-        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
-            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
-        }
-        
-        if (project.hasMember(targetUserId)) {
-            throw new IllegalArgumentException("User is already a member");
-        }
-        
-        project.addMember(targetUserId, targetUsername, targetEmail, normalizedRole);
-        return projectRepository.save(project);
+    Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
+    if (projectOpt.isEmpty()) {
+        throw new IllegalArgumentException("Project not found");
+    }
+    
+    Project project = projectOpt.get();
+    
+    if (!canManageProject(project, userId)) {
+        throw new SecurityException("Only project owner or a workspace owner/admin can add members");
     }
 
+    String normalizedRole = role == null ? "" : role.toUpperCase();
+    if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
+        throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
+    }
+    
+    
+    if (project.hasMember(targetUserId)) {
+        log.info("[addMember] {} is already a member of project {} — no-op", targetUserId, projectId);
+        return project;
+    }
+    
+    project.addMember(targetUserId, targetUsername, targetEmail, normalizedRole);
+    return projectRepository.save(project);
+}
     /**
      * Update a member's role in a project
      */

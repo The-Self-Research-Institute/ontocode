@@ -1498,14 +1498,25 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
             console.log("[ClassEditor] deleteSubClassOf completed");
             break;
           case "DisjointWith":
-            console.log("[ClassEditor] Calling deleteDisjointWith");
-            await ontologyMutationService.deleteDisjointWith(
-              projectId,
-              ownerIri,
-              id,
-              user?.email,
-              user?.username || user?.email,
-            );
+            if (axiom?.isAllDisjointClasses) {
+              console.log("[ClassEditor] Calling deleteFromAllDisjointClasses");
+              await ontologyMutationService.deleteFromAllDisjointClasses(
+                projectId,
+                ownerIri,
+                id,
+                user?.email,
+                user?.username || user?.email,
+              );
+            } else {
+              console.log("[ClassEditor] Calling deleteDisjointWith");
+              await ontologyMutationService.deleteDisjointWith(
+                projectId,
+                ownerIri,
+                id,
+                user?.email,
+                user?.username || user?.email,
+              );
+            }
             break;
         }
         // Small delay to allow GraphDB to process the mutation
