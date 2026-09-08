@@ -20,7 +20,7 @@ usage() {
 ALL_SERVICES=(fuseki graphdb auth gateway editor reasoner-worker swrl plugin plugin-init web)
 
 DEFAULT_ALL_SERVICES=(auth gateway editor reasoner-worker swrl plugin plugin-init web)
-ALL_PLATFORMS=(web vscode desktop)
+ALL_PLATFORMS=(web vscode windows linux mac)
 
 EC2_DIR="${EC2_DIR:-}"
 
@@ -28,7 +28,17 @@ MODE_ARG=""
 CHANGES_ARG=""
 PLATFORM_ARG=""
 REMOTE_BUILD_ARG=0
-REMOTE_BUILD_SUPPORTED=(swrl)
+REMOTE_BUILD_SUPPORTED=("${DEFAULT_ALL_SERVICES[@]}")
+
+declare -A COMPOSE_SERVICE_NAME=(
+  [auth]=auth [gateway]=gateway [editor]=owl-editor [reasoner-worker]=reasoner-worker
+  [swrl]=swrl-service [plugin]=plugin-service [plugin-init]=plugin-init [web]=webapp
+)
+declare -A REMOTE_BUILD_DOCKERFILE=(
+  [auth]=Dockerfile.auth [gateway]=Dockerfile.gateway [editor]=Dockerfile.editor
+  [reasoner-worker]=Dockerfile.reasoner-worker [swrl]=Dockerfile.swrl
+  [plugin]=Dockerfile.plugin [plugin-init]=Dockerfile.plugin-init [web]=Dockerfile.webapp
+)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,7 +53,7 @@ done
 
 [[ -n "$MODE_ARG" ]]     || { echo "ERROR: --mode dev|prod|all is required" >&2; usage 1; }
 [[ -n "$CHANGES_ARG" ]]  || { echo "ERROR: --changes|--deploy <service,...>|all is required" >&2; usage 1; }
-[[ -n "$PLATFORM_ARG" ]] || { echo "ERROR: --platform <web,vscode,desktop>|all is required" >&2; usage 1; }
+[[ -n "$PLATFORM_ARG" ]] || { echo "ERROR: --platform <web,vscode,windows,linux,mac>|all is required" >&2; usage 1; }
 
 case "$MODE_ARG" in
   all)  MODES=(dev prod) ;;
@@ -131,7 +141,7 @@ _wsl_flags=()
 for p in "${PLATFORMS[@]}"; do
   case "$p" in
     web) _wsl_flags+=(--web) ;;
-    desktop) _wsl_flags+=(--desktop) ;;
+    windows|linux|mac) _wsl_flags+=(--desktop) ;;
     vscode) _wsl_flags+=(--vscode) ;;
   esac
 done
@@ -143,7 +153,7 @@ if [[ -x "$ROOT/scripts/check-wsl-prereqs.sh" ]] || [[ -f "$ROOT/scripts/check-w
 else
   _needs_host_jdk=0
   for p in "${PLATFORMS[@]}"; do
-    [[ "$p" == "desktop" ]] && _needs_host_jdk=1
+    case "$p" in windows|linux|mac) _needs_host_jdk=1 ;; esac
   done
   if [[ $_needs_host_jdk -eq 1 ]]; then
     require_jdk_prereqs
@@ -195,26 +205,44 @@ branch_web_remote_build() {
     rsync_rsh="ssh -o BatchMode=yes -i ${SSHKEY[$m]}"
   fi
 
+  if [[ "$m" == "dev" ]]; then
+    local s
+    for s in "${SERVICES[@]}"; do
+      if [[ "$s" == "reasoner-worker" ]]; then
+        echo "ERROR: reasoner-worker isn't part of docker-compose.yml (dev) at all — only docker-compose.production.yml. --remote-build --mode dev can't deploy it." >&2
+        return 1
+      fi
+    done
+  fi
+
+  local compose_services=() dockerfiles=() s
+  for s in "${SERVICES[@]}"; do
+    compose_services+=("${COMPOSE_SERVICE_NAME[$s]}")
+    dockerfiles+=("${REMOTE_BUILD_DOCKERFILE[$s]}")
+  done
+
+  local rsync_paths=(pom.xml shared/ ontology-auth/ ontology-gateway/ ontology-editor/ \
+    ontology-swrl/ ontology-plugin-service/ ontology-reasoner-worker/ \
+    "${dockerfiles[@]}" docker-compose.remote-build.yml)
+  if [[ " ${SERVICES[*]} " == *" web "* ]]; then
+    rsync_paths+=(ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/)
+  fi
+  if [[ " ${SERVICES[*]} " == *" plugin-init "* ]]; then
+    rsync_paths+=(plugins/ scripts/package.json scripts/manage-plugins.js)
+  fi
+
   echo "[progress][$m-web] $(date '+%H:%M:%S') START remote build → ${HOST[$m]}:${DIR[$m]}"
-  echo "[progress][$m-web] rsync build context (pom stubs, shared/, ontology-swrl/)"
+  echo "[progress][$m-web] rsync build context (${SERVICES[*]})"
   rsync -azR -e "$rsync_rsh" \
     --exclude 'target' \
     --exclude '*.class' \
-    pom.xml \
-    ontology-auth/pom.xml \
-    ontology-gateway/pom.xml \
-    ontology-editor/pom.xml \
-    ontology-plugin-service/pom.xml \
-    ontology-reasoner-worker/pom.xml \
-    shared/ \
-    ontology-swrl/ \
-    Dockerfile.swrl \
-    docker-compose.remote-build.yml \
+    --exclude 'node_modules' \
+    "${rsync_paths[@]}" \
     "${HOST[$m]}:${DIR[$m]}/" || return 1
 
-  echo "[progress][$m-web] $(date '+%H:%M:%S') rsync OK — building + starting on remote"
+  echo "[progress][$m-web] $(date '+%H:%M:%S') rsync OK — building + starting on remote: ${compose_services[*]}"
   ssh "${ssh_opts[@]}" "${HOST[$m]}" \
-    "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml build swrl-service && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml up -d swrl-service && docker compose ${CFLAGS[$m]}ps" || return 1
+    "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml build ${compose_services[*]} && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml up -d ${compose_services[*]} && docker compose ${CFLAGS[$m]}ps" || return 1
   echo "[progress][$m-web] $(date '+%H:%M:%S') DONE remote build+deploy"
 }
 
@@ -284,11 +312,12 @@ is_wsl() {
 }
 
 build_desktop() {
-  local platform="$1"
-  ( cd "$ROOT/electron-app" && npm run "dist:$platform" )
+  local platform="$1" update_host="$2"
+  ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run "dist:$platform" )
 }
 
 build_desktop_win_via_windows_host() {
+  local update_host="$1"
   if ! command -v cmd.exe >/dev/null 2>&1 && ! command -v powershell.exe >/dev/null 2>&1; then
     echo "[progress][desktop] Windows host tools not available from WSL — skipping win installer"
     return 1
@@ -302,9 +331,9 @@ build_desktop_win_via_windows_host() {
   echo "          path: $win_electron"
 
   if command -v cmd.exe >/dev/null 2>&1; then
-    cmd.exe /c "cd /d \"${win_electron}\" && npm run dist:win" || return 1
+    cmd.exe /c "set ONTOCODE_UPDATE_HOST=${update_host}&& cd /d \"${win_electron}\" && npm run dist:win" || return 1
   else
-    powershell.exe -NoProfile -Command "Set-Location -LiteralPath '${win_electron}'; npm run dist:win" || return 1
+    powershell.exe -NoProfile -Command "\$env:ONTOCODE_UPDATE_HOST='${update_host}'; Set-Location -LiteralPath '${win_electron}'; npm run dist:win" || return 1
   fi
 }
 
@@ -338,61 +367,14 @@ upload_installer() {
   echo "   Public download: $api_base/api/downloads/$platform"
 }
 
-branch_desktop() {
-  local m="$1"
-  local host_platform
-  host_platform="$(host_desktop_platform)"
-  local api_base="${API[$m]}"
-  local fail=0
-  local built_native=0
-
-  echo "[progress][$m-desktop] $(date '+%H:%M:%S') START (host=$host_platform)"
-
-  if [[ "$host_platform" == "linux" ]]; then
-    if ensure_linux_nodejs; then
-      echo "[progress][$m-desktop] Building native 'linux' installer"
-      if build_desktop "linux"; then
-        echo "[progress][$m-desktop] $(date '+%H:%M:%S') native linux build OK"
-        built_native=1
-      else
-        echo "ERROR: desktop linux build failed" >&2
-        fail=1
-      fi
-    else
-      echo "[progress][$m-desktop] No Linux Node.js — skipping Linux installer"
-      echo "          Install with: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
-      fail=1
-    fi
-  else
-    echo "[progress][$m-desktop] Building native '$host_platform' installer"
-    build_desktop "$host_platform" || { echo "ERROR: desktop $host_platform build failed" >&2; return 1; }
-    built_native=1
-    echo "[progress][$m-desktop] $(date '+%H:%M:%S') native $host_platform build OK"
-  fi
-
-  if [[ "$host_platform" == "linux" ]] && is_wsl; then
-    echo "[progress][$m-desktop] WSL detected — Linux then Windows (shared electron-app/resources — not parallel by design)"
-    if build_desktop_win_via_windows_host; then
-      echo "[progress][$m-desktop] $(date '+%H:%M:%S') Windows installer build OK"
-
-      if [[ $built_native -eq 0 ]]; then fail=0; fi
-    else
-      echo "[progress][$m-desktop] Windows installer build skipped/failed"
-      echo "          Tip: run from Windows: build-and-push.cmd --mode $m --platform desktop --deploy all"
-    fi
-  elif [[ "$host_platform" == "linux" ]]; then
-    echo "[progress][$m-desktop] Pure Linux host — Linux installer only (no Windows .exe here)"
-  fi
-
-  echo "[progress][$m-desktop] $(date '+%H:%M:%S') uploading available installers..."
+upload_windows_installer() {
+  local api_base="$1"
   local DIST="$ROOT/electron-app/dist-electron"
   shopt -s nullglob
-
   local win=( "$DIST"/*[Ss]etup*.exe )
   if [[ ${#win[@]} -eq 0 ]]; then
     win=( "$DIST"/*Setup*x64*.exe )
   fi
-
   local win_filtered=()
   local _w
   for _w in "${win[@]+"${win[@]}"}"; do
@@ -400,23 +382,166 @@ branch_desktop() {
     win_filtered+=("$_w")
   done
   win=("${win_filtered[@]+"${win_filtered[@]}"}")
-  [[ ${#win[@]} -gt 0 ]] && { local f; f=$(ls -t "${win[@]}" | head -1); upload_installer "$api_base" "windows-x64" "$f" "$(basename "$f")" || fail=1; }
-  local dmg_arm=( "$DIST"/*arm64*.dmg )
-  [[ ${#dmg_arm[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_arm[@]}" | head -1); upload_installer "$api_base" "mac-arm64" "$f" "$(basename "$f")" || fail=1; }
-  local dmg_x64=( "$DIST"/*x64*.dmg )
-  [[ ${#dmg_x64[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_x64[@]}" | head -1); upload_installer "$api_base" "mac-x64" "$f" "$(basename "$f")" || fail=1; }
-  local appimages=( "$DIST"/*.AppImage )
-  [[ ${#appimages[@]} -gt 0 ]] && { local f; f=$(ls -t "${appimages[@]}" | head -1); upload_installer "$api_base" "linux-x64" "$f" "$(basename "$f")" || fail=1; }
-  local debs=( "$DIST"/*.deb )
-  [[ ${#debs[@]} -gt 0 ]] && { local f; f=$(ls -t "${debs[@]}" | head -1); upload_installer "$api_base" "linux-deb" "$f" "$(basename "$f")" || fail=1; }
   shopt -u nullglob
-
-  if [[ $fail -eq 0 ]]; then
-    echo "[progress][$m-desktop] $(date '+%H:%M:%S') DONE"
-  else
-    echo "[progress][$m-desktop] $(date '+%H:%M:%S') finished with warnings/errors (see above)"
+  if [[ ${#win[@]} -eq 0 ]]; then
+    echo "ERROR: no Windows installer found in $DIST" >&2
+    return 1
   fi
+
+  local win_arm64=() win_x64=()
+  local _w2
+  for _w2 in "${win[@]}"; do
+    case "$_w2" in
+      *arm64*) win_arm64+=("$_w2") ;;
+      *)       win_x64+=("$_w2") ;;
+    esac
+  done
+  local fail=0
+  [[ ${#win_x64[@]}   -gt 0 ]] && { local f; f=$(ls -t "${win_x64[@]}"   | head -1); upload_installer "$api_base" "windows-x64"   "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#win_arm64[@]} -gt 0 ]] && { local f; f=$(ls -t "${win_arm64[@]}" | head -1); upload_installer "$api_base" "windows-arm64" "$f" "$(basename "$f")" || fail=1; }
   return $fail
+}
+
+upload_linux_installers() {
+  local api_base="$1"
+  local DIST="$ROOT/electron-app/dist-electron"
+  local fail=0
+  shopt -s nullglob
+  local appimages=( "$DIST"/*.AppImage )
+  local debs=( "$DIST"/*.deb )
+  local flatpaks=( "$DIST"/*.flatpak )
+  shopt -u nullglob
+  if [[ ${#appimages[@]} -eq 0 && ${#debs[@]} -eq 0 && ${#flatpaks[@]} -eq 0 ]]; then
+    echo "ERROR: no Linux installer (.AppImage/.deb/.flatpak) found in $DIST" >&2
+    return 1
+  fi
+
+  local appimg_arm64=() appimg_x64=()
+  local _ai
+  for _ai in "${appimages[@]+"${appimages[@]}"}"; do
+    case "$_ai" in
+      *arm64*) appimg_arm64+=("$_ai") ;;
+      *)       appimg_x64+=("$_ai") ;;
+    esac
+  done
+  [[ ${#appimg_x64[@]}   -gt 0 ]] && { local f; f=$(ls -t "${appimg_x64[@]}"   | head -1); upload_installer "$api_base" "linux-x64"    "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#appimg_arm64[@]} -gt 0 ]] && { local f; f=$(ls -t "${appimg_arm64[@]}" | head -1); upload_installer "$api_base" "linux-arm64"  "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#debs[@]}         -gt 0 ]] && { local f; f=$(ls -t "${debs[@]}"        | head -1); upload_installer "$api_base" "linux-deb"    "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#flatpaks[@]}     -gt 0 ]] && { local f; f=$(ls -t "${flatpaks[@]}"    | head -1); upload_installer "$api_base" "linux-flatpak" "$f" "$(basename "$f")" || fail=1; }
+  return $fail
+}
+
+upload_mac_installers() {
+  local api_base="$1"
+  local DIST="$ROOT/electron-app/dist-electron"
+  local fail=0
+  shopt -s nullglob
+  local dmg_arm=( "$DIST"/*arm64*.dmg )
+  local dmg_x64=( "$DIST"/*x64*.dmg )
+  shopt -u nullglob
+  if [[ ${#dmg_arm[@]} -eq 0 && ${#dmg_x64[@]} -eq 0 ]]; then
+    echo "ERROR: no macOS installer (.dmg) found in $DIST" >&2
+    return 1
+  fi
+  [[ ${#dmg_arm[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_arm[@]}" | head -1); upload_installer "$api_base" "mac-arm64" "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#dmg_x64[@]} -gt 0 ]] && { local f; f=$(ls -t "${dmg_x64[@]}" | head -1); upload_installer "$api_base" "mac-x64" "$f" "$(basename "$f")" || fail=1; }
+  return $fail
+}
+
+# One platform per call — explicit, no host-detection ambiguity about which
+# installer(s) a bare `--platform desktop` would produce.
+branch_desktop_windows() {
+  local m="$1"
+  local api_base="${API[$m]}"
+  local update_host="${api_base#https://}"
+  local host_platform
+  host_platform="$(host_desktop_platform)"
+  echo "[progress][$m-windows] $(date '+%H:%M:%S') START (host=$host_platform)"
+
+  case "$host_platform" in
+    win)
+      build_desktop "win" "$update_host" || { echo "ERROR: windows build failed" >&2; return 1; }
+      ;;
+    linux)
+      if is_wsl; then
+        build_desktop_win_via_windows_host "$update_host" || { echo "ERROR: windows build via WSL cross-call to the Windows host failed" >&2; return 1; }
+      else
+        echo "ERROR: can't build a Windows installer from a plain Linux host — run this from Windows, or from WSL (it cross-builds via the Windows host)" >&2
+        return 1
+      fi
+      ;;
+    *)
+      echo "ERROR: can't build a Windows installer from '$host_platform' — run this from Windows or WSL instead" >&2
+      return 1
+      ;;
+  esac
+
+  echo "[progress][$m-windows] $(date '+%H:%M:%S') build OK — uploading"
+  if upload_windows_installer "$api_base"; then
+    echo "[progress][$m-windows] $(date '+%H:%M:%S') DONE"
+  else
+    echo "[progress][$m-windows] $(date '+%H:%M:%S') finished with errors (see above)"
+    return 1
+  fi
+}
+
+branch_desktop_linux() {
+  local m="$1"
+  local api_base="${API[$m]}"
+  local update_host="${api_base#https://}"
+  local host_platform
+  host_platform="$(host_desktop_platform)"
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') START (host=$host_platform)"
+
+  if [[ "$host_platform" != "linux" ]]; then
+    echo "ERROR: can't build a Linux installer from '$host_platform' — run this from Linux or WSL instead" >&2
+    return 1
+  fi
+
+  ensure_linux_nodejs || return 1
+  build_desktop "linux" "$update_host" || { echo "ERROR: linux build failed" >&2; return 1; }
+
+  if command -v flatpak-builder >/dev/null 2>&1; then
+    echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too"
+    if ! ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:flatpak ); then
+      echo "WARNING: flatpak build failed — continuing with AppImage/deb only" >&2
+    fi
+  else
+    echo "[progress][$m-linux] flatpak-builder not installed — skipping flatpak bundle"
+    echo "          Install with: sudo apt-get install -y flatpak flatpak-builder && flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak install -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08"
+  fi
+
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') build OK — uploading"
+  if upload_linux_installers "$api_base"; then
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') DONE"
+  else
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') finished with errors (see above)"
+    return 1
+  fi
+}
+
+branch_desktop_mac() {
+  local m="$1"
+  local api_base="${API[$m]}"
+  local update_host="${api_base#https://}"
+  local host_platform
+  host_platform="$(host_desktop_platform)"
+  echo "[progress][$m-mac] $(date '+%H:%M:%S') START (host=$host_platform)"
+
+  if [[ "$host_platform" != "mac" ]]; then
+    echo "ERROR: can't build a macOS installer from '$host_platform' — this only works on a Mac host (no cross-build)" >&2
+    return 1
+  fi
+
+  build_desktop "mac" "$update_host" || { echo "ERROR: mac build failed" >&2; return 1; }
+
+  echo "[progress][$m-mac] $(date '+%H:%M:%S') build OK — uploading"
+  if upload_mac_installers "$api_base"; then
+    echo "[progress][$m-mac] $(date '+%H:%M:%S') DONE"
+  else
+    echo "[progress][$m-mac] $(date '+%H:%M:%S') finished with errors (see above)"
+    return 1
+  fi
 }
 
 branch_vscode() {
@@ -458,7 +583,9 @@ for m in "${MODES[@]}"; do
           ( branch_web "$m" ) > "$log" 2>&1 &
         fi
         ;;
-      desktop) ( branch_desktop "$m" ) > "$log" 2>&1 & ;;
+      windows) ( branch_desktop_windows "$m" ) > "$log" 2>&1 & ;;
+      linux)   ( branch_desktop_linux "$m" )   > "$log" 2>&1 & ;;
+      mac)     ( branch_desktop_mac "$m" )     > "$log" 2>&1 & ;;
       vscode)  ( branch_vscode "$m" )  > "$log" 2>&1 & ;;
     esac
     BRANCH_PID["$key"]=$!

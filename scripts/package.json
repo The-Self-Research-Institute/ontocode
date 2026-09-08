@@ -12,6 +12,8 @@
     "plugins:clean": "node manage-plugins.js clean"
   },
   "dependencies": {
+    "axios": "^1.19.0",
+    "form-data": "^4.0.6",
     "mongodb": "^6.21.0",
     "stripe": "^16.12.0"
   }

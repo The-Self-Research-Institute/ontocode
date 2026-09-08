@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Sparkles, Calendar, PlayCircle } from "lucide-react";
 import { RELEASE_NOTES } from "../utils/releaseNotes";
+import { isDesktop } from "../utils/desktop";
 
 interface ReleaseNotesModalProps {
   isOpen: boolean;
@@ -57,7 +58,9 @@ export const ReleaseNotesModal: React.FC<ReleaseNotesModalProps> = ({ isOpen, on
             return (
               <div key={note.version} className="space-y-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="text-lg font-bold text-gray-900">v{note.version}</span>
+                  <span className="text-lg font-bold text-gray-900">
+                    v{!isDesktop() && note.webVersion ? note.webVersion : note.version}
+                  </span>
                   {isCurrent && (
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-800 border border-green-300">
                       Current

@@ -149,18 +149,16 @@ linux:
 # Build with: npm run dist:linux:flatpak
 flatpak:
   runtime: org.freedesktop.Platform
-  runtimeVersion: "23.08"
+  runtimeVersion: "25.08"
   sdk: org.freedesktop.Sdk
   base: org.electronjs.Electron2.BaseApp
-  baseVersion: "23.08"
+  baseVersion: "25.08"
   finishArgs:
     - --share=network
     - --share=ipc
-    - --socket=x11
     - --socket=wayland
-    - --socket=pulseaudio
+    - --socket=fallback-x11
     - --device=dri
-    - --filesystem=home
   # electron-builder schema: each entry is [from, to] (not {from,to} objects)
   files:
     - ["build-assets/icon-512.png", "share/icons/hicolor/512x512/apps/${appId}.png"]
@@ -168,7 +166,7 @@ flatpak:
 # ── Auto-update (electron-updater generic provider) ─────────────────────────────
 publish:
   provider: generic
-  url: https://ontocodeapi.selfresearch.org/api/downloads/updates/win
+  url: https://${env.ONTOCODE_UPDATE_HOST}/api/downloads/updates/${os}
 
 # ── Build meta ────────────────────────────────────────────────────────────────
 # electronVersion intentionally omitted — electron-builder auto-detects it from

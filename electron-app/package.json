@@ -1,6 +1,6 @@
 {
   "name": "ontocode-desktop",
-  "version": "1.1.0-beta.19",
+  "version": "1.2.1-beta.1",
   "description": "OntoCode Studio Ontology Editor – Desktop (Electron + bundled backend)",
   "homepage": "https://ontocode.selfresearch.org",
   "author": "OntoCode Studio",
@@ -11,16 +11,23 @@
     "start:dev:win": "set ELECTRON_IS_DEV=1 && electron .",
     "build-web": "cd ../ontology-vscode-extension/webview-src && npm run build:electron",
     "prepare-resources": "node scripts/prepare-resources.js",
+    "prepare-resources:linux-x64": "cross-env TARGET_ARCH=x64 node scripts/prepare-resources.js",
+    "prepare-resources:linux-arm64": "cross-env TARGET_ARCH=arm64 node scripts/prepare-resources.js",
     "dist": "npm run prepare-resources && npm run build-web && electron-builder",
+    "pack": "npm run prepare-resources && electron-builder --dir",
+
     "dist:win": "npm run prepare-resources && npm run build-web && electron-builder --win",
-    "dist:mac": "npm run prepare-resources && npm run build-web && electron-builder --mac",
-    "dist:linux": "npm run prepare-resources && npm run build-web && electron-builder --linux",
-    "dist:linux:flatpak": "npm run prepare-resources && npm run build-web && electron-builder --linux flatpak",
     "dist:win:appx": "npm run prepare-resources && npm run build-web && electron-builder --win appx",
-    "dist:win:dev": "npm run prepare-resources && npm run build-web && electron-builder --win -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/win",
-    "dist:mac:dev": "npm run prepare-resources && npm run build-web && electron-builder --mac -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/mac",
-    "dist:linux:dev": "npm run prepare-resources && npm run build-web && electron-builder --linux -c.publish.url=https://ontocodedevapi.selfresearch.org/api/downloads/updates/linux",
-    "pack": "npm run prepare-resources && electron-builder --dir"
+    "dist:win:dev": "npm run dist:win",
+
+    "dist:mac": "npm run prepare-resources && npm run build-web && electron-builder --mac",
+    "dist:mac:dev": "npm run dist:mac",
+
+    "dist:linux:x64": "npm run prepare-resources:linux-x64 && npm run build-web && electron-builder --linux --x64",
+    "dist:linux:arm64": "npm run prepare-resources:linux-arm64 && electron-builder --linux --arm64",
+    "dist:linux": "npm run dist:linux:x64 && npm run dist:linux:arm64",
+    "dist:linux:dev": "npm run dist:linux",
+    "dist:linux:flatpak": "npm run prepare-resources && npm run build-web && electron-builder --linux flatpak"
   },
   "keywords": [
     "ontology",
@@ -31,6 +38,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "electron": "^43.4.0",
     "electron-builder": "^26.15.7"
   },

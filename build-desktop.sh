@@ -8,6 +8,9 @@ DESKTOP_VERSION="1.0.0"
 SWRL_VERSION="1.0.0"
 
 # shellcheck disable=SC1091
+[[ -f "$SCRIPT_DIR/.env.deploy" ]] && source "$SCRIPT_DIR/.env.deploy"
+
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/scripts/check-jdk-prereqs.sh"
 require_jdk_prereqs   # sets JDK17_HOME / JDK21_HOME, or exits with a clear message
 
@@ -157,6 +160,13 @@ if $run_pack; then
     # installer missing its bundled runtime.
     # DIST_TARGET lets callers point at the dev update URL, e.g.:
     #   DIST_TARGET_SUFFIX=":dev" bash build-desktop.sh win
+    if [[ "${DIST_TARGET_SUFFIX:-}" == ":dev" ]]; then
+        : "${DEV_API_BASE:=https://ontocodedevapi.selfresearch.org}"
+        export ONTOCODE_UPDATE_HOST="${DEV_API_BASE#https://}"
+    else
+        : "${API_BASE:=https://ontocodeapi.selfresearch.org}"
+        export ONTOCODE_UPDATE_HOST="${API_BASE#https://}"
+    fi
     case "$PLATFORM" in
         win)   npm run "dist:win${DIST_TARGET_SUFFIX:-}" ;;
         mac)   npm run "dist:mac${DIST_TARGET_SUFFIX:-}" ;;
