@@ -299,6 +299,9 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [showConfigureDialog, setShowConfigureDialog] = useState(false);
   const [showExplainDialog, setShowExplainDialog] = useState(false);
+  const [justificationMode, setJustificationMode] = useState<'regular' | 'laconic'>('regular');
+  const [justificationLimitMode, setJustificationLimitMode] = useState<'all' | 'limit'>('limit');
+  const [justificationLimitValue, setJustificationLimitValue] = useState<number | ''>(5);
   const [inconsistencyExplanation, setInconsistencyExplanation] = useState<any>(null);
   const [autoSync, setAutoSync] = useState(true);
   const [reasonerStatus, setReasonerStatus] = useState<string>('Not initialized');
@@ -331,10 +334,11 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
   const consistentFlag = (displayStats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
   const unsatRaw = displayStats?.unsatisfiableClassesRaw;
-  const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
-    (displayStats && ((displayStats.unsatisfiableClasses ?? 0) > 0 || displayStats.isConsistent === false)) ||
-    combinedUnsat.length > 0
-  );
+  // A class being unsatisfiable is NOT the same as the whole ontology being
+// inconsistent — a class can be individually broken while everything else
+// is perfectly fine (consistentFlag stays true). Only treat this as a full
+// ontology inconsistency when the consistency check itself actually failed.
+const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
 
   const tooltipRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -644,7 +648,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   };
 
   // Fetch detailed inconsistency explanation
-  const fetchInconsistencyExplanation = useCallback(async () => {
+  const fetchInconsistencyExplanation = useCallback(async (
+    modeOverride?: 'regular' | 'laconic',
+    limitOverride?: { mode: 'all' | 'limit'; value: number | '' }
+  ) => {
     // Uses the same isOntologyInconsistent flag the Explain button's `disabled`
     // prop checks (rather than the narrower `isConsistent` state, which some
     // code paths — e.g. a classify response with isConsistent === undefined —
@@ -670,7 +677,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reasonerType })
+          body: JSON.stringify({
+            reasonerType,
+            mode: modeOverride ?? justificationMode,
+
+            maxJustifications: (limitOverride?.mode ?? justificationLimitMode) === 'all'
+              ? 50
+              : (Number(limitOverride?.value ?? justificationLimitValue) || 5)
+          })
         }
       );
 
@@ -685,7 +699,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl]);
+  }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue]);
 
   // Handle class hover
   const handleClassHover = (classIri: string, event: React.MouseEvent) => {
@@ -1440,13 +1454,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     <div className={`text-xs font-semibold ${isDark ? 'text-red-400' : 'text-red-700'}`}>
                       ⚠ Unsatisfiable Classes ({combinedUnsat.length})
                     </div>
-                    <button
-                      onClick={() => { setShowExplainDialog(true); fetchInconsistencyExplanation(); }}
-                      className="text-[10px] px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
-                      disabled={isLoading}
-                    >
-                      Explain
-                    </button>
                   </div>
                   <div className="max-h-56 overflow-y-auto space-y-1">
                     {combinedUnsat.map((cls: any, idx: number) => {
@@ -1697,6 +1704,101 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     <div className="text-sm">The reasoner has detected logical contradictions in the ontology.</div>
                   </div>
 
+                  <div className={`p-3 rounded-md border text-sm space-y-2 ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={justificationMode === 'regular'}
+                        disabled={localIsRunning}
+                        onChange={() => {
+                          setJustificationMode('regular');
+                          fetchInconsistencyExplanation('regular');
+                        }}
+                      />
+                      Show regular justifications
+                      {localIsRunning && justificationMode === 'regular' && (
+                        <RefreshCw size={12} className="animate-spin opacity-60" />
+                      )}
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={justificationMode === 'laconic'}
+                        disabled={localIsRunning}
+                        onChange={() => {
+                          setJustificationMode('laconic');
+                          fetchInconsistencyExplanation('laconic');
+                        }}
+                      />
+                      Show laconic justifications
+                      {localIsRunning && justificationMode === 'laconic' && (
+                        <RefreshCw size={12} className="animate-spin opacity-60" />
+                      )}
+                    </label>
+
+                    <div className={`h-px my-1 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} />
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={justificationLimitMode === 'all'}
+                        disabled={localIsRunning}
+                        onChange={() => {
+                          setJustificationLimitMode('all');
+                          fetchInconsistencyExplanation(undefined, { mode: 'all', value: justificationLimitValue });
+                        }}
+                      />
+                      All justifications
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        id="justification-limit-radio"
+                        checked={justificationLimitMode === 'limit'}
+                        disabled={localIsRunning}
+                        onChange={() => {
+                          setJustificationLimitMode('limit');
+                          fetchInconsistencyExplanation(undefined, { mode: 'limit', value: justificationLimitValue });
+                        }}
+                      />
+                      <label htmlFor="justification-limit-radio" className="cursor-pointer">
+                        Limit justifications to
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={justificationLimitValue}
+                        disabled={localIsRunning}
+                        onFocus={() => {
+                          if (justificationLimitMode !== 'limit') {
+                            setJustificationLimitMode('limit');
+                          }
+                        }}
+                         onChange={(e) => {
+                          const raw = e.target.value;
+                          setJustificationLimitValue(raw === '' ? '' : Number(raw));
+                        }}
+                        onBlur={(e) => {
+                          const newValue = Math.max(1, Math.min(50, Number(e.target.value) || 5));
+                          setJustificationLimitValue(newValue);
+                          fetchInconsistencyExplanation(undefined, { mode: 'limit', value: newValue });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const newValue = Math.max(1, Math.min(50, Number(e.currentTarget.value) || 5));
+                            setJustificationLimitValue(newValue);
+                            fetchInconsistencyExplanation(undefined, { mode: 'limit', value: newValue });
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        className={`w-16 px-2 py-1 rounded border text-sm ${
+                          isDark ? 'bg-gray-900 border-gray-600 text-gray-100' : 'bg-white border-gray-300 text-gray-900'
+                        }`}
+                      />
+                    </div>
+                  </div>
+
                   {isRunning && !inconsistencyExplanation ? (
                     <div className="text-sm opacity-80 flex items-center gap-2">
                       <RefreshCw size={14} className="animate-spin" />
@@ -1707,14 +1809,29 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       <div
                         key={idx}
                         className={`p-3 rounded-md border text-sm ${
-                          cause.severity === 'ERROR'
-                            ? (isDark ? 'bg-red-900/10 border-red-900/50' : 'bg-red-50 border-red-200')
-                            : cause.severity === 'INFO'
-                              ? (isDark ? 'bg-blue-900/10 border-blue-900/50' : 'bg-blue-50 border-blue-200')
-                              : (isDark ? 'bg-yellow-900/10 border-yellow-900/50' : 'bg-yellow-50 border-yellow-200')
+                          cause.type === 'JUSTIFICATIONS'
+                            ? (isDark ? 'bg-yellow-900/10 border-yellow-900/50' : 'bg-yellow-50 border-yellow-200')
+                            : cause.severity === 'ERROR'
+                              ? (isDark ? 'bg-red-900/10 border-red-900/50' : 'bg-red-50 border-red-200')
+                              : cause.severity === 'INFO'
+                                ? (isDark ? 'bg-blue-900/10 border-blue-900/50' : 'bg-blue-50 border-blue-200')
+                                : (isDark ? 'bg-yellow-900/10 border-yellow-900/50' : 'bg-yellow-50 border-yellow-200')
                         }`}
                       >
-                        <div className="font-semibold mb-1">{cause.title}</div>
+                        <div className="flex items-center gap-2 mb-1">
+                          {cause.type !== 'GLOBAL_INCONSISTENCY' && cause.type !== 'RECOMMENDATIONS' && (
+                            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                              cause.type === 'JUSTIFICATIONS'
+                                ? (isDark ? 'bg-yellow-900/40 text-yellow-400' : 'bg-yellow-200 text-yellow-800')
+                                : cause.severity === 'ERROR'
+                                  ? (isDark ? 'bg-red-900/40 text-red-400' : 'bg-red-200 text-red-800')
+                                  : (isDark ? 'bg-blue-900/40 text-blue-400' : 'bg-blue-200 text-blue-800')
+                            }`}>
+                              {cause.type === 'JUSTIFICATIONS' ? 'Warning' : cause.severity === 'ERROR' ? 'Error' : 'Info'}
+                            </span>
+                          )}
+                          <div className="font-semibold">{cause.title}</div>
+                        </div>
                         {cause.description && <div className="opacity-80 mb-2">{cause.description}</div>}
 
                         {Array.isArray(cause.classes) && cause.classes.length > 0 && (
@@ -1745,6 +1862,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                                             {d.class} — inherited via {d.via}
                                           </div>
                                         ))}
+                                    {v.suggestedFix && (
+                                      <div className="mt-1 pt-1 border-t border-current/10">
+                                        <span className="font-semibold">How to fix: </span>
+                                        {v.suggestedFix}
+                                      </div>
+                                    )}
                                   </>
                                 ) : v.property ? (
                                   <>
@@ -1753,6 +1876,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                                     <span className="font-medium">{v.requiredClass}</span> — but it's already
                                     asserted as <span className="font-medium">{v.conflictingClass}</span>, which is
                                     declared disjoint with {v.requiredClass}.
+                                    {v.suggestedFix && (
+                                      <div className="mt-1 pt-1 border-t border-current/10">
+                                        <span className="font-semibold">How to fix: </span>
+                                        {v.suggestedFix}
+                                      </div>
+                                    )}
                                   </>
                                 ) : (
                                   JSON.stringify(v)
@@ -1770,6 +1899,48 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                               </li>
                             ))}
                           </ul>
+                        )}
+                        {Array.isArray(cause.justifications) && cause.justifications.length > 0 && (
+                          <div className="space-y-3 mt-2">
+                            {cause.justifications.map((justification: any, ji: number) => (
+                              <div
+                                key={ji}
+                                className={`rounded-md border overflow-hidden ${
+                                  isDark ? 'border-gray-700 bg-gray-900/40' : 'border-gray-300 bg-gray-50'
+                                }`}
+                              >
+                                <div
+                                  className={`px-3 py-1.5 text-xs font-semibold border-b ${
+                                    isDark
+                                      ? 'border-gray-700 bg-gray-800/60 text-gray-200'
+                                      : 'border-gray-200 bg-gray-100 text-gray-800'
+                                  }`}
+                                >
+                                  {justification.label}
+                                </div>
+                                <ol>
+                                  {(justification.axioms || []).map((axiom: any, ai: number) => (
+                                    <li
+                                      key={ai}
+                                      className={`flex items-baseline justify-between gap-3 px-3 py-1.5 text-xs ${
+                                        ai !== justification.axioms.length - 1
+                                          ? (isDark ? 'border-b border-gray-800' : 'border-b border-gray-200')
+                                          : ''
+                                      }`}
+                                    >
+                                      <span className="flex items-baseline gap-2 min-w-0">
+                                        <span className="opacity-50 shrink-0">{ai + 1})</span>
+                                        <span className="font-medium">{axiom.text}</span>
+                                      </span>
+                                      <span className="opacity-50 italic whitespace-nowrap shrink-0">
+                                        {axiom.membershipNote}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ol>
+                              </div>
+                            ))}
+                          </div>
                         )}
 
                         {Array.isArray(cause.tips) && cause.tips.length > 0 && (
