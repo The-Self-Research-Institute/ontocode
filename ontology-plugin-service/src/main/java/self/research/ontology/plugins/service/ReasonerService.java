@@ -70,15 +70,8 @@ public class ReasonerService {
         return t;
     });
 
-    // Black-box justification search (owlexplanation) re-checks consistency on
-    // candidate axiom subsets internally, so it's far slower than the syntactic
-    // heuristics above — only runs as a fallback when those find nothing.
     @Value("${ontocode.reasoner.justification-timeout-ms:15000}")
     private long JUSTIFICATION_TIMEOUT_MS;
-    // How many independent minimal justifications to search for, matching
-    // Protégé's "Explanation 1 / Explanation 2 / ..." panel. Each additional
-    // justification costs another hitting-set-tree branch of re-checks, so
-    // keep this modest.
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int MAX_JUSTIFICATIONS;
     /**
@@ -660,14 +653,6 @@ public class ReasonerService {
         }
         return justifications;
     }
-        /**
-     * Same black-box search as findJustifications, but wraps the generator in
-     * LaconicExplanationGeneratorFactory — owlexplanation's own built-in mode
-     * that trims each axiom in a justification down to just the part actually
-     * responsible for the contradiction, dropping unrelated conjuncts/restrictions
-     * that were just "along for the ride." Prevents users over-repairing their
-     * ontology by deleting more than the entailment actually requires.
-     */
           private List<Map<String, Object>> findLaconicJustifications(OWLOntology ontology, int limit) {
         OWLOntology reasoningOntology = stripSwrlRules(ontology);
 
@@ -714,13 +699,6 @@ public class ReasonerService {
         }
         return justifications;
     }
-/**
- * HermiT (and the owlexplanation entailment checker it powers) cannot load
- * ontologies containing SWRL rules with built-in atoms like swrlb:greaterThan
- * — it throws IllegalArgumentException during normalization. Class-level
- * disjointness/consistency reasoning never needs the SWRL rules anyway, so
- * strip them from a throwaway copy before handing the ontology to HermiT.
- */
 
 private OWLOntology stripSwrlRules(OWLOntology ontology) {
     Set<OWLAxiom> axioms = ontology.getAxioms().stream()
@@ -734,12 +712,7 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
         return ontology;
     }
 }
-    /**
-     * Renders an arbitrary OWL axiom in plain English, matching the style used
-     * elsewhere in this class ("X Type Y", "X SubClassOf Y", "DisjointClasses: ...").
-     * Falls back to OWL functional syntax with IRIs swapped for labels for any
-     * axiom shape not specifically handled — always readable, never blank.
-     */
+
     private String renderAxiom(OWLAxiom axiom, OWLOntology ontology) {
         if (axiom instanceof OWLClassAssertionAxiom) {
             OWLClassAssertionAxiom ax = (OWLClassAssertionAxiom) axiom;
@@ -1222,14 +1195,6 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
                 log.error("Error checking property violations", e);
             }
 
-             // 3.5. Real black-box justification search — same technique Protégé's own
-            // Explanation panel uses. Runs unconditionally (not just as a fallback)
-            // so multiple independent root causes surface exactly like Protégé's
-            // "Explanation 1 / Explanation 2" panels, even when the syntactic
-            // heuristics above already found something (they usually find only one
-            // path to the contradiction; this can find several). Bounded by
-            // MAX_JUSTIFICATIONS and JUSTIFICATION_TIMEOUT_MS so it can't run away
-            // on large ontologies.
             try {
                 List<Map<String, Object>> justifications = "laconic".equals(mode)
                     ? findLaconicJustifications(ontology, maxJustifications)
@@ -1329,9 +1294,6 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
                         .map(c -> getLabel(c, ontology))
                         .collect(Collectors.toList());
                     violation.put("disjointClasses", classLabels);
-                    // Plain-English, actionable fix for THIS specific violation — the
-                    // generic "How to Fix" tips at the bottom are too vague to act on
-                    // directly; this tells the user exactly what to remove.
                     List<Map<String, Object>> typeDerivations = violatingClasses.stream()
                         .map(c -> {
                             Map<String, Object> derivation = new HashMap<>();
@@ -1365,13 +1327,6 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
 
         return violations;
     }
-    /**
-     * Builds a fix suggestion tailored to whether the violating classes were
-     * asserted directly on the individual or inherited through another class.
-     * Direct memberships are simple to fix (just remove one); an inherited
-     * membership usually means the REAL problem is higher up the hierarchy —
-     * so we point there instead of telling the user to edit the individual.
-     */
     private String buildDisjointFixSuggestion(String individualLabel, List<Map<String, Object>> typeDerivations) {
         List<String> direct = new ArrayList<>();
         List<String> inherited = new ArrayList<>();

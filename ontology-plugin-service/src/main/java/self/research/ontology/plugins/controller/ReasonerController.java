@@ -661,9 +661,6 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     try {
         String requestedReasonerType = request.getOrDefault("reasonerType", "HERMIT");
         ReasonerType requestedType = ReasonerType.valueOf(requestedReasonerType.toUpperCase());
-
-        // Justification search needs a DL-complete reasoner; ELK/Structural
-        // can't power axiom pinpointing. Silently upgrade for this call only.
         ReasonerType type = (requestedType == ReasonerType.ELK || requestedType == ReasonerType.STRUCTURAL)
             ? ReasonerType.HERMIT
             : requestedType;

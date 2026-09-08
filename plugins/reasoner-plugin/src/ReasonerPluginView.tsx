@@ -680,9 +680,7 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
           body: JSON.stringify({
             reasonerType,
             mode: modeOverride ?? justificationMode,
-            // 'all' has no true "unlimited" mode server-side, so a high cap (50)
-            // stands in for it. Number(...) || 5 guards against a momentarily
-            // empty limit field (mid-backspace) ever reaching the backend as ''.
+
             maxJustifications: (limitOverride?.mode ?? justificationLimitMode) === 'all'
               ? 50
               : (Number(limitOverride?.value ?? justificationLimitValue) || 5)
