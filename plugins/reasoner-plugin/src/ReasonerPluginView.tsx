@@ -334,10 +334,11 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
   const consistentFlag = (displayStats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
   const unsatRaw = displayStats?.unsatisfiableClassesRaw;
-  const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1 || !!(
-    (displayStats && ((displayStats.unsatisfiableClasses ?? 0) > 0 || displayStats.isConsistent === false)) ||
-    combinedUnsat.length > 0
-  );
+  // A class being unsatisfiable is NOT the same as the whole ontology being
+// inconsistent — a class can be individually broken while everything else
+// is perfectly fine (consistentFlag stays true). Only treat this as a full
+// ontology inconsistency when the consistency check itself actually failed.
+const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
 
   const tooltipRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1455,13 +1456,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     <div className={`text-xs font-semibold ${isDark ? 'text-red-400' : 'text-red-700'}`}>
                       ⚠ Unsatisfiable Classes ({combinedUnsat.length})
                     </div>
-                    <button
-                      onClick={() => { setShowExplainDialog(true); fetchInconsistencyExplanation(); }}
-                      className="text-[10px] px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
-                      disabled={isLoading}
-                    >
-                      Explain
-                    </button>
                   </div>
                   <div className="max-h-56 overflow-y-auto space-y-1">
                     {combinedUnsat.map((cls: any, idx: number) => {
@@ -1817,14 +1811,29 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       <div
                         key={idx}
                         className={`p-3 rounded-md border text-sm ${
-                          cause.severity === 'ERROR'
-                            ? (isDark ? 'bg-red-900/10 border-red-900/50' : 'bg-red-50 border-red-200')
-                            : cause.severity === 'INFO'
-                              ? (isDark ? 'bg-blue-900/10 border-blue-900/50' : 'bg-blue-50 border-blue-200')
-                              : (isDark ? 'bg-yellow-900/10 border-yellow-900/50' : 'bg-yellow-50 border-yellow-200')
+                          cause.type === 'JUSTIFICATIONS'
+                            ? (isDark ? 'bg-yellow-900/10 border-yellow-900/50' : 'bg-yellow-50 border-yellow-200')
+                            : cause.severity === 'ERROR'
+                              ? (isDark ? 'bg-red-900/10 border-red-900/50' : 'bg-red-50 border-red-200')
+                              : cause.severity === 'INFO'
+                                ? (isDark ? 'bg-blue-900/10 border-blue-900/50' : 'bg-blue-50 border-blue-200')
+                                : (isDark ? 'bg-yellow-900/10 border-yellow-900/50' : 'bg-yellow-50 border-yellow-200')
                         }`}
                       >
-                        <div className="font-semibold mb-1">{cause.title}</div>
+                        <div className="flex items-center gap-2 mb-1">
+                          {cause.type !== 'GLOBAL_INCONSISTENCY' && cause.type !== 'RECOMMENDATIONS' && (
+                            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                              cause.type === 'JUSTIFICATIONS'
+                                ? (isDark ? 'bg-yellow-900/40 text-yellow-400' : 'bg-yellow-200 text-yellow-800')
+                                : cause.severity === 'ERROR'
+                                  ? (isDark ? 'bg-red-900/40 text-red-400' : 'bg-red-200 text-red-800')
+                                  : (isDark ? 'bg-blue-900/40 text-blue-400' : 'bg-blue-200 text-blue-800')
+                            }`}>
+                              {cause.type === 'JUSTIFICATIONS' ? 'Warning' : cause.severity === 'ERROR' ? 'Error' : 'Info'}
+                            </span>
+                          )}
+                          <div className="font-semibold">{cause.title}</div>
+                        </div>
                         {cause.description && <div className="opacity-80 mb-2">{cause.description}</div>}
 
                         {Array.isArray(cause.classes) && cause.classes.length > 0 && (
@@ -1855,6 +1864,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                                             {d.class} — inherited via {d.via}
                                           </div>
                                         ))}
+                                    {v.suggestedFix && (
+                                      <div className="mt-1 pt-1 border-t border-current/10">
+                                        <span className="font-semibold">How to fix: </span>
+                                        {v.suggestedFix}
+                                      </div>
+                                    )}
                                   </>
                                 ) : v.property ? (
                                   <>
@@ -1863,6 +1878,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                                     <span className="font-medium">{v.requiredClass}</span> — but it's already
                                     asserted as <span className="font-medium">{v.conflictingClass}</span>, which is
                                     declared disjoint with {v.requiredClass}.
+                                    {v.suggestedFix && (
+                                      <div className="mt-1 pt-1 border-t border-current/10">
+                                        <span className="font-semibold">How to fix: </span>
+                                        {v.suggestedFix}
+                                      </div>
+                                    )}
                                   </>
                                 ) : (
                                   JSON.stringify(v)

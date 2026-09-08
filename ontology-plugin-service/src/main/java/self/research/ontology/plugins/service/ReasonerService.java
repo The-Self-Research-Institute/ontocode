@@ -1325,9 +1325,22 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
                     Map<String, Object> violation = new HashMap<>();
                     violation.put("individual", getLabel(entry.getKey(), ontology));
                     violation.put("individualIri", entry.getKey().getIRI().toString());
-                    violation.put("disjointClasses", violatingClasses.stream()
+                    List<String> classLabels = violatingClasses.stream()
                         .map(c -> getLabel(c, ontology))
-                        .collect(Collectors.toList()));
+                        .collect(Collectors.toList());
+                    violation.put("disjointClasses", classLabels);
+                    // Plain-English, actionable fix for THIS specific violation — the
+                    // generic "How to Fix" tips at the bottom are too vague to act on
+                    // directly; this tells the user exactly what to remove.
+                    List<Map<String, Object>> typeDerivations = violatingClasses.stream()
+                        .map(c -> {
+                            Map<String, Object> derivation = new HashMap<>();
+                            derivation.put("class", getLabel(c, ontology));
+                            derivation.put("via", buildDerivationChain(c, provenance, ontology));
+                            return derivation;
+                        })
+                        .collect(Collectors.toList());
+                    violation.put("suggestedFix", buildDisjointFixSuggestion(getLabel(entry.getKey(), ontology), typeDerivations));
                     // Per-class derivation: null "via" means the type was asserted
                     // directly; otherwise the chain explains the inheritance path
                     // (e.g. "VegetarianPizza ⊑ Pizza") the way Protégé's own
@@ -1352,7 +1365,43 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
 
         return violations;
     }
+    /**
+     * Builds a fix suggestion tailored to whether the violating classes were
+     * asserted directly on the individual or inherited through another class.
+     * Direct memberships are simple to fix (just remove one); an inherited
+     * membership usually means the REAL problem is higher up the hierarchy —
+     * so we point there instead of telling the user to edit the individual.
+     */
+    private String buildDisjointFixSuggestion(String individualLabel, List<Map<String, Object>> typeDerivations) {
+        List<String> direct = new ArrayList<>();
+        List<String> inherited = new ArrayList<>();
+        for (Map<String, Object> d : typeDerivations) {
+            String className = (String) d.get("class");
+            String via = (String) d.get("via");
+            if (via == null) {
+                direct.add(className);
+            } else {
+                inherited.add(className + " (via " + via + ")");
+            }
+        }
 
+        StringBuilder sb = new StringBuilder();
+        sb.append("These classes are declared mutually exclusive, so ")
+          .append(individualLabel).append(" cannot belong to more than one.");
+
+        if (!direct.isEmpty()) {
+            sb.append(" ").append(direct.size() == 1 ? "One option: remove " : "One option: remove all but one of ")
+              .append(individualLabel).append("'s direct membership in ")
+              .append(String.join(" and ", direct)).append(".");
+        }
+        if (!inherited.isEmpty()) {
+            sb.append(" Note that ").append(String.join(" and ", inherited))
+              .append(" wasn't asserted directly — it came from an inheritance chain, "
+                  + "so the real fix might be higher up: reconsider that inherited rule instead of editing "
+                  + individualLabel).append(" directly.");
+        }
+        return sb.toString();
+    }
     /**
      * Asserted types for an individual, closed over asserted SubClassOf and
      * EquivalentClasses edges between named classes. Purely syntactic (no reasoner
@@ -1628,13 +1677,22 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
     private Map<String, Object> buildPropertyViolation(OWLObjectProperty prop, String constraintKind,
             OWLNamedIndividual individual, OWLClass required, OWLClass conflict, OWLOntology ontology) {
         Map<String, Object> violation = new HashMap<>();
-        violation.put("property", getLabel(prop, ontology));
+        String individualLabel = getLabel(individual, ontology);
+        String propLabel = getLabel(prop, ontology);
+        String requiredLabel = getLabel(required, ontology);
+        String conflictLabel = getLabel(conflict, ontology);
+        violation.put("property", propLabel);
         violation.put("propertyIri", prop.getIRI().toString());
         violation.put("constraintKind", constraintKind);
-        violation.put("individual", getLabel(individual, ontology));
+        violation.put("individual", individualLabel);
         violation.put("individualIri", individual.getIRI().toString());
-        violation.put("requiredClass", getLabel(required, ontology));
-        violation.put("conflictingClass", getLabel(conflict, ontology));
+        violation.put("requiredClass", requiredLabel);
+        violation.put("conflictingClass", conflictLabel);
+        violation.put("suggestedFix", "The " + constraintKind + " of " + propLabel + " requires " + individualLabel
+            + " to be a " + requiredLabel + ", but it's already asserted as " + conflictLabel
+            + ", which is disjoint with " + requiredLabel + ". Either remove " + individualLabel + "'s "
+            + conflictLabel + " type, stop using it with " + propLabel + ", or reconsider whether "
+            + requiredLabel + " and " + conflictLabel + " should really be disjoint.");
         return violation;
     }
     
