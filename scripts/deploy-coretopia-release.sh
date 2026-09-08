@@ -357,12 +357,15 @@ upload_installer() {
   bytes=$(wc -c <"$file_path" | tr -d ' ')
   mb=$(( bytes / 1024 / 1024 ))
 
-  echo "[progress] uploading $filename ($mb MiB) → $platform"
+  local ver=""
+  [[ -f "$ROOT/electron-app/package.json" ]] && ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/electron-app/package.json" | head -1)
+
+  echo "[progress] uploading $filename ($mb MiB) → $platform (version=${ver:-unset})"
   echo ">> Uploading $filename ($mb MiB) → $api_base (platform=$platform)"
 
   curl -f --connect-timeout 30 --max-time 1800 -X POST "$api_base/api/downloads/upload" \
     -H "Authorization: Bearer $token" \
-    -F "platform=$platform" -F "filename=$filename" -F "file=@$file_path"
+    -F "platform=$platform" -F "filename=$filename" -F "version=${ver:-}" -F "file=@$file_path"
   echo ""
   echo "   Public download: $api_base/api/downloads/$platform"
 }
