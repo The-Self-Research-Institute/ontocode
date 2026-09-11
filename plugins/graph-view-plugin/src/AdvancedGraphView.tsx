@@ -5468,7 +5468,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   // Deliberately granular deps: edit-mode toggles, click-handler identity, and label/
   // tooltip toggles update in place (refs + visual-update effect) instead of tearing
   // down and rebuilding the whole scene.
-  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, settings.physics, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions]);
+  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, settings.physics, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions,webglActive]);
 
   // Auto-fit the viewport when switching to ontograph or changing its layout type
   // This ensures nodes are always in view after a layout recalculation
