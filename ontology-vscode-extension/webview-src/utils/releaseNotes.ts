@@ -17,7 +17,17 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
 
-    {
+  {
+  version: "1.2.2-beta.1",
+  webVersion: "1.2.2",
+  date: "September 8, 2026",
+  highlights: [
+    "TSRI-348: Reasoner — \"Explain Inconsistency\" now finds the real cause of each inconsistency, instead of only recognizing a fixed set of common cases. Added Regular and Laconic explanation styles and an option to view all causes or just the first few.",
+  ],
+  videoUrl: "",
+},
+
+  {
     version: "1.2.1-beta.1",
     webVersion: "1.2.1",
     date: "September 4, 2026",
