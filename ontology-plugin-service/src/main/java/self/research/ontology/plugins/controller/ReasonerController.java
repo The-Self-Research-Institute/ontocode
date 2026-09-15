@@ -350,7 +350,7 @@ public class ReasonerController {
     private String editorOntologyFileUrl(String projectId) {
         String encoded = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
         String base = editorServiceUrl.endsWith("/") ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
-        return base + "/api/ontology-file/" + encoded;
+        return base + "/api/ontology-file/" + encoded + "?forceExport=true";
     }
 
     /**

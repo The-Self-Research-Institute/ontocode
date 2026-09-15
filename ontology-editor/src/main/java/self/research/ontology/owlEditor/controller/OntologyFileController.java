@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
+import org.semanticweb.owlapi.model.OWLOntology;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,7 +15,9 @@ import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.StorageManager;
+import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -31,6 +35,9 @@ public class OntologyFileController {
 
     @Autowired
     private ProjectMetadataService metadataService;
+
+    @Autowired(required = false)
+    private OwlApiOntologyContext owlApiContext;
 
     @GetMapping("/{projectId}")
     public ResponseEntity<?> getOntologyFile(@PathVariable String projectId,
@@ -77,6 +84,17 @@ public class OntologyFileController {
                 }
             }
 
+            if (owlApiContext != null && owlApiContext.hasOntology(projectId)) {
+                Optional<byte[]> liveExport = exportLiveOwlApiModel(projectId);
+                if (liveExport.isPresent()) {
+                    log.info("Serving ontology for project {} directly from the live in-memory OWLAPI model", projectId);
+                    return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_XML)
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + projectId + ".owl\"")
+                        .body(liveExport.get());
+                }
+            }
+
             log.info("No ontology file on disk, attempting to export from GraphDB for project: {}", projectId);
             try {
                 Path exportedFile = storageManager.exportOntology(projectId, "rdfxml");
@@ -109,6 +127,22 @@ public class OntologyFileController {
                     "error", e.getMessage(),
                     "projectId", projectId
                 ));
+        }
+    }
+
+    private Optional<byte[]> exportLiveOwlApiModel(String projectId) {
+        Optional<OWLOntology> ontologyOpt = owlApiContext.ontology(projectId);
+        if (ontologyOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            OWLOntology ontology = ontologyOpt.get();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ontology.getOWLOntologyManager().saveOntology(ontology, new RDFXMLDocumentFormat(), out);
+            return Optional.of(out.toByteArray());
+        } catch (Exception e) {
+            log.warn("Failed to export live OWLAPI model for project {}: {}", projectId, e.getMessage());
+            return Optional.empty();
         }
     }
 
