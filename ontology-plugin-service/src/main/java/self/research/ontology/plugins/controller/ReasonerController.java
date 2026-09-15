@@ -165,6 +165,21 @@ public class ReasonerController {
     private OWLOntology loadOntology(String projectId) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
 
+    ensureLatestSavedOnEditorService(projectId);
+    OWLOntology stale = ontologyCache.remove(projectId);
+    if (stale != null) {
+        releaseProjectResources(projectId, stale);
+    }
+    if (projectId != null && projectId.contains("--")) {
+        String baseProjectId = extractBaseProjectId(projectId);
+        if (!baseProjectId.equals(projectId)) {
+            OWLOntology staleBase = ontologyCache.remove(baseProjectId);
+            if (staleBase != null) {
+                releaseProjectResources(baseProjectId, staleBase);
+            }
+        }
+    }
+
         OWLOntology ontology = tryLoadOntologyForId(projectId);
         if (ontology != null) {
             return ontology;
@@ -188,6 +203,19 @@ public class ReasonerController {
         log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", triedIds);
         throw new OntologyNotFoundException("Ontology file not found for project: " + triedIds +
             ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
+    }
+
+        private void ensureLatestSavedOnEditorService(String projectId) {
+        try {
+            String base = editorServiceUrl.endsWith("/")
+                ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1)
+                : editorServiceUrl;
+            String encoded = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
+            String url = base + "/api/ontology-file/" + encoded + "/save";
+            restTemplate.postForEntity(url, editorAuthEntity(), Map.class);
+        } catch (Exception e) {
+            log.debug("Could not trigger auto-save before reasoning for project {}: {}", projectId, e.getMessage());
+        }
     }
 
     /** No source (editor service, GridFS, filesystem) yielded an ontology for the project. */

@@ -94,7 +94,8 @@ export function getApiBaseUrl(): string {
 }
 
 export function getCloudGatewayUrl(): string {
-    return DEFAULTS.CLOUD_GATEWAY_URL;
+     const config = getConfig();
+     return config?.CLOUD_GATEWAY_URL || DEFAULTS.CLOUD_GATEWAY_URL;
 }
 
 export function isCloudDeployment(type?: DeploymentType): boolean {

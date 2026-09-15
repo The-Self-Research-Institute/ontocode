@@ -29,6 +29,9 @@ public class OntologyFileController {
     @Autowired
     private StorageManager storageManager;
 
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.DesktopOntologyLoader desktopOntologyLoader;
+
     @Autowired
     private ProjectMetadataService metadataService;
 
@@ -109,6 +112,22 @@ public class OntologyFileController {
                     "error", e.getMessage(),
                     "projectId", projectId
                 ));
+        }
+    }
+
+    @PostMapping("/{projectId}/save")
+    public ResponseEntity<Map<String, Object>> saveOntologyFile(@PathVariable String projectId) {
+        try {
+            if (desktopOntologyLoader == null) {
+                return ResponseEntity.ok(Map.of("success", true, "saved", false, "message", "Save not available"));
+            }
+            boolean hadDraft = desktopOntologyLoader.hasDraft(projectId);
+            boolean saved = desktopOntologyLoader.saveProject(projectId);
+            log.info("Auto-save before reasoning: project={}, hadDraft={}, saved={}", projectId, hadDraft, saved);
+            return ResponseEntity.ok(Map.of("success", true, "saved", saved));
+        } catch (Exception e) {
+            log.warn("Auto-save before reasoning failed for project {}: {}", projectId, e.getMessage());
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
         }
     }
 
