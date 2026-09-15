@@ -23,6 +23,13 @@ const proxy    = require('./services/ProxyServer');
 const autoUpdater = require('./services/AutoUpdater');
 const detectJava = require('./scripts/detect-java');
 
+if (process.platform === 'linux') {
+    if (process.env.WAYLAND_DISPLAY) {
+        process.env.XDG_SESSION_TYPE = 'wayland';
+    }
+    app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+}
+
 // ── Crash safety net ───────────────────────────────────────────────────────────
 // Without this, an uncaught exception or unhandled rejection anywhere in the main
 // process (e.g. during backend startup) kills the process with zero trace: no
