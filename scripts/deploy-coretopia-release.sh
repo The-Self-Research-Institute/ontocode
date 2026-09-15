@@ -502,7 +502,19 @@ branch_desktop_linux() {
   fi
 
   ensure_linux_nodejs || return 1
-  build_desktop "linux" "$update_host" || { echo "ERROR: linux build failed" >&2; return 1; }
+
+  local build_ok=0
+  if ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:x64 ); then
+    build_ok=1
+  else
+    echo "WARNING: linux x64 build failed" >&2
+  fi
+  if ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:arm64 ); then
+    build_ok=1
+  else
+    echo "WARNING: linux arm64 build failed — continuing with whatever succeeded" >&2
+  fi
+  [[ $build_ok -eq 1 ]] || { echo "ERROR: both linux x64 and arm64 builds failed" >&2; return 1; }
 
   if command -v flatpak-builder >/dev/null 2>&1; then
     echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too"

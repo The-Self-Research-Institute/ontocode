@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload, Info, Zap } from 'lucide-react';
+import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload, Info, Zap, Trash2 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from '../utils/desktop';
 import { fetchLatestDesktopInstallerVersion, getAppVersion } from '../utils/appVersion';
 import LLMSettingsPanel from './LLMSettingsPanel';
+import ConfirmDialog from './ConfirmDialog';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -48,6 +49,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
     const [licenseMessage, setLicenseMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [appVersion, setAppVersion] = useState<string>('');
     const [latestDesktopVersion, setLatestDesktopVersion] = useState<string | null>(null);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [deletingAccount, setDeletingAccount] = useState(false);
 
     useEffect(() => {
         if (!desktop || !isOpen) return;
@@ -267,7 +270,36 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         }
     };
 
+    const handleDeleteAccount = async () => {
+        const prevCallback = (apiClient as any).onUnauthorized;
+        apiClient.setUnauthorizedCallback(() => {
+            console.log('[SettingsModal] Suppressed 401 redirect during delete-account');
+        });
+
+        try {
+            setDeletingAccount(true);
+            await apiClient.delete('/api/auth/account');
+
+            if (onLogout) {
+                onLogout();
+            } else if (window.vscode) {
+                window.vscode.postMessage({ type: 'logout' });
+            }
+        } catch (error: any) {
+            console.error('Error deleting account:', error);
+            const status = error?.status;
+            const msg = status === 401
+                ? 'Session expired. Please sign in again and retry.'
+                : (error?.error || error?.message || 'Failed to delete account');
+            showMessage('error', msg);
+        } finally {
+            setDeletingAccount(false);
+            apiClient.setUnauthorizedCallback(prevCallback);
+        }
+    };
+
     return (
+      <>
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
         <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
           {/* Header */}
@@ -545,6 +577,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                       </button>
                     </div>
                   </div>
+
+                  <div className="border-t border-gray-200 pt-6">
+                    <h4 className="text-lg font-semibold text-red-600 mb-2">Danger Zone</h4>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Permanently delete your account and all data you solely own. This cannot be undone.
+                    </p>
+                    <button
+                      onClick={() => setShowDeleteConfirm(true)}
+                      disabled={deletingAccount}
+                      className="px-4 py-3 bg-white border border-red-300 hover:bg-red-50 text-red-600 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {deletingAccount ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
+                      Delete Account
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -683,6 +730,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="Delete Account"
+        message="This will permanently delete your account and any projects or workspaces you solely own. This cannot be undone."
+        confirmText="Delete Account"
+        variant="danger"
+        onConfirm={handleDeleteAccount}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+      </>
     );
 };
 

@@ -766,6 +766,14 @@ function setupMenu(win) {
                             });
                             return;
                         }
+                        if (result.status === 'store-managed') {
+                            dialog.showMessageBox(win, {
+                                title: 'Updates',
+                                message: 'This copy of OntoCode Studio is managed by Microsoft Store, which keeps it up to date automatically.',
+                                buttons: ['OK'],
+                            });
+                            return;
+                        }
                         if (result.status === 'up-to-date') {
                             dialog.showMessageBox(win, {
                                 title: 'No updates',

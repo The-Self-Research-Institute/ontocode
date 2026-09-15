@@ -5,11 +5,14 @@ import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 import self.research.ontology.auth.model.Workspace;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 @Repository("authWorkspaceRepository")
 public interface WorkspaceRepository extends MongoRepository<Workspace, String> {
+
+    long deleteAllByIsDeletedTrueAndDeletedAtBefore(LocalDateTime cutoff);
 
     Optional<Workspace> findByWorkspaceId(String workspaceId);
 
@@ -17,6 +20,7 @@ public interface WorkspaceRepository extends MongoRepository<Workspace, String> 
     Optional<Workspace> findActiveByWorkspaceId(String workspaceId);
 
     List<Workspace> findByOwnerId(String ownerId);
+    List<Workspace> findByMembers_UserId(String userId);
 
     @Query("{ 'ownerId': ?0, $or: [ { 'isDeleted': { $exists: false } }, { 'isDeleted': false } ] }")
     List<Workspace> findActiveByOwnerId(String ownerId);
