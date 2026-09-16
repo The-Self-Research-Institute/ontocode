@@ -17,3 +17,22 @@ export function buildEntityIri(ontologyBaseIri: string | undefined, rawName: str
   const base = ontologyBaseIri || DEFAULT_ONTOLOGY_BASE_IRI;
   return `${base}#${sanitizeIriFragment(trimmed)}`;
 }
+
+export interface EntityIriPreview {
+  trimmedName: string;
+  computedIri: string;
+  isDuplicate: boolean;
+  canCreate: boolean;
+}
+
+export function computeEntityIriPreview(
+  ontologyBaseIri: string | undefined,
+  rawName: string,
+  existingIris: string[],
+): EntityIriPreview {
+  const trimmedName = rawName.trim();
+  const computedIri = buildEntityIri(ontologyBaseIri, trimmedName);
+  const isDuplicate = !!computedIri && existingIris.includes(computedIri);
+  const canCreate = !!trimmedName && !isDuplicate;
+  return { trimmedName, computedIri, isDuplicate, canCreate };
+}

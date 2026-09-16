@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { buildEntityIri } from '../../utils/entityIri';
+import { computeEntityIriPreview } from '../../utils/entityIri';
+import { IriPreviewField } from './IriPreviewField';
+import { CreateButton } from './CreateButton';
 
 interface CreateIndividualModalProps {
   isOpen: boolean;
@@ -22,10 +24,11 @@ const CreateIndividualModal: React.FC<CreateIndividualModalProps> = ({
 
   if (!isOpen) return null;
 
-  const trimmedName = name.trim();
-  const computedIri = buildEntityIri(ontologyIri, trimmedName);
-  const isDuplicate = !!computedIri && existingIris.includes(computedIri);
-  const canCreate = !!trimmedName && !isDuplicate;
+  const { trimmedName, computedIri, isDuplicate, canCreate } = computeEntityIriPreview(
+    ontologyIri,
+    name,
+    existingIris,
+  );
 
   const handleCreate = () => {
     if (canCreate) {
@@ -62,25 +65,11 @@ const CreateIndividualModal: React.FC<CreateIndividualModalProps> = ({
               autoFocus
             />
           </div>
-          <div>
-            <label className="font-medium text-black block mb-2">IRI Preview</label>
-            <input
-              type="text"
-              disabled
-              value={computedIri || '(auto-generated from ontology IRI + name, or paste a full IRI above)'}
-              style={{ direction: 'rtl', textAlign: 'left' }}
-              className={`w-full px-3 py-2 border rounded-md text-xs ${
-                isDuplicate
-                  ? 'border-red-300 bg-red-50 text-red-700'
-                  : 'border-gray-200 bg-gray-50 text-gray-500'
-              }`}
-            />
-            {isDuplicate && (
-              <p className="text-xs text-red-600 mt-1">
-                Entity already exists: <span className="font-mono break-all">{computedIri}</span>
-              </p>
-            )}
-          </div>
+          <IriPreviewField
+            computedIri={computedIri}
+            isDuplicate={isDuplicate}
+            placeholder="(auto-generated from ontology IRI + name, or paste a full IRI above)"
+          />
           <p className="text-[11px] text-gray-500">
             Tip: You can add types, property assertions, and same/different-individual relationships after creation in the entity editor.
           </p>
@@ -89,17 +78,7 @@ const CreateIndividualModal: React.FC<CreateIndividualModalProps> = ({
           <button onClick={handleClose} className="px-4 py-2 text-sm bg-gray-200 text-black rounded-md hover:bg-gray-300">
             Cancel
           </button>
-          <button
-            onClick={handleCreate}
-            disabled={!canCreate}
-            className={`px-4 py-2 text-sm rounded-md ${
-              canCreate
-                ? 'bg-blue-600 text-white hover:bg-blue-700'
-                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-            }`}
-          >
-            Create
-          </button>
+          <CreateButton onClick={handleCreate} disabled={!canCreate} />
         </div>
       </div>
     </div>
