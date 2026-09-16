@@ -27,6 +27,7 @@ EC2_DIR="${EC2_DIR:-}"
 MODE_ARG=""
 CHANGES_ARG=""
 PLATFORM_ARG=""
+LINUX_ONLY_ARG=""
 REMOTE_BUILD_ARG=0
 REMOTE_BUILD_SUPPORTED=("${DEFAULT_ALL_SERVICES[@]}")
 
@@ -46,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --mode) shift; MODE_ARG="${1:-}"; shift ;;
     --changes|--deploy) shift; CHANGES_ARG="${1:-}"; shift ;;
     --platform) shift; PLATFORM_ARG="${1:-}"; shift ;;
+    --linux-only) shift; LINUX_ONLY_ARG="${1:-}"; shift ;;
     --remote-build) REMOTE_BUILD_ARG=1; shift ;;
     *) echo "Unknown arg: $1" >&2; usage 1 ;;
   esac
@@ -419,17 +421,24 @@ upload_linux_installers() {
     return 1
   fi
 
-  local appimg_arm64=() appimg_x64=()
-  local _ai
+  local appimg_arm64=() appimg_x64=() deb_arm64=() deb_x64=()
+  local _ai _d
   for _ai in "${appimages[@]+"${appimages[@]}"}"; do
     case "$_ai" in
       *arm64*) appimg_arm64+=("$_ai") ;;
       *)       appimg_x64+=("$_ai") ;;
     esac
   done
-  [[ ${#appimg_x64[@]}   -gt 0 ]] && { local f; f=$(ls -t "${appimg_x64[@]}"   | head -1); upload_installer "$api_base" "linux-x64"    "$f" "$(basename "$f")" || fail=1; }
-  [[ ${#appimg_arm64[@]} -gt 0 ]] && { local f; f=$(ls -t "${appimg_arm64[@]}" | head -1); upload_installer "$api_base" "linux-arm64"  "$f" "$(basename "$f")" || fail=1; }
-  [[ ${#debs[@]}         -gt 0 ]] && { local f; f=$(ls -t "${debs[@]}"        | head -1); upload_installer "$api_base" "linux-deb"    "$f" "$(basename "$f")" || fail=1; }
+  for _d in "${debs[@]+"${debs[@]}"}"; do
+    case "$_d" in
+      *arm64*) deb_arm64+=("$_d") ;;
+      *)       deb_x64+=("$_d") ;;
+    esac
+  done
+  [[ ${#appimg_x64[@]}   -gt 0 ]] && { local f; f=$(ls -t "${appimg_x64[@]}"   | head -1); upload_installer "$api_base" "linux-x64"       "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#appimg_arm64[@]} -gt 0 ]] && { local f; f=$(ls -t "${appimg_arm64[@]}" | head -1); upload_installer "$api_base" "linux-arm64"     "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#deb_x64[@]}      -gt 0 ]] && { local f; f=$(ls -t "${deb_x64[@]}"      | head -1); upload_installer "$api_base" "linux-deb"       "$f" "$(basename "$f")" || fail=1; }
+  [[ ${#deb_arm64[@]}    -gt 0 ]] && { local f; f=$(ls -t "${deb_arm64[@]}"    | head -1); upload_installer "$api_base" "linux-deb-arm64" "$f" "$(basename "$f")" || fail=1; }
   [[ ${#flatpaks[@]}     -gt 0 ]] && { local f; f=$(ls -t "${flatpaks[@]}"    | head -1); upload_installer "$api_base" "linux-flatpak" "$f" "$(basename "$f")" || fail=1; }
   return $fail
 }
@@ -502,16 +511,54 @@ branch_desktop_linux() {
   fi
 
   ensure_linux_nodejs || return 1
-  build_desktop "linux" "$update_host" || { echo "ERROR: linux build failed" >&2; return 1; }
 
-  if command -v flatpak-builder >/dev/null 2>&1; then
-    echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too"
-    if ! ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:flatpak ); then
-      echo "WARNING: flatpak build failed — continuing with AppImage/deb only" >&2
-    fi
+  local -A want=([x64]=0 [arm64]=0 [flatpak]=0)
+  if [[ -z "$LINUX_ONLY_ARG" ]]; then
+    want[x64]=1; want[arm64]=1; want[flatpak]=1
   else
-    echo "[progress][$m-linux] flatpak-builder not installed — skipping flatpak bundle"
-    echo "          Install with: sudo apt-get install -y flatpak flatpak-builder && flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak install -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08"
+    local _part
+    IFS=',' read -ra _linux_only_parts <<< "$LINUX_ONLY_ARG"
+    for _part in "${_linux_only_parts[@]}"; do
+      case "$_part" in
+        x64|arm64|flatpak) want[$_part]=1 ;;
+        *) echo "ERROR: unknown --linux-only component '$_part' (expected: x64, arm64, flatpak)" >&2; return 1 ;;
+      esac
+    done
+    echo "[progress][$m-linux] --linux-only=$LINUX_ONLY_ARG — skipping everything else, uploading whatever else already exists on disk"
+  fi
+
+  local build_ok=0 attempted_core=0
+  if [[ ${want[x64]} -eq 1 ]]; then
+    attempted_core=1
+    if ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:x64 ); then
+      build_ok=1
+    else
+      echo "WARNING: linux x64 build failed" >&2
+    fi
+  fi
+  if [[ ${want[arm64]} -eq 1 ]]; then
+    attempted_core=1
+    if ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:arm64 ); then
+      build_ok=1
+    else
+      echo "WARNING: linux arm64 build failed — continuing with whatever succeeded" >&2
+    fi
+  fi
+  if [[ $attempted_core -eq 1 && $build_ok -eq 0 ]]; then
+    echo "ERROR: requested linux build(s) all failed" >&2
+    return 1
+  fi
+
+  if [[ ${want[flatpak]} -eq 1 ]]; then
+    if command -v flatpak-builder >/dev/null 2>&1; then
+      echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too"
+      if ! ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:flatpak ); then
+        echo "WARNING: flatpak build failed — continuing with AppImage/deb only" >&2
+      fi
+    else
+      echo "[progress][$m-linux] flatpak-builder not installed — skipping flatpak bundle"
+      echo "          Install with: sudo apt-get install -y flatpak flatpak-builder && flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak install -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08"
+    fi
   fi
 
   echo "[progress][$m-linux] $(date '+%H:%M:%S') build OK — uploading"

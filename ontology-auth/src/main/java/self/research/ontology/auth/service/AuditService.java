@@ -71,4 +71,8 @@ public class AuditService {
     public void logPasswordChange(String username) {
         logEvent(username, "PASSWORD_CHANGED", null, null);
     }
+
+    public void logAccountDeleted(String username) {
+        logEvent(username, "ACCOUNT_DELETED", null, null);
+    }
 }

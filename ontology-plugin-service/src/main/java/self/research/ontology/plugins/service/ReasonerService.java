@@ -78,8 +78,8 @@ public class ReasonerService {
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
-        String cacheKey = ontology.getOntologyID().toString() + "-" + type.name();
-        
+        String cacheKey = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
+
         if (reasonerCache.containsKey(cacheKey)) {
             OWLReasoner cached = reasonerCache.get(cacheKey);
             if (cached != null) {
@@ -1676,7 +1676,7 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
      * reload cannot be served a reasoner built on the evicted ontology.
      */
     public void disposeReasoners(OWLOntology ontology) {
-        String keyPrefix = ontology.getOntologyID().toString() + "-";
+        String keyPrefix = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-";
         Iterator<Map.Entry<String, OWLReasoner>> it = reasonerCache.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<String, OWLReasoner> entry = it.next();

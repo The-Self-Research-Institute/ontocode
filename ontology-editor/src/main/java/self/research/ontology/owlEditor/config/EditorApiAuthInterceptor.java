@@ -13,9 +13,14 @@ import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.HandlerMapping;
+import self.research.ontology.owlEditor.document.ProjectDocument;
+import self.research.ontology.owlEditor.repository.ProjectRepository;
 
 import javax.crypto.SecretKey;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Component
 public class EditorApiAuthInterceptor implements HandlerInterceptor {
@@ -29,6 +34,12 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             "/ws/**",
             "/api/v1/issues/report"
     );
+
+    private final ProjectRepository projectRepository;
+
+    public EditorApiAuthInterceptor(ProjectRepository projectRepository) {
+        this.projectRepository = projectRepository;
+    }
 
     @Value("${jwt.secret:}")
     private String jwtSecret;
@@ -91,7 +102,21 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             if (claims.getSubject() == null || claims.getSubject().isBlank()) {
                 throw new IllegalArgumentException("missing subject");
             }
-            request.setAttribute("jwtEmail", claims.getSubject());
+            String jwtEmail = claims.getSubject();
+            request.setAttribute("jwtEmail", jwtEmail);
+
+            String projectId = pathVariable(request, "projectId");
+            if (projectId != null) {
+                Optional<ProjectDocument> project = projectRepository.findById(projectId);
+                if (project.isEmpty() || !project.get().isAccessibleBy(jwtEmail)) {
+                    log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json");
+                    response.getWriter().write("{\"error\":\"You do not have access to this project\"}");
+                    return false;
+                }
+            }
+
             return true;
         } catch (Exception e) {
             log.debug("Invalid JWT for {} {}: {}", method, path, e.getMessage());
@@ -100,5 +125,13 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             response.getWriter().write("{\"error\":\"Invalid or expired token\"}");
             return false;
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private String pathVariable(HttpServletRequest request, String name) {
+        Object attr = request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE);
+        if (!(attr instanceof Map)) return null;
+        String value = ((Map<String, String>) attr).get(name);
+        return value == null || value.isBlank() ? null : value;
     }
 }

@@ -5,11 +5,14 @@ import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 import self.research.ontology.auth.model.FileMetadata;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface FileMetadataRepository extends MongoRepository<FileMetadata, String> {
+
+    List<FileMetadata> findAllByIsDeletedTrueAndDeletedAtBefore(LocalDateTime cutoff);
 
     Optional<FileMetadata> findByFileId(String fileId);
 
