@@ -12,6 +12,8 @@ fi
 
 export BUILD_PLATFORMS="${BUILD_PLATFORMS:-linux/amd64}"
 
+DESKTOP_BUILD_LOCK="$ROOT/.desktop-build.lock"
+
 usage() {
   sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
@@ -315,7 +317,10 @@ is_wsl() {
 
 build_desktop() {
   local platform="$1" update_host="$2"
-  ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run "dist:$platform" )
+  (
+    flock -x 9
+    cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run "dist:$platform"
+  ) 9>"$DESKTOP_BUILD_LOCK"
 }
 
 build_desktop_win_via_windows_host() {
@@ -332,11 +337,30 @@ build_desktop_win_via_windows_host() {
   echo "[progress][desktop] Building Windows installer on Windows host..."
   echo "          path: $win_electron"
 
-  if command -v cmd.exe >/dev/null 2>&1; then
-    cmd.exe /c "set ONTOCODE_UPDATE_HOST=${update_host}&& cd /d \"${win_electron}\" && npm run dist:win" || return 1
-  else
-    powershell.exe -NoProfile -Command "\$env:ONTOCODE_UPDATE_HOST='${update_host}'; Set-Location -LiteralPath '${win_electron}'; npm run dist:win" || return 1
-  fi
+  # WSL interop mis-escapes argv containing \"..\" sequences when reconstructing the Windows
+  # command line, so avoid embedding quoted paths in a cmd.exe/powershell.exe -Command string —
+  # write a .bat with no nested quoting and invoke that instead.
+  local bat_file="$ROOT/electron-app/.dist-win-build.bat"
+  cat > "$bat_file" <<EOF
+@echo off
+set ONTOCODE_UPDATE_HOST=${update_host}
+cd /d "${win_electron}"
+call npm run dist:win
+EOF
+  local win_bat
+  win_bat="$(wslpath -w "$bat_file")" || { echo "ERROR: wslpath failed for $bat_file" >&2; return 1; }
+
+  local rc=0
+  (
+    flock -x 9
+    if command -v cmd.exe >/dev/null 2>&1; then
+      cmd.exe /c "$win_bat"
+    else
+      powershell.exe -NoProfile -Command "& '$win_bat'"
+    fi
+  ) 9>"$DESKTOP_BUILD_LOCK" || rc=1
+  rm -f "$bat_file"
+  return $rc
 }
 
 upload_installer() {
@@ -530,7 +554,7 @@ branch_desktop_linux() {
   local build_ok=0 attempted_core=0
   if [[ ${want[x64]} -eq 1 ]]; then
     attempted_core=1
-    if ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:x64 ); then
+    if ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:x64 ) 9>"$DESKTOP_BUILD_LOCK"; then
       build_ok=1
     else
       echo "WARNING: linux x64 build failed" >&2
@@ -538,7 +562,7 @@ branch_desktop_linux() {
   fi
   if [[ ${want[arm64]} -eq 1 ]]; then
     attempted_core=1
-    if ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:arm64 ); then
+    if ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:arm64 ) 9>"$DESKTOP_BUILD_LOCK"; then
       build_ok=1
     else
       echo "WARNING: linux arm64 build failed — continuing with whatever succeeded" >&2
@@ -552,7 +576,7 @@ branch_desktop_linux() {
   if [[ ${want[flatpak]} -eq 1 ]]; then
     if command -v flatpak-builder >/dev/null 2>&1; then
       echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too"
-      if ! ( cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:flatpak ); then
+      if ! ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:flatpak ) 9>"$DESKTOP_BUILD_LOCK"; then
         echo "WARNING: flatpak build failed — continuing with AppImage/deb only" >&2
       fi
     else
