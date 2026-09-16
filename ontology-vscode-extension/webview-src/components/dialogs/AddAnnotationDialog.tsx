@@ -89,8 +89,13 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
     else setNewPropIri('');
   };
 
+  // Block creating a property whose IRI collides with one that already
+  // exists — the same check Protégé does before allowing a new entity.
+  const isDuplicateProp =
+    !!newPropIri.trim() && availableProperties.some(p => p.iri === newPropIri.trim());
+
   const handleCreateProperty = async () => {
-    if (!newPropLabel.trim() || !newPropIri.trim() || !onCreateProperty) return;
+    if (!newPropLabel.trim() || !newPropIri.trim() || !onCreateProperty || isDuplicateProp) return;
     setIsCreating(true);
     try {
       await onCreateProperty(newPropIri.trim(), newPropLabel.trim());
@@ -227,8 +232,18 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
                   value={newPropIri}
                   onChange={e => setNewPropIri(e.target.value)}
                   placeholder="IRI"
-                  className="w-full px-2 py-1 text-xs border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                  style={{ direction: 'rtl', textAlign: 'left' }}
+                  className={`w-full px-2 py-1 text-xs border rounded focus:outline-none focus:ring-1 font-mono ${
+                    isDuplicateProp
+                      ? 'border-red-300 bg-red-50 text-red-700 focus:ring-red-500'
+                      : 'border-blue-300 focus:ring-blue-500'
+                  }`}
                 />
+                {isDuplicateProp && (
+                  <p className="text-[11px] text-red-600">
+                    Entity already exists: <span className="font-mono break-all">{newPropIri.trim()}</span>
+                  </p>
+                )}
                 <div className="flex gap-1 justify-end">
                   <button
                     onClick={() => setShowCreate(false)}
@@ -239,7 +254,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
                   </button>
                   <button
                     onClick={handleCreateProperty}
-                    disabled={!newPropLabel.trim() || !newPropIri.trim() || isCreating}
+                    disabled={!newPropLabel.trim() || !newPropIri.trim() || isCreating || isDuplicateProp}
                     className="p-1 rounded hover:bg-blue-100 text-blue-600 disabled:text-blue-200 disabled:cursor-not-allowed"
                     title="Create property"
                   >

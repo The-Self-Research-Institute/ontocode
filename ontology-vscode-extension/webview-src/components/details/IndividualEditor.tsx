@@ -138,6 +138,7 @@ const IndividualEditor: React.FC<{
   username?: string;
   objectPropertyHierarchy?: TreeNode[];
   dataPropertyHierarchy?: TreeNode[];
+  existingIris?: string[];
   classHierarchy?: TreeNode[];
   objectProperties?: Property[];
   dataProperties?: Property[];
@@ -148,7 +149,7 @@ const IndividualEditor: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
   isReasonerRunning?: boolean;
   selectedReasoner?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy = [], dataPropertyHierarchy = [], classHierarchy = [], objectProperties = [], dataProperties = [], expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT' }) => {
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy = [], dataPropertyHierarchy = [], classHierarchy = [], objectProperties = [], dataProperties = [], expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT', existingIris = [] }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -1006,6 +1007,7 @@ const IndividualEditor: React.FC<{
   currentLabel={item.label}
   entityType="Individual"
   onSave={handleSaveIRI}
+  existingIris={existingIris}
 />
     </div>
   );

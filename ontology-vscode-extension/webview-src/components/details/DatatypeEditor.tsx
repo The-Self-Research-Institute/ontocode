@@ -275,6 +275,7 @@ const DatatypeEditor: React.FC<{
   username?: string;
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
+  existingIris?: string[];
 }> = ({
     item,
     onUpdate,
@@ -286,7 +287,8 @@ const DatatypeEditor: React.FC<{
     isViewOnly = false,
     onViewOnlyAction,
     userId,
-    username
+    username,
+    existingIris = [],
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('description');
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -431,6 +433,7 @@ const previousId = item.id;
                 currentLabel={item.label}
                entityType="Datatype"
                 onSave={handleSaveIRI}
+                existingIris={existingIris}
             />
     </div>
   );

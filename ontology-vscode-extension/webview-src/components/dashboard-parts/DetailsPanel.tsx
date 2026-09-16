@@ -46,6 +46,7 @@ export const DetailsPanel = ({
   metadata,
   individuals,
   setIndividuals,
+  datatypes,
   markAsUnsaved,
   viewMode = "asserted",
   isViewOnly = false,
@@ -88,6 +89,7 @@ export const DetailsPanel = ({
   metadata?: { ontologyIRI?: string } | null;
   individuals: Individual[];
   setIndividuals: React.Dispatch<React.SetStateAction<Individual[]>>;
+  datatypes: Datatype[];
   markAsUnsaved: () => void;
   viewMode?: "asserted" | "inferred";
   isViewOnly?: boolean;
@@ -107,6 +109,18 @@ export const DetailsPanel = ({
       </div>
     );
   }
+
+  const flattenIds = (nodes: TreeNode[]): string[] => {
+    const out: string[] = [];
+    const walk = (list: TreeNode[]) => {
+      for (const n of list) {
+        if (n.id) out.push(n.id);
+        if (n.children) walk(n.children as TreeNode[]);
+      }
+    };
+    walk(nodes);
+    return out;
+  };
 
   const sharedProps = {
     onAddAnnotation,
@@ -179,6 +193,7 @@ export const DetailsPanel = ({
                 .catch((err) => console.error("Failed to refresh individuals:", err));
             }
           }}
+          existingIris={flattenIds(classHierarchy).filter((id) => id !== selectedItem.id)}
           {...sharedProps}
         />
       );
@@ -196,6 +211,11 @@ export const DetailsPanel = ({
           onAddDisjointClick={onAddDisjointClick}
           onAddEquivalentClick={onAddEquivalentClick}
           objectProperties={objectProperties}
+          existingIris={
+            entitiesTab === "ObjectProperties"
+              ? flattenIds(objectPropertyHierarchy).filter((id) => id !== selectedItem.id)
+              : flattenIds(dataPropertyHierarchy).filter((id) => id !== selectedItem.id)
+          }
         />
       );
     case "Individuals":
@@ -215,6 +235,7 @@ export const DetailsPanel = ({
           dataProperties={dataProperties}
           objectPropertyHierarchy={objectPropertyHierarchy}
           dataPropertyHierarchy={dataPropertyHierarchy}
+          existingIris={individuals.map((i) => i.id).filter((id) => id !== selectedItem.id)}
         />
       );
     case "AnnotationProperties": {
@@ -235,6 +256,7 @@ export const DetailsPanel = ({
           onViewOnlyAction={onViewOnlyAction}
           annotationProperties={annotationProperties}
           user={user}
+          existingIris={(annotationProperties || []).map((p) => p.iri).filter((iri) => iri !== selectedItem.id)}
         />
       );
     }
@@ -246,6 +268,7 @@ export const DetailsPanel = ({
           {...sharedProps}
           userId={user?.email}
           username={user?.username}
+          existingIris={datatypes.map((d) => d.id).filter((id) => id !== selectedItem.id)}
         />
       );
     default:

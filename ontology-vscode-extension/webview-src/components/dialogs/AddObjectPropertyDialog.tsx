@@ -7,6 +7,10 @@ interface AddObjectPropertyDialogProps {
   type: 'subproperty' | 'sibling' | 'root';
   parentLabel: string;
   propertyType?: 'object' | 'data' | 'annotation';
+  /** Ontology base IRI, used to compute the live IRI preview (matches backend's {ontologyIri}#{name} convention). */
+  ontologyIri?: string;
+  /** Every existing IRI for this property type, used to block duplicate creation before it reaches the backend. */
+  existingIris?: string[];
 }
 
 const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({ 
@@ -15,15 +19,22 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
   onCreate,
   type,
   parentLabel,
-  propertyType = 'object'
+  propertyType = 'object',
+  ontologyIri,
+  existingIris = [],
 }) => {
   const [name, setName] = useState('');
   
   if (!isOpen) return null;
 
+  const trimmedName = name.trim();
+  const computedIri = ontologyIri && trimmedName ? `${ontologyIri}#${trimmedName}` : '';
+  const isDuplicate = !!computedIri && existingIris.includes(computedIri);
+  const canCreate = !!trimmedName && !isDuplicate;
+
   const handleCreate = () => {
-    if (name.trim()) {
-      onCreate(name.trim());
+    if (canCreate) {
+      onCreate(trimmedName);
       setName('');
       onClose();
     }
@@ -84,9 +95,19 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
             <input 
               type="text" 
               disabled 
-              value="(auto-generated from ontology IRI + property name)" 
-              className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-md text-gray-500 text-xs" 
+              value={computedIri || '(auto-generated from ontology IRI + property name)'}
+              style={{ direction: 'rtl', textAlign: 'left' }}
+              className={`w-full px-3 py-2 border rounded-md text-xs ${
+                isDuplicate
+                  ? 'border-red-300 bg-red-50 text-red-700'
+                  : 'border-gray-200 bg-gray-50 text-gray-500'
+              }`}
             />
+            {isDuplicate && (
+              <p className="text-xs text-red-600 mt-1">
+                Entity already exists: <span className="font-mono break-all">{computedIri}</span>
+              </p>
+            )}
           </div>
           <p className="text-[11px] text-gray-500">
             Tip: Keep names short and descriptive. You can edit domain/range and characteristics after creation.
@@ -100,8 +121,13 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
             Cancel
           </button>
           <button 
-            onClick={handleCreate} 
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            onClick={handleCreate}
+            disabled={!canCreate}
+            className={`px-4 py-2 text-sm rounded-md ${
+              canCreate
+                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
           >
             Create
           </button>

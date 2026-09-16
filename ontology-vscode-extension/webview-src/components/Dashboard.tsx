@@ -12290,6 +12290,21 @@ const updateItemInState = useCallback(
     return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
   }, []);
 
+const deriveOntologyIriFallback = (): string | undefined => {
+  const sampleIri =
+    flattenTree(classHierarchy).find((n) => n.id && n.id !== "http://www.w3.org/2002/07/owl#Thing")?.id ||
+    flattenTree(objectPropertyHierarchy).find((n) => n.id)?.id ||
+    flattenTree(dataPropertyHierarchy).find((n) => n.id)?.id ||
+    individuals.find((i) => i.id)?.id;
+  if (!sampleIri) return undefined;
+  const hashIndex = sampleIri.lastIndexOf('#');
+  if (hashIndex > -1) return sampleIri.slice(0, hashIndex);
+  const slashIndex = sampleIri.lastIndexOf('/');
+  if (slashIndex > -1) return sampleIri.slice(0, slashIndex);
+  return undefined;
+};
+
+const effectiveOntologyIri = metadata?.ontologyIRI || deriveOntologyIriFallback();
   useEffect(() => {
     const handleCollaborationNavigate = (event: Event) => {
       const detail = (event as CustomEvent<CollaborationNavigateDetail>).detail;
@@ -17678,6 +17693,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         isOpen={isCreateIndividualModalOpen}
         onClose={() => setCreateIndividualModalOpen(false)}
         onCreate={handleAddIndividual}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={individuals.map((i) => i.id)}
       />
       <CreateIndividualModal
         isOpen={isCreateIndividualForClassOpen}
@@ -17693,6 +17710,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
             notificationService.error("Create Failed", "Could not create individual.");
           }
         }}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={individuals.map((i) => i.id)}
       />
       <AddClassDialog
         isOpen={isAddClassDialogOpen}
@@ -17701,6 +17720,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         type={addClassType}
         parentLabel={classParentLabel}
         syncMode={syncMode}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={flattenTree(classHierarchy).map((n) => n.id)}
       />
       <AddObjectPropertyDialog
         isOpen={isAddPropertyDialogOpen}
@@ -17717,11 +17738,21 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         propertyType={
           entitiesTab === "ObjectProperties" ? "object" : entitiesTab === "DataProperties" ? "data" : "annotation"
         }
+        ontologyIri={effectiveOntologyIri}
+        existingIris={
+          entitiesTab === "ObjectProperties"
+            ? flattenTree(objectPropertyHierarchy).map((n) => n.id)
+            : entitiesTab === "DataProperties"
+              ? flattenTree(dataPropertyHierarchy).map((n) => n.id)
+              : flattenTree(annotationPropertyHierarchy).map((n) => n.id)
+        }
       />
       <AddDatatypeDialog
         isOpen={isAddDatatypeDialogOpen}
         onClose={() => setAddDatatypeDialogOpen(false)}
         onCreate={handleCreateDatatype}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={datatypes.map((d) => d.id)}
       />
       <AddAnnotationDialog
         isOpen={isAddAnnotationDialogOpen}
@@ -17736,7 +17767,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         }}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isEditAnnotationDialogOpen}
@@ -17774,7 +17805,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         initialDatatype={editAnnotationData?.datatype || ""}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddImportDialog
         isOpen={showImportDialog}
@@ -17894,7 +17925,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isQuickNoteDialogOpen}
@@ -18861,6 +18892,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                     dataPropertyHierarchy={dataPropertyHierarchy}
                     individuals={individuals}
                     setIndividuals={setIndividuals}
+                    datatypes={datatypes}
                     markAsUnsaved={markAsUnsaved}
                     isViewOnly={isViewOnlyMember}
                     onViewOnlyAction={handleViewOnlyAction}

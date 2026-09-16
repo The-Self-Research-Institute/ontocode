@@ -7,6 +7,10 @@ interface AddClassDialogProps {
   type: 'subclass' | 'sibling';
   parentLabel: string;
   syncMode?: 'private' | 'public';
+  /** Ontology base IRI, used to compute the live IRI preview (matches backend's {ontologyIri}#{name} convention). */
+  ontologyIri?: string;
+  /** Every existing class IRI in the ontology, used to block duplicate creation before it reaches the backend. */
+  existingIris?: string[];
 }
 
 const AddClassDialog: React.FC<AddClassDialogProps> = ({
@@ -16,14 +20,21 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
   type,
   parentLabel,
   syncMode = 'private',
+  ontologyIri,
+  existingIris = [],
 }) => {
   const [name, setName] = useState('');
 
   if (!isOpen) return null;
 
+  const trimmedName = name.trim();
+  const computedIri = ontologyIri && trimmedName ? `${ontologyIri}#${trimmedName}` : '';
+  const isDuplicate = !!computedIri && existingIris.includes(computedIri);
+  const canCreate = !!trimmedName && !isDuplicate;
+
   const handleCreate = () => {
-    if (name.trim()) {
-      onCreate(name.trim());
+    if (canCreate) {
+      onCreate(trimmedName);
       setName('');
       onClose();
     }
@@ -82,9 +93,19 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
             <input
               type="text"
               disabled
-              value="(auto-generated from ontology IRI + class name)"
-              className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-md text-gray-500 text-xs"
+              value={computedIri || '(auto-generated from ontology IRI + class name)'}
+              style={{ direction: 'rtl', textAlign: 'left' }}
+              className={`w-full px-3 py-2 border rounded-md text-xs ${
+                isDuplicate
+                  ? 'border-red-300 bg-red-50 text-red-700'
+                  : 'border-gray-200 bg-gray-50 text-gray-500'
+              }`}
             />
+            {isDuplicate && (
+              <p className="text-xs text-red-600 mt-1">
+                Entity already exists: <span className="font-mono break-all">{computedIri}</span>
+              </p>
+            )}
           </div>
           <p className="text-[11px] text-gray-500">
             Tip: Keep names short and descriptive. You can edit descriptions and relationships after creation.
@@ -109,7 +130,12 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
           </button>
           <button
             onClick={handleCreate}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            disabled={!canCreate}
+            className={`px-4 py-2 text-sm rounded-md ${
+              canCreate
+                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+            }`}
           >
             Create
           </button>
