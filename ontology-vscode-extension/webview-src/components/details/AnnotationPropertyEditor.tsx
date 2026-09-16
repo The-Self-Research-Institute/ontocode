@@ -11,6 +11,7 @@ import { useCollaboration } from '../../contexts/CollaborationContext';
 interface AnnotationPropertyEditorProps {
   item: AnnotationProperty;
   onUpdate: (updatedItem: AnnotationProperty, markUnsaved?: boolean, previousId?: string) => void;
+  existingIris?: string[];
   onAddAnnotation: () => void;
   onEditAnnotation: (propertyIri: string, currentValue: string) => void;
   onDeleteAnnotation: (key: string) => void;
@@ -196,6 +197,7 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
   onNavigate,
   annotationProperties,
   user,
+  existingIris = [],
 }) => {
   const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
   const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
@@ -462,9 +464,9 @@ const AnnotationPropertyEditor: React.FC<AnnotationPropertyEditorProps> = ({
         currentLabel={item.label}
         entityType="AnnotationProperty"
         onSave={handleSaveIRI}
+        existingIris={existingIris}
       />
     </div>
   );
-};
-
+}
 export default AnnotationPropertyEditor;

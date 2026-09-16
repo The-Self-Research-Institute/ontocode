@@ -153,6 +153,7 @@ const PropertyEditor: React.FC<{
   onViewOnlyAction?: () => void;
   onNavigate?: (iri: string, type: string) => void;
     user?: { email?: string; username?: string; userId?: string };
+    existingIris?: string[];
 }> = ({
         item,
         onUpdate,
@@ -173,6 +174,7 @@ const PropertyEditor: React.FC<{
         onViewOnlyAction,
         onNavigate,
         user,
+        existingIris = [],
 }) => {
     const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -710,6 +712,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 currentLabel={item.label}
                 entityType={isObjectProperty ? 'ObjectProperty' : isDataProperty ? 'DataProperty' : 'AnnotationProperty'}
                 onSave={handleSaveIRI}
+                existingIris={existingIris}
             />
         </div>
     );

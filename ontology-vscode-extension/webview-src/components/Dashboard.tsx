@@ -146,6 +146,7 @@ import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
+import { buildEntityIri } from "../utils/entityIri";
 import { PluginMarketplace } from "./PluginMarketplace";
 import { pluginLoader } from "../services/pluginLoader";
 import { checkForPluginUpdates, clearPluginUpdateCache } from "../services/pluginUpdateChecker";
@@ -10800,6 +10801,44 @@ const updateItemInState = useCallback(
     handleRefreshAnnotationProperties,
   ]);
 
+  const flattenTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
+    return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
+  }, []);
+
+  const effectiveOntologyIri = useMemo(() => {
+    if (metadata?.ontologyIRI) return metadata.ontologyIRI;
+    const sampleIri =
+      flattenTree(classHierarchy).find((n) => n.id && n.id !== "http://www.w3.org/2002/07/owl#Thing")?.id ||
+      flattenTree(objectPropertyHierarchy).find((n) => n.id)?.id ||
+      flattenTree(dataPropertyHierarchy).find((n) => n.id)?.id ||
+      individuals.find((i) => i.id)?.id;
+    if (!sampleIri) return undefined;
+    const hashIndex = sampleIri.lastIndexOf('#');
+    if (hashIndex > -1) return sampleIri.slice(0, hashIndex);
+    const slashIndex = sampleIri.lastIndexOf('/');
+    if (slashIndex > -1) return sampleIri.slice(0, slashIndex);
+    return undefined;
+  }, [metadata?.ontologyIRI, classHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, individuals, flattenTree]);
+
+  const classExistingIris = useMemo(
+    () => flattenTree(classHierarchy).map((n) => n.id),
+    [flattenTree, classHierarchy],
+  );
+  const objectPropertyExistingIris = useMemo(
+    () => flattenTree(objectPropertyHierarchy).map((n) => n.id),
+    [flattenTree, objectPropertyHierarchy],
+  );
+  const dataPropertyExistingIris = useMemo(
+    () => flattenTree(dataPropertyHierarchy).map((n) => n.id),
+    [flattenTree, dataPropertyHierarchy],
+  );
+  const annotationPropertyExistingIris = useMemo(
+    () => flattenTree(annotationPropertyHierarchy).map((n) => n.id),
+    [flattenTree, annotationPropertyHierarchy],
+  );
+  const individualExistingIris = useMemo(() => individuals.map((i) => i.id), [individuals]);
+  const datatypeExistingIris = useMemo(() => datatypes.map((d) => d.id), [datatypes]);
+
   // Handler for creating object properties with name parameter
   const handleAddObjectProperty = useCallback(
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
@@ -10811,9 +10850,11 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddObjectProperty] Creating property:", name, "type:", type, "parentId:", parentId);
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const cleanName = (name || "NewObjectProperty").replace(/\s+/g, "_");
-        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewObjectProperty");
+        if (flattenTree(objectPropertyHierarchy).some((n) => n.id === newIri)) {
+          showNotification(`An object property with IRI "${newIri}" already exists.`, "error");
+          return;
+        }
 
         let parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
 
@@ -10848,7 +10889,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, metadata, objectPropertyHierarchy, user, refreshProperties, showNotification],
+    [projectId, effectiveOntologyIri, flattenTree, objectPropertyHierarchy, user, refreshProperties, showNotification],
   );
 
   // Handler for creating data properties with name parameter
@@ -10862,9 +10903,11 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddDataProperty] Creating property:", name, "type:", type, "parentId:", parentId);
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const cleanName = (name || "NewDataProperty").replace(/\s+/g, "_");
-        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewDataProperty");
+        if (flattenTree(dataPropertyHierarchy).some((n) => n.id === newIri)) {
+          showNotification(`A data property with IRI "${newIri}" already exists.`, "error");
+          return;
+        }
 
         let parentIri = "http://www.w3.org/2002/07/owl#topDataProperty";
 
@@ -10899,7 +10942,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, metadata, dataPropertyHierarchy, user, refreshProperties, showNotification],
+    [projectId, effectiveOntologyIri, flattenTree, dataPropertyHierarchy, user, refreshProperties, showNotification],
   );
 
   // Handler for creating classes with name parameter (for inline creation in dialogs)
@@ -10913,9 +10956,11 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddClassInline] Creating class:", name, "type:", type, "parentId:", parentId);
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const cleanName = (name || "NewClass").replace(/\s+/g, "_");
-        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewClass");
+        if (flattenTree(classHierarchy).some((n) => n.id === newIri)) {
+          showNotification(`A class with IRI "${newIri}" already exists.`, "error");
+          return;
+        }
 
         let parentIri = "http://www.w3.org/2002/07/owl#Thing";
 
@@ -11029,7 +11074,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, metadata, classHierarchy, user, loadChildren, showNotification, expandedNodes, markAsUnsaved],
+    [projectId, effectiveOntologyIri, flattenTree, classHierarchy, user, loadChildren, showNotification, expandedNodes, markAsUnsaved],
   );
 
   const handleAddItem = useCallback(
@@ -11231,8 +11276,7 @@ const updateItemInState = useCallback(
       const type = addClassType;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         // Determine parent IRI based on type
         let parentIri = "http://www.w3.org/2002/07/owl#Thing";
@@ -11418,7 +11462,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create entity. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addClassType, entitiesTab, metadata, classHierarchy, markAsUnsaved, refreshProperties, loadChildren],
+    [projectId, selectedItem, addClassType, entitiesTab, effectiveOntologyIri, classHierarchy, markAsUnsaved, refreshProperties, loadChildren],
   );
 
   const handleCreateObjectProperty = useCallback(
@@ -11428,8 +11472,7 @@ const updateItemInState = useCallback(
       const type = addPropertyType;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         let parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
         if (type === "subproperty" && selectedItem?.id) {
@@ -11494,7 +11537,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create property. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved, refreshProperties],
+    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, effectiveOntologyIri, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateDataProperty = useCallback(
@@ -11504,8 +11547,7 @@ const updateItemInState = useCallback(
       const type = addPropertyType;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         let parentIri = "http://www.w3.org/2002/07/owl#topDataProperty";
         if (type === "subproperty" && selectedItem?.id) {
@@ -11570,7 +11612,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create data property. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved, refreshProperties],
+    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, effectiveOntologyIri, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateDatatype = useCallback(
@@ -11578,8 +11620,7 @@ const updateItemInState = useCallback(
       if (!projectId) return;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         await ontologyMutationService.createDatatype(
           projectId,
@@ -11605,7 +11646,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create datatype. See console for details.", "error");
       }
     },
-    [projectId, metadata, markAsUnsaved, showNotification],
+    [projectId, effectiveOntologyIri, markAsUnsaved, showNotification],
   );
 
   const handleCreateAnnotationProperty = useCallback(
@@ -11613,8 +11654,7 @@ const updateItemInState = useCallback(
       if (!projectId) return;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         // Bug #45: support sub-annotation-properties. createAnnotationProperty now takes the
         // parent directly (matching createObjectProperty/createDataProperty) so the declaration
@@ -11658,7 +11698,7 @@ const updateItemInState = useCallback(
     },
     [
       projectId,
-      metadata,
+      effectiveOntologyIri,
       markAsUnsaved,
       showNotification,
       addPropertyType,
@@ -11679,8 +11719,7 @@ const updateItemInState = useCallback(
         return;
       }
 
-      const base = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-      const id = `${base}#${name.replace(/\s+/g, "_")}`;
+      const id = buildEntityIri(effectiveOntologyIri, name);
 
       // Determine the class IRI - use selected class if available, otherwise owl:Thing
       const classIri =
@@ -11708,7 +11747,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create individual. See console for details.", "error");
       }
     },
-    [projectId, metadata, entitiesTab, selectedItem, markAsUnsaved, showNotification],
+    [projectId, effectiveOntologyIri, entitiesTab, selectedItem, markAsUnsaved, showNotification],
   );
 
   const handleMakeSiblingsDisjoint = useCallback(async () => {
@@ -12285,10 +12324,6 @@ const updateItemInState = useCallback(
     },
     [classHierarchy],
   );
-
-  const flattenTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
-    return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
-  }, []);
 
   useEffect(() => {
     const handleCollaborationNavigate = (event: Event) => {
@@ -17678,6 +17713,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         isOpen={isCreateIndividualModalOpen}
         onClose={() => setCreateIndividualModalOpen(false)}
         onCreate={handleAddIndividual}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={individualExistingIris}
       />
       <CreateIndividualModal
         isOpen={isCreateIndividualForClassOpen}
@@ -17693,6 +17730,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
             notificationService.error("Create Failed", "Could not create individual.");
           }
         }}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={individualExistingIris}
       />
       <AddClassDialog
         isOpen={isAddClassDialogOpen}
@@ -17701,6 +17740,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         type={addClassType}
         parentLabel={classParentLabel}
         syncMode={syncMode}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={classExistingIris}
       />
       <AddObjectPropertyDialog
         isOpen={isAddPropertyDialogOpen}
@@ -17717,11 +17758,21 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         propertyType={
           entitiesTab === "ObjectProperties" ? "object" : entitiesTab === "DataProperties" ? "data" : "annotation"
         }
+        ontologyIri={effectiveOntologyIri}
+        existingIris={
+          entitiesTab === "ObjectProperties"
+            ? objectPropertyExistingIris
+            : entitiesTab === "DataProperties"
+              ? dataPropertyExistingIris
+              : annotationPropertyExistingIris
+        }
       />
       <AddDatatypeDialog
         isOpen={isAddDatatypeDialogOpen}
         onClose={() => setAddDatatypeDialogOpen(false)}
         onCreate={handleCreateDatatype}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={datatypeExistingIris}
       />
       <AddAnnotationDialog
         isOpen={isAddAnnotationDialogOpen}
@@ -17736,7 +17787,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         }}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isEditAnnotationDialogOpen}
@@ -17774,7 +17825,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         initialDatatype={editAnnotationData?.datatype || ""}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddImportDialog
         isOpen={showImportDialog}
@@ -17894,7 +17945,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isQuickNoteDialogOpen}
@@ -18861,6 +18912,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                     dataPropertyHierarchy={dataPropertyHierarchy}
                     individuals={individuals}
                     setIndividuals={setIndividuals}
+                    datatypes={datatypes}
                     markAsUnsaved={markAsUnsaved}
                     isViewOnly={isViewOnlyMember}
                     onViewOnlyAction={handleViewOnlyAction}

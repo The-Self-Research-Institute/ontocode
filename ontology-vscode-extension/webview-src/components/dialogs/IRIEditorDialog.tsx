@@ -8,6 +8,8 @@ interface IRIEditorDialogProps {
   currentLabel: string;
   entityType: 'Class' | 'ObjectProperty' | 'DataProperty' | 'Individual' | 'Datatype' | 'AnnotationProperty';
   onSave: (newIRI: string, newLabel: string) => void;
+  /** Every existing IRI of this entity type (excluding this entity's own current IRI), used to block renaming into a collision. */
+  existingIris?: string[];
 }
 
 const getIRIParts = (iriValue: string) => {
@@ -41,6 +43,7 @@ const IRIEditorDialog: React.FC<IRIEditorDialogProps> = ({
   currentLabel,
   entityType,
   onSave,
+  existingIris = [],
 }) => {
   const [label, setLabel] = useState(currentLabel);
   const [localName, setLocalName] = useState('');
@@ -67,9 +70,12 @@ useEffect(() => {
   const labelChanged = label !== currentLabel;
   const hasChanged = iriChanged || labelChanged;
   const localNameValid = localName.trim().length > 0 && isValidLocalName(localName.trim());
+  // Only matters when the IRI is actually changing — renaming to the exact
+  // same IRI you started with is never a collision.
+  const isDuplicate = iriChanged && existingIris.includes(newIRI);
 
   const handleSave = () => {
-    if (!label.trim() || !localNameValid) return;
+    if (!label.trim() || !localNameValid || isDuplicate) return;
     onSave(newIRI, label.trim());
     onClose();
   };
@@ -139,9 +145,14 @@ useEffect(() => {
                 Local name can only contain letters, numbers, underscores, hyphens, and periods.
               </p>
             )}
-            <p className="text-xs text-gray-500 mt-1 font-mono break-all">
+            <p className={`text-xs mt-1 font-mono break-all ${isDuplicate ? 'text-red-600' : 'text-gray-500'}`}>
               Preview: {newIRI}
             </p>
+            {isDuplicate && (
+              <p className="text-xs text-red-600 mt-1">
+                Entity already exists: <span className="font-mono break-all">{newIRI}</span>
+              </p>
+            )}
           </div>
 
           {/* Rename warning — only shown when the IRI is actually changing */}
@@ -168,9 +179,9 @@ useEffect(() => {
             </button>
             <button
               onClick={handleSave}
-              disabled={!label.trim() || !localNameValid || !hasChanged}
+              disabled={!label.trim() || !localNameValid || !hasChanged || isDuplicate}
               className={`px-4 py-2 text-sm rounded-md flex items-center gap-2 ${
-                !label.trim() || !localNameValid || !hasChanged
+                !label.trim() || !localNameValid || !hasChanged || isDuplicate
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   : 'bg-purple-600 text-white hover:bg-purple-700'
               }`}
