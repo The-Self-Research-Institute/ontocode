@@ -92,7 +92,7 @@ const AddAnnotationDialog: React.FC<AddAnnotationDialogProps> = ({
   // Block creating a property whose IRI collides with one that already
   // exists — the same check Protégé does before allowing a new entity.
   const isDuplicateProp =
-    !!newPropIri.trim() && availableProperties.some(p => p.iri === newPropIri.trim());
+    !!newPropIri.trim() && availableProperties.some(p => p.id === newPropIri.trim());
 
   const handleCreateProperty = async () => {
     if (!newPropLabel.trim() || !newPropIri.trim() || !onCreateProperty || isDuplicateProp) return;

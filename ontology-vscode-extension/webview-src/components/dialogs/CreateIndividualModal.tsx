@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { buildEntityIri } from '../../utils/entityIri';
 
 interface CreateIndividualModalProps {
   isOpen: boolean;
@@ -22,17 +23,7 @@ const CreateIndividualModal: React.FC<CreateIndividualModalProps> = ({
   if (!isOpen) return null;
 
   const trimmedName = name.trim();
-  // The input accepts either a short name or a full IRI directly (per the
-  // placeholder text) — only compute the {ontologyIri}#{name} form when the
-  // user typed a short name; if they already pasted a full IRI, use it as-is.
-  const looksLikeFullIri = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedName);
-  const computedIri = !trimmedName
-    ? ''
-    : looksLikeFullIri
-      ? trimmedName
-      : ontologyIri
-        ? `${ontologyIri}#${trimmedName}`
-        : '';
+  const computedIri = buildEntityIri(ontologyIri, trimmedName);
   const isDuplicate = !!computedIri && existingIris.includes(computedIri);
   const canCreate = !!trimmedName && !isDuplicate;
 

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React from "react";
+import React, { useMemo } from "react";
 import { Package } from "lucide-react";
 import apiClient from "../../services/apiClient";
 import ontologyMutationService from "../../services/ontologyMutationService";
@@ -10,6 +10,7 @@ import IndividualEditor from "../details/IndividualEditor";
 import DatatypeEditor from "../details/DatatypeEditor";
 import AnnotationPropertyEditor from "../details/AnnotationPropertyEditor";
 import { AnnotationsDisplay } from "../details/common";
+import { buildEntityIri } from "../../utils/entityIri";
 
 export const DetailsPanel = ({
   selectedItem,
@@ -98,18 +99,6 @@ export const DetailsPanel = ({
   selectedReasoner?: string;
   user?: { email?: string; username?: string; userId?: string };
 }) => {
-  if (!selectedItem) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 p-4">
-        <Package size={48} className="mb-4 text-gray-300" />
-        <h3 className="text-lg font-semibold text-gray-600">Ontology Editor</h3>
-        <p className="text-sm">
-          Select an entity from the hierarchy panel on the left to view its details and make edits.
-        </p>
-      </div>
-    );
-  }
-
   const flattenIds = (nodes: TreeNode[]): string[] => {
     const out: string[] = [];
     const walk = (list: TreeNode[]) => {
@@ -121,6 +110,43 @@ export const DetailsPanel = ({
     walk(nodes);
     return out;
   };
+
+  const classExistingIris = useMemo(
+    () => flattenIds(classHierarchy).filter((id) => id !== selectedItem?.id),
+    [classHierarchy, selectedItem?.id],
+  );
+  const objectPropertyExistingIris = useMemo(
+    () => flattenIds(objectPropertyHierarchy).filter((id) => id !== selectedItem?.id),
+    [objectPropertyHierarchy, selectedItem?.id],
+  );
+  const dataPropertyExistingIris = useMemo(
+    () => flattenIds(dataPropertyHierarchy).filter((id) => id !== selectedItem?.id),
+    [dataPropertyHierarchy, selectedItem?.id],
+  );
+  const individualExistingIris = useMemo(
+    () => individuals.map((i) => i.id).filter((id) => id !== selectedItem?.id),
+    [individuals, selectedItem?.id],
+  );
+  const annotationPropertyExistingIris = useMemo(
+    () => (annotationProperties || []).map((p) => p.id).filter((id) => id !== selectedItem?.id),
+    [annotationProperties, selectedItem?.id],
+  );
+  const datatypeExistingIris = useMemo(
+    () => datatypes.map((d) => d.id).filter((id) => id !== selectedItem?.id),
+    [datatypes, selectedItem?.id],
+  );
+
+  if (!selectedItem) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 p-4">
+        <Package size={48} className="mb-4 text-gray-300" />
+        <h3 className="text-lg font-semibold text-gray-600">Ontology Editor</h3>
+        <p className="text-sm">
+          Select an entity from the hierarchy panel on the left to view its details and make edits.
+        </p>
+      </div>
+    );
+  }
 
   const sharedProps = {
     onAddAnnotation,
@@ -157,7 +183,7 @@ export const DetailsPanel = ({
           viewMode={viewMode}
           individuals={individuals}
           onAddIndividual={async (name: string, classIri: string) => {
-            const id = `${metadata?.ontologyIRI || "http://example.org/ontology"}#${name.replace(/\s+/g, "_")}`;
+            const id = buildEntityIri(metadata?.ontologyIRI, name);
             await ontologyMutationService.createIndividual(projectId || "", id, name, classIri);
             const newIndividual: Individual = {
               id,
@@ -193,7 +219,7 @@ export const DetailsPanel = ({
                 .catch((err) => console.error("Failed to refresh individuals:", err));
             }
           }}
-          existingIris={flattenIds(classHierarchy).filter((id) => id !== selectedItem.id)}
+          existingIris={classExistingIris}
           {...sharedProps}
         />
       );
@@ -211,11 +237,7 @@ export const DetailsPanel = ({
           onAddDisjointClick={onAddDisjointClick}
           onAddEquivalentClick={onAddEquivalentClick}
           objectProperties={objectProperties}
-          existingIris={
-            entitiesTab === "ObjectProperties"
-              ? flattenIds(objectPropertyHierarchy).filter((id) => id !== selectedItem.id)
-              : flattenIds(dataPropertyHierarchy).filter((id) => id !== selectedItem.id)
-          }
+          existingIris={entitiesTab === "ObjectProperties" ? objectPropertyExistingIris : dataPropertyExistingIris}
         />
       );
     case "Individuals":
@@ -235,7 +257,7 @@ export const DetailsPanel = ({
           dataProperties={dataProperties}
           objectPropertyHierarchy={objectPropertyHierarchy}
           dataPropertyHierarchy={dataPropertyHierarchy}
-          existingIris={individuals.map((i) => i.id).filter((id) => id !== selectedItem.id)}
+          existingIris={individualExistingIris}
         />
       );
     case "AnnotationProperties": {
@@ -256,7 +278,7 @@ export const DetailsPanel = ({
           onViewOnlyAction={onViewOnlyAction}
           annotationProperties={annotationProperties}
           user={user}
-          existingIris={(annotationProperties || []).map((p) => p.iri).filter((iri) => iri !== selectedItem.id)}
+          existingIris={annotationPropertyExistingIris}
         />
       );
     }
@@ -268,7 +290,7 @@ export const DetailsPanel = ({
           {...sharedProps}
           userId={user?.email}
           username={user?.username}
-          existingIris={datatypes.map((d) => d.id).filter((id) => id !== selectedItem.id)}
+          existingIris={datatypeExistingIris}
         />
       );
     default:

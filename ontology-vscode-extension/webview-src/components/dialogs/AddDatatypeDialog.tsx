@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { buildEntityIri } from '../../utils/entityIri';
 
 interface AddDatatypeDialogProps {
   isOpen: boolean;
@@ -22,7 +23,7 @@ const AddDatatypeDialog: React.FC<AddDatatypeDialogProps> = ({
   if (!isOpen) return null;
 
   const trimmedName = name.trim();
-  const computedIri = ontologyIri && trimmedName ? `${ontologyIri}#${trimmedName}` : '';
+  const computedIri = buildEntityIri(ontologyIri, trimmedName);
   const isDuplicate = !!computedIri && existingIris.includes(computedIri);
   const canCreate = !!trimmedName && !isDuplicate;
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { buildEntityIri } from '../../utils/entityIri';
 
 interface AddObjectPropertyDialogProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
   if (!isOpen) return null;
 
   const trimmedName = name.trim();
-  const computedIri = ontologyIri && trimmedName ? `${ontologyIri}#${trimmedName}` : '';
+  const computedIri = buildEntityIri(ontologyIri, trimmedName);
   const isDuplicate = !!computedIri && existingIris.includes(computedIri);
   const canCreate = !!trimmedName && !isDuplicate;
 
