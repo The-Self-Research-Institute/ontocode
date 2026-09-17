@@ -9,6 +9,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
@@ -36,9 +39,11 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
     );
 
     private final ProjectRepository projectRepository;
+    private final MongoTemplate mongoTemplate;
 
-    public EditorApiAuthInterceptor(ProjectRepository projectRepository) {
+    public EditorApiAuthInterceptor(ProjectRepository projectRepository, MongoTemplate mongoTemplate) {
         this.projectRepository = projectRepository;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @Value("${jwt.secret:}")
@@ -106,19 +111,12 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             request.setAttribute("jwtEmail", jwtEmail);
 
             String projectId = pathVariable(request, "projectId");
-            if (projectId != null) {
-                int compositeSep = projectId.indexOf("--");
-                if (compositeSep > 0) {
-                    projectId = projectId.substring(0, compositeSep);
-                }
-                Optional<ProjectDocument> project = projectRepository.findById(projectId);
-                if (project.isEmpty() || !project.get().isAccessibleBy(jwtEmail)) {
-                    log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
-                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                    response.setContentType("application/json");
-                    response.getWriter().write("{\"error\":\"You do not have access to this project\"}");
-                    return false;
-                }
+            if (projectId != null && !hasProjectAccess(projectId, jwtEmail)) {
+                log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json");
+                response.getWriter().write("{\"error\":\"You do not have access to this project\"}");
+                return false;
             }
 
             return true;
@@ -129,6 +127,24 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             response.getWriter().write("{\"error\":\"Invalid or expired token\"}");
             return false;
         }
+    }
+
+    // Composite "proj-xxx--fileId" keys are polled before the import worker writes that file's
+    // tracking doc, so findById can legitimately miss — fall back to the parent project's members.
+    private boolean hasProjectAccess(String projectId, String email) {
+        Optional<ProjectDocument> direct = projectRepository.findById(projectId);
+        if (direct.isPresent()) {
+            return direct.get().isAccessibleBy(email);
+        }
+        int compositeSep = projectId.indexOf("--");
+        if (compositeSep <= 0) {
+            return false;
+        }
+        String parentProjectId = projectId.substring(0, compositeSep);
+        Query query = new Query(Criteria.where("projectId").is(parentProjectId).orOperator(
+                Criteria.where("ownerEmail").is(email),
+                Criteria.where("members").elemMatch(Criteria.where("email").is(email))));
+        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
     }
 
     @SuppressWarnings("unchecked")
