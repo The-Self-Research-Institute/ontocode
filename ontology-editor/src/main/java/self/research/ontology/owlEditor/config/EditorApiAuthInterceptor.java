@@ -107,6 +107,10 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
 
             String projectId = pathVariable(request, "projectId");
             if (projectId != null) {
+                int compositeSep = projectId.indexOf("--");
+                if (compositeSep > 0) {
+                    projectId = projectId.substring(0, compositeSep);
+                }
                 Optional<ProjectDocument> project = projectRepository.findById(projectId);
                 if (project.isEmpty() || !project.get().isAccessibleBy(jwtEmail)) {
                     log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
