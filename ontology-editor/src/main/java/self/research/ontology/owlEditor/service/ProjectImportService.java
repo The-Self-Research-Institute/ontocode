@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.ImportOptions;
@@ -124,6 +125,7 @@ public class ProjectImportService {
     @Autowired(required = false) @Nullable
     private DesktopFusekiSyncScheduler fusekiSyncScheduler;
 
+    @Lazy
     @Autowired(required = false) @Nullable
     private OntologyMutationService ontologyMutationService;
 
