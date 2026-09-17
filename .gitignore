@@ -892,3 +892,7 @@ test-data/mondo.owl
 ontology-vscode-extension/out.txt
 ontology-vscode-extension/test-collaboration.html
 ontology-vscode-extension/test-invitation-helper.js
+
+# deploy-coretopia-release.sh flock lock file
+.desktop-build.lock
+.deploy-app/

@@ -23,6 +23,7 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <git.commit>unknown</git.commit>
     </properties>
 
     <dependencies>
@@ -201,6 +202,17 @@
                         <goals>
                             <goal>repackage</goal>
                         </goals>
+                    </execution>
+                    <execution>
+                        <id>build-info</id>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                        <configuration>
+                            <additionalProperties>
+                                <git.commit>${git.commit}</git.commit>
+                            </additionalProperties>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

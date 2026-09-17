@@ -26,6 +26,7 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
+		<git.commit>unknown</git.commit>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -147,6 +148,17 @@
 						<goals>
 							<goal>repackage</goal>
 						</goals>
+					</execution>
+					<execution>
+						<id>build-info</id>
+						<goals>
+							<goal>build-info</goal>
+						</goals>
+						<configuration>
+							<additionalProperties>
+								<git.commit>${git.commit}</git.commit>
+							</additionalProperties>
+						</configuration>
 					</execution>
 				</executions>
 			</plugin>

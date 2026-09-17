@@ -167,7 +167,13 @@ else
 fi
 echo ""
 
-LOG_DIR="$(mktemp -d)"
+RUN_TS="$(date +%Y_%m_%d_%H_%M)"
+LOG_DIR="$ROOT/.deploy-app/$RUN_TS"
+mkdir -p "$LOG_DIR"
+DEPLOY_START_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+DEPLOY_START_BRANCH="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+echo "[progress] deploying commit ${DEPLOY_START_SHA:-unknown} on branch ${DEPLOY_START_BRANCH:-unknown}"
+echo "[progress] logs: $LOG_DIR"
 declare -A BRANCH_PID
 
 branch_web() {
@@ -521,8 +527,100 @@ branch_desktop_windows() {
   fi
 }
 
+# Builds the linux desktop installer on the target host over SSH instead of
+# locally — avoids this host's WSL flakiness (9P mount stalls, network stalls)
+# entirely by building on a real Linux box. Mirrors branch_web_remote_build's
+# rsync-then-ssh-build pattern, then pulls the finished .AppImage/.deb files
+# back and hands them to the normal (unchanged) upload_linux_installers.
+branch_desktop_linux_remote_build() {
+  local m="$1"
+  local api_base="${API[$m]}"
+  local update_host="${api_base#https://}"
+  local ssh_opts=(-o BatchMode=yes)
+  local rsync_rsh="ssh -o BatchMode=yes"
+  if [[ -n "${SSHKEY[$m]}" ]]; then
+    if [[ ! -f "${SSHKEY[$m]}" ]]; then
+      echo "ERROR: ${m^^}_SSH_KEY is set to '${SSHKEY[$m]}' but that file doesn't exist on this host" >&2
+      return 1
+    fi
+    ssh_opts+=(-i "${SSHKEY[$m]}")
+    rsync_rsh="ssh -o BatchMode=yes -i ${SSHKEY[$m]}"
+  fi
+
+  local remote_dir="${DIR[$m]}/desktop-build"
+  local git_commit
+  git_commit="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+
+  local -A want=([x64]=0 [arm64]=0)
+  if [[ -z "$LINUX_ONLY_ARG" ]]; then
+    want[x64]=1; want[arm64]=1
+  else
+    local _part
+    IFS=',' read -ra _linux_only_parts <<< "$LINUX_ONLY_ARG"
+    for _part in "${_linux_only_parts[@]}"; do
+      case "$_part" in
+        x64|arm64) want[$_part]=1 ;;
+        flatpak) echo "[progress][$m-linux] flatpak isn't supported via --remote-build — skipping" ;;
+        *) echo "ERROR: unknown --linux-only component '$_part' (expected: x64, arm64)" >&2; return 1 ;;
+      esac
+    done
+  fi
+  local dist_targets=()
+  [[ ${want[x64]} -eq 1 ]] && dist_targets+=("dist:linux:x64")
+  [[ ${want[arm64]} -eq 1 ]] && dist_targets+=("dist:linux:arm64")
+  if [[ ${#dist_targets[@]} -eq 0 ]]; then
+    echo "ERROR: --remote-build linux has nothing to build (--linux-only=$LINUX_ONLY_ARG)" >&2
+    return 1
+  fi
+
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') START remote build → ${HOST[$m]}:$remote_dir (commit $git_commit)"
+  ssh "${ssh_opts[@]}" "${HOST[$m]}" "mkdir -p '$remote_dir'" || return 1
+
+  echo "[progress][$m-linux] rsync source"
+  rsync -azR -e "$rsync_rsh" \
+    --exclude 'target' --exclude 'node_modules' --exclude 'dist-electron' \
+    --exclude '.deploy-app' --exclude '.git' \
+    pom.xml shared/ ontology-auth/ ontology-editor/ ontology-plugin-service/ ontology-desktop/ \
+    ontology-gateway/ ontology-swrl/ ontology-reasoner-worker/ \
+    electron-app/ ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ \
+    "${HOST[$m]}:$remote_dir/" || return 1
+
+  local dist_cmd=""
+  local t
+  for t in "${dist_targets[@]}"; do
+    dist_cmd+="ONTOCODE_UPDATE_HOST=$update_host npm run $t && "
+  done
+  dist_cmd+="true"
+
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') rsync OK — building on remote (${dist_targets[*]})"
+  ssh "${ssh_opts[@]}" "${HOST[$m]}" \
+    "cd '$remote_dir' && export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 && export PATH=\$JAVA_HOME/bin:\$PATH && \
+     mvn -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -q -Dgit.commit=$git_commit && \
+     (cd ontology-desktop && mvn clean package -DskipTests -q -Dgit.commit=$git_commit) && \
+     cd electron-app && $dist_cmd" \
+    || { echo "ERROR: remote desktop linux build failed" >&2; return 1; }
+
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') build OK — fetching artifacts back"
+  mkdir -p "$ROOT/electron-app/dist-electron"
+  rsync -avz -e "$rsync_rsh" \
+    --include='*.AppImage' --include='*.deb' --exclude='*' \
+    "${HOST[$m]}:$remote_dir/electron-app/dist-electron/" "$ROOT/electron-app/dist-electron/" || return 1
+
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') artifacts fetched — uploading"
+  if upload_linux_installers "$api_base"; then
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') DONE"
+  else
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') finished with errors (see above)"
+    return 1
+  fi
+}
+
 branch_desktop_linux() {
   local m="$1"
+  if [[ $REMOTE_BUILD_ARG -eq 1 ]]; then
+    branch_desktop_linux_remote_build "$m"
+    return $?
+  fi
   local api_base="${API[$m]}"
   local update_host="${api_base#https://}"
   local host_platform
@@ -554,18 +652,22 @@ branch_desktop_linux() {
   local build_ok=0 attempted_core=0
   if [[ ${want[x64]} -eq 1 ]]; then
     attempted_core=1
-    if ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:x64 ) 9>"$DESKTOP_BUILD_LOCK"; then
+    local x64_log="$LOG_DIR/$m-linux-x64.log"
+    echo "[progress][$m-linux] x64 build → $x64_log"
+    if ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:x64 ) 9>"$DESKTOP_BUILD_LOCK" > "$x64_log" 2>&1; then
       build_ok=1
     else
-      echo "WARNING: linux x64 build failed" >&2
+      echo "WARNING: linux x64 build failed — see $x64_log" >&2
     fi
   fi
   if [[ ${want[arm64]} -eq 1 ]]; then
     attempted_core=1
-    if ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:arm64 ) 9>"$DESKTOP_BUILD_LOCK"; then
+    local arm64_log="$LOG_DIR/$m-linux-arm64.log"
+    echo "[progress][$m-linux] arm64 build → $arm64_log"
+    if ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:arm64 ) 9>"$DESKTOP_BUILD_LOCK" > "$arm64_log" 2>&1; then
       build_ok=1
     else
-      echo "WARNING: linux arm64 build failed — continuing with whatever succeeded" >&2
+      echo "WARNING: linux arm64 build failed — see $arm64_log — continuing with whatever succeeded" >&2
     fi
   fi
   if [[ $attempted_core -eq 1 && $build_ok -eq 0 ]]; then
@@ -575,9 +677,10 @@ branch_desktop_linux() {
 
   if [[ ${want[flatpak]} -eq 1 ]]; then
     if command -v flatpak-builder >/dev/null 2>&1; then
-      echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too"
-      if ! ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:flatpak ) 9>"$DESKTOP_BUILD_LOCK"; then
-        echo "WARNING: flatpak build failed — continuing with AppImage/deb only" >&2
+      local flatpak_log="$LOG_DIR/$m-linux-flatpak.log"
+      echo "[progress][$m-linux] flatpak-builder found — building flatpak bundle too → $flatpak_log"
+      if ! ( flock -x 9; cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run dist:linux:flatpak ) 9>"$DESKTOP_BUILD_LOCK" > "$flatpak_log" 2>&1; then
+        echo "WARNING: flatpak build failed — see $flatpak_log — continuing with AppImage/deb only" >&2
       fi
     else
       echo "[progress][$m-linux] flatpak-builder not installed — skipping flatpak bundle"
@@ -640,24 +743,71 @@ EOF
   echo "[progress][$m-vscode] $(date '+%H:%M:%S') DONE"
 }
 
+# Desktop bundles auth+owlEditor+ontology-plugin-service into one merged JAR
+# (ontology-desktop). prepare-resources.js only ever COPIES whatever jar is
+# already sitting in ontology-desktop/target/ — it never invokes Maven. So this
+# rebuild has to happen here, once, before any desktop platform branch starts
+# (windows/linux/mac run concurrently and would otherwise race `mvn clean` on
+# the same target/ directory). Must use `clean install`/`clean package`, not
+# plain `package` — spring-boot-maven-plugin's repackage goal can silently
+# reuse a stale packaged jar on an incremental build otherwise.
+rebuild_desktop_backend() {
+  local needs_desktop=0 p
+  for p in "${PLATFORMS[@]}"; do
+    case "$p" in windows|linux|mac) needs_desktop=1 ;; esac
+  done
+  [[ $needs_desktop -eq 1 ]] || return 0
+
+  local java_home="${JDK21_HOME:-${JAVA_HOME:-}}"
+  if [[ -z "$java_home" || ! -x "$java_home/bin/java" ]]; then
+    echo "ERROR: JDK 21 not found (checked \$JDK21_HOME/\$JAVA_HOME) — can't rebuild the desktop backend jar" >&2
+    return 1
+  fi
+  local git_commit
+  git_commit="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+
+  echo "[progress][desktop-backend] rebuilding auth+owlEditor+ontology-plugin-service+ontology-desktop (commit $git_commit)"
+  (
+    export JAVA_HOME="$java_home"
+    export PATH="$JAVA_HOME/bin:$PATH"
+    cd "$ROOT" && mvn -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -q -Dgit.commit="$git_commit" \
+      && cd "$ROOT/ontology-desktop" && mvn clean package -DskipTests -q -Dgit.commit="$git_commit"
+  )
+  if [[ $? -ne 0 ]]; then
+    echo "ERROR: desktop backend rebuild failed — see above" >&2
+    return 1
+  fi
+  echo "[progress][desktop-backend] rebuilt OK — $ROOT/ontology-desktop/target/ontology-desktop-1.0.0.jar"
+}
+rebuild_desktop_backend || exit 1
+
 BRANCH_COUNT=0
 for m in "${MODES[@]}"; do
   for p in "${PLATFORMS[@]}"; do
     key="$m-$p"
     log="$LOG_DIR/$key.log"
     echo "[progress] launching branch $key (log: $log)"
+    {
+      echo "============================================================"
+      echo " OntoCode deploy — $key"
+      echo " started : $(date '+%Y-%m-%d %H:%M:%S')"
+      echo " commit  : $(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null) $(git -C "$ROOT" log -1 --format='%s' 2>/dev/null)"
+      echo " branch  : $(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+      echo " services: ${SERVICES[*]}"
+      echo "============================================================"
+    } > "$log"
     case "$p" in
       web)
         if [[ $REMOTE_BUILD_ARG -eq 1 ]]; then
-          ( branch_web_remote_build "$m" ) > "$log" 2>&1 &
+          ( branch_web_remote_build "$m" ) >> "$log" 2>&1 &
         else
-          ( branch_web "$m" ) > "$log" 2>&1 &
+          ( branch_web "$m" ) >> "$log" 2>&1 &
         fi
         ;;
-      windows) ( branch_desktop_windows "$m" ) > "$log" 2>&1 & ;;
-      linux)   ( branch_desktop_linux "$m" )   > "$log" 2>&1 & ;;
-      mac)     ( branch_desktop_mac "$m" )     > "$log" 2>&1 & ;;
-      vscode)  ( branch_vscode "$m" )  > "$log" 2>&1 & ;;
+      windows) ( branch_desktop_windows "$m" ) >> "$log" 2>&1 & ;;
+      linux)   ( branch_desktop_linux "$m" )   >> "$log" 2>&1 & ;;
+      mac)     ( branch_desktop_mac "$m" )     >> "$log" 2>&1 & ;;
+      vscode)  ( branch_vscode "$m" )  >> "$log" 2>&1 & ;;
     esac
     BRANCH_PID["$key"]=$!
     BRANCH_COUNT=$((BRANCH_COUNT + 1))
@@ -725,6 +875,14 @@ if [[ ${#FAILED[@]} -eq 0 ]]; then
   echo "   SUCCESS — all branches completed: ${!BRANCH_PID[*]}"
 else
   echo "   FAILED branches: ${FAILED[*]}"
+fi
+DEPLOY_END_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"
+echo "   Started at commit : ${DEPLOY_START_SHA:-unknown}"
+echo "   Ended at commit   : ${DEPLOY_END_SHA:-unknown}"
+if [[ -n "$DEPLOY_START_SHA" && "$DEPLOY_START_SHA" != "$DEPLOY_END_SHA" ]]; then
+  echo "   *** WARNING: the git checkout changed WHILE this deploy was running. ***"
+  echo "   *** Branches that read source files after the change may have built a mix of commits. ***"
+  echo "   *** Don't switch branches or commit in this repo while a deploy is in flight. ***"
 fi
 echo "============================================"
 for key in "${!BRANCH_PID[@]}"; do
