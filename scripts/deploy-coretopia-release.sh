@@ -108,7 +108,7 @@ resolve_mode() {
       VER[dev]="${DEV_VERSION:-dev}"
       HOST[dev]="${DEV_EC2_HOST:?Set DEV_EC2_HOST (dev SSH target, e.g. ubuntu@1.2.3.4)}"
       API[dev]="${DEV_API_BASE:?Set DEV_API_BASE (dev API URL, e.g. https://dev-api.example.com)}"
-      CFLAGS[dev]="-f docker-compose.yml "
+      CFLAGS[dev]="-f docker-compose.de.ec2.yml "
       VSIXFILE[dev]=".env.dev-release"
       SSHKEY[dev]="${DEV_SSH_KEY:-}"
       DIR[dev]="${DEV_EC2_DIR:-${EC2_DIR:-/home/ubuntu/ontocode}}"
@@ -214,16 +214,6 @@ branch_web_remote_build() {
     fi
     ssh_opts+=(-i "${SSHKEY[$m]}")
     rsync_rsh="ssh -o BatchMode=yes -i ${SSHKEY[$m]}"
-  fi
-
-  if [[ "$m" == "dev" ]]; then
-    local s
-    for s in "${SERVICES[@]}"; do
-      if [[ "$s" == "reasoner-worker" ]]; then
-        echo "ERROR: reasoner-worker isn't part of docker-compose.yml (dev) at all — only docker-compose.production.yml. --remote-build --mode dev can't deploy it." >&2
-        return 1
-      fi
-    done
   fi
 
   local compose_services=() dockerfiles=() s
