@@ -129,18 +129,17 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         }
     }
 
-    // Composite "proj-xxx--fileId" keys are polled before the import worker writes that file's
-    // tracking doc, so findById can legitimately miss — fall back to the parent project's members.
+    // The "projects" collection has no row self-keyed by a bare parent project id — only the
+    // container doc's "projectId" field and each file's own _id ("proj-xxx--fileId") carry it.
+    // A file's tracking doc may not exist yet (polled before the import worker writes it), so
+    // always fall back to checking membership by the "projectId" field on the parent.
     private boolean hasProjectAccess(String projectId, String email) {
         Optional<ProjectDocument> direct = projectRepository.findById(projectId);
         if (direct.isPresent()) {
             return direct.get().isAccessibleBy(email);
         }
         int compositeSep = projectId.indexOf("--");
-        if (compositeSep <= 0) {
-            return false;
-        }
-        String parentProjectId = projectId.substring(0, compositeSep);
+        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
         Query query = new Query(Criteria.where("projectId").is(parentProjectId).orOperator(
                 Criteria.where("ownerEmail").is(email),
                 Criteria.where("members").elemMatch(Criteria.where("email").is(email))));
