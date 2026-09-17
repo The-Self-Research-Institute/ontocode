@@ -21,6 +21,8 @@ public interface FileMetadataRepository extends MongoRepository<FileMetadata, St
 
     List<FileMetadata> findByProjectIdAndStatus(String projectId, String status);
 
+    List<FileMetadata> findByProjectId(String projectId);
+
     @Query("{ 'projectId': ?0, 'status': ?1, $or: [ { 'isDeleted': { $exists: false } }, { 'isDeleted': false } ] }")
     List<FileMetadata> findActiveByProjectIdAndStatus(String projectId, String status);
 

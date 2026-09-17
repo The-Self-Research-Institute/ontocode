@@ -2002,10 +2002,10 @@ public ResponseEntity<?> renameFile(
     public static class UpdateMemberRoleRequest {
         @NotBlank(message = "Role is required")
         @Pattern(
-            regexp = "^(ADMIN|EDITOR|DRAFT_EDITOR|VIEWER)$",
-            message = "Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER"
+            regexp = "^(OWNER|ADMIN|EDITOR|DRAFT_EDITOR|VIEWER)$",
+            message = "Invalid role. Must be OWNER, ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER"
         )
-        public String role; // ADMIN, EDITOR, DRAFT_EDITOR, VIEWER
+        public String role; // OWNER (ownership transfer), ADMIN, EDITOR, DRAFT_EDITOR, VIEWER
     }
     
     /**

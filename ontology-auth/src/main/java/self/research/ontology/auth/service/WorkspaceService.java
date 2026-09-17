@@ -11,6 +11,7 @@ import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.model.Workspace.WorkspaceMember;
 import self.research.ontology.auth.model.Workspace.WorkspaceRole;
 import self.research.ontology.auth.repository.FileMetadataRepository;
+import self.research.ontology.auth.repository.InvitationRepository;
 import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
@@ -35,19 +36,47 @@ public class WorkspaceService {
     private final FileMetadataRepository fileMetadataRepository;
     private final PlanFeatureConfigService planFeatureConfigService;
     private final SystemSettingsService systemSettingsService;
+    private final InvitationRepository invitationRepository;
+    private final ProjectService projectService;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                            UserRepository userRepository,
                            ProjectRepository projectRepository,
                            FileMetadataRepository fileMetadataRepository,
                            PlanFeatureConfigService planFeatureConfigService,
-                           SystemSettingsService systemSettingsService) {
+                           SystemSettingsService systemSettingsService,
+                           InvitationRepository invitationRepository,
+                           ProjectService projectService) {
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
         this.fileMetadataRepository = fileMetadataRepository;
         this.planFeatureConfigService = planFeatureConfigService;
         this.systemSettingsService = systemSettingsService;
+        this.invitationRepository = invitationRepository;
+        this.projectService = projectService;
+    }
+
+    public void hardDeleteWorkspaceCompletely(String workspaceId, String userId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+        if (!workspace.getOwnerId().equals(userId)) {
+            throw new SecurityException("Only the workspace owner can permanently delete this workspace");
+        }
+        long otherActiveMembers = workspace.getMembers().stream()
+                .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                .count();
+        if (otherActiveMembers > 0) {
+            throw new IllegalStateException("Workspace still has other members — transfer ownership or use the regular delete instead");
+        }
+
+        for (Project project : projectRepository.findByWorkspaceId(workspaceId)) {
+            projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+        }
+
+        invitationRepository.deleteByWorkspaceId(workspaceId);
+        workspaceRepository.delete(workspace);
+        log.info("Permanently deleted workspace {} (owner {}, no other members)", workspaceId, userId);
     }
 
     /**

@@ -123,16 +123,8 @@ public class OntologyMutationService {
         }
     }
 
-    /**
-     * Bust every cached reasoner ontology for this project after a mutation —
-     * draft and public alike, since ontology-plugin-service's cache is keyed by
-     * plain projectId with no draft/public distinction, so a draft edit can
-     * otherwise leave a stale cached object behind for whichever scope reasons
-     * over that same key next. Without this, the reasoner can keep silently
-     * reasoning over a stale, pre-edit ontology — reporting consistency/
-     * classification results that no longer match what's actually saved.
-     */
-    private void invalidateReasonerCaches(String projectId) {
+
+    public void invalidateReasonerCaches(String projectId) {
         if (editorReasonerCacheService != null) {
             try {
                 editorReasonerCacheService.invalidateOntology(projectId);

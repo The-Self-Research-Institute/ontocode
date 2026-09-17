@@ -32,7 +32,9 @@ public class ReasoningJobController {
                     request.getExpression(),
                     request.getQueryTypes(),
                     request.getReasonerType(),
-                    request.getOwnerEmail());
+                    request.getOwnerEmail(),
+                    request.getMaxJustifications(),
+                    request.getExplanationMode());
             queueProcessor.processNext();
 
             Map<String, Object> body = new HashMap<>();

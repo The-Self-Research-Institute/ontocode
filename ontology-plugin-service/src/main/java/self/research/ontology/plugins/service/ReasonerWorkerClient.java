@@ -32,10 +32,21 @@ public class ReasonerWorkerClient {
     }
 
     public Map<String, Object> submit(String jobType, String projectId, String reasonerType) {
+        return submit(jobType, projectId, reasonerType, null, null);
+    }
+
+    public Map<String, Object> submit(String jobType, String projectId, String reasonerType,
+                                       String explanationMode, Integer maxJustifications) {
         Map<String, Object> body = new HashMap<>();
         body.put("jobType", jobType);
         body.put("projectId", projectId);
         body.put("reasonerType", reasonerType);
+        if (explanationMode != null) {
+            body.put("explanationMode", explanationMode);
+        }
+        if (maxJustifications != null) {
+            body.put("maxJustifications", maxJustifications);
+        }
         try {
             ResponseEntity<Map> response = restTemplate.exchange(
                     workerUrl + "/api/reasoning/jobs",

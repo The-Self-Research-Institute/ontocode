@@ -124,6 +124,9 @@ public class ProjectImportService {
     @Autowired(required = false) @Nullable
     private DesktopFusekiSyncScheduler fusekiSyncScheduler;
 
+    @Autowired(required = false) @Nullable
+    private OntologyMutationService ontologyMutationService;
+
     @Value("${ontocode.desktop.owlapi-first:false}")
     private boolean owlApiFirst;
 
@@ -834,7 +837,16 @@ public class ProjectImportService {
             long durationMs = elapsedMillis(importStart);
             metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
             importMarkedCompleted.set(true);  // Prevent catch block from overwriting to ERROR
-            
+
+            if (ontologyMutationService != null) {
+                try {
+                    ontologyMutationService.invalidateReasonerCaches(projectId);
+                } catch (Exception cacheEx) {
+                    log.warn("[Import {}] Failed busting plugin-service reasoner cache after completion (non-fatal): {}",
+                            projectId, cacheEx.getMessage());
+                }
+            }
+
             Map<String, Object> completionMeta = new HashMap<>();
             completionMeta.put("stage", "hierarchy-warming");
             completionMeta.put("durationMs", durationMs);

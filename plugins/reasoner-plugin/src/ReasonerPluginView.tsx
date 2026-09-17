@@ -689,17 +689,25 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
       );
 
       if (response.ok) {
-        const explanation = await response.json();
+        let explanation = await response.json();
+        if (explanation.async && (explanation.jobId || explanation.taskId)) {
+          explanation = await pollWorkerJob(explanation.jobId || explanation.taskId);
+        }
         setInconsistencyExplanation(explanation);
       } else {
         console.error('Failed to fetch inconsistency explanation');
       }
     } catch (error) {
       console.error('Error fetching inconsistency explanation:', error);
+      setInconsistencyExplanation({
+        success: false,
+        causes: [],
+        error: error instanceof Error ? error.message : 'Failed to fetch inconsistency explanation',
+      });
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue]);
+  }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, pollWorkerJob]);
 
   // Handle class hover
   const handleClassHover = (classIri: string, event: React.MouseEvent) => {

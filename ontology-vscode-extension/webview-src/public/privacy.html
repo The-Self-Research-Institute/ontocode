@@ -102,19 +102,35 @@
     </section>
 
     <section>
-      <h2>3. The Desktop Application</h2>
+      <h2>3. The Desktop Application, VS Code Extension, and Web Application</h2>
       <p>
-        OntoCode Studio's desktop application does not currently require or support any account or sign-in —
-        it operates as a local, standalone tool with no personal identity attached. Your ontology projects,
-        and the bundled MongoDB and Apache Jena Fuseki data stores used to power editing and reasoning, are
-        stored on your own device.
+        The VS Code extension and the web application both support either a self-hosted deployment or our
+        cloud-hosted service, configured per installation. If you use the cloud-hosted service, your account
+        and identity data is maintained as described in Section 2, and your ontology edits, project data, and
+        collaboration events (presence, cursor position, edit locks) are synced to our servers in real time —
+        the same usage data and ontology data handling already described in Sections 2 and 6. If you
+        self-host instead, that data stays on your own infrastructure.
       </p>
       <p>
-        The desktop application does make a small number of network calls:
+        In both the VS Code extension and the web application: if you use the in-app "Report Issue" feature,
+        the description, diagnostic details, and system information you submit are sent to our servers and
+        logged in our internal issue tracker so our team can act on them. If you use the citation-insertion
+        feature, the DOI you enter is sent to our backend to be validated against the official DOI registry
+        (doi.org) on your behalf. If you optionally connect your own Zotero account by providing a Zotero API
+        key, the application communicates directly with Zotero's API using that key to retrieve your citation
+        library, and stores that key in your browser's local storage — this connection is between your device
+        and Zotero directly; we do not see or store your Zotero data. If you enable the optional AI Insights
+        feature, see Section 6 for how that data flows directly to your chosen third-party provider.
+      </p>
+      <p>
+        The desktop application does not currently require or support any account or sign-in, and does not
+        sync ontology data to our servers — it operates as a local, standalone tool. Your ontology projects,
+        and the bundled MongoDB and Apache Jena Fuseki data stores used to power editing and reasoning, are
+        stored on your own device. The desktop application does make a small number of network calls:
       </p>
       <ul>
         <li>If installed via a direct download (not through Microsoft Store), an automatic update and version check against our own download servers, so the app can offer you new releases. Store installs are updated by Microsoft Store instead, and never contact our download servers for this purpose.</li>
-        <li>If you use the in-app "Report Issue" feature, the description and diagnostic details you submit are sent to our servers and logged in our internal issue tracker so our team can act on them — this does not use or require any Jira account of your own.</li>
+        <li>The same "Report Issue" and optional Zotero-connection behavior described above — these work identically to the VS Code extension and web application.</li>
       </ul>
     </section>
 
@@ -136,6 +152,11 @@
         operate the platform (for example, Stripe for billing, Google for transactional email delivery, and
         cloud infrastructure providers), and only to the extent required to deliver those services. All
         providers are contractually bound to handle your data securely.
+      </p>
+      <p>
+        California residents: we do not sell or share personal information as those terms are defined under
+        the CCPA, so no opt-out mechanism is required. California residents may still exercise the access,
+        deletion, and correction rights described in Section 9 by contacting us at the address below.
       </p>
     </section>
 
@@ -159,10 +180,20 @@
     <section>
       <h2>7. Data Retention</h2>
       <p>
-        We retain your account data for as long as your account is active. When you delete your account,
-        your account record is deleted immediately, and any project or workspace data you solely owned is
-        permanently removed within 30 days, subject to legal obligations. Hashed download-page analytics
-        (which cannot be traced back to you) may be retained indefinitely.
+        We retain your account data for as long as your account is active. When you delete your account: your
+        account record and any issue-tracker submissions you filed are deleted immediately; projects and
+        workspaces you solely own, with no other collaborators, are permanently deleted immediately, including
+        their ontology content and files; and for anything you own that still has other collaborators, you
+        choose at deletion time to transfer ownership to one of them or delete it anyway — if you choose to
+        delete it, it is flagged for deletion and permanently removed within 30 days, subject to legal
+        obligations. Hashed download-page analytics (which cannot be traced back to you) may be retained
+        indefinitely.
+      </p>
+      <p>
+        Outside of account deletion, support requests and issue-tracker submissions (including diagnostic logs
+        and system information) are automatically deleted after 24 months from submission. If a report was
+        also forwarded to our issue tracker (Jira), that copy follows our issue-tracker provider's own
+        retention practices. You can request earlier deletion of your reports at any time — see Section 9.
       </p>
     </section>
 
@@ -179,7 +210,15 @@
       <h2>9. Your Rights</h2>
       <p>
         Depending on your jurisdiction, you may have the right to access, correct, or delete your personal
-        data, or to restrict or object to certain processing. To exercise these rights, contact us at
+        data, or to restrict or object to certain processing.
+      </p>
+      <p>
+        Where GDPR applies, our legal basis for processing is: performance of a contract (account and billing
+        data), legitimate interest (hashed IP address, browser/app version, referrer, and error logs used for
+        download-page analytics and crash diagnosis), and consent (optional features like AI Insights).
+      </p>
+      <p>
+        To exercise these rights, contact us at
         <a href="mailto:privacy@ontocode.org"> privacy@ontocode.org</a>.
       </p>
     </section>
@@ -187,14 +226,23 @@
     <section>
       <h2>10. Cookies and Local Storage</h2>
       <p>
-        The desktop application and the VS Code extension do not use browser cookies. The web application
-        and the desktop application's embedded interface may use session tokens and local storage for
-        authentication purposes when you sign in.
+        The desktop application and the VS Code extension do not use browser cookies. The web application,
+        and the embedded interface inside the desktop application and VS Code extension, may use session
+        tokens and local storage for authentication purposes when you sign in, and to store your Zotero API
+        key and configuration if you choose to connect a Zotero account.
       </p>
     </section>
 
     <section>
-      <h2>11. Changes to This Policy</h2>
+      <h2>11. Governing Law</h2>
+      <p>
+        This Privacy Policy and any disputes arising from it are governed by the laws of the State of
+        Oklahoma, USA, without regard to conflict-of-law principles.
+      </p>
+    </section>
+
+    <section>
+      <h2>12. Changes to This Policy</h2>
       <p>
         We may update this Privacy Policy from time to time. We will notify you of significant changes by
         email where possible, and will always display the effective date at the top of this document.
@@ -202,7 +250,7 @@
     </section>
 
     <section>
-      <h2>12. Contact Us</h2>
+      <h2>13. Contact Us</h2>
       <p>
         For privacy-related enquiries, please contact our data protection contact at
         <a href="mailto:privacy@ontocode.org"> privacy@ontocode.org</a>.

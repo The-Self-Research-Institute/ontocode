@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, Upload, Info, Zap, Trash2 } from 'lucide-react';
+import { X, Settings, User, Bell, Lock, Palette, Globe, Check, Loader2, Eye, EyeOff, Building2, KeyRound, /* Upload, */ Info, Zap, Trash2 } from 'lucide-react';
 import apiClient from '../services/apiClient';
-import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from '../utils/desktop';
+import { isDesktop /*, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT */ } from '../utils/desktop';
 import { fetchLatestDesktopInstallerVersion, getAppVersion } from '../utils/appVersion';
 import LLMSettingsPanel from './LLMSettingsPanel';
 import ConfirmDialog from './ConfirmDialog';
@@ -44,18 +44,29 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         confirmPassword: false
     });
     const desktop = isDesktop();
+    /* License tab disabled until the purchase/upgrade flow is ready — see tabs array below.
     const [license, setLicense] = useState<DesktopLicense | null>(null);
     const [licenseImporting, setLicenseImporting] = useState(false);
     const [licenseMessage, setLicenseMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    */
     const [appVersion, setAppVersion] = useState<string>('');
     const [latestDesktopVersion, setLatestDesktopVersion] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [deletingAccount, setDeletingAccount] = useState(false);
+    const [checkingDeletionImpact, setCheckingDeletionImpact] = useState(false);
+    const [deletionImpact, setDeletionImpact] = useState<{
+        sharedWorkspaces: Array<{ workspaceId: string; name: string; otherMembers: Array<{ userId: string; username: string; email: string }> }>;
+        sharedProjects: Array<{ projectId: string; name: string; workspaceId: string; otherMembers: Array<{ userId: string; username: string; email: string }> }>;
+    } | null>(null);
+    const [ownershipChoices, setOwnershipChoices] = useState<Record<string, string>>({});
+    const [resolvingOwnership, setResolvingOwnership] = useState(false);
 
+    /*
     useEffect(() => {
         if (!desktop || !isOpen) return;
         getDesktopLicense().then(setLicense).catch(() => setLicense(null));
     }, [desktop, isOpen]);
+    */
 
     useEffect(() => {
         if (!isOpen) return;
@@ -65,6 +76,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         }
     }, [desktop, isOpen]);
 
+    /*
     const handleLicenseFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         event.target.value = '';
@@ -88,6 +100,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
             setLicenseImporting(false);
         }
     };
+    */
 
     // Reset settings when user changes or modal opens
     useEffect(() => {
@@ -136,7 +149,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         { id: 'profile', label: 'Profile', icon: User },
         // Desktop: no shared workspace settings / password — show License instead.
         ...(desktop
-            ? [{ id: 'license', label: 'License', icon: KeyRound }]
+            ? [
+              // { id: 'license', label: 'License', icon: KeyRound }
+            ]
             : [
                 { id: 'workspace', label: 'Workspace', icon: Building2 },
                 { id: 'security', label: 'Security', icon: Lock },
@@ -270,6 +285,55 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         }
     };
 
+    const handleStartDeleteAccount = async () => {
+        setCheckingDeletionImpact(true);
+        try {
+            const response = await apiClient.get('/api/auth/account/deletion-impact');
+            const impact = (response as any)?.data || response;
+            const hasShared = (impact?.sharedWorkspaces?.length || 0) > 0 || (impact?.sharedProjects?.length || 0) > 0;
+            if (hasShared) {
+                setDeletionImpact(impact);
+                const defaults: Record<string, string> = {};
+                impact.sharedWorkspaces.forEach((w: any) => { defaults[w.workspaceId] = 'DELETE'; });
+                impact.sharedProjects.forEach((p: any) => { defaults[p.projectId] = 'DELETE'; });
+                setOwnershipChoices(defaults);
+            } else {
+                setShowDeleteConfirm(true);
+            }
+        } catch (error: any) {
+            console.error('Error checking deletion impact:', error);
+            showMessage('error', error?.error || error?.message || 'Failed to check what will be deleted');
+        } finally {
+            setCheckingDeletionImpact(false);
+        }
+    };
+
+    const handleResolveOwnershipAndProceed = async () => {
+        if (!deletionImpact) return;
+        setResolvingOwnership(true);
+        try {
+            for (const workspace of deletionImpact.sharedWorkspaces) {
+                const choice = ownershipChoices[workspace.workspaceId];
+                if (choice && choice !== 'DELETE') {
+                    await apiClient.put(`/api/workspaces/${workspace.workspaceId}/members/${choice}/role`, { role: 'OWNER' });
+                }
+            }
+            for (const project of deletionImpact.sharedProjects) {
+                const choice = ownershipChoices[project.projectId];
+                if (choice && choice !== 'DELETE') {
+                    await apiClient.patch(`/api/projects/${project.projectId}/members/${choice}/role`, { role: 'OWNER' });
+                }
+            }
+            setDeletionImpact(null);
+            setShowDeleteConfirm(true);
+        } catch (error: any) {
+            console.error('Error applying ownership choices:', error);
+            showMessage('error', error?.error || error?.message || 'Failed to transfer ownership');
+        } finally {
+            setResolvingOwnership(false);
+        }
+    };
+
     const handleDeleteAccount = async () => {
         const prevCallback = (apiClient as any).onUnauthorized;
         apiClient.setUnauthorizedCallback(() => {
@@ -377,7 +441,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 </div>
               )}
 
-              {activeTab === "license" && (
+              {/* License tab content disabled until the purchase/upgrade flow is ready — see tabs array above.
+              activeTab === "license" && (
                 <div className="space-y-6">
                   <div>
                     <h4 className="text-lg font-semibold text-gray-900 mb-1">License</h4>
@@ -436,7 +501,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                     )}
                   </div>
                 </div>
-              )}
+              ) */}
 
               {activeTab === "workspace" && (
                 <div className="space-y-6">
@@ -584,11 +649,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                       Permanently delete your account and all data you solely own. This cannot be undone.
                     </p>
                     <button
-                      onClick={() => setShowDeleteConfirm(true)}
-                      disabled={deletingAccount}
+                      onClick={handleStartDeleteAccount}
+                      disabled={deletingAccount || checkingDeletionImpact}
                       className="px-4 py-3 bg-white border border-red-300 hover:bg-red-50 text-red-600 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                     >
-                      {deletingAccount ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
+                      {(deletingAccount || checkingDeletionImpact) ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
                       Delete Account
                     </button>
                   </div>
@@ -739,6 +804,55 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         onConfirm={handleDeleteAccount}
         onCancel={() => setShowDeleteConfirm(false)}
       />
+      {deletionImpact && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setDeletionImpact(null)} />
+          <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 p-6 max-h-[85vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Resolve Shared Workspaces & Projects</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              You own the following, and other people still have access. For each one, choose to transfer
+              ownership to someone else, or delete it anyway (removing everyone's access).
+            </p>
+            <div className="space-y-4">
+              {[
+                ...deletionImpact.sharedWorkspaces.map((w) => ({ id: w.workspaceId, label: `Workspace: ${w.name}`, otherMembers: w.otherMembers })),
+                ...deletionImpact.sharedProjects.map((p) => ({ id: p.projectId, label: `Project: ${p.name}`, otherMembers: p.otherMembers })),
+              ].map((item) => (
+                <div key={item.id} className="border border-gray-200 rounded-lg p-3">
+                  <p className="font-medium text-gray-900 text-sm mb-1">{item.label}</p>
+                  <select
+                    value={ownershipChoices[item.id] || 'DELETE'}
+                    onChange={(e) => setOwnershipChoices((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                    className="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5"
+                  >
+                    <option value="DELETE">Delete anyway</option>
+                    {item.otherMembers.map((m) => (
+                      <option key={m.userId} value={m.userId}>Transfer to {m.username} ({m.email})</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setDeletionImpact(null)}
+                disabled={resolvingOwnership}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResolveOwnershipAndProceed}
+                disabled={resolvingOwnership}
+                className="px-4 py-2 text-sm font-medium text-white rounded-md bg-red-600 hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {resolvingOwnership && <Loader2 size={16} className="animate-spin" />}
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </>
     );
 };

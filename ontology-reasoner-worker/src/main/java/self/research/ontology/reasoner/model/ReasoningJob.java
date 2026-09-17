@@ -20,7 +20,8 @@ public class ReasoningJob {
         REASONER_INFERRED_AXIOMS,
         REASONER_HIERARCHY,
         REASONER_OBJ_PROP_HIERARCHY,
-        REASONER_DATA_PROP_HIERARCHY
+        REASONER_DATA_PROP_HIERARCHY,
+        REASONER_EXPLAIN_INCONSISTENCY
     }
 
     public enum Status {
@@ -33,6 +34,8 @@ public class ReasoningJob {
     private String expression;
     private List<String> queryTypes;
     private String reasonerType;
+    private Integer maxJustifications;
+    private String explanationMode;
     private Status status;
     private int queuePosition;
     private long estimatedWaitTimeMs;

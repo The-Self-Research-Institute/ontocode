@@ -26,6 +26,7 @@ import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.AuditService;
 import self.research.ontology.auth.service.EmailService;
 import self.research.ontology.auth.service.EnterpriseBypassService;
+import self.research.ontology.auth.service.IssueReportClient;
 import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.service.RateLimitService;
 import self.research.ontology.auth.service.StripeService;
@@ -58,6 +59,7 @@ public class AuthController {
     private final AuditService auditService;
     private final SystemSettingsService systemSettingsService;
     private final EnterpriseBypassService enterpriseBypassService;
+    private final IssueReportClient issueReportClient;
 
     @Value("${app.admin.password:}")
     private String adminPassword;
@@ -95,7 +97,8 @@ public class AuthController {
                           RateLimitService rateLimitService,
                           AuditService auditService,
                           SystemSettingsService systemSettingsService,
-                          EnterpriseBypassService enterpriseBypassService) {
+                          EnterpriseBypassService enterpriseBypassService,
+                          IssueReportClient issueReportClient) {
         this.authenticationManager = authenticationManager;
         this.userDetailsService = userDetailsService;
         this.jwtUtil = jwtUtil;
@@ -111,6 +114,7 @@ public class AuthController {
         this.auditService = auditService;
         this.systemSettingsService = systemSettingsService;
         this.enterpriseBypassService = enterpriseBypassService;
+        this.issueReportClient = issueReportClient;
     }
 
     private boolean isDomainAllowed(String email) {
@@ -677,6 +681,49 @@ public class AuthController {
         }
     }
 
+    @GetMapping("/account/deletion-impact")
+    public ResponseEntity<?> getAccountDeletionImpact(@RequestHeader("Authorization") String authHeader) {
+        try {
+            String token = authHeader.replace("Bearer ", "");
+            String email = jwtUtil.extractEmail(token);
+            Optional<User> userOpt = userRepository.findByEmail(email);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+            String userId = userOpt.get().getId();
+
+            List<Map<String, Object>> sharedWorkspaces = workspaceRepository.findByOwnerId(userId).stream()
+                    .filter(w -> w.getMembers().stream().anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId)))
+                    .map(w -> Map.<String, Object>of(
+                        "workspaceId", w.getWorkspaceId(),
+                        "name", w.getName(),
+                        "otherMembers", w.getMembers().stream()
+                            .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                            .map(m -> Map.of("userId", m.getUserId(), "username", m.getUsername(), "email", m.getEmail()))
+                            .collect(Collectors.toList())
+                    ))
+                    .collect(Collectors.toList());
+
+            List<Map<String, Object>> sharedProjects = projectRepository.findByOwnerId(userId).stream()
+                    .filter(p -> p.getMembers().stream().anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId)))
+                    .map(p -> Map.<String, Object>of(
+                        "projectId", p.getProjectId(),
+                        "name", p.getName(),
+                        "workspaceId", p.getWorkspaceId(),
+                        "otherMembers", p.getMembers().stream()
+                            .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                            .map(m -> Map.of("userId", m.getUserId(), "username", m.getUsername(), "email", m.getEmail()))
+                            .collect(Collectors.toList())
+                    ))
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(Map.of("sharedWorkspaces", sharedWorkspaces, "sharedProjects", sharedProjects));
+        } catch (Exception e) {
+            log.error("Error computing account deletion impact", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to compute deletion impact: " + e.getMessage()));
+        }
+    }
+
     @DeleteMapping("/account")
     public ResponseEntity<?> deleteAccount(@RequestHeader("Authorization") String authHeader) {
         try {
@@ -691,28 +738,7 @@ public class AuthController {
             String userId = user.getId();
 
             List<Workspace> ownedWorkspaces = workspaceRepository.findByOwnerId(userId);
-            List<String> blockedWorkspaces = ownedWorkspaces.stream()
-                    .filter(w -> w.getMembers().size() > 1)
-                    .map(Workspace::getName)
-                    .collect(Collectors.toList());
-            if (!blockedWorkspaces.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                    "error", "Transfer ownership of these workspaces before deleting your account: "
-                        + String.join(", ", blockedWorkspaces)
-                ));
-            }
-
             List<Project> ownedProjects = projectRepository.findByOwnerId(userId);
-            List<String> blockedProjects = ownedProjects.stream()
-                    .filter(p -> !p.getMembers().isEmpty())
-                    .map(Project::getName)
-                    .collect(Collectors.toList());
-            if (!blockedProjects.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                    "error", "Transfer ownership of these shared projects before deleting your account: "
-                        + String.join(", ", blockedProjects)
-                ));
-            }
 
             if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
                 try {
@@ -722,8 +748,29 @@ public class AuthController {
                 }
             }
 
+            Set<String> hardDeletedWorkspaceIds = new HashSet<>();
+            for (Workspace workspace : ownedWorkspaces) {
+                boolean hasOtherMembers = workspace.getMembers().stream()
+                        .anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId));
+                if (hasOtherMembers) {
+                    workspaceService.deleteWorkspace(workspace.getWorkspaceId(), userId);
+                } else {
+                    workspaceService.hardDeleteWorkspaceCompletely(workspace.getWorkspaceId(), userId);
+                    hardDeletedWorkspaceIds.add(workspace.getWorkspaceId());
+                }
+            }
+
             for (Project project : ownedProjects) {
-                projectService.deleteProject(project.getProjectId(), userId);
+                if (hardDeletedWorkspaceIds.contains(project.getWorkspaceId())) {
+                    continue;
+                }
+                boolean hasOtherMembers = project.getMembers().stream()
+                        .anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId));
+                if (hasOtherMembers) {
+                    projectService.deleteProject(project.getProjectId(), userId);
+                } else {
+                    projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+                }
             }
 
             for (Project project : projectRepository.findByMembers_UserId(userId)) {
@@ -737,9 +784,7 @@ public class AuthController {
                 }
             }
 
-            for (Workspace workspace : ownedWorkspaces) {
-                workspaceService.deleteWorkspace(workspace.getWorkspaceId(), userId);
-            }
+            issueReportClient.deleteIssueReportsForUser(email);
 
             userRepository.delete(user);
             auditService.logAccountDeleted(user.getUsername());
