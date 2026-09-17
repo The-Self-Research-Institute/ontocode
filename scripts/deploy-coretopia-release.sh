@@ -145,7 +145,8 @@ _wsl_flags=()
 for p in "${PLATFORMS[@]}"; do
   case "$p" in
     web) _wsl_flags+=(--web) ;;
-    windows|linux|mac) _wsl_flags+=(--desktop) ;;
+    linux) [[ $REMOTE_BUILD_ARG -eq 1 ]] || _wsl_flags+=(--desktop) ;;
+    windows|mac) _wsl_flags+=(--desktop) ;;
     vscode) _wsl_flags+=(--vscode) ;;
   esac
 done
@@ -551,23 +552,23 @@ branch_desktop_linux_remote_build() {
   local git_commit
   git_commit="$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
 
-  local -A want=([x64]=0 [arm64]=0)
+  local -A want=([x64]=0 [arm64]=0 [flatpak]=0)
   if [[ -z "$LINUX_ONLY_ARG" ]]; then
-    want[x64]=1; want[arm64]=1
+    want[x64]=1; want[arm64]=1; want[flatpak]=1
   else
     local _part
     IFS=',' read -ra _linux_only_parts <<< "$LINUX_ONLY_ARG"
     for _part in "${_linux_only_parts[@]}"; do
       case "$_part" in
-        x64|arm64) want[$_part]=1 ;;
-        flatpak) echo "[progress][$m-linux] flatpak isn't supported via --remote-build — skipping" ;;
-        *) echo "ERROR: unknown --linux-only component '$_part' (expected: x64, arm64)" >&2; return 1 ;;
+        x64|arm64|flatpak) want[$_part]=1 ;;
+        *) echo "ERROR: unknown --linux-only component '$_part' (expected: x64, arm64, flatpak)" >&2; return 1 ;;
       esac
     done
   fi
   local dist_targets=()
   [[ ${want[x64]} -eq 1 ]] && dist_targets+=("dist:linux:x64")
   [[ ${want[arm64]} -eq 1 ]] && dist_targets+=("dist:linux:arm64")
+  [[ ${want[flatpak]} -eq 1 ]] && dist_targets+=("dist:linux:flatpak")
   if [[ ${#dist_targets[@]} -eq 0 ]]; then
     echo "ERROR: --remote-build linux has nothing to build (--linux-only=$LINUX_ONLY_ARG)" >&2
     return 1
@@ -578,10 +579,16 @@ branch_desktop_linux_remote_build() {
 
   echo "[progress][$m-linux] rsync source"
   rsync -azR -e "$rsync_rsh" \
-    --exclude 'target' --exclude 'node_modules' --exclude 'dist-electron' \
-    --exclude '.deploy-app' --exclude '.git' \
-    pom.xml shared/ ontology-auth/ ontology-editor/ ontology-plugin-service/ ontology-desktop/ \
-    ontology-gateway/ ontology-swrl/ ontology-reasoner-worker/ \
+    --exclude 'node_modules' --exclude 'dist-electron*' \
+    --exclude 'electron-app/resources/backend' --exclude 'electron-app/logs' \
+    pom.xml shared/ \
+    ontology-auth/pom.xml ontology-auth/src/ \
+    ontology-editor/pom.xml ontology-editor/src/ \
+    ontology-plugin-service/pom.xml ontology-plugin-service/src/ \
+    ontology-desktop/pom.xml ontology-desktop/src/ \
+    ontology-gateway/pom.xml ontology-gateway/src/ \
+    ontology-swrl/pom.xml ontology-swrl/src/ \
+    ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
     electron-app/ ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ \
     "${HOST[$m]}:$remote_dir/" || return 1
 
@@ -597,17 +604,74 @@ branch_desktop_linux_remote_build() {
     "cd '$remote_dir' && export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 && export PATH=\$JAVA_HOME/bin:\$PATH && \
      mvn -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -q -Dgit.commit=$git_commit && \
      (cd ontology-desktop && mvn clean package -DskipTests -q -Dgit.commit=$git_commit) && \
-     cd electron-app && $dist_cmd" \
+     (cd ontology-vscode-extension/webview-src && [ -d node_modules ] || npm install) && \
+     cd electron-app && \
+     ( [ -d node_modules ] || npm install ) && \
+     $dist_cmd" \
     || { echo "ERROR: remote desktop linux build failed" >&2; return 1; }
 
-  echo "[progress][$m-linux] $(date '+%H:%M:%S') build OK — fetching artifacts back"
-  mkdir -p "$ROOT/electron-app/dist-electron"
-  rsync -avz -e "$rsync_rsh" \
-    --include='*.AppImage' --include='*.deb' --exclude='*' \
-    "${HOST[$m]}:$remote_dir/electron-app/dist-electron/" "$ROOT/electron-app/dist-electron/" || return 1
+  echo "[progress][$m-linux] $(date '+%H:%M:%S') build OK — uploading directly from remote host"
+  if [[ -z "${ADMIN_USER:-}" || -z "${ADMIN_PASSWORD:-}" ]]; then
+    echo "ERROR: Set ADMIN_USER and ADMIN_PASSWORD for the desktop platform" >&2
+    return 1
+  fi
+  local ver=""
+  [[ -f "$ROOT/electron-app/package.json" ]] && ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/electron-app/package.json" | head -1)
 
-  echo "[progress][$m-linux] $(date '+%H:%M:%S') artifacts fetched — uploading"
-  if upload_linux_installers "$api_base"; then
+  local local_creds local_script
+  local_creds="$(mktemp)"
+  local_script="$(mktemp)"
+  trap 'rm -f "$local_creds" "$local_script"' RETURN
+  chmod 600 "$local_creds"
+  printf 'ADMIN_USER=%q\nADMIN_PASSWORD=%q\n' "$ADMIN_USER" "$ADMIN_PASSWORD" > "$local_creds"
+  cat > "$local_script" <<'UPLOADSCRIPT'
+#!/bin/bash
+set -uo pipefail
+CREDS_FILE="$1" API_BASE="$2" VERSION="$3" DIST="$4"
+# shellcheck disable=SC1090
+source "$CREDS_FILE"
+rm -f "$CREDS_FILE"
+
+TOKEN=$(curl -sf --connect-timeout 15 --max-time 60 -X POST "$API_BASE/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASSWORD\"}" \
+  | sed -n 's/.*"jwt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+unset ADMIN_USER ADMIN_PASSWORD
+if [ -z "$TOKEN" ]; then echo "ERROR: login to $API_BASE failed" >&2; exit 1; fi
+echo "[progress] remote login OK"
+
+upload_one() {
+  local platform="$1" file="$2"
+  local mb=$(( $(wc -c <"$file" | tr -d ' ') / 1024 / 1024 ))
+  echo "[progress] uploading $(basename "$file") (${mb} MiB) -> $platform"
+  curl -f --connect-timeout 30 --max-time 1800 -X POST "$API_BASE/api/downloads/upload" \
+    -H "Authorization: Bearer $TOKEN" \
+    -F "platform=$platform" -F "filename=$(basename "$file")" -F "version=$VERSION" -F "file=@$file"
+  echo ""
+}
+
+cd "$DIST" || exit 1
+shopt -s nullglob
+appimages=( *.AppImage ); debs=( *.deb ); flatpaks=( *.flatpak )
+shopt -u nullglob
+FAIL=0
+for f in "${appimages[@]}"; do
+  case "$f" in *arm64*) p=linux-arm64 ;; *) p=linux-x64 ;; esac
+  upload_one "$p" "$f" || FAIL=1
+done
+for f in "${debs[@]}"; do
+  case "$f" in *arm64*) p=linux-deb-arm64 ;; *) p=linux-deb ;; esac
+  upload_one "$p" "$f" || FAIL=1
+done
+for f in "${flatpaks[@]}"; do
+  upload_one "linux-flatpak" "$f" || FAIL=1
+done
+exit $FAIL
+UPLOADSCRIPT
+
+  scp -q "${ssh_opts[@]}" "$local_creds" "${HOST[$m]}:/tmp/.ontocode-creds-$$" || return 1
+  ssh "${ssh_opts[@]}" "${HOST[$m]}" "chmod 600 /tmp/.ontocode-creds-$$" || return 1
+  if ssh "${ssh_opts[@]}" "${HOST[$m]}" "bash -s -- '/tmp/.ontocode-creds-$$' '$api_base' '${ver:-unknown}' '$remote_dir/electron-app/dist-electron'" < "$local_script"; then
     echo "[progress][$m-linux] $(date '+%H:%M:%S') DONE"
   else
     echo "[progress][$m-linux] $(date '+%H:%M:%S') finished with errors (see above)"
@@ -754,7 +818,10 @@ EOF
 rebuild_desktop_backend() {
   local needs_desktop=0 p
   for p in "${PLATFORMS[@]}"; do
-    case "$p" in windows|linux|mac) needs_desktop=1 ;; esac
+    case "$p" in
+      windows|mac) needs_desktop=1 ;;
+      linux) [[ $REMOTE_BUILD_ARG -eq 1 ]] || needs_desktop=1 ;;
+    esac
   done
   [[ $needs_desktop -eq 1 ]] || return 0
 
