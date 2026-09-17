@@ -760,7 +760,7 @@ public class StorageManager {
         if (line.matches(".*\\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]+)\\b.*")) {
             String prefixedName = line.replaceAll(".*\\b([a-zA-Z_][a-zA-Z0-9_-]*:[a-zA-Z_][a-zA-Z0-9_-]+)\\b.*", "$1");
             // Filter out common RDF/OWL predicates
-            if (!prefixedName.matches("(rdf|rdfs|owl|dc|bibo|prov|foaf|xsd):.*")) {
+            if (!prefixedName.matches("(rdf|rdfs|owl|dc|bibo|prov|foaf|xsd|xmlns|xml):.*")) {
                 return prefixedName;
             }
         }
