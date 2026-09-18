@@ -1141,6 +1141,8 @@ public class SparqlDatasetService {
         execUpdate(projectId, getGraphUri(projectId), sparqlUpdate);
         if (mainGraphRevisionService != null) {
             mainGraphRevisionService.incrementRevision(projectId);
+        } else {
+            log.warn("[REVISION] mainGraphRevisionService is null in SparqlDatasetService for project={}", projectId);
         }
     }
 
