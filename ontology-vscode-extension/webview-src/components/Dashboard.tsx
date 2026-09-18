@@ -3496,6 +3496,21 @@ const Dashboard: React.FC<DashboardProps> = ({
             console.log("[Dashboard] reasoner bundle:", results);
       console.log("[Dashboard] FIRST inferred class item:", JSON.stringify((results as any)?.classHierarchy?.[0], null, 2));
 
+      if ((results as any)?.inconsistent === true) {
+        setConsistencyResult({
+          consistent: false,
+          isConsistent: false,
+          reasonerType: selectedReasoner,
+          projectId,
+          issues: (results as any).issues,
+        });
+        notificationService.error(
+          "Ontology Inconsistent",
+          (results as any).message || "Classification found the ontology is inconsistent. Open Explain Inconsistency to inspect the causes.",
+        );
+        return;
+      }
+
       const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
       const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
         (results as any)?.objectPropertyHierarchy,
