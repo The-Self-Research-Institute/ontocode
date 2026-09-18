@@ -25,6 +25,7 @@ public class ProjectDocument {
     private Map<String, Object> metadata;
     /** Monotonic counter bumped on every Fuseki write; used to invalidate stale OWLAPI caches. */
     private Long mutationVersion;
+    private Long mainGraphRevision;
     private List<MemberRef> members;
 
     public static class MemberRef {
@@ -154,6 +155,14 @@ public class ProjectDocument {
 
     public void setMutationVersion(Long mutationVersion) {
         this.mutationVersion = mutationVersion;
+    }
+
+    public Long getMainGraphRevision() {
+        return mainGraphRevision;
+    }
+
+    public void setMainGraphRevision(Long mainGraphRevision) {
+        this.mainGraphRevision = mainGraphRevision;
     }
 
     public List<MemberRef> getMembers() {
