@@ -274,7 +274,14 @@ export const combineReasonerResults = (classificationPayload: any, statsPayload?
 
   const unsatRaw = statsData.unsatisfiableClasses;
   const unsatCount = unsatRaw === -1 ? 0 : statsData.unsatisfiableClasses || 0;
-  const isConsistent = statsData.isConsistent === false || unsatRaw === -1 ? false : true;
+  // /reasoner/stats is a separate, independently-cached backend call (ontology-editor's own
+  // local reasoner, not the worker classify just ran through) — it can lag behind a fresh
+  // edit and report consistent when classify's own isConsistent() check, moments earlier in
+  // the same operation, already found otherwise. classify's finding is the newer, more
+  // authoritative signal, so it wins rather than getting silently overwritten here.
+  const isConsistent = (classificationData as any)?.inconsistent === true
+    ? false
+    : statsData.isConsistent === false || unsatRaw === -1 ? false : true;
 
   return {
     ...classificationData,
