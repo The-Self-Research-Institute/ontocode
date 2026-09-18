@@ -379,9 +379,7 @@ public class WorkspaceService {
     /**
      * Remove a member from workspace (by userId or email).
      * Also removes any WS_EDITOR_LINK_ADMIN project entries for the removed user
-     * so they don't retain project access after being removed from the workspace,
-     * and permanently deletes any private (single-member) project the removed
-     * member owned, rather than leaving it as an inaccessible orphan.
+     * so they don't retain project access after being removed from the workspace.
      */
     @Transactional
     public void removeMember(String workspaceId, String memberIdentifier) {
@@ -419,28 +417,12 @@ public class WorkspaceService {
             final String finalUserId = removedUserId;
             projectRepository.findByWorkspaceId(workspaceId).forEach(project -> {
                 Project.ProjectMember pm = project.getMember(finalUserId);
-                if (pm == null) {
-                    return;
+                if (pm != null) {
+                    project.removeMember(finalUserId);
+                    projectRepository.save(project);
+                    log.info("Removed user {} from project {} after workspace member removal",
+                            finalUserId, project.getProjectId());
                 }
-
-                boolean isPrivateProject = finalUserId.equals(project.getOwnerId())
-                        && project.getMembers().size() <= 1;
-                if (isPrivateProject) {
-                    try {
-                        projectService.hardDeleteProjectCompletely(project.getProjectId(), finalUserId);
-                        log.info("Permanently deleted private project {} owned by removed member {} from workspace {}",
-                                project.getProjectId(), finalUserId, workspaceId);
-                        return;
-                    } catch (Exception e) {
-                        log.warn("Could not hard-delete private project {} for removed member {}, falling back to membership removal: {}",
-                                project.getProjectId(), finalUserId, e.getMessage());
-                    }
-                }
-
-                project.removeMember(finalUserId);
-                projectRepository.save(project);
-                log.info("Removed user {} from project {} after workspace member removal",
-                        finalUserId, project.getProjectId());
             });
         }
     }
@@ -558,6 +540,33 @@ public class WorkspaceService {
                         previousOwnerId, newOwnerId, project.getProjectId());
             }
         }
+    }
+
+    @Transactional
+    public Workspace transferOwnership(String workspaceId, String currentOwnerId, String newOwnerId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+        if (!workspace.getOwnerId().equals(currentOwnerId)) {
+            throw new SecurityException("Only the current workspace owner can transfer ownership");
+        }
+        Workspace.WorkspaceMember target = workspace.getMember(newOwnerId);
+        if (target == null) {
+            throw new IllegalArgumentException("Member not found in workspace");
+        }
+
+        WorkspaceRole previousRole = target.getRole();
+
+        workspace.getMembers().stream()
+                .filter(m -> m.getRole() == WorkspaceRole.OWNER)
+                .forEach(m -> m.setRole(WorkspaceRole.ADMIN));
+        workspace.setOwnerId(newOwnerId);
+        target.setRole(WorkspaceRole.OWNER);
+        workspace = updateWorkspace(workspace);
+
+        syncAdminRoleChangeToProjects(workspace, newOwnerId, previousRole, WorkspaceRole.OWNER);
+        syncOwnerTransferToProjects(workspace, currentOwnerId, newOwnerId);
+
+        return workspace;
     }
 
     /**

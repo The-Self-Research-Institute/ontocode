@@ -55,11 +55,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
     const [deletingAccount, setDeletingAccount] = useState(false);
     const [checkingDeletionImpact, setCheckingDeletionImpact] = useState(false);
     const [deletionImpact, setDeletionImpact] = useState<{
-        sharedWorkspaces: Array<{ workspaceId: string; name: string; otherMembers: Array<{ userId: string; username: string; email: string }> }>;
-        sharedProjects: Array<{ projectId: string; name: string; workspaceId: string; otherMembers: Array<{ userId: string; username: string; email: string }> }>;
+        workspaces: Array<{ workspaceId: string; name: string; hasOtherMembers: boolean; otherMembers: Array<{ userId: string; username: string; email: string }> }>;
+        projects: Array<{ projectId: string; name: string; workspaceId: string; isPrivate: boolean; hasOtherMembers: boolean; otherMembers: Array<{ userId: string; username: string; email: string }> }>;
     } | null>(null);
     const [ownershipChoices, setOwnershipChoices] = useState<Record<string, string>>({});
-    const [resolvingOwnership, setResolvingOwnership] = useState(false);
 
     /*
     useEffect(() => {
@@ -290,12 +289,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         try {
             const response = await apiClient.get('/api/auth/account/deletion-impact');
             const impact = (response as any)?.data || response;
-            const hasShared = (impact?.sharedWorkspaces?.length || 0) > 0 || (impact?.sharedProjects?.length || 0) > 0;
-            if (hasShared) {
+            const ownsAnything = (impact?.workspaces?.length || 0) > 0 || (impact?.projects?.length || 0) > 0;
+            if (ownsAnything) {
                 setDeletionImpact(impact);
                 const defaults: Record<string, string> = {};
-                impact.sharedWorkspaces.forEach((w: any) => { defaults[w.workspaceId] = 'DELETE'; });
-                impact.sharedProjects.forEach((p: any) => { defaults[p.projectId] = 'DELETE'; });
+                impact.workspaces.forEach((w: any) => { if (w.hasOtherMembers) defaults[w.workspaceId] = 'DELETE'; });
+                impact.projects.forEach((p: any) => { if (p.hasOtherMembers) defaults[p.projectId] = 'DELETE'; });
                 setOwnershipChoices(defaults);
             } else {
                 setShowDeleteConfirm(true);
@@ -308,30 +307,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         }
     };
 
-    const handleResolveOwnershipAndProceed = async () => {
-        if (!deletionImpact) return;
-        setResolvingOwnership(true);
-        try {
-            for (const workspace of deletionImpact.sharedWorkspaces) {
-                const choice = ownershipChoices[workspace.workspaceId];
-                if (choice && choice !== 'DELETE') {
-                    await apiClient.put(`/api/workspaces/${workspace.workspaceId}/members/${choice}/role`, { role: 'OWNER' });
-                }
-            }
-            for (const project of deletionImpact.sharedProjects) {
-                const choice = ownershipChoices[project.projectId];
-                if (choice && choice !== 'DELETE') {
-                    await apiClient.patch(`/api/projects/${project.projectId}/members/${choice}/role`, { role: 'OWNER' });
-                }
-            }
-            setDeletionImpact(null);
-            setShowDeleteConfirm(true);
-        } catch (error: any) {
-            console.error('Error applying ownership choices:', error);
-            showMessage('error', error?.error || error?.message || 'Failed to transfer ownership');
-        } finally {
-            setResolvingOwnership(false);
-        }
+    const handleResolveOwnershipAndProceed = () => {
+        setDeletionImpact(null);
+        setShowDeleteConfirm(true);
     };
 
     const handleDeleteAccount = async () => {
@@ -342,7 +320,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
 
         try {
             setDeletingAccount(true);
-            await apiClient.delete('/api/auth/account');
+            const resolutions: Array<{ type: string; id: string; action: string; transferToUserId?: string }> = [];
+            if (deletionImpact) {
+                deletionImpact.workspaces.forEach((w) => {
+                    const choice = ownershipChoices[w.workspaceId];
+                    if (choice && choice !== 'DELETE') {
+                        resolutions.push({ type: 'workspace', id: w.workspaceId, action: 'TRANSFER', transferToUserId: choice });
+                    }
+                });
+                deletionImpact.projects.forEach((p) => {
+                    const choice = ownershipChoices[p.projectId];
+                    if (choice && choice !== 'DELETE') {
+                        resolutions.push({ type: 'project', id: p.projectId, action: 'TRANSFER', transferToUserId: choice });
+                    }
+                });
+            }
+            await apiClient.post('/api/auth/account/delete', { resolutions });
 
             if (onLogout) {
                 onLogout();
@@ -808,45 +801,67 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         <div className="fixed inset-0 z-[9999] flex items-center justify-center">
           <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setDeletionImpact(null)} />
           <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 p-6 max-h-[85vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Resolve Shared Workspaces & Projects</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">This is what deleting your account removes</h3>
             <p className="text-sm text-gray-600 mb-4">
-              You own the following, and other people still have access. For each one, choose to transfer
-              ownership to someone else, or delete it anyway (removing everyone's access).
+              Everything below that you solely own is deleted permanently and immediately — there's no undo.
+              For anything other people still have access to, choose to transfer ownership or delete it anyway.
             </p>
-            <div className="space-y-4">
+            <div className="space-y-3">
               {[
-                ...deletionImpact.sharedWorkspaces.map((w) => ({ id: w.workspaceId, label: `Workspace: ${w.name}`, otherMembers: w.otherMembers })),
-                ...deletionImpact.sharedProjects.map((p) => ({ id: p.projectId, label: `Project: ${p.name}`, otherMembers: p.otherMembers })),
+                ...deletionImpact.workspaces.map((w) => ({
+                  id: w.workspaceId,
+                  label: `Workspace: ${w.name}`,
+                  tag: 'Solely owned',
+                  hasOtherMembers: w.hasOtherMembers,
+                  otherMembers: w.otherMembers,
+                })),
+                ...deletionImpact.projects.map((p) => ({
+                  id: p.projectId,
+                  label: `Project: ${p.name}`,
+                  tag: p.isPrivate ? 'Private' : 'Solely owned',
+                  hasOtherMembers: p.hasOtherMembers,
+                  otherMembers: p.otherMembers,
+                })),
               ].map((item) => (
                 <div key={item.id} className="border border-gray-200 rounded-lg p-3">
-                  <p className="font-medium text-gray-900 text-sm mb-1">{item.label}</p>
-                  <select
-                    value={ownershipChoices[item.id] || 'DELETE'}
-                    onChange={(e) => setOwnershipChoices((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                    className="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5"
-                  >
-                    <option value="DELETE">Delete anyway</option>
-                    {item.otherMembers.map((m) => (
-                      <option key={m.userId} value={m.userId}>Transfer to {m.username} ({m.email})</option>
-                    ))}
-                  </select>
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <p className="font-medium text-gray-900 text-sm">{item.label}</p>
+                    {item.hasOtherMembers ? (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 whitespace-nowrap">
+                        {item.otherMembers.length} other member{item.otherMembers.length === 1 ? '' : 's'}
+                      </span>
+                    ) : (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-800 whitespace-nowrap">
+                        Will be deleted
+                      </span>
+                    )}
+                  </div>
+                  {item.hasOtherMembers && (
+                    <select
+                      value={ownershipChoices[item.id] || 'DELETE'}
+                      onChange={(e) => setOwnershipChoices((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                      className="w-full text-sm border border-gray-300 rounded-lg px-2 py-1.5"
+                    >
+                      <option value="DELETE">Delete anyway (removes everyone's access)</option>
+                      {item.otherMembers.map((m) => (
+                        <option key={m.userId} value={m.userId}>Transfer to {m.username} ({m.email})</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               ))}
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button
                 onClick={() => setDeletionImpact(null)}
-                disabled={resolvingOwnership}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleResolveOwnershipAndProceed}
-                disabled={resolvingOwnership}
-                className="px-4 py-2 text-sm font-medium text-white rounded-md bg-red-600 hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 text-sm font-medium text-white rounded-md bg-red-600 hover:bg-red-700"
               >
-                {resolvingOwnership && <Loader2 size={16} className="animate-spin" />}
                 Continue
               </button>
             </div>

@@ -692,40 +692,63 @@ public class AuthController {
             }
             String userId = userOpt.get().getId();
 
-            List<Map<String, Object>> sharedWorkspaces = workspaceRepository.findByOwnerId(userId).stream()
-                    .filter(w -> w.getMembers().stream().anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId)))
-                    .map(w -> Map.<String, Object>of(
-                        "workspaceId", w.getWorkspaceId(),
-                        "name", w.getName(),
-                        "otherMembers", w.getMembers().stream()
-                            .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
-                            .map(m -> Map.of("userId", m.getUserId(), "username", m.getUsername(), "email", m.getEmail()))
-                            .collect(Collectors.toList())
-                    ))
+            List<Map<String, Object>> workspaces = workspaceRepository.findByOwnerId(userId).stream()
+                    .map(w -> {
+                        List<Map<String, Object>> otherMembers = w.getMembers().stream()
+                                .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                                .map(m -> Map.<String, Object>of("userId", m.getUserId(), "username", m.getUsername(), "email", m.getEmail()))
+                                .collect(Collectors.toList());
+                        Map<String, Object> dto = new HashMap<>();
+                        dto.put("workspaceId", w.getWorkspaceId());
+                        dto.put("name", w.getName());
+                        dto.put("otherMembers", otherMembers);
+                        dto.put("hasOtherMembers", !otherMembers.isEmpty());
+                        return dto;
+                    })
                     .collect(Collectors.toList());
 
-            List<Map<String, Object>> sharedProjects = projectRepository.findByOwnerId(userId).stream()
-                    .filter(p -> p.getMembers().stream().anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId)))
-                    .map(p -> Map.<String, Object>of(
-                        "projectId", p.getProjectId(),
-                        "name", p.getName(),
-                        "workspaceId", p.getWorkspaceId(),
-                        "otherMembers", p.getMembers().stream()
-                            .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
-                            .map(m -> Map.of("userId", m.getUserId(), "username", m.getUsername(), "email", m.getEmail()))
-                            .collect(Collectors.toList())
-                    ))
+            List<Map<String, Object>> projects = projectRepository.findByOwnerId(userId).stream()
+                    .map(p -> {
+                        List<Map<String, Object>> otherMembers = p.getMembers().stream()
+                                .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                                .map(m -> Map.<String, Object>of("userId", m.getUserId(), "username", m.getUsername(), "email", m.getEmail()))
+                                .collect(Collectors.toList());
+                        String visibility = p.getVisibility();
+                        boolean isPrivate = "PRIVATE".equals(visibility)
+                                || (visibility == null && otherMembers.isEmpty());
+                        Map<String, Object> dto = new HashMap<>();
+                        dto.put("projectId", p.getProjectId());
+                        dto.put("name", p.getName());
+                        dto.put("workspaceId", p.getWorkspaceId());
+                        dto.put("isPrivate", isPrivate);
+                        dto.put("otherMembers", otherMembers);
+                        dto.put("hasOtherMembers", !otherMembers.isEmpty());
+                        return dto;
+                    })
                     .collect(Collectors.toList());
 
-            return ResponseEntity.ok(Map.of("sharedWorkspaces", sharedWorkspaces, "sharedProjects", sharedProjects));
+            return ResponseEntity.ok(Map.of("workspaces", workspaces, "projects", projects));
         } catch (Exception e) {
             log.error("Error computing account deletion impact", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to compute deletion impact: " + e.getMessage()));
         }
     }
 
-    @DeleteMapping("/account")
-    public ResponseEntity<?> deleteAccount(@RequestHeader("Authorization") String authHeader) {
+    public static class OwnershipResolution {
+        public String type;
+        public String id;
+        public String action;
+        public String transferToUserId;
+    }
+
+    public static class AccountDeleteRequest {
+        public List<OwnershipResolution> resolutions;
+    }
+
+    @PostMapping("/account/delete")
+    public ResponseEntity<?> deleteAccount(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody(required = false) AccountDeleteRequest request) {
         try {
             String token = authHeader.replace("Bearer ", "");
             String email = jwtUtil.extractEmail(token);
@@ -736,6 +759,20 @@ public class AuthController {
             }
             User user = userOpt.get();
             String userId = user.getId();
+
+            List<OwnershipResolution> resolutions = request != null && request.resolutions != null
+                    ? request.resolutions : List.of();
+            for (OwnershipResolution resolution : resolutions) {
+                if (!"TRANSFER".equalsIgnoreCase(resolution.action)
+                        || resolution.transferToUserId == null || resolution.transferToUserId.isBlank()) {
+                    continue;
+                }
+                if ("workspace".equalsIgnoreCase(resolution.type)) {
+                    workspaceService.transferOwnership(resolution.id, userId, resolution.transferToUserId);
+                } else if ("project".equalsIgnoreCase(resolution.type)) {
+                    projectService.updateMemberRole(resolution.id, userId, resolution.transferToUserId, "OWNER");
+                }
+            }
 
             List<Workspace> ownedWorkspaces = workspaceRepository.findByOwnerId(userId);
             List<Project> ownedProjects = projectRepository.findByOwnerId(userId);
