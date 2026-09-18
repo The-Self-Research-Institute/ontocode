@@ -31,6 +31,7 @@ CHANGES_ARG=""
 PLATFORM_ARG=""
 LINUX_ONLY_ARG=""
 REMOTE_BUILD_ARG=0
+UPLOAD_ONLY_ARG=0
 REMOTE_BUILD_SUPPORTED=("${DEFAULT_ALL_SERVICES[@]}")
 
 declare -A COMPOSE_SERVICE_NAME=(
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --platform) shift; PLATFORM_ARG="${1:-}"; shift ;;
     --linux-only) shift; LINUX_ONLY_ARG="${1:-}"; shift ;;
     --remote-build) REMOTE_BUILD_ARG=1; shift ;;
+    --upload-only) UPLOAD_ONLY_ARG=1; shift ;;
     *) echo "Unknown arg: $1" >&2; usage 1 ;;
   esac
 done
@@ -577,43 +579,6 @@ branch_desktop_linux_remote_build() {
     return 1
   fi
 
-  echo "[progress][$m-linux] $(date '+%H:%M:%S') START remote build → ${HOST[$m]}:$remote_dir (commit $git_commit)"
-  ssh "${ssh_opts[@]}" "${HOST[$m]}" "mkdir -p '$remote_dir'" || return 1
-
-  echo "[progress][$m-linux] rsync source"
-  rsync -azR -e "$rsync_rsh" \
-    --exclude 'node_modules' --exclude 'dist-electron*' \
-    --exclude 'electron-app/resources/backend' --exclude 'electron-app/logs' \
-    pom.xml shared/ \
-    ontology-auth/pom.xml ontology-auth/src/ \
-    ontology-editor/pom.xml ontology-editor/src/ \
-    ontology-plugin-service/pom.xml ontology-plugin-service/src/ \
-    ontology-desktop/pom.xml ontology-desktop/src/ \
-    ontology-gateway/pom.xml ontology-gateway/src/ \
-    ontology-swrl/pom.xml ontology-swrl/src/ \
-    ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
-    electron-app/ ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ \
-    "${HOST[$m]}:$remote_dir/" || return 1
-
-  local dist_cmd=""
-  local t
-  for t in "${dist_targets[@]}"; do
-    dist_cmd+="ONTOCODE_UPDATE_HOST=$update_host npm run $t && "
-  done
-  dist_cmd+="true"
-
-  echo "[progress][$m-linux] $(date '+%H:%M:%S') rsync OK — building on remote (${dist_targets[*]})"
-  ssh "${ssh_opts[@]}" "${HOST[$m]}" \
-    "cd '$remote_dir' && export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 && export PATH=\$JAVA_HOME/bin:\$PATH && \
-     mvn -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -q -Dgit.commit=$git_commit && \
-     (cd ontology-desktop && mvn clean package -DskipTests -q -Dgit.commit=$git_commit) && \
-     (cd ontology-vscode-extension/webview-src && [ -d node_modules ] || npm install) && \
-     cd electron-app && \
-     ( [ -d node_modules ] || npm install ) && \
-     $dist_cmd" \
-    || { echo "ERROR: remote desktop linux build failed" >&2; return 1; }
-
-  echo "[progress][$m-linux] $(date '+%H:%M:%S') build OK — uploading directly from remote host"
   if [[ -z "${ADMIN_USER:-}" || -z "${ADMIN_PASSWORD:-}" ]]; then
     echo "ERROR: Set ADMIN_USER and ADMIN_PASSWORD for the desktop platform" >&2
     return 1
@@ -621,20 +586,45 @@ branch_desktop_linux_remote_build() {
   local ver=""
   [[ -f "$ROOT/electron-app/package.json" ]] && ver=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/electron-app/package.json" | head -1)
 
+  if [[ $UPLOAD_ONLY_ARG -eq 1 ]]; then
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') --upload-only — skipping rsync/build, uploading whatever's already at ${HOST[$m]}:$remote_dir"
+  else
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') START remote build → ${HOST[$m]}:$remote_dir (commit $git_commit)"
+    ssh "${ssh_opts[@]}" "${HOST[$m]}" "mkdir -p '$remote_dir'" || return 1
+
+    echo "[progress][$m-linux] rsync source"
+    rsync -azR -e "$rsync_rsh" \
+      --exclude 'node_modules' --exclude 'dist-electron*' \
+      --exclude 'electron-app/resources/backend' --exclude 'electron-app/logs' \
+      pom.xml shared/ \
+      ontology-auth/pom.xml ontology-auth/src/ \
+      ontology-editor/pom.xml ontology-editor/src/ \
+      ontology-plugin-service/pom.xml ontology-plugin-service/src/ \
+      ontology-desktop/pom.xml ontology-desktop/src/ \
+      ontology-gateway/pom.xml ontology-gateway/src/ \
+      ontology-swrl/pom.xml ontology-swrl/src/ \
+      ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
+      electron-app/ ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ \
+      "${HOST[$m]}:$remote_dir/" || return 1
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') rsync OK — building + uploading each target on remote (${dist_targets[*]})"
+  fi
+
   local local_creds local_script
   local_creds="$(mktemp)"
   local_script="$(mktemp)"
   trap 'rm -f "${local_creds:-}" "${local_script:-}"' RETURN
   chmod 600 "$local_creds"
   printf 'ADMIN_USER=%q\nADMIN_PASSWORD=%q\n' "$ADMIN_USER" "$ADMIN_PASSWORD" > "$local_creds"
-  cat > "$local_script" <<'UPLOADSCRIPT'
+  cat > "$local_script" <<'REMOTESCRIPT'
 #!/bin/bash
 set -uo pipefail
-CREDS_FILE="$1" API_BASE="$2" VERSION="$3" DIST="$4"
+CREDS_FILE="$1"; API_BASE="$2"; VERSION="$3"; REMOTE_DIR="$4"; UPDATE_HOST="$5"; GIT_COMMIT="$6"; UPLOAD_ONLY="$7"; shift 7
+TARGETS=("$@")
+DIST="$REMOTE_DIR/electron-app/dist-electron"
+
 # shellcheck disable=SC1090
 source "$CREDS_FILE"
 rm -f "$CREDS_FILE"
-
 TOKEN=$(curl -sf --connect-timeout 15 --max-time 60 -X POST "$API_BASE/api/auth/login" \
   -H "Content-Type: application/json" \
   -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASSWORD\"}" \
@@ -647,42 +637,108 @@ upload_one() {
   local platform="$1" file="$2"
   local mb=$(( $(wc -c <"$file" | tr -d ' ') / 1024 / 1024 ))
   echo "[progress] uploading $(basename "$file") (${mb} MiB) -> $platform"
-  curl -f --connect-timeout 30 --max-time 1800 -X POST "$API_BASE/api/downloads/upload" \
-    -H "Authorization: Bearer $TOKEN" \
-    -F "platform=$platform" -F "filename=$(basename "$file")" -F "version=$VERSION" -F "file=@$file"
-  local curl_rc=$?
-  echo ""
-  if [[ $curl_rc -ne 0 ]]; then
-    echo "ERROR: upload of $(basename "$file") failed (curl exit $curl_rc)" >&2
+  if ! curl -f --connect-timeout 30 --max-time 1800 -X POST "$API_BASE/api/downloads/upload" \
+      -H "Authorization: Bearer $TOKEN" \
+      -F "platform=$platform" -F "filename=$(basename "$file")" -F "version=$VERSION" -F "file=@$file"; then
+    echo ""
+    echo "ERROR: upload of $(basename "$file") failed" >&2
     return 1
   fi
+  echo ""
 }
 
-cd "$DIST" || exit 1
-shopt -s nullglob
-appimages=( *.AppImage ); debs=( *.deb ); flatpaks=( *.flatpak )
-shopt -u nullglob
+# Uploads whatever matches $1 (a glob, already expanded by the caller) for the given
+# platform, picking the most recently built file if more than one is present.
+upload_latest() {
+  local platform="$1"; shift
+  local -a matches=("$@")
+  [[ ${#matches[@]} -eq 0 ]] && return 0
+  local f
+  f=$(ls -t "${matches[@]}" | head -1)
+  upload_one "$platform" "$f"
+}
+
 FAIL=0
-for f in "${appimages[@]}"; do
-  case "$f" in *arm64*) p=linux-arm64 ;; *) p=linux-x64 ;; esac
-  upload_one "$p" "$f" || FAIL=1
-done
-for f in "${debs[@]}"; do
-  case "$f" in *arm64*) p=linux-deb-arm64 ;; *) p=linux-deb ;; esac
-  upload_one "$p" "$f" || FAIL=1
-done
-for f in "${flatpaks[@]}"; do
-  upload_one "linux-flatpak" "$f" || FAIL=1
-done
+if [[ "$UPLOAD_ONLY" -eq 0 ]]; then
+  cd "$REMOTE_DIR" || exit 1
+  export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+  export PATH="$JAVA_HOME/bin:$PATH"
+  echo "[progress] building shared backend (commit $GIT_COMMIT)"
+  if ! mvn -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -q -Dgit.commit="$GIT_COMMIT"; then
+    echo "ERROR: shared backend build failed — no target can be built" >&2
+    exit 1
+  fi
+  if ! (cd ontology-desktop && mvn clean package -DskipTests -q -Dgit.commit="$GIT_COMMIT"); then
+    echo "ERROR: ontology-desktop jar build failed — no target can be built" >&2
+    exit 1
+  fi
+  (cd ontology-vscode-extension/webview-src && [ -d node_modules ] || npm install)
+  cd electron-app || exit 1
+  [ -d node_modules ] || npm install
+
+  for target in "${TARGETS[@]}"; do
+    echo "[progress] building dist:linux:$target"
+    if ONTOCODE_UPDATE_HOST="$UPDATE_HOST" npm run "dist:linux:$target"; then
+      echo "[progress] $target build OK — uploading immediately (not waiting for other targets)"
+    else
+      echo "WARNING: $target build failed — skipping its upload, continuing with remaining targets" >&2
+      FAIL=1
+      continue
+    fi
+    cd "$DIST" || { FAIL=1; continue; }
+    shopt -s nullglob
+    case "$target" in
+      x64)
+        appimg=( *.AppImage ); appimg_x64=(); for f in "${appimg[@]+"${appimg[@]}"}"; do [[ "$f" == *arm64* ]] || appimg_x64+=("$f"); done
+        deb=( *.deb ); deb_x64=(); for f in "${deb[@]+"${deb[@]}"}"; do [[ "$f" == *arm64* ]] || deb_x64+=("$f"); done
+        upload_latest linux-x64 "${appimg_x64[@]+"${appimg_x64[@]}"}" || FAIL=1
+        upload_latest linux-deb "${deb_x64[@]+"${deb_x64[@]}"}" || FAIL=1
+        ;;
+      arm64)
+        appimg_arm64=( *arm64*.AppImage )
+        deb_arm64=( *arm64*.deb )
+        upload_latest linux-arm64 "${appimg_arm64[@]+"${appimg_arm64[@]}"}" || FAIL=1
+        upload_latest linux-deb-arm64 "${deb_arm64[@]+"${deb_arm64[@]}"}" || FAIL=1
+        ;;
+      flatpak)
+        flatpaks=( *.flatpak )
+        upload_latest linux-flatpak "${flatpaks[@]+"${flatpaks[@]}"}" || FAIL=1
+        ;;
+    esac
+    shopt -u nullglob
+    cd "$REMOTE_DIR/electron-app" || exit 1
+  done
+else
+  echo "[progress] --upload-only — uploading whatever's already in $DIST"
+  cd "$DIST" || exit 1
+  shopt -s nullglob
+  appimages=( *.AppImage ); debs=( *.deb ); flatpaks=( *.flatpak )
+  shopt -u nullglob
+  for f in "${appimages[@]+"${appimages[@]}"}"; do
+    case "$f" in *arm64*) p=linux-arm64 ;; *) p=linux-x64 ;; esac
+    upload_one "$p" "$f" || FAIL=1
+  done
+  for f in "${debs[@]+"${debs[@]}"}"; do
+    case "$f" in *arm64*) p=linux-deb-arm64 ;; *) p=linux-deb ;; esac
+    upload_one "$p" "$f" || FAIL=1
+  done
+  for f in "${flatpaks[@]+"${flatpaks[@]}"}"; do
+    upload_one linux-flatpak "$f" || FAIL=1
+  done
+fi
 exit $FAIL
-UPLOADSCRIPT
+REMOTESCRIPT
 
   scp -q "${ssh_opts[@]}" "$local_creds" "${HOST[$m]}:/tmp/.ontocode-creds-$$" || return 1
   ssh "${ssh_opts[@]}" "${HOST[$m]}" "chmod 600 /tmp/.ontocode-creds-$$" || return 1
-  if ssh "${ssh_opts[@]}" "${HOST[$m]}" "bash -s -- '/tmp/.ontocode-creds-$$' '$api_base' '${ver:-unknown}' '$remote_dir/electron-app/dist-electron'" < "$local_script"; then
+  local -a target_names=()
+  for t in "${dist_targets[@]}"; do target_names+=("${t#dist:linux:}"); done
+  if ssh "${ssh_opts[@]}" "${HOST[$m]}" \
+      "bash -s -- '/tmp/.ontocode-creds-$$' '$api_base' '${ver:-unknown}' '$remote_dir' '$update_host' '$git_commit' '$UPLOAD_ONLY_ARG' ${target_names[*]}" \
+      < "$local_script"; then
     echo "[progress][$m-linux] $(date '+%H:%M:%S') DONE"
   else
-    echo "[progress][$m-linux] $(date '+%H:%M:%S') finished with errors (see above)"
+    echo "[progress][$m-linux] $(date '+%H:%M:%S') finished with errors (see above) — but any target that built successfully was already uploaded"
     return 1
   fi
 }
