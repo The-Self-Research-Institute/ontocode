@@ -2,6 +2,8 @@ package self.research.ontology.owlEditor.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -165,6 +167,9 @@ public class ProjectLoadController {
         this.mongoTemplate = mongoTemplate;
         this.exportJobService = exportJobService;
     }
+
+    @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.OntologyMutationService ontologyMutationService;
 
     @PostMapping("/upload/{projectId:.+}")  // Allow slashes in path variable
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
@@ -1947,6 +1952,15 @@ public class ProjectLoadController {
                 }
             }
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
+
+            if (ontologyMutationService != null) {
+                try {
+                    ontologyMutationService.invalidateReasonerCaches(projectId);
+                } catch (Exception cacheEx) {
+                    log.warn("[CODE-VIEW-SAVE] Failed busting reasoner caches for project {} (non-fatal): {}",
+                            projectId, cacheEx.getMessage());
+                }
+            }
 
             // bulkLoadChunked() above cleared the dirty marker as if disk now matched Fuseki,
             // but code-view-save never touches ontology.original.*/ontology.current.* on disk —

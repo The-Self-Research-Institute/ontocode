@@ -125,6 +125,14 @@ public class OntologyMutationService {
 
 
     public void invalidateReasonerCaches(String projectId) {
+        if (mainGraphRevisionService != null) {
+            try {
+                mainGraphRevisionService.incrementRevision(projectId);
+            } catch (Exception e) {
+                log.warn("[MUTATION] Failed bumping main graph revision for project {}", projectId, e);
+            }
+        }
+
         if (editorReasonerCacheService != null) {
             try {
                 editorReasonerCacheService.invalidateOntology(projectId);

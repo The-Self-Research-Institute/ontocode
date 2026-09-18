@@ -1139,6 +1139,9 @@ public class SparqlDatasetService {
      */
     public void execUpdate(String projectId, String sparqlUpdate) {
         execUpdate(projectId, getGraphUri(projectId), sparqlUpdate);
+        if (mainGraphRevisionService != null) {
+            mainGraphRevisionService.incrementRevision(projectId);
+        }
     }
 
     /**
