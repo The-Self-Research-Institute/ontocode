@@ -477,11 +477,11 @@ public class ProjectService {
         Workspace workspace = workspaceRepository.findByWorkspaceId(project.getWorkspaceId())
                 .orElseThrow(() -> new IllegalStateException("Workspace not found"));
 
-        if (Project.WS_EDITOR_LINK_OWNER.equals(member.getWorkspaceEditorLink())) {
+        if (Project.WS_EDITOR_LINK_OWNER.equals(member.getWorkspaceEditorLink()) && !isOwnershipTransfer) {
             throw new IllegalArgumentException("The workspace owner's access on this project cannot be changed.");
         }
         if (Project.WS_EDITOR_LINK_ADMIN.equals(member.getWorkspaceEditorLink())
-                && !workspace.getOwnerId().equals(userId)) {
+                && !isOwnershipTransfer && !workspace.getOwnerId().equals(userId)) {
             throw new SecurityException("Only the workspace owner can change this workspace administrator's project role.");
         }
 
@@ -491,6 +491,7 @@ public class ProjectService {
                 previousOwnerMember.setRole("ADMIN");
             }
             project.setOwnerId(targetUserId);
+            member.setWorkspaceEditorLink(null);
         }
         member.setRole(normalizedRole);
         return projectRepository.save(project);

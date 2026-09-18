@@ -554,8 +554,6 @@ public class WorkspaceService {
             throw new IllegalArgumentException("Member not found in workspace");
         }
 
-        WorkspaceRole previousRole = target.getRole();
-
         workspace.getMembers().stream()
                 .filter(m -> m.getRole() == WorkspaceRole.OWNER)
                 .forEach(m -> m.setRole(WorkspaceRole.ADMIN));
@@ -563,7 +561,6 @@ public class WorkspaceService {
         target.setRole(WorkspaceRole.OWNER);
         workspace = updateWorkspace(workspace);
 
-        syncAdminRoleChangeToProjects(workspace, newOwnerId, previousRole, WorkspaceRole.OWNER);
         syncOwnerTransferToProjects(workspace, currentOwnerId, newOwnerId);
 
         return workspace;
