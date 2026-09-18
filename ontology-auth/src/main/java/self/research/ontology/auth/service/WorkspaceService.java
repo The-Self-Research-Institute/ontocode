@@ -70,7 +70,7 @@ public class WorkspaceService {
             throw new IllegalStateException("Workspace still has other members — transfer ownership or use the regular delete instead");
         }
 
-        for (Project project : projectRepository.findByWorkspaceId(workspaceId)) {
+        for (Project project : projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE")) {
             projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
         }
 
@@ -720,7 +720,7 @@ public class WorkspaceService {
         log.info("Soft deleted workspace: {} by user: {}", workspaceId, userId);
         
         // Cascade soft delete to all projects in this workspace
-        List<Project> projects = projectRepository.findByWorkspaceId(workspaceId);
+        List<Project> projects = projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE");
         for (Project project : projects) {
             if (!Boolean.TRUE.equals(project.getIsDeleted())) {
                 project.setIsDeleted(true);
