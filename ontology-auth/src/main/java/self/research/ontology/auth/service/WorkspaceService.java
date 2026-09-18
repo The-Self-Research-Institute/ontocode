@@ -379,7 +379,9 @@ public class WorkspaceService {
     /**
      * Remove a member from workspace (by userId or email).
      * Also removes any WS_EDITOR_LINK_ADMIN project entries for the removed user
-     * so they don't retain project access after being removed from the workspace.
+     * so they don't retain project access after being removed from the workspace,
+     * and permanently deletes any private (single-member) project the removed
+     * member owned, rather than leaving it as an inaccessible orphan.
      */
     @Transactional
     public void removeMember(String workspaceId, String memberIdentifier) {
@@ -417,12 +419,28 @@ public class WorkspaceService {
             final String finalUserId = removedUserId;
             projectRepository.findByWorkspaceId(workspaceId).forEach(project -> {
                 Project.ProjectMember pm = project.getMember(finalUserId);
-                if (pm != null) {
-                    project.removeMember(finalUserId);
-                    projectRepository.save(project);
-                    log.info("Removed user {} from project {} after workspace member removal",
-                            finalUserId, project.getProjectId());
+                if (pm == null) {
+                    return;
                 }
+
+                boolean isPrivateProject = finalUserId.equals(project.getOwnerId())
+                        && project.getMembers().size() <= 1;
+                if (isPrivateProject) {
+                    try {
+                        projectService.hardDeleteProjectCompletely(project.getProjectId(), finalUserId);
+                        log.info("Permanently deleted private project {} owned by removed member {} from workspace {}",
+                                project.getProjectId(), finalUserId, workspaceId);
+                        return;
+                    } catch (Exception e) {
+                        log.warn("Could not hard-delete private project {} for removed member {}, falling back to membership removal: {}",
+                                project.getProjectId(), finalUserId, e.getMessage());
+                    }
+                }
+
+                project.removeMember(finalUserId);
+                projectRepository.save(project);
+                log.info("Removed user {} from project {} after workspace member removal",
+                        finalUserId, project.getProjectId());
             });
         }
     }
@@ -506,6 +524,40 @@ public class WorkspaceService {
                                 targetUserId, project.getProjectId());
                     }
                 });
+    }
+
+    @Transactional
+    public void syncOwnerTransferToProjects(Workspace workspace, String previousOwnerId, String newOwnerId) {
+        if (newOwnerId == null || newOwnerId.equals(previousOwnerId)) {
+            return;
+        }
+
+        List<Project> projects = projectRepository.findByWorkspaceId(workspace.getWorkspaceId());
+        for (Project project : projects) {
+            String visibility = project.getVisibility();
+            boolean isPrivate = "PRIVATE".equals(visibility)
+                    || (visibility == null && (project.getMembers() == null || project.getMembers().size() <= 1));
+            if (isPrivate) {
+                continue;
+            }
+
+            boolean dirty = projectService.applyImplicitWorkspaceLeadershipEditors(project, workspace);
+
+            if (previousOwnerId != null) {
+                Project.ProjectMember oldOwnerMember = project.getMember(previousOwnerId);
+                if (oldOwnerMember != null && Project.WS_EDITOR_LINK_OWNER.equals(oldOwnerMember.getWorkspaceEditorLink())) {
+                    oldOwnerMember.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_ADMIN);
+                    dirty = true;
+                }
+            }
+
+            if (dirty) {
+                project.setUpdatedAt(LocalDateTime.now());
+                projectRepository.save(project);
+                log.info("Synced owner transfer ({} -> {}) onto project {}",
+                        previousOwnerId, newOwnerId, project.getProjectId());
+            }
+        }
     }
 
     /**
