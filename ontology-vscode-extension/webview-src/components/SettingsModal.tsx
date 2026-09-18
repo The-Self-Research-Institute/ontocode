@@ -52,6 +52,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
     const [appVersion, setAppVersion] = useState<string>('');
     const [latestDesktopVersion, setLatestDesktopVersion] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [showOwnershipModal, setShowOwnershipModal] = useState(false);
     const [deletingAccount, setDeletingAccount] = useState(false);
     const [checkingDeletionImpact, setCheckingDeletionImpact] = useState(false);
     const [deletionImpact, setDeletionImpact] = useState<{
@@ -296,6 +297,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
                 impact.workspaces.forEach((w: any) => { if (w.hasOtherMembers) defaults[w.workspaceId] = 'DELETE'; });
                 impact.projects.forEach((p: any) => { if (p.hasOtherMembers) defaults[p.projectId] = 'DELETE'; });
                 setOwnershipChoices(defaults);
+                setShowOwnershipModal(true);
             } else {
                 setShowDeleteConfirm(true);
             }
@@ -308,7 +310,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
     };
 
     const handleResolveOwnershipAndProceed = () => {
-        setDeletionImpact(null);
+        setShowOwnershipModal(false);
         setShowDeleteConfirm(true);
     };
 
@@ -797,9 +799,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
         onConfirm={handleDeleteAccount}
         onCancel={() => setShowDeleteConfirm(false)}
       />
-      {deletionImpact && (
+      {showOwnershipModal && deletionImpact && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setDeletionImpact(null)} />
+          <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setShowOwnershipModal(false)} />
           <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 p-6 max-h-[85vh] overflow-y-auto">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">This is what deleting your account removes</h3>
             <p className="text-sm text-gray-600 mb-4">
@@ -853,7 +855,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, onLogout
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button
-                onClick={() => setDeletionImpact(null)}
+                onClick={() => setShowOwnershipModal(false)}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
               >
                 Cancel
