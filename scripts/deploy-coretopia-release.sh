@@ -224,8 +224,13 @@ branch_web_remote_build() {
     dockerfiles+=("${REMOTE_BUILD_DOCKERFILE[$s]}")
   done
 
-  local rsync_paths=(pom.xml shared/ ontology-auth/ ontology-gateway/ ontology-editor/ \
-    ontology-swrl/ ontology-plugin-service/ ontology-reasoner-worker/ \
+  local rsync_paths=(pom.xml shared/ \
+    ontology-auth/pom.xml ontology-auth/src/ \
+    ontology-gateway/pom.xml ontology-gateway/src/ \
+    ontology-editor/pom.xml ontology-editor/src/ \
+    ontology-swrl/pom.xml ontology-swrl/src/ \
+    ontology-plugin-service/pom.xml ontology-plugin-service/src/ \
+    ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
     "${dockerfiles[@]}" docker-compose.remote-build.yml)
   if [[ " ${SERVICES[*]} " == *" web "* ]]; then
     local webapp_env="$ROOT/ontology-vscode-extension/webview-src/.env.production"
