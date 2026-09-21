@@ -15,7 +15,7 @@ import java.time.temporal.ChronoUnit;
  * policy. Mirrors DataRetentionScheduler (ontology-auth) for files/projects/workspaces.
  *
  * This is the automatic backstop for users who never request deletion themselves —
- * proactive erasure requests are still handled separately via privacy@ontocode.org
+ * proactive erasure requests are still handled separately via support@selfresearch.org
  * (see scripts/delete-user-complete.js), which already deletes a user's issue_reports.
  */
 @Slf4j
