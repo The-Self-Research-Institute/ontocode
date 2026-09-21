@@ -762,15 +762,19 @@ public class AuthController {
 
             List<OwnershipResolution> resolutions = request != null && request.resolutions != null
                     ? request.resolutions : List.of();
-            for (OwnershipResolution resolution : resolutions) {
-                if (!"TRANSFER".equalsIgnoreCase(resolution.action)
-                        || resolution.transferToUserId == null || resolution.transferToUserId.isBlank()) {
-                    continue;
+            List<OwnershipResolution> validResolutions = resolutions.stream()
+                    .filter(r -> "TRANSFER".equalsIgnoreCase(r.action)
+                            && r.transferToUserId != null && !r.transferToUserId.isBlank())
+                    .collect(Collectors.toList());
+
+            for (OwnershipResolution resolution : validResolutions) {
+                if ("project".equalsIgnoreCase(resolution.type)) {
+                    projectService.updateMemberRole(resolution.id, userId, resolution.transferToUserId, "OWNER");
                 }
+            }
+            for (OwnershipResolution resolution : validResolutions) {
                 if ("workspace".equalsIgnoreCase(resolution.type)) {
                     workspaceService.transferOwnership(resolution.id, userId, resolution.transferToUserId);
-                } else if ("project".equalsIgnoreCase(resolution.type)) {
-                    projectService.updateMemberRole(resolution.id, userId, resolution.transferToUserId, "OWNER");
                 }
             }
 

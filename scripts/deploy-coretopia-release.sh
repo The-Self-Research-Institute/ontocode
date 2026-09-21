@@ -146,13 +146,17 @@ source "$ROOT/scripts/check-jdk-prereqs.sh"
 _wsl_flags=()
 for p in "${PLATFORMS[@]}"; do
   case "$p" in
-    web) _wsl_flags+=(--web) ;;
+    web) [[ $REMOTE_BUILD_ARG -eq 1 ]] || _wsl_flags+=(--web) ;;
     linux) [[ $REMOTE_BUILD_ARG -eq 1 ]] || _wsl_flags+=(--desktop) ;;
     windows|mac) _wsl_flags+=(--desktop) ;;
     vscode) _wsl_flags+=(--vscode) ;;
   esac
 done
-if [[ -x "$ROOT/scripts/check-wsl-prereqs.sh" ]] || [[ -f "$ROOT/scripts/check-wsl-prereqs.sh" ]]; then
+if [[ ${#_wsl_flags[@]} -eq 0 ]]; then
+  : # every requested platform is handled by --remote-build — no local WSL/Docker/JDK needed.
+  # (check-wsl-prereqs.sh defaults to checking everything when called with no --web/--desktop/
+  # --vscode flags, so it must not be invoked at all here, not just with an empty flag list.)
+elif [[ -x "$ROOT/scripts/check-wsl-prereqs.sh" ]] || [[ -f "$ROOT/scripts/check-wsl-prereqs.sh" ]]; then
 
   export PATH="/usr/local/bin:/usr/bin:/bin:${PATH}"
 
