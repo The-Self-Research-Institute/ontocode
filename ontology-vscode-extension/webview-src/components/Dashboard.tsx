@@ -8937,67 +8937,73 @@ const updateItemInState = useCallback(
     };
   }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
+  // Shared by the handleRefresh* callbacks below. On desktop, a mutation can leave the OWLAPI
+  // in-memory model briefly evicted/re-warming — a plain GET right after create/delete can land
+  // on that transient "warming" response (data: []), which would otherwise wipe the whole list.
+  // Retry instead of trusting it. Returns null if the list is still warming after retries, so
+  // callers can log their own entity-specific warning and keep the current list.
+  const fetchEntityListWithWarmup = useCallback(
+    async (endpoint: string, listField: string): Promise<any[] | null> => {
+      if (!projectId) return null;
+      if (isDesktop()) {
+        await waitForDesktopOwlApiReady(projectId);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      const res = await getOntologyListWithRetry<any>(withDraftScope(endpoint));
+      if (res === null) return null;
+      return Array.isArray(res?.data) ? res.data : Array.isArray(res?.[listField]) ? res[listField] : [];
+    },
+    [projectId],
+  );
+
+  // Returns the freshly-fetched list so callers can verify a specific just-applied change
+  // actually shows up (see handleCreateAnnotationProperty / handleAnnotationSuperpropertyConfirm)
+  // instead of trusting a single fetch — desktop's OWLAPI cache has a version-check/evict/rewarm
+  // cycle (OwlApiMutationCoordinator.ensureFreshForRead) that can race with two back-to-back
+  // mutations (create-then-link is two separate requests), so a read moments later can
+  // land mid-rewarm and see the entity without its just-added relationship.
   const handleRefreshAnnotationProperties = useCallback(async (): Promise<AnnotationProperty[]> => {
     if (!projectId) return [];
-    if (isDesktop()) {
-      await waitForDesktopOwlApiReady(projectId);
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-    const res = await getOntologyListWithRetry<any>(
-      withDraftScope(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`),
+    const rawProperties = await fetchEntityListWithWarmup(
+      `/api/ontology/annotation-properties/${encodeProjectId(projectId)}`,
+      "annotationProperties",
     );
-    if (res === null) {
+    if (rawProperties === null) {
       console.warn("[Dashboard] Annotation properties still warming after retries — keeping current list");
       return [];
     }
-    const rawProperties = Array.isArray(res?.data)
-      ? res.data
-      : Array.isArray(res?.annotationProperties)
-        ? res.annotationProperties
-        : [];
-    console.log(
-      "[TRACE] Full rawProperties:",
-      rawProperties
-    );
     const merged = mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty));
     setAnnotationProperties(merged);
     setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
     return merged;
-  }, [projectId]);
+  }, [projectId, fetchEntityListWithWarmup]);
+
   const handleRefreshIndividuals = useCallback(async () => {
     if (!projectId) return;
-    if (isDesktop()) {
-      await waitForDesktopOwlApiReady(projectId);
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-    const res = await getOntologyListWithRetry<any>(
-      withDraftScope(`/api/ontology/individuals/${encodeProjectId(projectId)}?limit=10000`),
+    const individuals = await fetchEntityListWithWarmup(
+      `/api/ontology/individuals/${encodeProjectId(projectId)}?limit=10000`,
+      "individuals",
     );
-    if (res === null) {
+    if (individuals === null) {
       console.warn("[Dashboard] Individuals still warming after retries — keeping current list");
       return;
     }
-    setIndividuals(Array.isArray(res?.data) ? res.data : Array.isArray(res?.individuals) ? res.individuals : []);
-  }, [projectId]);
+    setIndividuals(individuals);
+  }, [projectId, fetchEntityListWithWarmup]);
 
   const handleRefreshDatatypes = useCallback(async () => {
     if (!projectId) return;
-    if (isDesktop()) {
-      await waitForDesktopOwlApiReady(projectId);
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-    const res = await getOntologyListWithRetry<any>(
-      withDraftScope(`/api/ontology/datatypes/${encodeProjectId(projectId)}`),
+    const datatypes = await fetchEntityListWithWarmup(
+      `/api/ontology/datatypes/${encodeProjectId(projectId)}`,
+      "datatypes",
     );
-    if (res === null) {
+    if (datatypes === null) {
       console.warn("[Dashboard] Datatypes still warming after retries — keeping current list");
       return;
     }
-    setDatatypes(Array.isArray(res?.data) ? res.data : Array.isArray(res?.datatypes) ? res.datatypes : []);
-  }, [projectId]);
+    setDatatypes(datatypes);
+  }, [projectId, fetchEntityListWithWarmup]);
 
   // Handle rollback events from Change Assistant plugin - refresh data
   useEffect(() => {
