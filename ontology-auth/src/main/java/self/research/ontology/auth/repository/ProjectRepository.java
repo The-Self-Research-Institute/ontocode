@@ -12,7 +12,7 @@ import java.util.Optional;
 @Repository("authProjectRepository")
 public interface ProjectRepository extends MongoRepository<Project, String> {
 
-    long deleteAllByIsDeletedTrueAndDeletedAtBefore(LocalDateTime cutoff);
+    List<Project> findAllByIsDeletedTrueAndDeletedAtBefore(LocalDateTime cutoff);
 
     Optional<Project> findByProjectId(String projectId);
 

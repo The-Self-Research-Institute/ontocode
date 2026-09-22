@@ -80,6 +80,12 @@ public class ProjectService {
             throw new IllegalStateException("Project still has other members — transfer ownership or use the regular delete instead");
         }
 
+        purgeProjectData(project);
+        log.info("Permanently deleted project {} (owner {}, no other members)", projectId, userId);
+    }
+
+    public void purgeProjectData(Project project) {
+        String projectId = project.getProjectId();
         clearFusekiGraphsForProject(project);
 
         List<FileMetadata> files = fileMetadataRepository.findByProjectId(projectId);
@@ -104,7 +110,6 @@ public class ProjectService {
         }
 
         projectRepository.delete(project);
-        log.info("Permanently deleted project {} (owner {}, no other members)", projectId, userId);
     }
 
     private void clearFusekiGraphsForProject(Project project) {

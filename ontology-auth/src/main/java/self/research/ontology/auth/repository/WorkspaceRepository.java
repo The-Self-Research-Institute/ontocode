@@ -12,7 +12,7 @@ import java.util.Optional;
 @Repository("authWorkspaceRepository")
 public interface WorkspaceRepository extends MongoRepository<Workspace, String> {
 
-    long deleteAllByIsDeletedTrueAndDeletedAtBefore(LocalDateTime cutoff);
+    List<Workspace> findAllByIsDeletedTrueAndDeletedAtBefore(LocalDateTime cutoff);
 
     Optional<Workspace> findByWorkspaceId(String workspaceId);
 

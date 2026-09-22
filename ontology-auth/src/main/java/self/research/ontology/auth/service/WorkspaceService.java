@@ -71,12 +71,31 @@ public class WorkspaceService {
         }
 
         for (Project project : projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE")) {
-            projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+            if (!userId.equals(project.getOwnerId())) {
+                log.warn("Skipping hard-delete of project {} in workspace {}: owner is {}, not {}",
+                        project.getProjectId(), workspaceId, project.getOwnerId(), userId);
+                continue;
+            }
+            try {
+                projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+            } catch (IllegalStateException e) {
+                log.warn("Skipping hard-delete of project {} in workspace {}: {}",
+                        project.getProjectId(), workspaceId, e.getMessage());
+            }
         }
 
         invitationRepository.deleteByWorkspaceId(workspaceId);
         workspaceRepository.delete(workspace);
         log.info("Permanently deleted workspace {} (owner {}, no other members)", workspaceId, userId);
+    }
+
+    public void purgeWorkspaceData(Workspace workspace) {
+        String workspaceId = workspace.getWorkspaceId();
+        for (Project project : projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE")) {
+            projectService.purgeProjectData(project);
+        }
+        invitationRepository.deleteByWorkspaceId(workspaceId);
+        workspaceRepository.delete(workspace);
     }
 
     /**
