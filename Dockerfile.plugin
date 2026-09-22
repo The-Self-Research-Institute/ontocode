@@ -4,6 +4,8 @@ FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /build
 
 COPY pom.xml .
+COPY checkstyle.xml checkstyle-suppressions.xml ./
+COPY .mvn/ ./.mvn/
 COPY shared/ ./shared/
 COPY ontology-auth/ ./ontology-auth/
 COPY ontology-gateway/ ./ontology-gateway/

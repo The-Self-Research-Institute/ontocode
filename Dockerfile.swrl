@@ -7,6 +7,8 @@ WORKDIR /build
 
 # Copy parent pom first for better caching
 COPY pom.xml .
+COPY checkstyle.xml checkstyle-suppressions.xml ./
+COPY .mvn/ ./.mvn/
 
 # Maven reactor needs every listed module's pom.xml to exist, even for a -pl build.
 # Copy only pom.xml stubs for modules we're NOT building (no source needed).
