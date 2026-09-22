@@ -535,15 +535,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     member.workspaceEditorLink !== "WORKSPACE_OWNER" &&
     (member.workspaceEditorLink !== "WORKSPACE_ADMIN" || isWorkspaceOwner);
 
-  /** Resolved workspace role: JWT, team membership, or workspace owner id. */
   const workspaceRoleResolved = useMemo((): WorkspaceRole | null => {
-    const jwt = normalizeRole(user?.workspaceRole);
-    if ((WORKSPACE_ROLES as readonly string[]).includes(jwt)) return jwt as WorkspaceRole;
     if (user?.userId && workspaceOwnerId && user.userId === workspaceOwnerId) return "OWNER";
     const fromTeam = currentUserInTeam?.roles
       ?.map((r) => normalizeRole(r))
       .find((r) => (WORKSPACE_ROLES as readonly string[]).includes(r));
-    return fromTeam ? (fromTeam as WorkspaceRole) : null;
+    if (fromTeam) return fromTeam as WorkspaceRole;
+    const jwt = normalizeRole(user?.workspaceRole);
+    return (WORKSPACE_ROLES as readonly string[]).includes(jwt) ? (jwt as WorkspaceRole) : null;
   }, [user?.workspaceRole, user?.userId, workspaceOwnerId, currentUserInTeam]);
 
   const effectiveWorkspaceRole = workspaceRoleResolved;

@@ -525,7 +525,19 @@ public class WorkspaceService {
 
             boolean dirty = projectService.applyImplicitWorkspaceLeadershipEditors(project, workspace);
 
-            if (previousOwnerId != null) {
+            if (previousOwnerId != null && previousOwnerId.equals(project.getOwnerId())) {
+                Project.ProjectMember oldOwnerMember = project.getMember(previousOwnerId);
+                if (oldOwnerMember != null) {
+                    oldOwnerMember.setRole("ADMIN");
+                }
+                project.setOwnerId(newOwnerId);
+                Project.ProjectMember newOwnerMember = project.getMember(newOwnerId);
+                if (newOwnerMember != null) {
+                    newOwnerMember.setRole("OWNER");
+                    newOwnerMember.setWorkspaceEditorLink(null);
+                }
+                dirty = true;
+            } else if (previousOwnerId != null) {
                 Project.ProjectMember oldOwnerMember = project.getMember(previousOwnerId);
                 if (oldOwnerMember != null && Project.WS_EDITOR_LINK_OWNER.equals(oldOwnerMember.getWorkspaceEditorLink())) {
                     oldOwnerMember.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_ADMIN);

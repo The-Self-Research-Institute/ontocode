@@ -146,13 +146,17 @@ source "$ROOT/scripts/check-jdk-prereqs.sh"
 _wsl_flags=()
 for p in "${PLATFORMS[@]}"; do
   case "$p" in
-    web) _wsl_flags+=(--web) ;;
+    web) [[ $REMOTE_BUILD_ARG -eq 1 ]] || _wsl_flags+=(--web) ;;
     linux) [[ $REMOTE_BUILD_ARG -eq 1 ]] || _wsl_flags+=(--desktop) ;;
     windows|mac) _wsl_flags+=(--desktop) ;;
     vscode) _wsl_flags+=(--vscode) ;;
   esac
 done
-if [[ -x "$ROOT/scripts/check-wsl-prereqs.sh" ]] || [[ -f "$ROOT/scripts/check-wsl-prereqs.sh" ]]; then
+if [[ ${#_wsl_flags[@]} -eq 0 ]]; then
+  : # every requested platform is handled by --remote-build — no local WSL/Docker/JDK needed.
+  # (check-wsl-prereqs.sh defaults to checking everything when called with no --web/--desktop/
+  # --vscode flags, so it must not be invoked at all here, not just with an empty flag list.)
+elif [[ -x "$ROOT/scripts/check-wsl-prereqs.sh" ]] || [[ -f "$ROOT/scripts/check-wsl-prereqs.sh" ]]; then
 
   export PATH="/usr/local/bin:/usr/bin:/bin:${PATH}"
 
@@ -224,8 +228,13 @@ branch_web_remote_build() {
     dockerfiles+=("${REMOTE_BUILD_DOCKERFILE[$s]}")
   done
 
-  local rsync_paths=(pom.xml shared/ ontology-auth/ ontology-gateway/ ontology-editor/ \
-    ontology-swrl/ ontology-plugin-service/ ontology-reasoner-worker/ \
+  local rsync_paths=(pom.xml shared/ \
+    ontology-auth/pom.xml ontology-auth/src/ \
+    ontology-gateway/pom.xml ontology-gateway/src/ \
+    ontology-editor/pom.xml ontology-editor/src/ \
+    ontology-swrl/pom.xml ontology-swrl/src/ \
+    ontology-plugin-service/pom.xml ontology-plugin-service/src/ \
+    ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
     "${dockerfiles[@]}" docker-compose.remote-build.yml)
   if [[ " ${SERVICES[*]} " == *" web "* ]]; then
     local webapp_env="$ROOT/ontology-vscode-extension/webview-src/.env.production"

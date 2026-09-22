@@ -9,7 +9,7 @@ interface Props {
 const EFFECTIVE_DATE = "September 15, 2026";
 const COMPANY = "The Self Research Institute";
 const PRODUCT = "OntoCode Studio";
-const CONTACT = "privacy@ontocode.org";
+const CONTACT = "support@selfresearch.org";
 
 export const PrivacyPolicyModal: React.FC<Props> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
