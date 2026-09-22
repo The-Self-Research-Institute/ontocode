@@ -6,7 +6,6 @@ WORKDIR /build
 # Copy parent pom first for better caching
 COPY pom.xml .
 COPY checkstyle.xml checkstyle-suppressions.xml ./
-COPY .mvn/ ./.mvn/
 
 # Copy all service directories (Maven needs them for module resolution even if not all are used)
 COPY shared/ ./shared/
