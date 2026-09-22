@@ -12,6 +12,7 @@ import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.HistorySyncService;
+import self.research.ontology.owlEditor.util.SparqlSafety;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -490,7 +491,7 @@ public class ChangeTrackingController {
                 newValue = historyChange.getNewValue();
                 changeType = historyChange.getEntityType();
                 annotationProperty = historyChange.getAnnotationProperty();
-                log.info("[ROLLBACK] MongoDB data - action: {}, entityIRI: {}, changeType: {}, annotationProperty: {}", 
+                log.info("[ROLLBACK] MongoDB data - action: {}, entityIRI: {}, changeType: {}, annotationProperty: {}",
                     action, entityIRI, changeType, annotationProperty);
             }
             
@@ -530,8 +531,8 @@ public class ChangeTrackingController {
             
             try {
                 // Create inverse mutation
-                List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> inverseMutations = 
-                    createInverseMutation(action, changeType, entityIRI, entityLabel, oldValue, newValue, annotationProperty);
+                List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> inverseMutations =
+                    createInverseMutation(projectId, action, changeType, entityIRI, entityLabel, oldValue, newValue, annotationProperty);
                 
                 boolean mutationApplied = false;
                 if (!inverseMutations.isEmpty()) {
@@ -617,11 +618,33 @@ public class ChangeTrackingController {
         return "modified";
     }
     
+    private void applyRawHierarchyRollback(String projectId, String predicateQName, String predicateLabel,
+                                            boolean wasRemoved, String entityIRI, String parentToRestore) {
+        if (parentToRestore == null || parentToRestore.isEmpty() || "null".equalsIgnoreCase(parentToRestore)
+                || entityIRI == null || "null".equalsIgnoreCase(entityIRI)) {
+            log.warn("[ROLLBACK] Missing/invalid entityIRI or parent for {} rollback — skipping", predicateLabel);
+            return;
+        }
+        try {
+            String safeEntityIri = SparqlSafety.safeIri(entityIRI);
+            String safeParentIri = SparqlSafety.safeIri(parentToRestore);
+            String sparql = "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
+                    + (wasRemoved
+                        ? "INSERT DATA { <" + safeEntityIri + "> " + predicateQName + " <" + safeParentIri + "> }"
+                        : "DELETE DATA { <" + safeEntityIri + "> " + predicateQName + " <" + safeParentIri + "> }");
+            ontologyMutationService.applyRawUpdate(projectId, sparql);
+            log.info("[ROLLBACK] Applied direct SPARQL for {} rollback: {}", predicateLabel, sparql);
+        } catch (Exception rawEx) {
+            log.error("[ROLLBACK] Direct SPARQL for {} rollback failed: {}", predicateLabel, rawEx.getMessage());
+        }
+    }
+
     /**
      * Create inverse mutation operations for rollback
      */
+
     private List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> createInverseMutation(
-            String action, String changeType, String entityIRI, String entityLabel, String oldValue, String newValue, String annotationProperty) {
+            String projectId, String action, String changeType, String entityIRI, String entityLabel, String oldValue, String newValue, String annotationProperty) {
         
         List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> mutations = new ArrayList<>();
         
@@ -631,6 +654,27 @@ public class ChangeTrackingController {
         
         String actionLower = action != null ? action.toLowerCase() : "";
         String typeLower = changeType != null ? changeType.toLowerCase() : "";
+        String rawOpType = changeType != null ? changeType.toLowerCase() : "";
+
+        if (rawOpType.equals("removesubclassof") || rawOpType.equals("addsubclassof")) {
+            boolean wasRemoved = rawOpType.equals("removesubclassof");
+            applyRawHierarchyRollback(projectId, "rdfs:subClassOf", "subClassOf", wasRemoved,
+                    entityIRI, wasRemoved ? oldValue : newValue);
+            return mutations;
+        }
+
+        if (rawOpType.equals("addstatement") || rawOpType.equals("removestatement")) {
+            boolean wasRemoved = rawOpType.equals("removestatement");
+            boolean isSubPropertyOf = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf".equals(annotationProperty);
+            if (isSubPropertyOf) {
+                applyRawHierarchyRollback(projectId, "rdfs:subPropertyOf", "subPropertyOf", wasRemoved,
+                        entityIRI, wasRemoved ? oldValue : newValue);
+            } else {
+                log.warn("[ROLLBACK] Generic property-assertion rollback ({}) not yet supported for {} — skipping",
+                        rawOpType, entityIRI);
+            }
+            return mutations;
+        }
         
         // For 'modified' actions, check if oldValue exists - if so, it's likely a label/annotation change
         boolean hasOldAndNewValue = oldValue != null && !oldValue.isEmpty() && newValue != null && !newValue.isEmpty();

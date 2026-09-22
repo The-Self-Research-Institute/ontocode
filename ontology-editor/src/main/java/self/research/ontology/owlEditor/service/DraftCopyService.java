@@ -39,6 +39,13 @@ public class DraftCopyService {
     ) {}
 
     public InitiateResult initiateCopy(String projectId, String userId) {
+        if (isReady(projectId, userId)) {
+            long existingRevision = getMainRevisionAtCopy(projectId, userId);
+            log.info("[DRAFT-COPY] Resuming existing ready draft session for project {} user {} (baseline revision {}) — not re-copying, would discard pending draft edits",
+                    projectId, userId, existingRevision);
+            return new InitiateResult(true, "Resumed existing draft session", -1, existingRevision);
+        }
+
         var stats = importQueueManager.getQueueStats();
         if (stats.getActiveProjectIds() != null && stats.getActiveProjectIds().contains(projectId)) {
             return new InitiateResult(false,
