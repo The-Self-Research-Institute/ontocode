@@ -93,10 +93,6 @@ export function getApiBaseUrl(): string {
     return getGatewayUrl();
 }
 
-export function getCloudGatewayUrl(): string {
-    return DEFAULTS.CLOUD_GATEWAY_URL;
-}
-
 export function isCloudDeployment(type?: DeploymentType): boolean {
     return (type ?? getStoredDeploymentType()) === 'cloud';
 }
