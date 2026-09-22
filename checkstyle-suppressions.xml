@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<suppressions>
+    <suppress checks="FileLength" files="[/\\]OntologyQueryService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]SparqlDatasetService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]OntologyMutationService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]ProjectLoadController\.java$"/>
+    <suppress checks="FileLength" files="ontology-auth[/\\].*[/\\]ProjectController\.java$"/>
+    <suppress checks="FileLength" files="ontology-editor[/\\].*[/\\]ReasonerController\.java$"/>
+    <suppress checks="FileLength" files="ontology-plugin-service[/\\].*[/\\]ReasonerController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]WorkspaceController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]OntologyQueryController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]AuthController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]ChangeTrackingController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]ProjectImportService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]StripeService\.java$"/>
+    <suppress checks="FileLength" files="ontology-plugin-service[/\\].*[/\\]ReasonerService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]OntologyMergeService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]OntologyMetadataService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]SwrlEngineService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]DLQueryController\.java$"/>
+    <suppress checks="FileLength" files="ontology-auth[/\\].*[/\\]ProjectService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]EmailService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]DraftController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]GraphViewController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]InvitationController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]WorkspaceService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]DesktopHierarchyService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]CollaborativeEditService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]DraftTrackingService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]SubscriptionController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]SwrlController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]OntologyMetadataController\.java$"/>
+    <suppress checks="FileLength" files="ontology-editor[/\\].*[/\\]ReasonerService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]CitationService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]OntologyMergeController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]VisualizationController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]PluginController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]DesktopDownloadController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]EntityRelationController\.java$"/>
+    <suppress checks="FileLength" files="ontology-editor[/\\].*[/\\]ProjectController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]EmailTestController\.java$"/>
+    <suppress checks="FileLength" files="[/\\]ChangeTrackingService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]GraphGeneratingService\.java$"/>
+    <suppress checks="FileLength" files="[/\\]DesktopOntologyLoader\.java$"/>
+    <suppress checks="FileLength" files="[/\\]ImportQueueManager\.java$"/>
+    <suppress checks="FileLength" files="[/\\]OwlApiMutationPatcher\.java$"/>
+    <suppress checks="FileLength" files="[/\\]StorageManager\.java$"/>
+    <suppress checks="FileLength" files="[/\\]ReasoningJobExecutor\.java$"/>
+</suppressions>

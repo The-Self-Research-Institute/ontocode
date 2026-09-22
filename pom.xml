@@ -132,10 +132,78 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.2</version>
                     <configuration>
-                        <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
                     </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>0.8.12</version>
+                    <executions>
+                        <execution>
+                            <id>jacoco-prepare-agent</id>
+                            <goals>
+                                <goal>prepare-agent</goal>
+                            </goals>
+                        </execution>
+                        <execution>
+                            <id>jacoco-report</id>
+                            <phase>test</phase>
+                            <goals>
+                                <goal>report</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <sourceDirectories>
+                        <sourceDirectory>${project.basedir}/shared/common-models/src/main/java</sourceDirectory>
+                        <sourceDirectory>${project.basedir}/shared/common-utils/src/main/java</sourceDirectory>
+                        <sourceDirectory>${project.basedir}/ontology-gateway/src/main/java</sourceDirectory>
+                        <sourceDirectory>${project.basedir}/ontology-editor/src/main/java</sourceDirectory>
+                        <sourceDirectory>${project.basedir}/ontology-auth/src/main/java</sourceDirectory>
+                        <sourceDirectory>${project.basedir}/ontology-swrl/src/main/java</sourceDirectory>
+                        <sourceDirectory>${project.basedir}/ontology-plugin-service/src/main/java</sourceDirectory>
+                        <sourceDirectory>${project.basedir}/ontology-reasoner-worker/src/main/java</sourceDirectory>
+                    </sourceDirectories>
+                    <violationSeverity>error</violationSeverity>
+                    <failOnViolation>true</failOnViolation>
+                    <failsOnError>true</failsOnError>
+                    <consoleOutput>true</consoleOutput>
+                    <propertyExpansion>config_loc=${project.basedir}</propertyExpansion>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>checkstyle-controllers</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <configLocation>${project.basedir}/checkstyle-controllers.xml</configLocation>
+                            <includes>**/controller/**/*.java</includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>checkstyle-services</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <configLocation>${project.basedir}/checkstyle-services.xml</configLocation>
+                            <includes>**/service/**/*.java</includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 </project>
