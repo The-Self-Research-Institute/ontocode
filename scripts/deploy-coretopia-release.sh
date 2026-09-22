@@ -235,7 +235,8 @@ branch_web_remote_build() {
     ontology-swrl/pom.xml ontology-swrl/src/ \
     ontology-plugin-service/pom.xml ontology-plugin-service/src/ \
     ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
-    "${dockerfiles[@]}" docker-compose.remote-build.yml)
+    "${dockerfiles[@]}" docker-compose.remote-build.yml \
+    docker-compose.de.ec2.yml docker-compose.production.yml docker-compose.r6i-xlarge.yml)
   if [[ " ${SERVICES[*]} " == *" web "* ]]; then
     local webapp_env="$ROOT/ontology-vscode-extension/webview-src/.env.production"
     {
