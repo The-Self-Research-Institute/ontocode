@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Fast staged-file checks. Enable once per clone with:
+#   git config core.hooksPath .githooks
+# Reads staged blob content (via `git show :file`), not the working tree, so
+# a partially-staged file is checked on what will actually be committed.
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.ts' '*.tsx' '*.java')
+if [ -z "$staged" ]; then
+    exit 0
+fi
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+check_paths=()
+while IFS= read -r rel; do
+    [ -z "$rel" ] && continue
+    dest="$tmpdir/$rel"
+    mkdir -p "$(dirname "$dest")"
+    if git show ":$rel" > "$dest" 2>/dev/null; then
+        check_paths+=("$rel")
+    fi
+done <<< "$staged"
+
+if [ "${#check_paths[@]}" -eq 0 ]; then
+    exit 0
+fi
+
+if ! python3 "$repo_root/scripts/check-file-size.py" "$tmpdir" "${check_paths[@]}"; then
+    echo "" >&2
+    echo "pre-commit: file-size gate failed on staged content. Fix the file(s) above or record a reviewed baseline.json exception, then re-commit." >&2
+    exit 1
+fi
+
+echo "pre-commit: file-size gate passed for ${#check_paths[@]} staged file(s)." >&2
+echo "pre-commit: comment-policy and full lint/typecheck are NOT run here (language-aware tooling is too slow for a commit hook) — they run in the pre-push hook and scripts/preflight.sh." >&2

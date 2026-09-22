@@ -2,27 +2,27 @@ import typescriptEslint from "@typescript-eslint/eslint-plugin";
 import tsParser from "@typescript-eslint/parser";
 
 const MAX_LINES_RULE_OPTIONS = { skipBlankLines: true, skipComments: false };
+const TEST_GLOBS = ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"];
+const HOOK_GLOBS = ["hooks/**/*.ts", "custom-hook/**/*.ts", "**/hooks/**/*.ts"];
 
 export default [{
     ignores: [
-        "out/**",
         "dist/**",
-        "webview-src/**",
         "node_modules/**",
     ],
 }, {
-    files: ["**/*.ts"],
-}, {
+    files: ["**/*.ts", "**/*.tsx"],
     plugins: {
         "@typescript-eslint": typescriptEslint,
     },
-
     languageOptions: {
         parser: tsParser,
         ecmaVersion: 2022,
         sourceType: "module",
+        parserOptions: {
+            ecmaFeatures: { jsx: true },
+        },
     },
-
     rules: {
         curly: "warn",
         eqeqeq: "warn",
@@ -30,13 +30,25 @@ export default [{
         semi: "warn",
     },
 }, {
-    files: ["src/**/*.ts"],
-    ignores: ["src/**/*.test.ts", "src/**/*.spec.ts", "src/test/**"],
+    files: ["**/*.tsx"],
+    ignores: [...TEST_GLOBS, ...HOOK_GLOBS],
     rules: {
         "max-lines": ["warn", { max: 200, ...MAX_LINES_RULE_OPTIONS }],
     },
 }, {
-    files: ["src/**/*.test.ts", "src/**/*.spec.ts", "src/test/**/*.ts"],
+    files: HOOK_GLOBS,
+    ignores: TEST_GLOBS,
+    rules: {
+        "max-lines": ["warn", { max: 100, ...MAX_LINES_RULE_OPTIONS }],
+    },
+}, {
+    files: ["services/**/*.ts", "utils/**/*.ts", "config/**/*.ts"],
+    ignores: [...TEST_GLOBS, ...HOOK_GLOBS],
+    rules: {
+        "max-lines": ["warn", { max: 200, ...MAX_LINES_RULE_OPTIONS }],
+    },
+}, {
+    files: TEST_GLOBS,
     rules: {
         "max-lines": ["warn", { max: 400, ...MAX_LINES_RULE_OPTIONS }],
     },

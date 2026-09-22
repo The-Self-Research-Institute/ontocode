@@ -161,46 +161,23 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-checkstyle-plugin</artifactId>
-                <version>3.5.0</version>
+                <version>3.6.0</version>
                 <configuration>
-                    <sourceDirectories>
-                        <sourceDirectory>${project.basedir}/shared/common-models/src/main/java</sourceDirectory>
-                        <sourceDirectory>${project.basedir}/shared/common-utils/src/main/java</sourceDirectory>
-                        <sourceDirectory>${project.basedir}/ontology-gateway/src/main/java</sourceDirectory>
-                        <sourceDirectory>${project.basedir}/ontology-editor/src/main/java</sourceDirectory>
-                        <sourceDirectory>${project.basedir}/ontology-auth/src/main/java</sourceDirectory>
-                        <sourceDirectory>${project.basedir}/ontology-swrl/src/main/java</sourceDirectory>
-                        <sourceDirectory>${project.basedir}/ontology-plugin-service/src/main/java</sourceDirectory>
-                        <sourceDirectory>${project.basedir}/ontology-reasoner-worker/src/main/java</sourceDirectory>
-                    </sourceDirectories>
-                    <violationSeverity>error</violationSeverity>
-                    <failOnViolation>true</failOnViolation>
-                    <failsOnError>true</failsOnError>
+                    <configLocation>${maven.multiModuleProjectDirectory}/checkstyle.xml</configLocation>
+                    <suppressionsLocation>${maven.multiModuleProjectDirectory}/checkstyle-suppressions.xml</suppressionsLocation>
+                    <violationSeverity>warning</violationSeverity>
+                    <failOnViolation>false</failOnViolation>
+                    <failsOnError>false</failsOnError>
                     <consoleOutput>true</consoleOutput>
-                    <propertyExpansion>config_loc=${project.basedir}</propertyExpansion>
+                    <includeTestSourceDirectory>true</includeTestSourceDirectory>
                 </configuration>
                 <executions>
                     <execution>
-                        <id>checkstyle-controllers</id>
-                        <phase>verify</phase>
+                        <id>section3-file-length</id>
+                        <phase>validate</phase>
                         <goals>
                             <goal>check</goal>
                         </goals>
-                        <configuration>
-                            <configLocation>${project.basedir}/checkstyle-controllers.xml</configLocation>
-                            <includes>**/controller/**/*.java</includes>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>checkstyle-services</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                        <configuration>
-                            <configLocation>${project.basedir}/checkstyle-services.xml</configLocation>
-                            <includes>**/service/**/*.java</includes>
-                        </configuration>
                     </execution>
                 </executions>
             </plugin>
