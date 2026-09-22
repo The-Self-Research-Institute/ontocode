@@ -60,8 +60,8 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
   const [submitResult, setSubmitResult] = useState<{
     success: boolean;
     message: string;
-    jiraUrl?: string;
-    jiraFailureReason?: string;
+    issueUrl?: string;
+    trackerFailureReason?: string;
   } | null>(null);
 
   // Desktop only: no required login, so we collect + locally cache an email to
@@ -382,17 +382,17 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
             });
         }
 
-        const jiraFailureReason = result.jiraFailureReason || undefined;
+        const trackerFailureReason = result.trackerFailureReason || undefined;
         setSubmitResult({
           success: true,
           // message: result.message || (issueType === "Task" ? "Feature request submitted successfully!" : "Bug reported successfully!"),
           message: issueType === "Task" ? "Feature request submitted successfully!" : "Bug reported successfully!",
-          jiraUrl: result.jiraIssueUrl,
-          jiraFailureReason,
+          issueUrl: result.issueUrl,
+          trackerFailureReason,
         });
 
-        if (!jiraFailureReason) {
-          // Close modal after 3 seconds only when Jira creation succeeded.
+        if (!trackerFailureReason) {
+          // Close modal after 3 seconds only when tracker creation succeeded.
           setTimeout(() => {
             onClose();
           }, 3000);
@@ -472,7 +472,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
     }
   };
 
-  const isPartialSuccess = !!submitResult?.success && !!submitResult?.jiraFailureReason;
+  const isPartialSuccess = !!submitResult?.success && !!submitResult?.trackerFailureReason;
 
   return (
     <div className="fixed inset-0 bg-white z-50 flex flex-col">
@@ -537,9 +537,9 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                 }`}>
                 {submitResult.message}
               </p>
-              {submitResult.jiraFailureReason && (
+              {submitResult.trackerFailureReason && (
                 <p className="text-sm text-amber-900 bg-amber-100 border border-amber-200 rounded-md px-3 py-2">
-                  Jira sync failed: {submitResult.jiraFailureReason}
+                  OpenProject sync failed: {submitResult.trackerFailureReason}
                 </p>
               )}
               {submitResult.success && (

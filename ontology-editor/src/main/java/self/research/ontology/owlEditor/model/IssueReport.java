@@ -10,10 +10,6 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.Instant;
 import java.util.List;
 
-/**
- * Represents a user-submitted issue/bug report
- * Stored in MongoDB for audit trail and fallback when Jira is unavailable
- */
 @Data
 @Builder
 @NoArgsConstructor
@@ -54,19 +50,19 @@ public class IssueReport {
     
     private Instant createdAt;
     
-    private String jiraIssueKey;
-    
-    private String jiraIssueUrl;
-    
+    private String issueKey;
+
+    private String issueUrl;
+
     private IssueStatus status;
-    
+
     private String failureReason;
-    
+
     public enum IssueStatus {
-        PENDING,           // Not yet submitted to Jira
-        SUBMITTED,         // Successfully created in Jira
-        FAILED,            // Failed to create in Jira
-        LOCAL_ONLY         // Jira disabled, stored locally only
+        PENDING,
+        SUBMITTED,
+        FAILED,
+        LOCAL_ONLY
     }
     
     @Data

@@ -164,7 +164,7 @@ export const PrivacyPolicyModal: React.FC<Props> = ({ isOpen, onClose }) => {
             <p>
               Outside of account deletion, support requests and issue-tracker submissions (including
               diagnostic logs and system information) are automatically deleted after 24 months from
-              submission. If a report was also forwarded to our issue tracker (Jira), that copy follows our
+              submission. If a report was also forwarded to our issue tracker (OpenProject), that copy follows our
               issue-tracker provider's own retention practices. You can request earlier deletion of your
               reports at any time — see Section 9.
             </p>
