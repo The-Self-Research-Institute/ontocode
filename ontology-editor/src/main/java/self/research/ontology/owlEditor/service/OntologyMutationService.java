@@ -78,6 +78,9 @@ public class OntologyMutationService {
     @Autowired(required = false) @Nullable
     private EditorReasonerCacheService editorReasonerCacheService;
 
+    @Autowired(required = false) @Nullable
+    private OntologyHistoryService historyService;
+
     // Fire-and-forget cross-service call to bust ontology-plugin-service's reasoner
     // cache after a save — short timeouts since this must never hold up a mutation
     // waiting on another service (see invalidateReasonerCaches()).
@@ -194,7 +197,11 @@ public class OntologyMutationService {
         
         log.info("[MUTATION] Generated SPARQL (BEFORE graph injection):");
         log.info("[MUTATION] {}", sparql);
-        
+
+        for (MutationOp op : ops) {
+            snapshotAxiomsBeforeDelete(projectId, op, userId);
+        }
+
         try {
             // desktop: OWLAPI patch or in-memory SPARQL; defer Fuseki until SPARQL/graph.
             if (!draft && desktopOwlApiMutationService != null
@@ -2214,6 +2221,39 @@ public class OntologyMutationService {
     private boolean isComplexExpression(String expression) {
         if (expression == null) return false;
         return expression.contains(" ") && !expression.trim().startsWith("<") && !expression.trim().startsWith("_:");
+    }
+
+    private void snapshotAxiomsBeforeDelete(String projectId, MutationOp op, String userId) {
+        if (historyService == null || op.iri() == null) return;
+        String type = op.type();
+        if (type == null || !type.startsWith("delete")) return;
+
+        String query = PREFIXES + """
+            SELECT ?p ?o WHERE { <%s> ?p ?o }
+            """.formatted(op.iri());
+        try {
+            TupleQueryResult result = datasetService.execSelect(projectId, query);
+            String effectiveUsername = userId != null ? userId : "System";
+            while (result.hasNext()) {
+                BindingSet bs = result.next();
+                String predicate = bs.getValue("p").stringValue();
+                String object = bs.getValue("o").stringValue();
+                if (predicate.equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")) {
+                    continue;
+                }
+                if (predicate.equals("http://www.w3.org/2000/01/rdf-schema#subClassOf")) {
+                    historyService.recordEdit(projectId, userId, effectiveUsername,
+                            "removeSubClassOf", op.iri(), op.label(), object, null,
+                            "subClassOf changed via " + type, null);
+                } else {
+                    historyService.recordEdit(projectId, userId, effectiveUsername,
+                            "removeStatement", op.iri(), op.label(), object, null,
+                            "Property assertion changed via " + type + " (" + predicate + ")", predicate);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[MUTATION] Could not snapshot axioms before delete for {}: {}", op.iri(), e.getMessage());
+        }
     }
 
     private String resolveEntity(String projectId, String name) {

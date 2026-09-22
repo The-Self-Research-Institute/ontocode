@@ -5,6 +5,7 @@ import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.model.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.dto.AnnotationPropertyDto;
@@ -92,7 +93,9 @@ public class OntologyQueryService {
 
     private final SparqlDatasetService datasetService;
     private final TopLevelClassCacheService topLevelCacheService;
-
+@CacheEvict(value = {"ontologyIndividuals", "individualCount", "ontologyAnnotationProperties"}, allEntries = true)
+public void evictIndividualAndAnnotationPropertyCaches(String projectId) {
+}
     public OntologyQueryService(SparqlDatasetService datasetService,
                                 TopLevelClassCacheService topLevelCacheService) {
         this.datasetService = datasetService;

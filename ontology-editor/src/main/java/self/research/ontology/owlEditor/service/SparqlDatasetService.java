@@ -453,13 +453,17 @@ public class SparqlDatasetService {
     }
 
     private ProjectGraphBinding resolveBindingForImport(String projectId, long fileSizeBytes) {
-        String graphUri = getGraphUri(projectId);
+        return resolveBindingForImport(projectId, fileSizeBytes, null);
+    }
+
+    private ProjectGraphBinding resolveBindingForImport(String projectId, long fileSizeBytes, String graphUriOverride) {
+        String graphUri = graphUriOverride != null ? graphUriOverride : getGraphUri(projectId);
         if (usesSharedGraphForImport(fileSizeBytes)) {
             log.info("[SharedGraph] File {} MB < {} MB limit — using shared dataset for project {}",
                     fileSizeBytes / (1024 * 1024), sharedGraphMaxFileMb, projectId);
             return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
         }
-        return resolveBinding(projectId, true);
+        return resolveBinding(projectId, true, graphUriOverride);
     }
 
     private String deriveFusekiBase() {
@@ -509,7 +513,11 @@ public class SparqlDatasetService {
     }
 
     private ProjectGraphBinding resolveBinding(String projectId, boolean createIfAbsent) {
-        String graphUri = getGraphUri(projectId);
+        return resolveBinding(projectId, createIfAbsent, null);
+    }
+
+    private ProjectGraphBinding resolveBinding(String projectId, boolean createIfAbsent, String graphUriOverride) {
+        String graphUri = graphUriOverride != null ? graphUriOverride : getGraphUri(projectId);
         if (projectId == null || projectId.isBlank()) {
             return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
         }
@@ -1179,20 +1187,75 @@ public class SparqlDatasetService {
                 projectId, userId, elapsedMillis(start));
     }
 
-    /**
-     * Full copy of the main graph into the user's draft graph (copy-on-switch model).
-     * The draft graph must be cleared before calling this.
-     */
-    public void copyMainGraphToDraft(String projectId, String userId) {
+       public void copyMainGraphToDraft(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
-        String sparql = "INSERT { GRAPH <" + draftGraph + "> { ?s ?p ?o } } WHERE { GRAPH <" + mainGraph + "> { ?s ?p ?o } }";
         long start = System.nanoTime();
-        execUpdate(projectId, mainGraph, sparql);
-        log.info("[DRAFT-COPY] Copied main → draft for project {} user {} in {}ms",
-                projectId, userId, elapsedMillis(start));
-    }
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
+            org.eclipse.rdf4j.model.ValueFactory vf = conn.getValueFactory();
+            org.eclipse.rdf4j.model.IRI mainGraphIri = vf.createIRI(mainGraph);
+            org.eclipse.rdf4j.model.IRI draftGraphIri = vf.createIRI(draftGraph);
 
+            boolean autoCommit = conn.isAutoCommit();
+            if (autoCommit) {
+                conn.begin();
+            }
+            try {
+                java.util.List<org.eclipse.rdf4j.model.Statement> statements = new java.util.ArrayList<>();
+                try (org.eclipse.rdf4j.repository.RepositoryResult<org.eclipse.rdf4j.model.Statement> result =
+                        conn.getStatements(null, null, null, false, mainGraphIri)) {
+                    while (result.hasNext()) {
+                        statements.add(result.next());
+                    }
+                }
+                conn.add(statements, draftGraphIri);
+                if (autoCommit) {
+                    conn.commit();
+                }
+                log.info("[DRAFT-COPY] Copied {} triples main -> draft for project {} user {} in {}ms",
+                        statements.size(), projectId, userId, elapsedMillis(start));
+            } catch (Exception e) {
+                if (autoCommit) {
+                    conn.rollback();
+                }
+                throw e;
+            }
+        }
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
+    }
+    public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {
+        String draftGraph = getDraftGraphUri(projectId, userId);
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
+            org.eclipse.rdf4j.model.IRI draftGraphIri = conn.getValueFactory().createIRI(draftGraph);
+            java.util.List<org.eclipse.rdf4j.model.Statement> statements = new java.util.ArrayList<>();
+            try (org.eclipse.rdf4j.repository.RepositoryResult<org.eclipse.rdf4j.model.Statement> result =
+                    conn.getStatements(null, null, null, false, draftGraphIri)) {
+                while (result.hasNext()) {
+                    statements.add(result.next());
+                }
+            }
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            org.eclipse.rdf4j.rio.RDFWriter writer = org.eclipse.rdf4j.rio.Rio.createWriter(rdfFormat, out);
+            writer.startRDF();
+            writer.handleNamespace("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+            writer.handleNamespace("rdfs", "http://www.w3.org/2000/01/rdf-schema#");
+            writer.handleNamespace("owl", "http://www.w3.org/2002/07/owl#");
+            writer.handleNamespace("xsd", "http://www.w3.org/2001/XMLSchema#");
+            for (org.eclipse.rdf4j.model.Statement st : statements) {
+                writer.handleStatement(st);
+            }
+            writer.endRDF();
+            log.info("[DRAFT-EXPORT] Exported {} triples from draft graph for project {} user {}",
+                    statements.size(), projectId, userId);
+            return out.toString(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to export draft graph: " + e.getMessage(), e);
+        }
+    }
     public long countDraftTriples(String projectId, String userId) {
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);
@@ -1435,10 +1498,6 @@ public class SparqlDatasetService {
         // Don't split by semicolon in this case as it's part of Turtle syntax
         if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
             if (operationsStr.toUpperCase().contains("USING ")) {
-                // Draft update: USING already present; wrap INSERT template with GRAPH instead of
-                // WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
-                // Close GRAPH and outer INSERT braces before WHERE (non-greedy .*? alone left USING
-                // attached to a malformed template for blank-node inserts).
                 operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\}\\s*)(WHERE)",
                         "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
                 log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
@@ -1560,13 +1619,23 @@ public class SparqlDatasetService {
                                 long fileSizeBytes,
                                 ImportOptions options,
                                 ProgressListener progressListener) {
+        bulkLoadChunked(projectId, inputStream, rdfFormat, fileSizeBytes, options, progressListener, null);
+    }
+
+    public void bulkLoadChunked(String projectId,
+                                InputStream inputStream,
+                                RDFFormat rdfFormat,
+                                long fileSizeBytes,
+                                ImportOptions options,
+                                ProgressListener progressListener,
+                                String targetGraphUriOverride) {
         long bulkLoadStart = System.nanoTime();
         int batchSize = resolveBatchSize(fileSizeBytes);
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
 
         try {
             long t0 = System.nanoTime();
-            ProjectGraphBinding binding = resolveBindingForImport(projectId, fileSizeBytes);
+            ProjectGraphBinding binding = resolveBindingForImport(projectId, fileSizeBytes, targetGraphUriOverride);
             Repository repo = binding.repository();
             String graphUri = binding.graphUri();
 
@@ -3088,7 +3157,7 @@ public class SparqlDatasetService {
         }
 
         ProjectGraphBinding binding = resolveBinding(projectId, false);
-        String url = binding.namedGraphGspUrl();
+        String url = binding.gspBase() + "?graph=" + java.net.URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
         String auth = "Basic " + java.util.Base64.getEncoder()
                 .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
 
