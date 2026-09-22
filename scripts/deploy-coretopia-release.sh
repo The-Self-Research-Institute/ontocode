@@ -228,7 +228,7 @@ branch_web_remote_build() {
     dockerfiles+=("${REMOTE_BUILD_DOCKERFILE[$s]}")
   done
 
-  local rsync_paths=(pom.xml shared/ \
+  local rsync_paths=(pom.xml checkstyle.xml checkstyle-suppressions.xml .mvn/ shared/ \
     ontology-auth/pom.xml ontology-auth/src/ \
     ontology-gateway/pom.xml ontology-gateway/src/ \
     ontology-editor/pom.xml ontology-editor/src/ \
