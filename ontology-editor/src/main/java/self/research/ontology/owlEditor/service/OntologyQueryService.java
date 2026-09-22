@@ -14,6 +14,7 @@ import self.research.ontology.owlEditor.dto.DatatypeDto;
 import self.research.ontology.owlEditor.dto.IndividualDto;
 import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.dto.PropertyDto;
+import self.research.ontology.owlEditor.util.SparqlSafety;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -78,28 +79,20 @@ public class OntologyQueryService {
      * any control character (U+0000–U+0020).
      */
     private static String safeIri(String iri) {
-        if (iri == null || iri.isBlank()) {
-            throw new IllegalArgumentException("IRI must not be blank");
-        }
-        for (int i = 0; i < iri.length(); i++) {
-            char c = iri.charAt(i);
-            if (c == '<' || c == '>' || c == '"' || c == '{' || c == '}' ||
-                    c == '|' || c == '^' || c == '`' || c == '\\' || c <= 0x20) {
-                throw new IllegalArgumentException("Invalid character in IRI at position " + i + " (char=" + (int) c + ")");
-            }
-        }
-        return iri;
+        return SparqlSafety.safeIri(iri);
     }
 
     private final SparqlDatasetService datasetService;
     private final TopLevelClassCacheService topLevelCacheService;
-@CacheEvict(value = {"ontologyIndividuals", "individualCount", "ontologyAnnotationProperties"}, allEntries = true)
-public void evictIndividualAndAnnotationPropertyCaches(String projectId) {
-}
+
     public OntologyQueryService(SparqlDatasetService datasetService,
                                 TopLevelClassCacheService topLevelCacheService) {
         this.datasetService = datasetService;
         this.topLevelCacheService = topLevelCacheService;
+    }
+
+    @CacheEvict(value = {"ontologyIndividuals", "individualCount", "ontologyAnnotationProperties"}, allEntries = true)
+    public void evictIndividualAndAnnotationPropertyCaches(String projectId) {
     }
 
     private String draftEntityHiddenFilter(String projectId, String entityVar) {

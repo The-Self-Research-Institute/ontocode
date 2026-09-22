@@ -2231,8 +2231,7 @@ public class OntologyMutationService {
         String query = PREFIXES + """
             SELECT ?p ?o WHERE { <%s> ?p ?o }
             """.formatted(op.iri());
-        try {
-            TupleQueryResult result = datasetService.execSelect(projectId, query);
+        try (TupleQueryResult result = datasetService.execSelect(projectId, query)) {
             String effectiveUsername = userId != null ? userId : "System";
             while (result.hasNext()) {
                 BindingSet bs = result.next();
@@ -2349,5 +2348,18 @@ public class OntologyMutationService {
         String language,        // Language tag for annotation literals (e.g. "en", "fr")
         String datatype,        // Datatype IRI for annotation literals (e.g. xsd:boolean)
         String ancestorIri      // Subject class for anonymous ancestor deletes (rdfs:subClassOf subject)
-    ) {}
+    ) {
+        public static MutationOp forTypeAssertion(String opType, String iri, String label) {
+            return new MutationOp(opType, iri, label, null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+
+        public static MutationOp forSubClassOfChange(String opType, String iri, String label, String parentIri, boolean isAddition) {
+            return new MutationOp(opType, iri, label, parentIri, null, null, null, null, null, null, null,
+                    isAddition ? null : parentIri, null, null, null);
+        }
+
+        public static MutationOp forPropertyAssertion(String opType, String iri, String label, String property, String value) {
+            return new MutationOp(opType, iri, label, null, property, value, null, null, null, null, null, null, null, null, null);
+        }
+    }
 }

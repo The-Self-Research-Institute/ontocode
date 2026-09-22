@@ -2165,8 +2165,8 @@ public class ProjectLoadController {
                         subjectIri, label, null, null,
                         opType + " operation via Code View", null);
                 if (draftOps != null) {
-                    draftOps.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                            opType, subjectIri, label, null, null, null, null, null, null, null, null, null, null, null, null));
+                    draftOps.add(self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp
+                            .forTypeAssertion(opType, subjectIri, label));
                 }
             }
             return;
@@ -2180,9 +2180,8 @@ public class ProjectLoadController {
                     isAddition ? parentIri.stringValue() : null,
                     "subClassOf changed via Code View", null);
             if (draftOps != null) {
-                draftOps.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        opType, subjectIri, label, parentIri.stringValue(), null, null, null, null, null, null, null,
-                        isAddition ? null : parentIri.stringValue(), null, null, null));
+                draftOps.add(self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp
+                        .forSubClassOfChange(opType, subjectIri, label, parentIri.stringValue(), isAddition));
             }
             return;
         }
@@ -2193,9 +2192,8 @@ public class ProjectLoadController {
                     opType, subjectIri, label, null, st.getObject().stringValue(),
                     "Annotation changed via Code View", predicate.stringValue());
             if (draftOps != null) {
-                draftOps.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                        opType, subjectIri, label, null, predicate.stringValue(), st.getObject().stringValue(),
-                        null, null, null, null, null, null, null, null, null));
+                draftOps.add(self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp
+                        .forPropertyAssertion(opType, subjectIri, label, predicate.stringValue(), st.getObject().stringValue()));
             }
             return;
         }
@@ -2208,9 +2206,8 @@ public class ProjectLoadController {
                 "Property assertion changed via Code View (" + predicate.stringValue() + ")",
                 predicate.stringValue());
         if (draftOps != null) {
-            draftOps.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
-                    opType, subjectIri, label, null, predicate.stringValue(), st.getObject().stringValue(),
-                    null, null, null, null, null, null, null, null, null));
+            draftOps.add(self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp
+                    .forPropertyAssertion(opType, subjectIri, label, predicate.stringValue(), st.getObject().stringValue()));
         }
     }
 
