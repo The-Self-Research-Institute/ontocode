@@ -337,7 +337,8 @@ build_desktop() {
   local platform="$1" update_host="$2"
   (
     flock -x 9
-    cd "$ROOT/electron-app" && ONTOCODE_UPDATE_HOST="$update_host" npm run "dist:$platform"
+    cd "$ROOT/electron-app" && node scripts/build-desktop.js --plugins \
+      && ONTOCODE_UPDATE_HOST="$update_host" npm run "dist:$platform"
   ) 9>"$DESKTOP_BUILD_LOCK"
 }
 
@@ -616,6 +617,7 @@ branch_desktop_linux_remote_build() {
       ontology-swrl/pom.xml ontology-swrl/src/ \
       ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
       electron-app/ ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ \
+      plugins/ \
       "${HOST[$m]}:$remote_dir/" || return 1
     echo "[progress][$m-linux] $(date '+%H:%M:%S') rsync OK — building + uploading each target on remote (${dist_targets[*]})"
   fi
@@ -692,6 +694,10 @@ if [[ "$UPLOAD_ONLY" -eq 0 ]]; then
   (cd ontology-vscode-extension/webview-src && [ -d node_modules ] || npm install)
   cd electron-app || exit 1
   [ -d node_modules ] || npm install
+  if ! node scripts/build-desktop.js --plugins; then
+    echo "ERROR: plugin bundling failed — no target can be built" >&2
+    exit 1
+  fi
 
   for target in "${TARGETS[@]}"; do
     echo "[progress] building dist:linux:$target"
