@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, AlertCircle, Send, X, Lock, Copy, Check } from "lucide-react";
+import { AlertCircle, Send, X, Lock, Copy, Check } from "lucide-react";
+import { AskAiIcon } from "./AskAiIcon";
 import { hasApiKey, setStoredApiKey } from "../services/LlmInsightsService";
 import { CodeAssistantModelSwitcher } from "./CodeAssistantModelSwitcher";
 import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
@@ -292,9 +293,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--color-background)" }}>
       <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="relative bg-white bg-opacity-20 p-1.5 rounded-lg flex-shrink-0">
-            <span className="absolute inset-0 rounded-lg bg-white ask-ai-glow" />
-            <Bot className="relative text-white" size={20} />
+          <div className="bg-white bg-opacity-20 p-1.5 rounded-lg flex-shrink-0">
+            <AskAiIcon className="text-white" size={20} />
           </div>
           <div className="min-w-0">
             <h2 className="text-sm font-bold text-white leading-tight">Ask AI</h2>
