@@ -71,6 +71,10 @@ export function getGatewayUrl(type?: DeploymentType): string {
     return config?.SELF_HOSTED_GATEWAY_URL || DEFAULTS.SELF_HOSTED_GATEWAY_URL;
 }
 
+export function getRemoteApiBaseUrl(): string {
+    return getConfig()?.CLOUD_GATEWAY_URL || DEFAULTS.CLOUD_GATEWAY_URL;
+}
+
 export function getEditorUrl(type?: DeploymentType): string {
     const deploymentType = type ?? getStoredDeploymentType();
     const config = getConfig();

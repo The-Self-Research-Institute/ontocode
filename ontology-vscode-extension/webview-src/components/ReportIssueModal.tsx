@@ -16,7 +16,7 @@ import {
   Mail,
 } from "lucide-react";
 import { useAuth } from "../custom-hook/useAuth";
-import { getGatewayUrl } from "../config/deploymentConfig";
+import { getGatewayUrl, getRemoteApiBaseUrl } from "../config/deploymentConfig";
 import { isAppOnline, subscribeOnlineStatus } from "../utils/connectivity";
 import { isDesktop } from "../utils/desktop";
 import { validateEmail } from "../utils/validation";
@@ -33,9 +33,8 @@ interface ReportIssueModalProps {
   onClose: () => void;
 }
 
-// Get API base URL based on deployment type
 const getApiBaseUrl = () => {
-  return getGatewayUrl();
+  return isDesktop() ? getRemoteApiBaseUrl() : getGatewayUrl();
 };
 
 export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
