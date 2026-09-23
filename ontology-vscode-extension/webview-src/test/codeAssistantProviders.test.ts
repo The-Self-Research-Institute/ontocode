@@ -74,6 +74,19 @@ describe("requestNextTurn — OpenAI", () => {
     const conversation = await startAssistantConversation("system prompt", "hi");
     await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/cut off/);
   });
+
+  it("never adds Claude-only cache_control fields to the OpenAI request body", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "ok" } }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    await requestNextTurn(conversation, [TOOL]);
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(JSON.stringify(body)).not.toContain("cache_control");
+    expect(fetchMock.mock.calls[0][1].headers["anthropic-beta"]).toBeUndefined();
+  });
 });
 
 describe("requestNextTurn — Claude", () => {
@@ -99,6 +112,45 @@ describe("requestNextTurn — Claude", () => {
     const conversation = await startAssistantConversation("system prompt", "hi");
     await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/cut off/);
   });
+
+  it("marks the system prompt and the last tool definition as cacheable", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("claude");
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: "ok" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    await requestNextTurn(conversation, [TOOL]);
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
+    const body = JSON.parse(init.body);
+    expect(body.system).toEqual([{ type: "text", text: "system prompt", cache_control: { type: "ephemeral" } }]);
+    expect(body.tools.at(-1).cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("marks the last message as the conversation's cache breakpoint, whether it's plain text or a tool_result block", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("claude");
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: "ok" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    await requestNextTurn(conversation, [TOOL]);
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const lastPlainMessage = firstBody.messages.at(-1);
+    expect(lastPlainMessage.content).toEqual([{ type: "text", text: "hi", cache_control: { type: "ephemeral" } }]);
+
+    mockFetchOnce(200, { content: [{ type: "tool_use", id: "toolu_1", name: "read_context", input: {} }] });
+    const { advance } = await requestNextTurn(conversation, [TOOL]);
+    const afterToolCall = advance([{ toolCallId: "toolu_1", name: "read_context", result: { ok: true }, isError: false }]);
+
+    const secondFetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: "done" }] }) });
+    vi.stubGlobal("fetch", secondFetchMock);
+    await requestNextTurn(afterToolCall, [TOOL]);
+    const secondBody = JSON.parse(secondFetchMock.mock.calls[0][1].body);
+    const lastToolResultMessage = secondBody.messages.at(-1);
+    expect(lastToolResultMessage.content.at(-1).cache_control).toEqual({ type: "ephemeral" });
+    expect(lastToolResultMessage.content.at(-1).type).toBe("tool_result");
+  });
 });
 
 describe("requestNextTurn — Gemini", () => {
@@ -115,6 +167,18 @@ describe("requestNextTurn — Gemini", () => {
     if (turn.kind === "tool_calls") {
       expect(turn.calls[0].name).toBe("read_context");
     }
+  });
+
+  it("never adds Claude-only cache_control fields to the Gemini request body", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("gemini");
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    await requestNextTurn(conversation, [TOOL]);
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(JSON.stringify(body)).not.toContain("cache_control");
   });
 });
 

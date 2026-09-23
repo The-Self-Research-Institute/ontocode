@@ -103,6 +103,27 @@ function toGeminiFunctionDeclaration(tool: ToolDefinition) {
   return { name: tool.name, description: tool.description, parameters: tool.parameters };
 }
 
+const CACHE_CONTROL_EPHEMERAL = { type: "ephemeral" } as const;
+
+function withClaudeCacheBreakpoint(messages: unknown[]): unknown[] {
+  if (messages.length === 0) return messages;
+  const lastIndex = messages.length - 1;
+  const last = messages[lastIndex] as { role: string; content: unknown };
+  if (typeof last.content === "string") {
+    return [
+      ...messages.slice(0, lastIndex),
+      { ...last, content: [{ type: "text", text: last.content, cache_control: CACHE_CONTROL_EPHEMERAL }] },
+    ];
+  }
+  if (Array.isArray(last.content) && last.content.length > 0) {
+    const blocks = last.content as Record<string, unknown>[];
+    const lastBlockIndex = blocks.length - 1;
+    const content = blocks.map((block, i) => (i === lastBlockIndex ? { ...block, cache_control: CACHE_CONTROL_EPHEMERAL } : block));
+    return [...messages.slice(0, lastIndex), { ...last, content }];
+  }
+  return messages;
+}
+
 function buildRequestBody(conversation: ConversationState, model: string, tools: ToolDefinition[]): Record<string, unknown> {
   const maxTokens = getStoredMaxResponseTokens();
   if (conversation.provider === "openai") {
@@ -116,11 +137,15 @@ function buildRequestBody(conversation: ConversationState, model: string, tools:
     };
   }
   if (conversation.provider === "claude") {
+    const claudeTools = tools.map(toClaudeTool);
+    if (claudeTools.length > 0) {
+      claudeTools[claudeTools.length - 1] = { ...claudeTools[claudeTools.length - 1], cache_control: CACHE_CONTROL_EPHEMERAL };
+    }
     return {
       model,
-      system: conversation.systemPrompt,
-      messages: conversation.nativeMessages,
-      tools: tools.map(toClaudeTool),
+      system: [{ type: "text", text: conversation.systemPrompt, cache_control: CACHE_CONTROL_EPHEMERAL }],
+      messages: withClaudeCacheBreakpoint(conversation.nativeMessages),
+      tools: claudeTools,
       max_tokens: maxTokens,
     };
   }
@@ -147,6 +172,7 @@ function providerEndpoint(provider: LlmProvider, model: string, key: string): { 
         "x-api-key": key,
         "anthropic-version": "2023-06-01",
         "anthropic-dangerous-direct-browser-access": "true",
+        "anthropic-beta": "prompt-caching-2024-07-31",
       },
     };
   }

@@ -11,9 +11,11 @@ import self.research.ontology.owlEditor.util.AssistantTokenEstimator;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -45,7 +47,7 @@ public class AssistantContextToolService {
 
         List<Item> items = new ArrayList<>();
         boolean anyPartial = false;
-        for (Target target : targets) {
+        for (Target target : dedupeTargets(targets)) {
             try {
                 if ("range".equals(target.type())) {
                     items.add(resolveRange(session.getProjectId(), target.value()));
@@ -77,6 +79,17 @@ public class AssistantContextToolService {
                 .coverage(anyPartial ? "partial" : "complete")
                 .revision(session.getPinnedRevision())
                 .build();
+    }
+
+    private List<Target> dedupeTargets(List<Target> targets) {
+        List<Target> deduped = new ArrayList<>();
+        Set<Target> seen = new HashSet<>();
+        for (Target target : targets) {
+            if (seen.add(target)) {
+                deduped.add(target);
+            }
+        }
+        return deduped;
     }
 
     private String concatenatedText(List<Item> items) {
