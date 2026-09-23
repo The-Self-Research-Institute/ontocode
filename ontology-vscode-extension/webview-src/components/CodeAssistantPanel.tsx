@@ -121,7 +121,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       ]);
       return;
     }
-    setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: outcome.reason }]);
+    setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(outcome.reason) }]);
   };
 
   const submitMessage = async () => {

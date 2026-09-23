@@ -114,6 +114,18 @@ function newClientGroupId(): string {
   return `grp_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function describeToolFailure(result: unknown): string {
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    if (typeof r.message === "string" && r.message.trim()) return r.message;
+    if (typeof r.error === "string" && r.error.trim()) {
+      const details = Array.isArray(r.details) ? r.details.join("; ") : "";
+      return details ? `${r.error}: ${details}` : r.error;
+    }
+  }
+  return "unknown reason";
+}
+
 async function dispatchToolCall(
   ctx: LoopContext,
   name: string,
@@ -212,8 +224,9 @@ export async function runAssistantLoop(
       onStage({ stage: "calling-tool", detail: "propose_edit" });
       const outcome = await dispatchToolCall(ctx, proposeCall.name, proposeCall.args, signal);
       if (outcome.isError || !outcome.proposeResult) {
+        const detail = describeToolFailure(outcome.result);
         onStage({ stage: "stopped", detail: "propose_edit failed" });
-        return { kind: "stopped", reason: "The proposed edit could not be validated. Try again or rephrase." };
+        return { kind: "stopped", reason: `The proposed edit couldn't be applied: ${detail}` };
       }
       onStage({ stage: "propose" });
       return { kind: "propose", result: outcome.proposeResult };
