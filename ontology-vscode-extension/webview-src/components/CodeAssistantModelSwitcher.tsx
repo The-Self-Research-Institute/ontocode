@@ -11,6 +11,7 @@ import {
   getProviderModels,
   refreshAvailableModels,
   hasApiKey,
+  isLikelyPaidOnlyModel,
   type LlmProvider,
   type KnownModel,
 } from "../services/LlmInsightsService";
@@ -66,8 +67,20 @@ export const CodeAssistantModelSwitcher: React.FC<CodeAssistantModelSwitcherProp
     setLoadingModels(true);
     try {
       const { models: live, live: isLive } = await refreshAvailableModels(provider, key.trim());
-      if (isLive) setModels(live);
-      else setError("Could not reach the provider — showing default models.");
+      if (!isLive) {
+        setError("Could not reach the provider — showing default models.");
+        return;
+      }
+      setModels(live);
+      // A currently-selected model that's likely billing-only (e.g. Gemini Pro, confirmed
+      // zero free-tier quota on real keys) gets swapped for the top free-tier alternative
+      // automatically, instead of leaving the user stuck retrying the same dead model.
+      const currentModel = getStoredModel();
+      if (isLikelyPaidOnlyModel(provider, currentModel) && live.length && live[0].id !== currentModel) {
+        setModel(live[0].id);
+        setStoredModel(live[0].id);
+        onChange();
+      }
     } finally {
       setLoadingModels(false);
     }

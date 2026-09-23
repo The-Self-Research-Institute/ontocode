@@ -120,7 +120,14 @@ function providerEndpoint(provider: LlmProvider, model: string, key: string): { 
   if (provider === "claude") {
     return {
       url: "https://api.anthropic.com/v1/messages",
-      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        // Anthropic's API blocks direct browser calls by default (no CORS) — this opts in,
+        // required since the key never leaves the browser in this app's design.
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
     };
   }
   return {

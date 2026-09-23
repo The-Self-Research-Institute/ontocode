@@ -143,6 +143,14 @@ export function getProviderModels(provider: LlmProvider): KnownModel[] {
 }
 
 const BUDGET_TIER = /(lite|mini|nano|-8b|small)/i;
+// Gemini's "Pro" tier has repeatedly shown a hard 0 free-tier quota on real keys (confirmed
+// live twice) — it's often billing-only, unlike Flash which is the intended free workhorse.
+// Never auto-pick it over a model that actually works on a free key.
+const GEMINI_PAID_TIER = /(^|-)pro(-|$)/i;
+
+export function isLikelyPaidOnlyModel(provider: LlmProvider, modelId: string): boolean {
+  return provider === 'gemini' && GEMINI_PAID_TIER.test(modelId);
+}
 
 function sortModelsTopFirst(models: KnownModel[]): KnownModel[] {
   const flagship = models.filter((m) => !BUDGET_TIER.test(m.id));
@@ -169,12 +177,17 @@ async function listGeminiModels(key: string): Promise<KnownModel[]> {
   // (tighter free quota, more prone to 503s) — never let one outrank an actual Gemini model.
   const gemini = known.filter((m) => m.id.startsWith('gemini-'));
   const other = known.filter((m) => !m.id.startsWith('gemini-'));
-  return [...sortModelsTopFirst(gemini), ...sortModelsTopFirst(other)];
+
+  const flash = gemini.filter((m) => !BUDGET_TIER.test(m.id) && !GEMINI_PAID_TIER.test(m.id));
+  const pro = gemini.filter((m) => GEMINI_PAID_TIER.test(m.id) && !BUDGET_TIER.test(m.id));
+  const budget = gemini.filter((m) => BUDGET_TIER.test(m.id));
+
+  return [...flash, ...pro, ...budget, ...sortModelsTopFirst(other)];
 }
 
 async function listClaudeModels(key: string): Promise<KnownModel[]> {
   const res = await fetch('https://api.anthropic.com/v1/models', {
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
   });
   if (!res.ok) return [];
   const data = await res.json().catch(() => null);
@@ -372,6 +385,7 @@ async function callClaude(key: string, model: string, prompt: string, signal?: A
       'Content-Type': 'application/json',
       'x-api-key': key,
       'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
 
