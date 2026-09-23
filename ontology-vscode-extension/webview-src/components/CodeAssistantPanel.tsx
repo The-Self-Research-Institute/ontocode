@@ -4,6 +4,7 @@ import { hasApiKey } from "../services/LlmInsightsService";
 import LLMSettingsPanel from "./LLMSettingsPanel";
 import { CodeAssistantReviewGroups, type GroupDecision } from "./CodeAssistantReviewGroups";
 import { useAuth } from "../custom-hook/useAuth";
+import { useSubscription } from "../hooks/useSubscription";
 import { createAssistantSession, applyEditGroup, AssistantApiError, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
 import { runAssistantLoop, type LoopOutcome } from "../services/codeAssistantLoop";
 import { ACTIONS, getApiBaseUrl, buildSystemPrompt, describeLoopStage, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
@@ -26,6 +27,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   onClose,
 }) => {
   const { user } = useAuth();
+  const { isFree, getUpgradeMessage } = useSubscription();
   const [phase, setPhase] = useState<Phase>(hasApiKey() ? "action-picker" : "configure-provider");
   const [selectedAction, setSelectedAction] = useState<CodeAssistantAction | null>(null);
   const [message, setMessage] = useState("");
@@ -49,6 +51,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   };
 
   const chooseAction = (action: CodeAssistantAction) => {
+    if (action === "local-edit" && isFree) return;
     if (!hasApiKey()) {
       setPhase("configure-provider");
       return;
@@ -184,20 +187,26 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                   Open a project first — the assistant needs one to work against.
                 </div>
               )}
-              {ACTIONS.map(({ id, label, description, icon: Icon }) => (
-                <button
-                  key={id}
-                  onClick={() => chooseAction(id)}
-                  disabled={!projectId}
-                  className="w-full text-left px-4 py-3 border-2 border-gray-200 rounded-lg hover:border-purple-400 hover:bg-purple-50 disabled:opacity-50 disabled:hover:border-gray-200 disabled:hover:bg-white transition-colors flex items-start gap-3"
-                >
-                  <Icon size={20} className="text-purple-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <div className="font-semibold text-gray-800">{label}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">{description}</div>
-                  </div>
-                </button>
-              ))}
+              {ACTIONS.map(({ id, label, description, icon: Icon }) => {
+                const planLocked = id === "local-edit" && isFree;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => chooseAction(id)}
+                    disabled={!projectId || planLocked}
+                    title={planLocked ? getUpgradeMessage("AI-assisted editing") : undefined}
+                    className="w-full text-left px-4 py-3 border-2 border-gray-200 rounded-lg hover:border-purple-400 hover:bg-purple-50 disabled:opacity-50 disabled:hover:border-gray-200 disabled:hover:bg-white transition-colors flex items-start gap-3"
+                  >
+                    <Icon size={20} className="text-purple-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-gray-800">{label}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {planLocked ? getUpgradeMessage("AI-assisted editing") : description}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
 
