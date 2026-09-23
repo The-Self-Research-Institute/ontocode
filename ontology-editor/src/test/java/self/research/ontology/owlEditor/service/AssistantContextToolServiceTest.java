@@ -40,6 +40,7 @@ class AssistantContextToolServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         toolService = new AssistantContextToolService(sessionService, datasetService, storageManager);
+        when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
     }
 
     @Test
@@ -57,6 +58,22 @@ class AssistantContextToolServiceTest {
     void returnsBudgetExhaustedWhenRetrievalAttemptFails() {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
         when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(false);
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "definitions");
+
+        assertFalse(result.isOk());
+        assertEquals("BUDGET_EXHAUSTED", result.getErrorCode());
+    }
+
+    @Test
+    void returnsBudgetExhaustedWhenTokenBudgetFails() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(false);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("p", "o"),
+                        List.of(Map.of("p", "rdf:type", "o", "owl:Class")), false, null));
 
         ContextToolResult result = toolService.readContext(
                 "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "definitions");

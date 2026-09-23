@@ -126,6 +126,24 @@ class AssistantSessionServiceTest {
     }
 
     @Test
+    void tryConsumeTokenBudgetReturnsTrueWhenBudgetAvailable() {
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
+                any(FindAndModifyOptions.class), eq(AssistantSessionDocument.class)))
+                .thenReturn(baseSession().tokenBudgetRemaining(7500).build());
+
+        assertTrue(service.tryConsumeTokenBudget("session-1", 500));
+    }
+
+    @Test
+    void tryConsumeTokenBudgetReturnsFalseWhenItWouldGoNegative() {
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
+                any(FindAndModifyOptions.class), eq(AssistantSessionDocument.class)))
+                .thenReturn(null);
+
+        assertFalse(service.tryConsumeTokenBudget("session-1", 50000));
+    }
+
+    @Test
     void isRevisionStaleComparesAgainstCurrentRevision() {
         when(metadataService.getMutationVersion("proj-1")).thenReturn(43L);
         AssistantSessionDocument session = baseSession().pinnedRevision(42L).build();

@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.util.AssistantTokenEstimator;
 
 import java.util.List;
 import java.util.Map;
@@ -66,6 +67,12 @@ public class AssistantSparqlToolService {
                                 + capped.rows().size() + " rows collected before the cap). Narrow the query and try again.")
                         .build();
             }
+            int estimatedTokens = AssistantTokenEstimator.estimate(resultText(capped.rows()));
+            if (!sessionService.tryConsumeTokenBudget(sessionId, estimatedTokens)) {
+                return SparqlToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
+                        .message("Retrieval token budget exhausted for this session").build();
+            }
+
             return SparqlToolResult.builder()
                     .ok(true)
                     .rows(capped.rows())
@@ -80,6 +87,18 @@ public class AssistantSparqlToolService {
             log.warn("[Assistant] run_sparql failed for session {}: {}", sessionId, msg);
             return SparqlToolResult.builder().ok(false).errorCode(errorCode).message(msg).build();
         }
+    }
+
+    private String resultText(List<Map<String, String>> rows) {
+        StringBuilder sb = new StringBuilder();
+        for (Map<String, String> row : rows) {
+            for (String value : row.values()) {
+                if (value != null) {
+                    sb.append(value);
+                }
+            }
+        }
+        return sb.toString();
     }
 
     @Data
