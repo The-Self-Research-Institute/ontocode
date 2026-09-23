@@ -28,7 +28,8 @@ export type AssistantErrorCode =
   | "QUERY_ERROR"
   | "STALE_GROUP"
   | "CONFLICT"
-  | "VALIDATION_FAILED";
+  | "VALIDATION_FAILED"
+  | "APPLY_FAILED";
 
 export class AssistantApiError extends Error {
   constructor(message: string, readonly errorCode?: AssistantErrorCode, readonly budget?: AssistantBudget) {

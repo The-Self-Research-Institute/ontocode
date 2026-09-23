@@ -35,6 +35,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const [answerText, setAnswerText] = useState("");
   const [reviewGroups, setReviewGroups] = useState<ProposedEditGroupResult[]>([]);
   const [groupDecisions, setGroupDecisions] = useState<Record<string, GroupDecision>>({});
+  const [groupErrors, setGroupErrors] = useState<Record<string, string>>({});
   const [errorText, setErrorText] = useState("");
   const [sessionRef, setSessionRef] = useState<AssistantSession | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -135,7 +136,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         }
         return next;
       });
-    } catch {
+    } catch (e) {
+      const message = e instanceof AssistantApiError ? e.message : "Apply failed unexpectedly.";
+      setGroupErrors((prev) => ({ ...prev, [serverGroupId]: message }));
       setGroupDecisions((prev) => ({ ...prev, [serverGroupId]: "failed" }));
     }
   };
@@ -150,6 +153,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     setSessionRef(null);
     setReviewGroups([]);
     setGroupDecisions({});
+    setGroupErrors({});
     setErrorText("");
     setPhase("action-picker");
   };
@@ -274,6 +278,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
               <CodeAssistantReviewGroups
                 groups={reviewGroups}
                 decisions={groupDecisions}
+                errors={groupErrors}
                 onApply={applyGroup}
                 onSkip={skipGroup}
               />

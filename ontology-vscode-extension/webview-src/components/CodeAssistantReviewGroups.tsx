@@ -7,6 +7,7 @@ export type GroupDecision = "pending" | "applying" | "applied" | "skipped" | "fa
 interface CodeAssistantReviewGroupsProps {
   groups: ProposedEditGroupResult[];
   decisions: Record<string, GroupDecision>;
+  errors?: Record<string, string>;
   onApply: (serverGroupId: string) => void;
   onSkip: (serverGroupId: string) => void;
 }
@@ -14,6 +15,7 @@ interface CodeAssistantReviewGroupsProps {
 export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps> = ({
   groups,
   decisions,
+  errors,
   onApply,
   onSkip,
 }) => {
@@ -66,7 +68,11 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
                   <AlertCircle size={14} /> Changed by another applied group — ask again to get a fresh proposal
                 </span>
               )}
-              {decision === "failed" && <span className="text-xs text-red-700">Failed</span>}
+              {decision === "failed" && (
+                <span className="flex items-center gap-1 text-xs text-red-700" title={errors?.[group.serverGroupId]}>
+                  <AlertCircle size={14} /> {errors?.[group.serverGroupId] || "Apply failed"}
+                </span>
+              )}
             </div>
           </div>
         );

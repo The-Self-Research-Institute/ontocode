@@ -71,7 +71,11 @@ export const PROPOSE_EDIT_TOOL: ToolDefinition = {
                 type: "object",
                 required: ["targetPath", "originalText", "newText"],
                 properties: {
-                  targetPath: { type: "string" },
+                  targetPath: {
+                    type: "string",
+                    description:
+                      "The serialization format this edit is written in: one of turtle, rdfxml, owlxml, manchester, functional.",
+                  },
                   originalText: { type: "string" },
                   newText: { type: "string" },
                 },
