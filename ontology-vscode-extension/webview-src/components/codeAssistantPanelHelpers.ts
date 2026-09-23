@@ -1,0 +1,56 @@
+import { MessageSquare, Pencil, Search, type LucideIcon } from "lucide-react";
+import { getGatewayUrl, getRemoteApiBaseUrl } from "../config/deploymentConfig";
+import { isDesktop } from "../utils/desktop";
+import type { LoopStageEvent } from "../services/codeAssistantLoop";
+
+export type CodeAssistantAction = "ask" | "local-edit" | "project-findings";
+
+export const ACTIONS: Array<{ id: CodeAssistantAction; label: string; description: string; icon: LucideIcon }> = [
+  {
+    id: "ask",
+    label: "Ask",
+    description: "Ask a question about this document, grounded in its actual content.",
+    icon: MessageSquare,
+  },
+  {
+    id: "local-edit",
+    label: "Local edit",
+    description: "Propose a change scoped to this document, reviewed before anything is applied.",
+    icon: Pencil,
+  },
+  {
+    id: "project-findings",
+    label: "Project findings",
+    description: "Ask a question grounded in the whole project, not just this document.",
+    icon: Search,
+  },
+];
+
+export function getApiBaseUrl(): string {
+  return isDesktop() ? getRemoteApiBaseUrl() : getGatewayUrl();
+}
+
+export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: string): string {
+  const scope =
+    action === "project-findings"
+      ? "The user's question may require looking beyond the current document, across the project."
+      : `Stay scoped to the current document${documentPath ? ` (${documentPath})` : ""} unless the user's request clearly needs more.`;
+  const editable =
+    action === "local-edit"
+      ? "The user wants a concrete edit. Use read_context to ground yourself, then call propose_edit with grouped, dependent replacements. Never claim an edit was applied — applying is a separate human-approved step."
+      : "Answer the question directly. Only call propose_edit if the user explicitly asked for a change.";
+  return [
+    "You are an ontology-editing assistant with three tools: read_context, run_sparql (read-only), and propose_edit.",
+    scope,
+    editable,
+    "Ground every claim in what read_context or run_sparql actually returned. If you don't have enough information, say so instead of guessing.",
+  ].join("\n");
+}
+
+export function describeLoopStage(event: LoopStageEvent): string {
+  if (event.stage === "calling-provider") return "Thinking...";
+  if (event.stage === "calling-tool") return `Running ${event.detail}...`;
+  if (event.stage === "tool-result") return `Got a result from ${event.detail}`;
+  if (event.stage === "propose") return "Preparing changes for review...";
+  return "";
+}
