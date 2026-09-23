@@ -52,7 +52,6 @@ import {
   Crown,
   Rocket,
   Bug,
-  Bot,
   FolderOpen,
   LayoutDashboard,
   AlertTriangle,
@@ -112,6 +111,7 @@ import ShareDialog from "./ShareDialog";
 import MergeWizard from "./MergeWizard";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { CodeAssistantPanel } from "./CodeAssistantPanel";
+import { AskAiIcon } from "./AskAiIcon";
 import { UserGuideModal } from "./UserGuideModal";
 import { OpenSourceLicensesModal } from "./OpenSourceLicensesModal";
 import ThemeSettings from "./ThemeSettings";
@@ -15361,10 +15361,11 @@ const updateItemInState = useCallback(
     switch (mainTab) {
       case "CodeView":
         return (
-          <div className="flex h-full overflow-hidden" style={{ backgroundColor: "var(--color-background)" }}>
+          <div className="flex h-full overflow-hidden code-view-enter" style={{ backgroundColor: "var(--color-background)" }}>
             <div className="flex-1 min-w-0 flex flex-col bg-theme-surface">
               <div className="p-4 border-b border-gray-200">
-                <h2 className="text-lg font-semibold">OWL/RDF Code View</h2>
+                <h2 className="text-lg font-semibold inline-block">OWL/RDF Code View</h2>
+                <div className="h-0.5 bg-gradient-to-r from-purple-600 to-indigo-500 rounded-full code-view-underline" />
                 <p className="text-sm text-gray-600 mt-1">View the ontology in different serialization formats</p>
               </div>
               <div className="flex-1 flex flex-col overflow-hidden p-4">
@@ -15519,15 +15520,14 @@ const updateItemInState = useCallback(
                   </button>
                   <button
                     onClick={() => setShowCodeAssistant((v) => !v)}
-                    className={`relative overflow-hidden px-3 py-1 text-sm rounded-md flex items-center gap-1 ${showCodeAssistant
+                    className={`px-3 py-1 text-sm rounded-md flex items-center gap-1 ${showCodeAssistant
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                       }`}
                     title="Ask the AI assistant about this document"
                   >
-                    {!showCodeAssistant && <span className="ask-ai-shimmer" />}
-                    <Bot size={16} className="relative" />
-                    <span className="relative">Ask AI</span>
+                    <AskAiIcon size={16} />
+                    Ask AI
                   </button>
                   {/* <button
                     onClick={() => {

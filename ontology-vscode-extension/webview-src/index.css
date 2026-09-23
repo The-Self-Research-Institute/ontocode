@@ -1146,31 +1146,68 @@ textarea.code-editor-textarea {
   .w-full.max-w-md { max-width: 100%; }
 }
 
-@keyframes ask-ai-glow-pulse {
-  0%, 100% { opacity: 0.12; transform: scale(1); }
-  50% { opacity: 0.3; transform: scale(1.12); }
+@keyframes ask-ai-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
 }
-.ask-ai-glow {
-  animation: ask-ai-glow-pulse 2.6s ease-in-out infinite;
+.ask-ai-bob {
+  animation: ask-ai-bob 2.4s ease-in-out infinite;
 }
 
-@keyframes ask-ai-shimmer-sweep {
-  0% { transform: translateX(-120%); }
-  100% { transform: translateX(220%); }
+@keyframes ask-ai-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  93%, 96% { transform: scaleY(0.1); }
 }
-.ask-ai-shimmer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  pointer-events: none;
+.ask-ai-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ask-ai-blink 4.5s ease-in-out infinite;
 }
-.ask-ai-shimmer::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 40%;
-  background: linear-gradient(115deg, transparent, rgba(255, 255, 255, 0.45), transparent);
-  animation: ask-ai-shimmer-sweep 3.2s ease-in-out infinite;
+.ask-ai-eye-right {
+  animation-delay: 0.08s;
+}
+
+@keyframes ask-ai-sparkle {
+  0%, 88%, 100% { opacity: 0; transform: scale(0.4) rotate(0deg); }
+  93% { opacity: 1; transform: scale(1) rotate(15deg); }
+  97% { opacity: 0; transform: scale(0.6) rotate(30deg); }
+}
+.ask-ai-sparkle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ask-ai-sparkle 4.5s ease-in-out infinite;
+}
+
+@keyframes code-view-fade-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+.code-view-enter {
+  transform-origin: center;
+  animation: code-view-fade-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes code-view-underline-draw {
+  from { width: 0; }
+  to { width: 64px; }
+}
+.code-view-underline {
+  width: 0;
+  animation: code-view-underline-draw 0.5s 0.15s ease-out forwards;
+}
+
+@keyframes chat-message-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.chat-message-enter {
+  animation: chat-message-fade-in 0.22s ease-out;
+}
+
+@keyframes chat-chip-fade-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.chat-chip-enter {
+  animation: chat-chip-fade-in 0.22s ease-out both;
 }
