@@ -16,9 +16,19 @@ import {
 
 interface LLMSettingsPanelProps {
   onSave?: () => void;
+  compact?: boolean;
+  bannerTitle?: string;
+  bannerDescription?: string;
+  usageNote?: string;
 }
 
-const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
+const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
+  onSave,
+  compact = false,
+  bannerTitle = 'Graph View AI Insights',
+  bannerDescription = 'Bring your own LLM API key. OntoCode Studio never stores or sees your credentials. Everything stays in your browser.',
+  usageNote = '3. Graph analytics will use your key when you click "AI Insights" on the graph',
+}) => {
   const [provider, setProvider] = useState<LlmProvider>(getStoredProvider());
   const [apiKey, setApiKey] = useState(getStoredApiKey());
   const [model, setModel] = useState(getStoredModel());
@@ -33,6 +43,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
   const [models, setModels] = useState<KnownModel[]>(() => getProviderModels(provider));
   const [modelsSource, setModelsSource] = useState<'default' | 'live'>('default');
   const [modelsRefreshing, setModelsRefreshing] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const providers = getAvailableProviders();
 
@@ -70,15 +81,31 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
 
-  const handleSave = () => {
-    if (!apiKey.trim()) {
+  const handleSave = async () => {
+    const activeKey = apiKey.trim();
+    if (!activeKey) {
       setMessage({ type: 'error', text: 'Please enter an API key.' });
       return;
     }
 
+    let modelToSave = model;
+    if (modelsSource === 'default') {
+      setSaving(true);
+      const { models: live, live: isLive } = await refreshAvailableModels(provider, activeKey);
+      if (isLive) {
+        setModels(live);
+        setModelsSource('live');
+        if (live.length && !live.some((m) => m.id === modelToSave)) {
+          modelToSave = live[0].id;
+          setModel(modelToSave);
+        }
+      }
+      setSaving(false);
+    }
+
     setStoredProvider(provider);
     setStoredApiKey(apiKey);
-    setStoredModel(model);
+    setStoredModel(modelToSave);
 
     setMessage({ type: 'success', text: `Saved ${providers.find(p => p.id === provider)?.label} settings.` });
     setTimeout(() => setMessage(null), 3000);
@@ -137,15 +164,13 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
   const currentInfo = providerInfo[provider];
 
   return (
-    <div className="space-y-6 p-4 sm:p-6 max-w-full sm:max-w-2xl">
+    <div className={`space-y-6 p-4 ${compact ? '' : 'sm:p-6 max-w-full sm:max-w-2xl'}`}>
       <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-lg p-4">
         <div className="flex items-start gap-3">
           <Zap className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
           <div>
-            <h3 className="font-semibold text-indigo-900">Graph View AI Insights</h3>
-            <p className="text-sm text-indigo-700 mt-1">
-              Bring your own LLM API key. OntoCode Studio never stores or sees your credentials. Everything stays in your browser.
-            </p>
+            <h3 className="font-semibold text-indigo-900">{bannerTitle}</h3>
+            <p className="text-sm text-indigo-700 mt-1">{bannerDescription}</p>
           </div>
         </div>
       </div>
@@ -155,7 +180,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
         <label className="block text-sm font-medium text-gray-700 mb-3">
           Choose Your LLM Provider
         </label>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className={`grid grid-cols-1 gap-3 ${compact ? '' : 'sm:grid-cols-3'}`}>
           {providers.map((p) => (
             <button
               key={p.id}
@@ -271,13 +296,14 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
       )}
 
       {/* Action Buttons */}
-      <div className="flex gap-3">
+      <div className={`flex gap-3 ${compact ? 'flex-wrap' : ''}`}>
         <button
           onClick={handleSave}
-          className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg transition"
+          disabled={saving}
+          className={`flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed ${compact ? 'w-full' : 'flex-1'}`}
         >
           <Save className="w-4 h-4" />
-          Save Settings
+          {saving ? 'Checking model…' : 'Save Settings'}
         </button>
         <button
           onClick={handleTestConnection}
@@ -321,7 +347,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({ onSave }) => {
             </li>
           )}
           <li>2. Paste it above and click "Save Settings"</li>
-          <li>3. Graph analytics will use your key when you click "AI Insights" on the graph</li>
+          <li>{usageNote}</li>
         </ul>
       </div>
     </div>

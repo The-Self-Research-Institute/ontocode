@@ -25,7 +25,7 @@ describe("codeAssistantSession error envelope handling", () => {
       projectId: "p",
       documentPath: "d",
       actionType: "ask",
-      actionContext: {},
+      actionContext: "{}",
     });
 
     expect(session.sessionId).toBe("s1");

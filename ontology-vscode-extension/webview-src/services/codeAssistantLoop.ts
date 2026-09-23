@@ -182,7 +182,9 @@ export async function runAssistantLoop(
 
   for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
     onStage({ stage: "calling-provider" });
-    const { turn, advance } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal);
+    const { turn, advance } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal, (attempt, maxAttempts, status) => {
+      onStage({ stage: "calling-provider", detail: `Provider busy (HTTP ${status}) — retrying ${attempt}/${maxAttempts}...` });
+    });
 
     if (turn.kind === "answer") {
       onStage({ stage: "answer" });

@@ -127,11 +127,73 @@ describe("requestNextTurn — HTTP error mapping", () => {
     await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/[Uu]nauthorized/);
   });
 
-  it("maps 429 to a rate-limit message", async () => {
+  it("maps a bare 429 to a generic rate-limit message without retrying", async () => {
     vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
-    mockFetchOnce(429, {});
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
+    vi.stubGlobal("fetch", fetchMock);
 
     const conversation = await startAssistantConversation("system prompt", "hi");
-    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/Rate limit/);
+    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/Rate limit reached\. Try again shortly\./);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces the provider's own quota message on a 429 instead of retrying blind", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { message: "You exceeded your current daily request quota." } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/daily request quota/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("condenses a long Gemini quota dump into one short, actionable line", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("gemini");
+    const rawQuotaMessage =
+      "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. " +
+      "* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3.1-pro " +
+      "* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-3.1-pro " +
+      "Please retry in 29.568204s.";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: { message: rawQuotaMessage } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(
+      "Rate limit reached: You exceeded your current quota, please check your plan and billing details for gemini-3.1-pro. Try again in about 30s.",
+    );
+  });
+
+  it("retries a 503 and succeeds once the provider recovers", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ choices: [{ message: { content: "recovered" } }] }),
+        });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const conversation = await startAssistantConversation("system prompt", "hi");
+      const resultPromise = requestNextTurn(conversation, [TOOL]);
+      await vi.runAllTimersAsync();
+      const { turn } = await resultPromise;
+
+      expect(turn).toEqual({ kind: "answer", text: "recovered" });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

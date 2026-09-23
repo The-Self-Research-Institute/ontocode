@@ -48,7 +48,7 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
 }
 
 export function describeLoopStage(event: LoopStageEvent): string {
-  if (event.stage === "calling-provider") return "Thinking...";
+  if (event.stage === "calling-provider") return event.detail || "Thinking...";
   if (event.stage === "calling-tool") return `Running ${event.detail}...`;
   if (event.stage === "tool-result") return `Got a result from ${event.detail}`;
   if (event.stage === "propose") return "Preparing changes for review...";

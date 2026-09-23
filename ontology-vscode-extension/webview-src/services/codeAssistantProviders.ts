@@ -124,8 +124,8 @@ function providerEndpoint(provider: LlmProvider, model: string, key: string): { 
     };
   }
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
-    headers: { "Content-Type": "application/json" },
+    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
   };
 }
 
@@ -270,11 +270,65 @@ function appendGeminiToolResults(conversation: ConversationState, nativeAssistan
   };
 }
 
-function mapHttpError(provider: LlmProvider, status: number): LlmRequestError {
+async function extractProviderErrorMessage(res: Response): Promise<string | null> {
+  try {
+    const data = await res.json();
+    const message = data?.error?.message;
+    return typeof message === "string" && message.trim() ? message.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Provider quota-exceeded bodies (Gemini especially) can be a multi-hundred-character dump:
+// a headline sentence, docs links, several repeated "* Quota exceeded for metric: ..." lines,
+// and a trailing "Please retry in Ns". Collapse that into one short, actionable line instead
+// of showing the raw provider text in the chat.
+function summarizeQuotaMessage(detail: string): string {
+  if (detail.length <= 160 && !detail.includes("\n") && !detail.includes(" * ")) return detail;
+  const headline = (detail.match(/^[^.]*\./)?.[0] ?? detail.split(/\s\*\s|\n/)[0]).trim().replace(/\.$/, "");
+  const modelMatch = detail.match(/model:\s*([\w.-]+)/i);
+  const retryMatch = detail.match(/retry in\s+([\d.]+)\s*s/i);
+  const parts = [headline || "Quota exceeded"];
+  if (modelMatch) parts.push(`for ${modelMatch[1]}`);
+  const sentence = parts.join(" ") + ".";
+  return retryMatch ? `${sentence} Try again in about ${Math.ceil(Number(retryMatch[1]))}s.` : sentence;
+}
+
+async function mapHttpError(provider: LlmProvider, res: Response): Promise<LlmRequestError> {
+  const status = res.status;
   if (status === 401 || status === 403) return new LlmRequestError(`Invalid or unauthorized API key for ${provider}.`);
   if (status === 404) return new LlmRequestError(`Model not found or unavailable for ${provider}.`);
-  if (status === 429) return new LlmRequestError("Rate limit reached. Try again shortly.");
+  if (status === 429) {
+    // Free-tier quotas (e.g. Gemini's per-minute AND per-day caps) return 429 too — retrying
+    // within a few seconds does nothing for a per-day cap, so surface the provider's own
+    // reason instead of guessing.
+    const detail = await extractProviderErrorMessage(res);
+    return new LlmRequestError(detail ? `Rate limit reached: ${summarizeQuotaMessage(detail)}` : "Rate limit reached. Try again shortly.");
+  }
+  if (status === 503) return new LlmRequestError(`${provider} is temporarily overloaded. Try again shortly.`);
   return new LlmRequestError(`${provider} API error (HTTP ${status}).`);
+}
+
+// Only 503 (genuine transient overload) is worth an automatic retry. 429 is left alone —
+// Gemini's free tier includes a requests-per-day cap as low as 20-30/day, and blindly
+// retrying that within a couple of seconds just burns another attempt against it for nothing.
+const RETRYABLE_STATUSES = new Set([503]);
+const MAX_TRANSIENT_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 1000;
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException("Aborted", "AbortError"));
+      },
+      { once: true },
+    );
+  });
 }
 
 export async function startAssistantConversation(
@@ -289,6 +343,7 @@ export async function requestNextTurn(
   conversation: ConversationState,
   tools: ToolDefinition[],
   signal?: AbortSignal,
+  onRetry?: (attempt: number, maxAttempts: number, status: number) => void,
 ): Promise<{ turn: AssistantTurn; advance: (results: ToolResultForModel[]) => ConversationState }> {
   const key = getStoredApiKey();
   if (!key) throw new LlmConfigError("No API key configured. Configure an AI provider to use the assistant.");
@@ -297,8 +352,16 @@ export async function requestNextTurn(
   const body = buildRequestBody(conversation, model, tools);
   const { url, headers } = providerEndpoint(conversation.provider, model, key);
 
-  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
-  if (!res.ok) throw mapHttpError(conversation.provider, res.status);
+  let res: Response;
+  let attempt = 0;
+  while (true) {
+    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
+    if (res.ok || !RETRYABLE_STATUSES.has(res.status) || attempt >= MAX_TRANSIENT_RETRIES) break;
+    attempt += 1;
+    onRetry?.(attempt, MAX_TRANSIENT_RETRIES, res.status);
+    await delay(RETRY_BASE_DELAY_MS * attempt, signal);
+  }
+  if (!res.ok) throw await mapHttpError(conversation.provider, res);
 
   const raw = await res.json().catch(() => {
     throw new ProviderProtocolError(`${conversation.provider} returned a response that could not be parsed as JSON.`);

@@ -59,7 +59,7 @@ export interface ReadContextResult {
 export interface SparqlResult {
   ok: true;
   result: { rows: unknown[]; truncated: boolean; rowCount: number };
-  provenance: { revision: number; coverage: "partial" | "complete" };
+  provenance: { revision: number; coverage?: "partial" | "complete" };
 }
 
 export interface ProposedEditGroupInput {
@@ -125,7 +125,7 @@ async function postJson<T>(
 export async function createAssistantSession(
   apiBaseUrl: string,
   token: string | undefined,
-  input: { projectId: string; documentPath: string; actionType: CodeAssistantAction; actionContext: unknown },
+  input: { projectId: string; documentPath: string; actionType: CodeAssistantAction; actionContext: string },
   signal?: AbortSignal,
 ): Promise<AssistantSession> {
   return postJson<AssistantSession>(apiBaseUrl, "/api/v1/code-assistant/sessions", token, input, signal);

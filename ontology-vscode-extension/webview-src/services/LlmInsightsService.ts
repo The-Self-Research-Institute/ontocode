@@ -142,20 +142,34 @@ export function getProviderModels(provider: LlmProvider): KnownModel[] {
   return PROVIDERS[provider]?.models ?? [];
 }
 
+const BUDGET_TIER = /(lite|mini|nano|-8b|small)/i;
+
+function sortModelsTopFirst(models: KnownModel[]): KnownModel[] {
+  const flagship = models.filter((m) => !BUDGET_TIER.test(m.id));
+  const budget = models.filter((m) => BUDGET_TIER.test(m.id));
+  return [...flagship, ...budget];
+}
+
 async function listGeminiModels(key: string): Promise<KnownModel[]> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
-  );
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+    headers: { 'x-goog-api-key': key },
+  });
   if (!res.ok) return [];
   const data = await res.json().catch(() => null);
   const models = Array.isArray(data?.models) ? data.models : [];
-  return models
+  const known = models
     .filter((m: any) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
     .map((m: any) => ({
       id: String(m.name ?? '').replace(/^models\//, ''),
       label: String(m.displayName ?? m.name ?? '').replace(/^models\//, ''),
     }))
     .filter((m: KnownModel) => m.id);
+
+  // Gemma models share this API but are a separate, less reliable open-weight family
+  // (tighter free quota, more prone to 503s) — never let one outrank an actual Gemini model.
+  const gemini = known.filter((m) => m.id.startsWith('gemini-'));
+  const other = known.filter((m) => !m.id.startsWith('gemini-'));
+  return [...sortModelsTopFirst(gemini), ...sortModelsTopFirst(other)];
 }
 
 async function listClaudeModels(key: string): Promise<KnownModel[]> {
@@ -165,9 +179,11 @@ async function listClaudeModels(key: string): Promise<KnownModel[]> {
   if (!res.ok) return [];
   const data = await res.json().catch(() => null);
   const models = Array.isArray(data?.data) ? data.data : [];
-  return models
-    .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.display_name ?? m.id ?? '') }))
-    .filter((m: KnownModel) => m.id);
+  return sortModelsTopFirst(
+    models
+      .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.display_name ?? m.id ?? '') }))
+      .filter((m: KnownModel) => m.id),
+  );
 }
 
 async function listOpenAIModels(key: string): Promise<KnownModel[]> {
@@ -179,9 +195,11 @@ async function listOpenAIModels(key: string): Promise<KnownModel[]> {
   const models = Array.isArray(data?.data) ? data.data : [];
 
   const NON_CHAT = /audio|embedding|whisper|tts|instruct|realtime|transcribe|search|moderation|davinci|babbage|image|vision-preview$/i;
-  return models
-    .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.id ?? '') }))
-    .filter((m: KnownModel) => m.id && /^gpt-/i.test(m.id) && !NON_CHAT.test(m.id));
+  return sortModelsTopFirst(
+    models
+      .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.id ?? '') }))
+      .filter((m: KnownModel) => m.id && /^gpt-/i.test(m.id) && !NON_CHAT.test(m.id)),
+  );
 }
 
 async function fetchLiveModels(provider: LlmProvider, key: string): Promise<KnownModel[]> {
@@ -313,11 +331,11 @@ function buildPrompt(req: LlmInsightRequest): string {
 }
 
 async function callGemini(key: string, model: string, prompt: string, signal?: AbortSignal): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0.4, maxOutputTokens: 512, topP: 0.9 },

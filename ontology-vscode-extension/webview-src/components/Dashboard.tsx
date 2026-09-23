@@ -2449,8 +2449,41 @@ const Dashboard: React.FC<DashboardProps> = ({
     "SPARQL",
     "Reasoner",
     "CodeView",
-    "CodeAssistant",
   ]);
+  const [showCodeAssistant, setShowCodeAssistant] = useState(false);
+  const [codeAssistantWidth, setCodeAssistantWidth] = useState(420);
+  const codeAssistantWidthRef = useRef(420);
+  const codeAssistantPanelRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingCodeAssistantRef = useRef(false);
+  const handleCodeAssistantDragStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingCodeAssistantRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingCodeAssistantRef.current) return;
+      const newWidth = Math.min(800, Math.max(280, window.innerWidth - e.clientX));
+      codeAssistantWidthRef.current = newWidth;
+      if (codeAssistantPanelRef.current) {
+        codeAssistantPanelRef.current.style.width = `${newWidth}px`;
+      }
+    };
+    const handleMouseUp = () => {
+      if (!isDraggingCodeAssistantRef.current) return;
+      isDraggingCodeAssistantRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      setCodeAssistantWidth(codeAssistantWidthRef.current);
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [hasPluginUpdates, setHasPluginUpdates] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
@@ -15328,8 +15361,8 @@ const updateItemInState = useCallback(
     switch (mainTab) {
       case "CodeView":
         return (
-          <div className="flex h-full" style={{ backgroundColor: "var(--color-background)" }}>
-            <div className="flex-1 flex flex-col bg-theme-surface">
+          <div className="flex h-full overflow-hidden" style={{ backgroundColor: "var(--color-background)" }}>
+            <div className="flex-1 min-w-0 flex flex-col bg-theme-surface">
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold">OWL/RDF Code View</h2>
                 <p className="text-sm text-gray-600 mt-1">View the ontology in different serialization formats</p>
@@ -15483,6 +15516,17 @@ const updateItemInState = useCallback(
                     title="Reload content (preserves inserted citations)"
                   >
                     {codeViewLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                  <button
+                    onClick={() => setShowCodeAssistant((v) => !v)}
+                    className={`px-3 py-1 text-sm rounded-md flex items-center gap-1 ${showCodeAssistant
+                        ? "bg-purple-600 text-white hover:bg-purple-700"
+                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      }`}
+                    title="Ask the AI assistant about this document"
+                  >
+                    <Bot size={16} />
+                    Fix with AI
                   </button>
                   {/* <button
                     onClick={() => {
@@ -15657,15 +15701,28 @@ const updateItemInState = useCallback(
                 </div>
               </div>
             </div>
+            {showCodeAssistant && (
+              <>
+                <div
+                  onMouseDown={handleCodeAssistantDragStart}
+                  className="w-1 flex-shrink-0 cursor-col-resize bg-gray-200 hover:bg-purple-400 active:bg-purple-500"
+                  title="Drag to resize"
+                />
+                <div
+                  ref={codeAssistantPanelRef}
+                  style={{ width: codeAssistantWidth }}
+                  className="flex-shrink-0 border-l border-gray-200 overflow-hidden"
+                >
+                  <CodeAssistantPanel
+                    projectName={projectId || undefined}
+                    projectId={projectId || undefined}
+                    documentPath={activeFileName || undefined}
+                    onClose={() => setShowCodeAssistant(false)}
+                  />
+                </div>
+              </>
+            )}
           </div>
-        );
-      case "CodeAssistant":
-        return (
-          <CodeAssistantPanel
-            projectName={projectId || undefined}
-            projectId={projectId || undefined}
-            documentPath={activeFileName || undefined}
-          />
         );
       case "SPARQL": {
         // Use dynamically loaded SPARQL Query Plugin
@@ -17736,7 +17793,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
     IndividualsByClass: { label: "Individuals by class", icon: Eye },
     DLQuery: { label: "DL Query", icon: Code },
     CodeView: { label: "Code View", icon: Code },
-    CodeAssistant: { label: "Fix with AI", icon: Bot },
     SPARQL: { label: "SPARQL Query", icon: DatabaseZap },
     SWRL: { label: "SWRL Rules", icon: Code },
     Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
