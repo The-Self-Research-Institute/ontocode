@@ -1,0 +1,303 @@
+import { getStoredApiKey, getStoredModel, getStoredProvider, LlmConfigError, LlmProvider, LlmRequestError } from "./LlmInsightsService";
+
+export interface JsonSchema {
+  type: string;
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+  required?: string[];
+  description?: string;
+  enum?: string[];
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: JsonSchema;
+}
+
+export interface ToolCallRequest {
+  toolCallId: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export type AssistantTurn =
+  | { kind: "answer"; text: string }
+  | { kind: "tool_calls"; calls: ToolCallRequest[] };
+
+export interface ToolResultForModel {
+  toolCallId: string;
+  name: string;
+  result: unknown;
+  isError: boolean;
+}
+
+export interface ConversationState {
+  provider: LlmProvider;
+  systemPrompt: string;
+  nativeMessages: unknown[];
+}
+
+export class ProviderProtocolError extends LlmRequestError {}
+
+function newToolCallId(prefix: string): string {
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+}
+
+function startConversation(provider: LlmProvider, systemPrompt: string, userMessage: string): ConversationState {
+  if (provider === "openai") {
+    return {
+      provider,
+      systemPrompt,
+      nativeMessages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+    };
+  }
+  if (provider === "claude") {
+    return {
+      provider,
+      systemPrompt,
+      nativeMessages: [{ role: "user", content: userMessage }],
+    };
+  }
+  return {
+    provider,
+    systemPrompt,
+    nativeMessages: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userMessage}` }] }],
+  };
+}
+
+function toOpenAiTool(tool: ToolDefinition) {
+  return { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } };
+}
+
+function toClaudeTool(tool: ToolDefinition) {
+  return { name: tool.name, description: tool.description, input_schema: tool.parameters };
+}
+
+function toGeminiFunctionDeclaration(tool: ToolDefinition) {
+  return { name: tool.name, description: tool.description, parameters: tool.parameters };
+}
+
+function buildRequestBody(conversation: ConversationState, model: string, tools: ToolDefinition[]): Record<string, unknown> {
+  if (conversation.provider === "openai") {
+    return {
+      model,
+      messages: conversation.nativeMessages,
+      tools: tools.map(toOpenAiTool),
+      tool_choice: "auto",
+      max_tokens: 1024,
+      temperature: 0.2,
+    };
+  }
+  if (conversation.provider === "claude") {
+    return {
+      model,
+      system: conversation.systemPrompt,
+      messages: conversation.nativeMessages,
+      tools: tools.map(toClaudeTool),
+      max_tokens: 1024,
+    };
+  }
+  return {
+    contents: conversation.nativeMessages,
+    tools: [{ functionDeclarations: tools.map(toGeminiFunctionDeclaration) }],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
+  };
+}
+
+function providerEndpoint(provider: LlmProvider, model: string, key: string): { url: string; headers: Record<string, string> } {
+  if (provider === "openai") {
+    return {
+      url: "https://api.openai.com/v1/chat/completions",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    };
+  }
+  if (provider === "claude") {
+    return {
+      url: "https://api.anthropic.com/v1/messages",
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    };
+  }
+  return {
+    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
+    headers: { "Content-Type": "application/json" },
+  };
+}
+
+interface OpenAiToolCall {
+  id?: string;
+  function?: { name?: string; arguments?: string };
+}
+interface OpenAiResponse {
+  choices?: Array<{ message?: { content?: string | null; tool_calls?: OpenAiToolCall[] } }>;
+}
+
+function parseOpenAiResponse(raw: OpenAiResponse): { turn: AssistantTurn; nativeAssistantMessage: unknown } {
+  const message = raw?.choices?.[0]?.message;
+  if (!message) throw new ProviderProtocolError("OpenAI response missing choices[0].message.");
+
+  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  if (toolCalls.length > 0) {
+    const calls: ToolCallRequest[] = toolCalls.map((tc) => {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(tc.function?.arguments ?? "{}");
+      } catch {
+        throw new ProviderProtocolError(`OpenAI returned malformed tool-call arguments for "${tc.function?.name}".`);
+      }
+      return { toolCallId: String(tc.id ?? newToolCallId("call")), name: String(tc.function?.name ?? ""), args };
+    });
+    return { turn: { kind: "tool_calls", calls }, nativeAssistantMessage: message };
+  }
+
+  const text = typeof message.content === "string" ? message.content : "";
+  if (!text.trim()) throw new ProviderProtocolError("OpenAI returned neither a tool call nor text content.");
+  return { turn: { kind: "answer", text: text.trim() }, nativeAssistantMessage: message };
+}
+
+function appendOpenAiToolResults(conversation: ConversationState, nativeAssistantMessage: unknown, results: ToolResultForModel[]): ConversationState {
+  const toolMessages = results.map((r) => ({
+    role: "tool",
+    tool_call_id: r.toolCallId,
+    content: JSON.stringify(r.isError ? { error: r.result } : r.result),
+  }));
+  return { ...conversation, nativeMessages: [...conversation.nativeMessages, nativeAssistantMessage, ...toolMessages] };
+}
+
+interface ClaudeContentBlock {
+  type?: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+}
+interface ClaudeResponse {
+  content?: ClaudeContentBlock[];
+}
+
+function parseClaudeResponse(raw: ClaudeResponse): { turn: AssistantTurn; nativeAssistantContent: unknown } {
+  const content = raw?.content;
+  if (!Array.isArray(content)) throw new ProviderProtocolError("Claude response missing content array.");
+
+  const toolUses = content.filter((b) => b.type === "tool_use");
+  if (toolUses.length > 0) {
+    const calls: ToolCallRequest[] = toolUses.map((b) => ({
+      toolCallId: String(b.id ?? newToolCallId("toolu")),
+      name: String(b.name ?? ""),
+      args: b.input ?? {},
+    }));
+    return { turn: { kind: "tool_calls", calls }, nativeAssistantContent: content };
+  }
+
+  const textBlock = content.find((b) => b.type === "text");
+  const text = typeof textBlock?.text === "string" ? textBlock.text : "";
+  if (!text.trim()) throw new ProviderProtocolError("Claude returned neither a tool_use block nor text content.");
+  return { turn: { kind: "answer", text: text.trim() }, nativeAssistantContent: content };
+}
+
+function appendClaudeToolResults(conversation: ConversationState, nativeAssistantContent: unknown, results: ToolResultForModel[]): ConversationState {
+  const toolResultContent = results.map((r) => ({
+    type: "tool_result",
+    tool_use_id: r.toolCallId,
+    content: JSON.stringify(r.isError ? { error: r.result } : r.result),
+    is_error: r.isError,
+  }));
+  return {
+    ...conversation,
+    nativeMessages: [
+      ...conversation.nativeMessages,
+      { role: "assistant", content: nativeAssistantContent },
+      { role: "user", content: toolResultContent },
+    ],
+  };
+}
+
+interface GeminiPart {
+  text?: string;
+  functionCall?: { name?: string; args?: Record<string, unknown> };
+}
+interface GeminiResponse {
+  candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
+}
+
+function parseGeminiResponse(raw: GeminiResponse): { turn: AssistantTurn; nativeAssistantParts: unknown } {
+  const parts = raw?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) throw new ProviderProtocolError("Gemini response missing candidates[0].content.parts.");
+
+  const functionCalls = parts.filter((p) => p.functionCall);
+  if (functionCalls.length > 0) {
+    const calls: ToolCallRequest[] = functionCalls.map((p) => ({
+      toolCallId: newToolCallId("gfn"),
+      name: String(p.functionCall?.name ?? ""),
+      args: p.functionCall?.args ?? {},
+    }));
+    return { turn: { kind: "tool_calls", calls }, nativeAssistantParts: parts };
+  }
+
+  const text = parts.map((p) => p.text ?? "").join("").trim();
+  if (!text) throw new ProviderProtocolError("Gemini returned neither a functionCall nor text content.");
+  return { turn: { kind: "answer", text }, nativeAssistantParts: parts };
+}
+
+function appendGeminiToolResults(conversation: ConversationState, nativeAssistantParts: unknown, results: ToolResultForModel[]): ConversationState {
+  const functionResponseParts = results.map((r) => ({
+    functionResponse: { name: r.name, response: r.isError ? { error: r.result } : { result: r.result } },
+  }));
+  return {
+    ...conversation,
+    nativeMessages: [
+      ...conversation.nativeMessages,
+      { role: "model", parts: nativeAssistantParts },
+      { role: "user", parts: functionResponseParts },
+    ],
+  };
+}
+
+function mapHttpError(provider: LlmProvider, status: number): LlmRequestError {
+  if (status === 401 || status === 403) return new LlmRequestError(`Invalid or unauthorized API key for ${provider}.`);
+  if (status === 404) return new LlmRequestError(`Model not found or unavailable for ${provider}.`);
+  if (status === 429) return new LlmRequestError("Rate limit reached. Try again shortly.");
+  return new LlmRequestError(`${provider} API error (HTTP ${status}).`);
+}
+
+export async function startAssistantConversation(
+  systemPrompt: string,
+  userMessage: string,
+): Promise<ConversationState> {
+  const provider = getStoredProvider();
+  return startConversation(provider, systemPrompt, userMessage);
+}
+
+export async function requestNextTurn(
+  conversation: ConversationState,
+  tools: ToolDefinition[],
+  signal?: AbortSignal,
+): Promise<{ turn: AssistantTurn; advance: (results: ToolResultForModel[]) => ConversationState }> {
+  const key = getStoredApiKey();
+  if (!key) throw new LlmConfigError("No API key configured. Configure an AI provider to use the assistant.");
+  const model = getStoredModel();
+
+  const body = buildRequestBody(conversation, model, tools);
+  const { url, headers } = providerEndpoint(conversation.provider, model, key);
+
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
+  if (!res.ok) throw mapHttpError(conversation.provider, res.status);
+
+  const raw = await res.json().catch(() => {
+    throw new ProviderProtocolError(`${conversation.provider} returned a response that could not be parsed as JSON.`);
+  });
+
+  if (conversation.provider === "openai") {
+    const { turn, nativeAssistantMessage } = parseOpenAiResponse(raw);
+    return { turn, advance: (results) => appendOpenAiToolResults(conversation, nativeAssistantMessage, results) };
+  }
+  if (conversation.provider === "claude") {
+    const { turn, nativeAssistantContent } = parseClaudeResponse(raw);
+    return { turn, advance: (results) => appendClaudeToolResults(conversation, nativeAssistantContent, results) };
+  }
+  const { turn, nativeAssistantParts } = parseGeminiResponse(raw);
+  return { turn, advance: (results) => appendGeminiToolResults(conversation, nativeAssistantParts, results) };
+}
