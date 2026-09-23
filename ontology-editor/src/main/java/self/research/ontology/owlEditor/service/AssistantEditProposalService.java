@@ -79,7 +79,7 @@ public class AssistantEditProposalService {
                                                   long publicGraphVersion, Instant now, Instant expiresAt) {
         List<CheckResult> checks = new ArrayList<>();
         List<EditInput> sortedEdits = groupInput.edits().stream()
-                .sorted(Comparator.comparingLong(e -> e.range().startLine()))
+                .sorted(Comparator.comparingLong(e -> e.range() == null ? Long.MAX_VALUE : e.range().startLine()))
                 .toList();
 
         boolean hasEdits = !sortedEdits.isEmpty();
@@ -150,6 +150,9 @@ public class AssistantEditProposalService {
 
     private boolean hasNoIntraGroupOverlap(List<EditInput> sortedEdits) {
         for (int i = 0; i < sortedEdits.size() - 1; i++) {
+            if (sortedEdits.get(i).range() == null || sortedEdits.get(i + 1).range() == null) {
+                return false;
+            }
             long thisEnd = sortedEdits.get(i).range().startLine() + sortedEdits.get(i).range().lineCount();
             long nextStart = sortedEdits.get(i + 1).range().startLine();
             if (thisEnd > nextStart) {
@@ -175,11 +178,13 @@ public class AssistantEditProposalService {
     }
 
     private EditEntry toEditEntry(EditInput edit) {
+        long startLine = edit.range() != null ? edit.range().startLine() : 0;
+        int lineCount = edit.range() != null ? edit.range().lineCount() : 0;
         int newTextLines = countLines(edit.newText());
-        int delta = newTextLines - edit.range().lineCount();
+        int delta = newTextLines - lineCount;
         return EditEntry.builder()
-                .startLine(edit.range().startLine())
-                .lineCount(edit.range().lineCount())
+                .startLine(startLine)
+                .lineCount(lineCount)
                 .originalText(edit.originalText())
                 .newText(edit.newText())
                 .lineDelta(delta)

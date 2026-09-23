@@ -113,6 +113,32 @@ class AssistantEditProposalServiceTest {
     }
 
     @Test
+    void nullRangeFailsGracefullyInsteadOfThrowing() {
+        EditInput edit = new EditInput("turtle", null, "old", "new");
+        EditGroupInput group = new EditGroupInput("c1", List.of(edit));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        assertTrue(result.isOk());
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertFalse(outcome.isValidationPassed());
+        assertFalse(checkNamed(outcome, "range_well_formed").get().passed());
+    }
+
+    @Test
+    void nullRangeInMultiEditGroupDoesNotCrashOverlapCheck() {
+        EditInput withRange = new EditInput("turtle", new EditRange(1, 1), ":A a owl:Class .", ":B a owl:Class .");
+        EditInput withoutRange = new EditInput("turtle", null, "old", "new");
+        EditGroupInput group = new EditGroupInput("c1", List.of(withRange, withoutRange));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        assertTrue(result.isOk());
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertFalse(outcome.isValidationPassed());
+    }
+
+    @Test
     void zeroLineCountWithNonEmptyOriginalTextFailsRangeWellFormed() {
         EditInput edit = new EditInput("turtle", new EditRange(3, 0), "not empty", "new");
         EditGroupInput group = new EditGroupInput("c1", List.of(edit));
