@@ -7,7 +7,8 @@ export interface ValidationResult {
 
 function typeMatches(value: unknown, expected: string): boolean {
   if (expected === "string") return typeof value === "string";
-  if (expected === "number" || expected === "integer") return typeof value === "number" && Number.isFinite(value);
+  if (expected === "number") return typeof value === "number" && Number.isFinite(value);
+  if (expected === "integer") return typeof value === "number" && Number.isInteger(value);
   if (expected === "boolean") return typeof value === "boolean";
   if (expected === "array") return Array.isArray(value);
   if (expected === "object") return typeof value === "object" && value !== null && !Array.isArray(value);

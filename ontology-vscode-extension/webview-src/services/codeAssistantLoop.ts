@@ -1,0 +1,222 @@
+import type { ToolDefinition, ConversationState, ToolResultForModel } from "./codeAssistantProviders";
+import { startAssistantConversation, requestNextTurn } from "./codeAssistantProviders";
+import { validateAgainstSchema } from "./codeAssistantValidation";
+import {
+  readContext,
+  runSparql,
+  proposeEditGroups,
+  AssistantApiError,
+  type AssistantSession,
+  type ProposedEditGroupInput,
+  type ProposeResult,
+} from "./codeAssistantSession";
+
+export const READ_CONTEXT_TOOL: ToolDefinition = {
+  name: "read_context",
+  description: "Read definitions, diagnostics, or references for identifiers or ranges in the pinned document snapshot.",
+  parameters: {
+    type: "object",
+    required: ["targets", "kind"],
+    properties: {
+      targets: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["type", "value"],
+          properties: {
+            type: { type: "string", enum: ["identifier", "range"] },
+            value: { type: "string" },
+          },
+        },
+      },
+      kind: { type: "string", enum: ["definitions", "diagnostics", "references"] },
+    },
+  },
+};
+
+export const RUN_SPARQL_TOOL: ToolDefinition = {
+  name: "run_sparql",
+  description: "Run a single read-only SPARQL SELECT query against the pinned snapshot. Capped in rows, bytes, and time.",
+  parameters: {
+    type: "object",
+    required: ["query"],
+    properties: {
+      query: { type: "string" },
+    },
+  },
+};
+
+export const PROPOSE_EDIT_TOOL: ToolDefinition = {
+  name: "propose_edit",
+  description: "Propose one or more grouped, dependent edits for human review. Nothing is applied until the user approves a group.",
+  parameters: {
+    type: "object",
+    required: ["groups"],
+    properties: {
+      groups: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["edits"],
+          properties: {
+            edits: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["targetPath", "originalText", "newText"],
+                properties: {
+                  targetPath: { type: "string" },
+                  originalText: { type: "string" },
+                  newText: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+export const ASSISTANT_TOOLS: ToolDefinition[] = [READ_CONTEXT_TOOL, RUN_SPARQL_TOOL, PROPOSE_EDIT_TOOL];
+
+const MAX_LOOP_ITERATIONS = 12;
+
+export interface LoopContext {
+  apiBaseUrl: string;
+  token: string | undefined;
+  session: AssistantSession;
+}
+
+export type LoopOutcome =
+  | { kind: "answer"; text: string }
+  | { kind: "propose"; result: ProposeResult }
+  | { kind: "stopped"; reason: string };
+
+export interface LoopStageEvent {
+  stage: "calling-provider" | "calling-tool" | "tool-result" | "answer" | "propose" | "stopped";
+  detail?: string;
+}
+
+function newClientGroupId(): string {
+  return `grp_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function dispatchToolCall(
+  ctx: LoopContext,
+  name: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<{ result: unknown; isError: boolean; proposeResult?: ProposeResult }> {
+  const tool = ASSISTANT_TOOLS.find((t) => t.name === name);
+  if (!tool) {
+    return { result: { error: `Unknown tool "${name}".` }, isError: true };
+  }
+
+  const validation = validateAgainstSchema(tool.parameters, args);
+  if (!validation.valid) {
+    return { result: { error: "Invalid arguments", details: validation.errors }, isError: true };
+  }
+
+  try {
+    if (name === "read_context") {
+      const targetsRaw = Array.isArray(args.targets) ? args.targets : [];
+      const targets = targetsRaw.map((t) => {
+        const rec = t as Record<string, unknown>;
+        return { type: rec.type === "range" ? "range" as const : "identifier" as const, value: String(rec.value ?? "") };
+      });
+      const kind = args.kind === "diagnostics" || args.kind === "references" ? args.kind : "definitions";
+      const res = await readContext(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, { targets, kind }, signal);
+      return { result: res.result, isError: false };
+    }
+    if (name === "run_sparql") {
+      const res = await runSparql(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, String(args.query ?? ""), signal);
+      return { result: res.result, isError: false };
+    }
+    if (name === "propose_edit") {
+      const groupsRaw = Array.isArray(args.groups) ? args.groups : [];
+      const groups: ProposedEditGroupInput[] = groupsRaw.map((g) => {
+        const rec = g as Record<string, unknown>;
+        const editsRaw = Array.isArray(rec.edits) ? rec.edits : [];
+        const edits: ProposedEditGroupInput["edits"] = editsRaw.map((e) => {
+          const editRec = e as Record<string, unknown>;
+          return {
+            targetPath: String(editRec.targetPath ?? ""),
+            range: editRec.range,
+            originalText: String(editRec.originalText ?? ""),
+            newText: String(editRec.newText ?? ""),
+          };
+        });
+        return { clientGroupId: newClientGroupId(), edits };
+      });
+      const res = await proposeEditGroups(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, groups, signal);
+      return { result: { groupCount: res.groups.length }, isError: false, proposeResult: res };
+    }
+    return { result: { error: `Tool "${name}" has no dispatcher.` }, isError: true };
+  } catch (e) {
+    if (e instanceof AssistantApiError) {
+      return { result: { errorCode: e.errorCode, message: e.message }, isError: true };
+    }
+    return { result: { message: e instanceof Error ? e.message : "Unknown error calling the tool endpoint." }, isError: true };
+  }
+}
+
+export async function runAssistantLoop(
+  ctx: LoopContext,
+  systemPrompt: string,
+  userMessage: string,
+  onStage: (event: LoopStageEvent) => void,
+  signal?: AbortSignal,
+): Promise<LoopOutcome> {
+  let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage);
+
+  for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
+    onStage({ stage: "calling-provider" });
+    const { turn, advance } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal);
+
+    if (turn.kind === "answer") {
+      onStage({ stage: "answer" });
+      return { kind: "answer", text: turn.text };
+    }
+
+    const hasPropose = turn.calls.some((c) => c.name === "propose_edit");
+    if (hasPropose && turn.calls.length > 1) {
+      onStage({ stage: "stopped", detail: "propose_edit mixed with other calls" });
+      const results: ToolResultForModel[] = turn.calls.map((c) => ({
+        toolCallId: c.toolCallId,
+        name: c.name,
+        result: { error: "propose_edit must be the only tool call in a turn. Call it alone once you're ready to propose changes." },
+        isError: true,
+      }));
+      conversation = advance(results);
+      continue;
+    }
+
+    if (hasPropose) {
+      const proposeCall = turn.calls[0];
+      onStage({ stage: "calling-tool", detail: "propose_edit" });
+      const outcome = await dispatchToolCall(ctx, proposeCall.name, proposeCall.args, signal);
+      if (outcome.isError || !outcome.proposeResult) {
+        onStage({ stage: "stopped", detail: "propose_edit failed" });
+        return { kind: "stopped", reason: "The proposed edit could not be validated. Try again or rephrase." };
+      }
+      onStage({ stage: "propose" });
+      return { kind: "propose", result: outcome.proposeResult };
+    }
+
+    onStage({ stage: "calling-tool", detail: turn.calls.map((c) => c.name).join(", ") });
+    const outcomes = await Promise.all(turn.calls.map((call) => dispatchToolCall(ctx, call.name, call.args, signal)));
+    onStage({ stage: "tool-result", detail: turn.calls.map((c) => c.name).join(", ") });
+    const results: ToolResultForModel[] = turn.calls.map((call, idx) => ({
+      toolCallId: call.toolCallId,
+      name: call.name,
+      result: outcomes[idx].result,
+      isError: outcomes[idx].isError,
+    }));
+
+    conversation = advance(results);
+  }
+
+  onStage({ stage: "stopped", detail: "max iterations" });
+  return { kind: "stopped", reason: "The assistant took too many steps without reaching an answer or a proposal." };
+}

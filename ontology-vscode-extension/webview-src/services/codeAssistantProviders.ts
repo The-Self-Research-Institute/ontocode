@@ -81,6 +81,8 @@ function toGeminiFunctionDeclaration(tool: ToolDefinition) {
   return { name: tool.name, description: tool.description, parameters: tool.parameters };
 }
 
+const MAX_RESPONSE_TOKENS = 4096;
+
 function buildRequestBody(conversation: ConversationState, model: string, tools: ToolDefinition[]): Record<string, unknown> {
   if (conversation.provider === "openai") {
     return {
@@ -88,7 +90,7 @@ function buildRequestBody(conversation: ConversationState, model: string, tools:
       messages: conversation.nativeMessages,
       tools: tools.map(toOpenAiTool),
       tool_choice: "auto",
-      max_tokens: 1024,
+      max_tokens: MAX_RESPONSE_TOKENS,
       temperature: 0.2,
     };
   }
@@ -98,13 +100,13 @@ function buildRequestBody(conversation: ConversationState, model: string, tools:
       system: conversation.systemPrompt,
       messages: conversation.nativeMessages,
       tools: tools.map(toClaudeTool),
-      max_tokens: 1024,
+      max_tokens: MAX_RESPONSE_TOKENS,
     };
   }
   return {
     contents: conversation.nativeMessages,
     tools: [{ functionDeclarations: tools.map(toGeminiFunctionDeclaration) }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
+    generationConfig: { temperature: 0.2, maxOutputTokens: MAX_RESPONSE_TOKENS },
   };
 }
 
@@ -132,12 +134,16 @@ interface OpenAiToolCall {
   function?: { name?: string; arguments?: string };
 }
 interface OpenAiResponse {
-  choices?: Array<{ message?: { content?: string | null; tool_calls?: OpenAiToolCall[] } }>;
+  choices?: Array<{ finish_reason?: string; message?: { content?: string | null; tool_calls?: OpenAiToolCall[] } }>;
 }
 
 function parseOpenAiResponse(raw: OpenAiResponse): { turn: AssistantTurn; nativeAssistantMessage: unknown } {
-  const message = raw?.choices?.[0]?.message;
+  const choice = raw?.choices?.[0];
+  const message = choice?.message;
   if (!message) throw new ProviderProtocolError("OpenAI response missing choices[0].message.");
+  if (choice?.finish_reason === "length") {
+    throw new ProviderProtocolError("OpenAI's response was cut off (hit the token limit) before it finished. Try a narrower request.");
+  }
 
   const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
   if (toolCalls.length > 0) {
@@ -176,11 +182,15 @@ interface ClaudeContentBlock {
 }
 interface ClaudeResponse {
   content?: ClaudeContentBlock[];
+  stop_reason?: string;
 }
 
 function parseClaudeResponse(raw: ClaudeResponse): { turn: AssistantTurn; nativeAssistantContent: unknown } {
   const content = raw?.content;
   if (!Array.isArray(content)) throw new ProviderProtocolError("Claude response missing content array.");
+  if (raw?.stop_reason === "max_tokens") {
+    throw new ProviderProtocolError("Claude's response was cut off (hit the token limit) before it finished. Try a narrower request.");
+  }
 
   const toolUses = content.filter((b) => b.type === "tool_use");
   if (toolUses.length > 0) {
@@ -220,12 +230,16 @@ interface GeminiPart {
   functionCall?: { name?: string; args?: Record<string, unknown> };
 }
 interface GeminiResponse {
-  candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
+  candidates?: Array<{ content?: { parts?: GeminiPart[] }; finishReason?: string }>;
 }
 
 function parseGeminiResponse(raw: GeminiResponse): { turn: AssistantTurn; nativeAssistantParts: unknown } {
-  const parts = raw?.candidates?.[0]?.content?.parts;
+  const candidate = raw?.candidates?.[0];
+  const parts = candidate?.content?.parts;
   if (!Array.isArray(parts)) throw new ProviderProtocolError("Gemini response missing candidates[0].content.parts.");
+  if (candidate?.finishReason === "MAX_TOKENS") {
+    throw new ProviderProtocolError("Gemini's response was cut off (hit the token limit) before it finished. Try a narrower request.");
+  }
 
   const functionCalls = parts.filter((p) => p.functionCall);
   if (functionCalls.length > 0) {
