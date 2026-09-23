@@ -71,12 +71,23 @@ export const PROPOSE_EDIT_TOOL: ToolDefinition = {
               type: "array",
               items: {
                 type: "object",
-                required: ["targetPath", "originalText", "newText"],
+                required: ["targetPath", "range", "originalText", "newText"],
                 properties: {
                   targetPath: {
                     type: "string",
                     description:
                       "The serialization format this edit is written in: one of turtle, rdfxml, owlxml, manchester, functional.",
+                  },
+                  range: {
+                    type: "object",
+                    required: ["startLine", "lineCount"],
+                    description:
+                      "The 0-indexed line range this edit replaces in the document, from a prior read_context range read. " +
+                      "For a pure insertion with nothing to replace, set lineCount to 0 and originalText to an empty string.",
+                    properties: {
+                      startLine: { type: "integer", description: "0-indexed line number where this edit starts." },
+                      lineCount: { type: "integer", description: "Number of original lines this edit replaces, starting at startLine." },
+                    },
                   },
                   originalText: { type: "string" },
                   newText: { type: "string" },
