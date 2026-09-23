@@ -39,6 +39,7 @@ class AssistantSparqlToolServiceTest {
         ReflectionTestUtils.setField(toolService, "maxRows", 200);
         ReflectionTestUtils.setField(toolService, "maxBytes", 200000L);
         ReflectionTestUtils.setField(toolService, "timeoutSeconds", 15);
+        when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
     }
 
     @Test
@@ -129,6 +130,21 @@ class AssistantSparqlToolServiceTest {
 
         assertFalse(result.isOk());
         assertEquals("BYTE_CAP_EXCEEDED", result.getErrorCode());
+    }
+
+    @Test
+    void returnsBudgetExhaustedWhenTokenBudgetFails() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(false);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("s", "p"), List.of(Map.of("s", "a", "p", "b")), false, null));
+
+        AssistantSparqlToolService.SparqlToolResult result =
+                toolService.runSparql("s1", "u@x.com", "SELECT ?s ?p WHERE { ?s ?p ?o }");
+
+        assertFalse(result.isOk());
+        assertEquals("BUDGET_EXHAUSTED", result.getErrorCode());
     }
 
     @Test

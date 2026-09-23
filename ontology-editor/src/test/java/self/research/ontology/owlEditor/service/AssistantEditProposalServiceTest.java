@@ -17,6 +17,9 @@ import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService.GroupProposalOutcome;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService.ProposeEditResult;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,18 +45,34 @@ class AssistantEditProposalServiceTest {
     @Mock
     private StorageManager storageManager;
 
+    @Mock
+    private LineRangeSpliceWriter spliceWriter;
+
     private AssistantEditProposalService proposalService;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
-        proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager);
+        proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager, spliceWriter);
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 20);
         ReflectionTestUtils.setField(proposalService, "maxGroupsPerRequest", 10);
         ReflectionTestUtils.setField(proposalService, "ttlHours", 24L);
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
         when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(7L);
+        when(storageManager.ensureCodeViewFile(anyString(), anyString())).thenReturn(Path.of("dummy-source.ttl"));
+        when(storageManager.extensionFor(anyString())).thenReturn("ttl");
+        when(spliceWriter.splice(any(), anyString(), any())).thenAnswer(inv -> validSplicedTurtleFile());
+    }
+
+    private Path validSplicedTurtleFile() throws Exception {
+        Path tempFile = Files.createTempFile("test-splice-", ".ttl");
+        Files.writeString(tempFile,
+                "@prefix : <http://example.org/> .\n"
+                        + "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                        + ":NewClass a owl:Class .",
+                StandardCharsets.UTF_8);
+        return tempFile;
     }
 
     @Test
@@ -274,12 +294,90 @@ class AssistantEditProposalServiceTest {
     }
 
     private AssistantSessionDocument activeSession() {
+        return activeSessionWithActionType("local-edit");
+    }
+
+    private AssistantSessionDocument activeSessionWithActionType(String actionType) {
         return AssistantSessionDocument.builder()
                 .id("s1")
                 .projectId("proj-1")
                 .userEmail("u@x.com")
                 .pinnedRevision(42L)
+                .actionType(actionType)
                 .status(AssistantSessionStatus.ACTIVE)
                 .build();
+    }
+
+    @Test
+    void askActionTypeRejectedAtRequestLevel() {
+        when(sessionService.getActiveSession("s1", "u@x.com"))
+                .thenReturn(Optional.of(activeSessionWithActionType("ask")));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(validGroup()));
+
+        assertFalse(result.isOk());
+        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+        verify(groupRepository, never()).save(any());
+    }
+
+    @Test
+    void projectFindingsActionTypeRejectedAtRequestLevel() {
+        when(sessionService.getActiveSession("s1", "u@x.com"))
+                .thenReturn(Optional.of(activeSessionWithActionType("project-findings")));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(validGroup()));
+
+        assertFalse(result.isOk());
+        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+        verify(groupRepository, never()).save(any());
+    }
+
+    @Test
+    void invalidSyntaxAfterSpliceFailsValidation() throws Exception {
+        mockLiveContent("turtle", 1, 1, ":OldClass a owl:Class .");
+        Path brokenFile = Files.createTempFile("test-splice-broken-", ".ttl");
+        Files.writeString(brokenFile, "this is not valid turtle @@@ <<<", StandardCharsets.UTF_8);
+        when(spliceWriter.splice(any(), anyString(), any())).thenReturn(brokenFile);
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(validGroup()));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertFalse(outcome.isValidationPassed());
+        assertFalse(checkNamed(outcome, "syntax_valid").get().passed());
+    }
+
+    @Test
+    void validSyntaxAfterSplicePassesSyntaxCheck() throws Exception {
+        mockLiveContent("turtle", 1, 1, ":OldClass a owl:Class .");
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(validGroup()));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(checkNamed(outcome, "syntax_valid").get().passed());
+    }
+
+    @Test
+    void owlApiFormatSkipsSyntaxCheckEntirelyAtProposeTime() throws Exception {
+        EditInput edit = new EditInput("functional", new EditRange(1, 1), "Old", "New");
+        EditGroupInput group = new EditGroupInput("c1", List.of(edit));
+        when(storageManager.readCodeViewPage("proj-1", "functional", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("Old", 1, 1, 10, 100));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(checkNamed(outcome, "syntax_valid").get().passed());
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
+    }
+
+    @Test
+    void structurallyUnsoundGroupNeverReachesSpliceWriter() throws Exception {
+        EditInput turtleEdit = new EditInput("turtle", new EditRange(1, 1), "old", "new");
+        EditInput rdfxmlEdit = new EditInput("rdfxml", new EditRange(5, 1), "old2", "new2");
+        EditGroupInput group = new EditGroupInput("c1", List.of(turtleEdit, rdfxmlEdit));
+
+        proposalService.propose("s1", "u@x.com", List.of(group));
+
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
     }
 }

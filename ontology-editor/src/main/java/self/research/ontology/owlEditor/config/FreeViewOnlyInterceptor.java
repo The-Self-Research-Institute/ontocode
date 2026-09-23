@@ -8,57 +8,58 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
+import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 
 import java.util.List;
+import java.util.Map;
 
-/**
- * Blocks write operations for FREE plan non-owner users.
- * Plan is read from the JWT claim (fast path). For FREE plan users only,
- * workspace ownership is verified via DB to allow owners to edit their own content.
- */
 @Component
 public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(FreeViewOnlyInterceptor.class);
     private static final AntPathMatcher PATH = new AntPathMatcher();
 
-    // POST paths that are read-only — always allowed regardless of plan
     private static final List<String> READ_ONLY_POST_PATTERNS = List.of(
         "/**/dl-query",
-        "/api/sparql/query/**",          // SELECT/CONSTRUCT queries (read-only)
-        "/api/sparql/*/queries",         // save/list query templates (not ontology mutations)
-        "/api/v1/issues/report",         // support submissions are open to FREE users
+        "/api/sparql/query/**",
+        "/api/sparql/*/queries",
+        "/api/v1/issues/report",
         "/api/sqwrl/**",
         "/**/reasoner/**",
         "/**/validate",
         "/**/reload/**",
         "/**/code-view-cache",
-        "/**/upload-by-file-ref/**",     // loads OWL file from storage into working graph (needed to view)
+        "/**/upload-by-file-ref/**",
         "/api/v1/code-assistant/sessions",
         "/api/v1/code-assistant/sessions/*/tools/read_context",
         "/api/v1/code-assistant/sessions/*/tools/run_sparql"
     );
 
-    // PUT/DELETE paths allowed for FREE plan (non-ontology operations)
     private static final List<String> FREE_PUT_DELETE_ALLOW_PATTERNS = List.of(
-        "/api/sparql/*/queries/**",  // manage saved SPARQL query templates
-        "/api/preferences/**"        // per-user UI preferences (sync mode, etc.)
+        "/api/sparql/*/queries/**",
+        "/api/preferences/**"
     );
+
+    private static final String PROPOSE_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/propose";
+    private static final String APPLY_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/groups/{serverGroupId}/apply";
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
     private final WorkspaceOwnershipService workspaceOwnershipService;
+    private final AssistantSessionRepository assistantSessionRepository;
 
-    public FreeViewOnlyInterceptor(WorkspaceOwnershipService workspaceOwnershipService) {
+    public FreeViewOnlyInterceptor(WorkspaceOwnershipService workspaceOwnershipService,
+                                    AssistantSessionRepository assistantSessionRepository) {
         this.workspaceOwnershipService = workspaceOwnershipService;
+        this.assistantSessionRepository = assistantSessionRepository;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response,
                              Object handler) throws Exception {
-        // Desktop mode: all requests from localhost are fully trusted — no plan checks needed.
         if (desktopMode) {
             String remote = request.getRemoteAddr();
             if ("127.0.0.1".equals(remote) || "0:0:0:0:0:0:0:1".equals(remote) || "::1".equals(remote)) {
@@ -88,21 +89,21 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
         String[] jwtClaims = JwtClaimUtils.extractPlanAndUserId(request.getHeader("Authorization"));
         if (jwtClaims == null) {
-            // Unauthenticated writes are blocked when editor JWT enforcement is on (see EditorApiAuthInterceptor).
             return true;
         }
 
         String plan = jwtClaims[0];
         String userId = jwtClaims[1];
 
-        // Check project role — VIEWER is fully blocked; DRAFT_EDITOR can only write to draft
         String projectId = request.getParameter("projectId");
+        if (projectId == null || projectId.isBlank()) {
+            projectId = resolveCodeAssistantProjectId(path).orElse(null);
+        }
         if (projectId == null || projectId.isBlank()) {
             projectId = workspaceOwnershipService.resolveProjectIdFromRequestPath(path).orElse(null);
         }
         if (projectId != null) {
             if (workspaceOwnershipService.isViewerInProject(userId, projectId)) {
-                // Pure VIEWERs: no writes at all
                 log.debug("VIEWER write block: userId={} projectId={} path={}", userId, projectId, path);
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json");
@@ -113,9 +114,6 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
                 return false;
             }
             if (workspaceOwnershipService.isDraftEditorInProject(userId, projectId)) {
-                // DRAFT_EDITOR: allow draft mutations and all /draft* endpoints; block direct writes.
-                // pull-from-public is a draft mutation too — it merges public changes into the
-                // CALLER'S OWN DRAFT, never into public (403 here was the draft-editor pull bug).
                 boolean isDraftMutation = "true".equalsIgnoreCase(request.getParameter("draft"))
                         || "true".equalsIgnoreCase(request.getParameter("useDraft"));
                 boolean isDraftEndpoint = path.contains("/draft") || path.contains("/pull-from-public/");
@@ -134,10 +132,8 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
             }
         }
 
-        // PRO/ENTERPRISE users always allowed
         if (!"FREE".equalsIgnoreCase(plan)) return true;
 
-        // FREE plan: workspace owners can edit their own content
         if (workspaceOwnershipService.isFreePlanUserOwner(userId, path, request.getParameter("workspaceId"))) {
             return true;
         }
@@ -152,5 +148,20 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
             "\"requiresUpgrade\":true}"
         );
         return false;
+    }
+
+    private java.util.Optional<String> resolveCodeAssistantProjectId(String path) {
+        String sessionId = null;
+        if (PATH.match(PROPOSE_PATTERN, path)) {
+            Map<String, String> vars = PATH.extractUriTemplateVariables(PROPOSE_PATTERN, path);
+            sessionId = vars.get("sessionId");
+        } else if (PATH.match(APPLY_PATTERN, path)) {
+            Map<String, String> vars = PATH.extractUriTemplateVariables(APPLY_PATTERN, path);
+            sessionId = vars.get("sessionId");
+        }
+        if (sessionId == null) {
+            return java.util.Optional.empty();
+        }
+        return assistantSessionRepository.findById(sessionId).map(AssistantSessionDocument::getProjectId);
     }
 }

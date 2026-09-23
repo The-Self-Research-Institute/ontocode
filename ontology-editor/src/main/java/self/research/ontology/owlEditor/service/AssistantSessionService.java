@@ -96,6 +96,18 @@ public class AssistantSessionService {
         return defaultRetrievalAttempts;
     }
 
+    public boolean tryConsumeTokenBudget(String sessionId, int estimatedTokens) {
+        Query query = Query.query(Criteria.where("_id").is(sessionId)
+                .and("status").is(AssistantSessionStatus.ACTIVE)
+                .and("tokenBudgetRemaining").gte(estimatedTokens));
+        Update update = new Update()
+                .inc("tokenBudgetRemaining", -estimatedTokens)
+                .set("updatedAt", Instant.now());
+        AssistantSessionDocument updated = mongoTemplate.findAndModify(
+                query, update, FindAndModifyOptions.options().returnNew(true), AssistantSessionDocument.class);
+        return updated != null;
+    }
+
     public boolean isRevisionStale(AssistantSessionDocument session) {
         return metadataService.getMutationVersion(session.getProjectId()) != session.getPinnedRevision();
     }

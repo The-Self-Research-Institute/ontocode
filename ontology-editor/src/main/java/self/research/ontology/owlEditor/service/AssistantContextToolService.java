@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.util.AssistantTokenEstimator;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -64,12 +65,28 @@ public class AssistantContextToolService {
             }
         }
 
+        int estimatedTokens = AssistantTokenEstimator.estimate(concatenatedText(items));
+        if (!sessionService.tryConsumeTokenBudget(sessionId, estimatedTokens)) {
+            return ContextToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
+                    .message("Retrieval token budget exhausted for this session").build();
+        }
+
         return ContextToolResult.builder()
                 .ok(true)
                 .items(items)
                 .coverage(anyPartial ? "partial" : "complete")
                 .revision(session.getPinnedRevision())
                 .build();
+    }
+
+    private String concatenatedText(List<Item> items) {
+        StringBuilder sb = new StringBuilder();
+        for (Item item : items) {
+            if (item.getText() != null) {
+                sb.append(item.getText());
+            }
+        }
+        return sb.toString();
     }
 
     private Item resolveRange(String projectId, String encodedRange) throws IOException {
