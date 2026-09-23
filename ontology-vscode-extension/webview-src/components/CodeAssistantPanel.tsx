@@ -321,7 +321,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                 : "Pick a model below to add your API key, then ask a question or request an edit."}
             </p>
             <div className="flex flex-wrap gap-2">
-                  {ACTIONS.map(({ id, label, icon: Icon }) => {
+                  {ACTIONS.map(({ id, label, icon: Icon }, index) => {
                     const planLocked = id === "local-edit" && isFree;
                     return (
                       <button
@@ -329,7 +329,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                         onClick={() => setAction(id)}
                         disabled={planLocked}
                         title={planLocked ? getUpgradeMessage("AI-assisted editing") : undefined}
-                        className={`px-3 py-1.5 text-xs font-semibold rounded-full border flex items-center gap-1.5 disabled:opacity-50 ${
+                        style={{ animationDelay: `${index * 70}ms` }}
+                        className={`chat-chip-enter px-3 py-1.5 text-xs font-semibold rounded-full border flex items-center gap-1.5 disabled:opacity-50 ${
                           action === id
                             ? "bg-purple-600 border-purple-600 text-white"
                             : "bg-white border-gray-300 text-gray-700 hover:border-purple-400"
@@ -347,7 +348,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
             {entries.map((entry) => {
               if (entry.role === "user") {
                 return (
-                  <div key={entry.id} className="flex justify-end">
+                  <div key={entry.id} className="flex justify-end chat-message-enter">
                     <div className="max-w-[85%] bg-purple-600 text-white rounded-lg rounded-br-sm px-3 py-2">
                       <div className="text-[10px] uppercase tracking-wide text-purple-200 mb-0.5">
                         {actionLabel(entry.action)}
@@ -359,7 +360,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
               }
               if (entry.kind === "answer") {
                 return (
-                  <div key={entry.id} className="flex flex-col items-start">
+                  <div key={entry.id} className="flex flex-col items-start chat-message-enter">
                     <div className="max-w-[85%] bg-gray-100 rounded-lg rounded-bl-sm px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
                       {entry.text}
                     </div>
@@ -378,7 +379,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
               }
               if (entry.kind === "review") {
                 return (
-                  <div key={entry.id} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <div key={entry.id} className="bg-gray-50 border border-gray-200 rounded-lg p-3 chat-message-enter">
                     <CodeAssistantReviewGroups
                       groups={entry.groups}
                       decisions={entry.decisions}
@@ -392,7 +393,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                 );
               }
               return (
-                <div key={entry.id} className="flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-900 text-sm">
+                <div key={entry.id} className="flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-900 text-sm chat-message-enter">
                   <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
                   <span>{entry.text}</span>
                 </div>
@@ -418,7 +419,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
           <div className="border-t border-gray-200 px-4 py-3 flex-shrink-0 space-y-2">
             {entries.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
-                {ACTIONS.map(({ id, label, icon: Icon }) => {
+                {ACTIONS.map(({ id, label, icon: Icon }, index) => {
                   const planLocked = id === "local-edit" && isFree;
                   return (
                     <button
@@ -426,7 +427,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                       onClick={() => setAction(id)}
                       disabled={planLocked}
                       title={planLocked ? getUpgradeMessage("AI-assisted editing") : undefined}
-                      className={`px-2 py-1 text-[11px] font-semibold rounded-full border flex items-center gap-1 disabled:opacity-50 ${
+                      style={{ animationDelay: `${index * 70}ms` }}
+                      className={`chat-chip-enter px-2 py-1 text-[11px] font-semibold rounded-full border flex items-center gap-1 disabled:opacity-50 ${
                         action === id
                           ? "bg-purple-600 border-purple-600 text-white"
                           : "bg-white border-gray-300 text-gray-600 hover:border-purple-400"
@@ -481,7 +483,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
               <button
                 onClick={submitMessage}
                 disabled={busy || !input.trim() || !projectId || !configured}
-                className="p-2.5 text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-50 flex-shrink-0"
+                className="p-2.5 text-white bg-purple-600 rounded-lg hover:bg-purple-700 active:scale-90 transition-transform disabled:opacity-50 disabled:active:scale-100 flex-shrink-0"
                 title="Send"
               >
                 <Send size={16} />

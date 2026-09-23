@@ -1194,3 +1194,19 @@ textarea.code-editor-textarea {
   width: 0;
   animation: code-view-underline-draw 0.5s 0.15s ease-out forwards;
 }
+
+@keyframes chat-message-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.chat-message-enter {
+  animation: chat-message-fade-in 0.22s ease-out;
+}
+
+@keyframes chat-chip-fade-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.chat-chip-enter {
+  animation: chat-chip-fade-in 0.22s ease-out both;
+}
