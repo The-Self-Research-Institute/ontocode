@@ -7,7 +7,7 @@ import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
 import { createAssistantSession, applyEditGroup, AssistantApiError, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
 import { runAssistantLoop, type LoopOutcome } from "../services/codeAssistantLoop";
-import { ACTIONS, getApiBaseUrl, buildSystemPrompt, describeLoopStage, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
+import { ACTIONS, getApiBaseUrl, buildSystemPrompt, describeLoopStage, toFriendlyErrorMessage, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
 
 export type { CodeAssistantAction };
 
@@ -159,9 +159,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       appendOutcome(outcome, session.sessionId);
     } catch (e) {
       if (controller.signal.aborted) return;
-      const message =
-        e instanceof AssistantApiError || e instanceof Error ? e.message : "Something went wrong talking to the assistant.";
-      setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: message }]);
+      const raw = e instanceof AssistantApiError || e instanceof Error ? e.message : "Something went wrong talking to the assistant.";
+      setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(raw) }]);
     } finally {
       setBusy(false);
       setStatusText("");
@@ -189,11 +188,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         return { ...e, decisions: next };
       });
     } catch (e) {
-      const message = e instanceof AssistantApiError ? e.message : "Apply failed unexpectedly.";
+      const raw = e instanceof AssistantApiError ? e.message : "Apply failed unexpectedly.";
       updateReviewEntry(entryId, (e2) => ({
         ...e2,
         decisions: { ...e2.decisions, [serverGroupId]: "failed" },
-        errors: { ...e2.errors, [serverGroupId]: message },
+        errors: { ...e2.errors, [serverGroupId]: toFriendlyErrorMessage(raw) },
       }));
     }
   };

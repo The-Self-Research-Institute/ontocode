@@ -54,3 +54,22 @@ export function describeLoopStage(event: LoopStageEvent): string {
   if (event.stage === "propose") return "Preparing changes for review...";
   return "";
 }
+
+const TECHNICAL_ERROR_PATTERN = /Exception|\{[a-zA-Z]+=|com\.[a-z][\w.]*\.|Caused by:|StackTrace|at [\w.$]+\(/;
+
+// Backend infra failures (a downed Mongo, a timed-out socket, a dropped connection) can leak
+// their raw driver exception text into an error response. That's fine for logs, not for a chat
+// bubble — collapse anything that reads like an internal exception into one short, plain line.
+export function toFriendlyErrorMessage(raw: string): string {
+  const looksTechnical = raw.length > 180 || TECHNICAL_ERROR_PATTERN.test(raw);
+  if (!looksTechnical) return raw;
+  // eslint-disable-next-line no-console
+  console.error("[Fix with AI] raw error:", raw);
+  if (/timed?\s*out|timeout/i.test(raw)) {
+    return "The server took too long to respond. Try again in a moment.";
+  }
+  if (/socket|connection|unreachable|refused/i.test(raw)) {
+    return "Couldn't reach a required service on the server. Try again shortly.";
+  }
+  return "Something went wrong on the server. Try again in a moment.";
+}
