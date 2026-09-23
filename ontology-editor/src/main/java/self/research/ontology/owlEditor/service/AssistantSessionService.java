@@ -20,13 +20,20 @@ import java.util.Optional;
  * creation time, and is the sole source of truth for the retrieval-attempt budget
  * shared across read_context and run_sparql (decremented atomically so concurrent
  * calls can't both succeed past zero).
+ *
+ * <p>Pins {@link ProjectMetadataService#getMutationVersion}, not
+ * {@link MainGraphRevisionService} — the latter only advances on draft-publish
+ * (DraftTrackingService's own workflow) and would miss changes from the general
+ * mutation path or from a Code View save (ProjectLoadController.saveCodeViewAndSync
+ * bumps mutationVersion, never mainGraphRevision), which is exactly the surface
+ * this assistant reads and edits.
  */
 @Slf4j
 @Service
 public class AssistantSessionService {
 
     private final AssistantSessionRepository sessionRepository;
-    private final MainGraphRevisionService revisionService;
+    private final ProjectMetadataService metadataService;
     private final MongoTemplate mongoTemplate;
 
     @Value("${assistant.session.retrieval-attempts-default:5}")
@@ -39,16 +46,16 @@ public class AssistantSessionService {
     private long deadlineSeconds;
 
     public AssistantSessionService(AssistantSessionRepository sessionRepository,
-                                    MainGraphRevisionService revisionService,
+                                    ProjectMetadataService metadataService,
                                     MongoTemplate mongoTemplate) {
         this.sessionRepository = sessionRepository;
-        this.revisionService = revisionService;
+        this.metadataService = metadataService;
         this.mongoTemplate = mongoTemplate;
     }
 
     public AssistantSessionDocument createSession(String projectId, String userEmail, String documentPath,
                                                    String actionType, String actionContext) {
-        long pinnedRevision = revisionService.getRevision(projectId);
+        long pinnedRevision = metadataService.getMutationVersion(projectId);
         Instant now = Instant.now();
         AssistantSessionDocument session = AssistantSessionDocument.builder()
                 .projectId(projectId)
@@ -114,7 +121,7 @@ public class AssistantSessionService {
     }
 
     public boolean isRevisionStale(AssistantSessionDocument session) {
-        return revisionService.getRevision(session.getProjectId()) != session.getPinnedRevision();
+        return metadataService.getMutationVersion(session.getProjectId()) != session.getPinnedRevision();
     }
 
     public void completeSession(String sessionId) {

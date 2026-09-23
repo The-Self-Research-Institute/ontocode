@@ -29,7 +29,7 @@ class AssistantSessionServiceTest {
     private AssistantSessionRepository sessionRepository;
 
     @Mock
-    private MainGraphRevisionService revisionService;
+    private ProjectMetadataService metadataService;
 
     @Mock
     private MongoTemplate mongoTemplate;
@@ -39,7 +39,7 @@ class AssistantSessionServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        service = new AssistantSessionService(sessionRepository, revisionService, mongoTemplate);
+        service = new AssistantSessionService(sessionRepository, metadataService, mongoTemplate);
         ReflectionTestUtils.setField(service, "defaultRetrievalAttempts", 5);
         ReflectionTestUtils.setField(service, "defaultTokenBudget", 8000);
         ReflectionTestUtils.setField(service, "deadlineSeconds", 300L);
@@ -54,7 +54,7 @@ class AssistantSessionServiceTest {
 
     @Test
     void createSessionPinsCurrentRevisionAndDefaultBudgets() {
-        when(revisionService.getRevision("proj-1")).thenReturn(42L);
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(42L);
 
         AssistantSessionDocument session = service.createSession(
                 "proj-1", "user@example.com", "/doc.owl", "ask", "why is this class inconsistent?");
@@ -127,12 +127,12 @@ class AssistantSessionServiceTest {
 
     @Test
     void isRevisionStaleComparesAgainstCurrentRevision() {
-        when(revisionService.getRevision("proj-1")).thenReturn(43L);
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(43L);
         AssistantSessionDocument session = baseSession().pinnedRevision(42L).build();
 
         assertTrue(service.isRevisionStale(session));
 
-        when(revisionService.getRevision("proj-1")).thenReturn(42L);
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(42L);
         assertFalse(service.isRevisionStale(session));
     }
 
