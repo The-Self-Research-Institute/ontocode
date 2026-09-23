@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, X, Settings, Loader2, AlertCircle } from "lucide-react";
+import { Bot, Settings, Loader2, AlertCircle } from "lucide-react";
 import { hasApiKey } from "../services/LlmInsightsService";
 import LLMSettingsPanel from "./LLMSettingsPanel";
 import { CodeAssistantReviewGroups, type GroupDecision } from "./CodeAssistantReviewGroups";
@@ -15,7 +15,6 @@ interface CodeAssistantPanelProps {
   projectId?: string;
   projectName?: string;
   documentPath?: string;
-  onClose: () => void;
 }
 
 type Phase = "action-picker" | "configure-provider" | "compose" | "running" | "answer" | "review" | "error";
@@ -24,7 +23,6 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   projectId,
   projectName,
   documentPath,
-  onClose,
 }) => {
   const { user } = useAuth();
   const { isFree, getUpgradeMessage } = useSubscription();
@@ -45,11 +43,6 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       abortControllerRef.current?.abort();
     };
   }, []);
-
-  const handleClose = () => {
-    abortControllerRef.current?.abort();
-    onClose();
-  };
 
   const chooseAction = (action: CodeAssistantAction) => {
     if (action === "local-edit" && isFree) return;
@@ -159,9 +152,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
-        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-5 flex items-center justify-between">
+    <div className="flex h-full" style={{ backgroundColor: "var(--color-background)" }}>
+      <div className="flex-1 flex flex-col bg-theme-surface overflow-hidden">
+        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-5 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="bg-white bg-opacity-20 p-2 rounded-lg">
               <Bot className="text-white" size={26} />
@@ -174,12 +167,6 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
               )}
             </div>
           </div>
-          <button
-            onClick={handleClose}
-            className="text-white hover:bg-white hover:bg-opacity-20 p-2 rounded-lg transition-colors"
-          >
-            <X size={22} />
-          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-6">

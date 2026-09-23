@@ -211,7 +211,6 @@ const TopMenuBar = ({
   onOpenPluginMarketplace,
   hasPluginUpdates,
   onOpenHistory,
-  onOpenAssistant,
   onReportBug,
   onRequestFeature,
   onOpenUserGuide,
@@ -272,7 +271,6 @@ const TopMenuBar = ({
   onOpenPluginMarketplace: () => void;
   hasPluginUpdates?: boolean;
   onOpenHistory: () => void;
-  onOpenAssistant: () => void;
   onReportBug: () => void;
   onRequestFeature: () => void;
   onOpenUserGuide: () => void;
@@ -783,16 +781,6 @@ const TopMenuBar = ({
                         User Guide
                       </button>
                     )}
-                    <button
-                      onClick={() => {
-                        onOpenAssistant();
-                        setOpenMenu(null);
-                      }}
-                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
-                    >
-                      <Bot size={14} />
-                      Fix with AI
-                    </button>
                     <button
                       onClick={() => {
                         onReportBug();
@@ -2421,7 +2409,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
-  const [isCodeAssistantOpen, setIsCodeAssistantOpen] = useState(false);
   const [reportIssueType, setReportIssueType] = useState<"Bug" | "Task">("Bug");
   const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -2462,6 +2449,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     "SPARQL",
     "Reasoner",
     "CodeView",
+    "CodeAssistant",
   ]);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [hasPluginUpdates, setHasPluginUpdates] = useState(false);
@@ -15671,6 +15659,14 @@ const updateItemInState = useCallback(
             </div>
           </div>
         );
+      case "CodeAssistant":
+        return (
+          <CodeAssistantPanel
+            projectName={projectId || undefined}
+            projectId={projectId || undefined}
+            documentPath={activeFileName || undefined}
+          />
+        );
       case "SPARQL": {
         // Use dynamically loaded SPARQL Query Plugin
         const sparqlPlugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "sparql-query-plugin");
@@ -17740,6 +17736,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
     IndividualsByClass: { label: "Individuals by class", icon: Eye },
     DLQuery: { label: "DL Query", icon: Code },
     CodeView: { label: "Code View", icon: Code },
+    CodeAssistant: { label: "Fix with AI", icon: Bot },
     SPARQL: { label: "SPARQL Query", icon: DatabaseZap },
     SWRL: { label: "SWRL Rules", icon: Code },
     Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
@@ -18560,7 +18557,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           hasPluginUpdates={hasPluginUpdates}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
-          onOpenAssistant={() => setIsCodeAssistantOpen(true)}
            onReportBug={() => {
             setReportIssueType("Bug");
             setIsReportIssueModalOpen(true);
@@ -19622,16 +19618,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           ontologyFilePath={activeFileName || undefined}
           initialIssueType={reportIssueType}
           onClose={() => setIsReportIssueModalOpen(false)}
-        />
-      )}
-
-      {/* Code Assistant Panel */}
-      {isCodeAssistantOpen && (
-        <CodeAssistantPanel
-          projectName={projectId || undefined}
-          projectId={projectId || undefined}
-          documentPath={activeFileName || undefined}
-          onClose={() => setIsCodeAssistantOpen(false)}
         />
       )}
 
