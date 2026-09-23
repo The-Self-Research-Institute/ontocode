@@ -48,7 +48,8 @@ import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.ProjectShareService;
 import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.StorageManager;
-import self.research.ontology.owlEditor.util.OWLFormatConverter;
+import self.research.ontology.owlEditor.service.CodeViewReimportPipeline;
+import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
@@ -71,17 +72,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.bson.Document;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.eclipse.rdf4j.model.IRI;
-import org.eclipse.rdf4j.model.Model;
-import org.eclipse.rdf4j.model.Statement;
-import org.eclipse.rdf4j.model.impl.LinkedHashModel;
-import org.eclipse.rdf4j.model.vocabulary.RDF;
-import org.eclipse.rdf4j.model.vocabulary.RDFS;
-import org.eclipse.rdf4j.rio.RDFParser;
-import org.eclipse.rdf4j.rio.Rio;
-import org.eclipse.rdf4j.rio.helpers.StatementCollector;
-import java.util.LinkedHashSet;
-import java.util.Set;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -91,9 +81,6 @@ public class ProjectLoadController {
     private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
     private static final java.util.regex.Pattern PCT_PATTERN = java.util.regex.Pattern.compile("(\\d+)%");
     
-    // Project-level locks to prevent concurrent saves
-    private final ConcurrentHashMap<String, Object> projectSaveLocks = new ConcurrentHashMap<>();
-
     // Tracks projects with an active uploadByFileRef in progress.
     // Prevents a second call from triggering a full re-import while the first
     // is still running the Fuseki PUT (Fuseki appears empty during the PUT,
@@ -148,6 +135,8 @@ public class ProjectLoadController {
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
+    private final CodeViewReimportPipeline codeViewReimportPipeline;
+    private final ProjectWriteLockRegistry lockRegistry;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -164,7 +153,9 @@ public class ProjectLoadController {
                                  OntologyPreparseService preparseService,
                                  ImportWorkerDispatcher importWorkerDispatcher,
                                  MongoTemplate mongoTemplate,
-                                 self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService) {
+                                 self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService,
+                                 CodeViewReimportPipeline codeViewReimportPipeline,
+                                 ProjectWriteLockRegistry lockRegistry) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -181,10 +172,9 @@ public class ProjectLoadController {
         this.importWorkerDispatcher = importWorkerDispatcher;
         this.mongoTemplate = mongoTemplate;
         this.exportJobService = exportJobService;
+        this.codeViewReimportPipeline = codeViewReimportPipeline;
+        this.lockRegistry = lockRegistry;
     }
-
-    @Autowired(required = false) @Nullable
-    private self.research.ontology.owlEditor.service.OntologyMutationService ontologyMutationService;
 
     @PostMapping("/upload/{projectId:.+}")  // Allow slashes in path variable
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
@@ -1312,11 +1302,8 @@ public class ProjectLoadController {
             @RequestParam(required = false, defaultValue = "false") boolean merge,
             @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody) {
         
-        // Get or create a lock object for this project
-        Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
-        
-        // Synchronize on the project-specific lock to prevent concurrent saves
-        synchronized (lock) {
+        try {
+            return lockRegistry.runExclusive(projectId, () -> {
             try {
                 String effectiveUserId = (userId != null && !userId.isBlank()) ? userId : "anonymous";
                 if (desktopMode) {
@@ -1491,6 +1478,11 @@ public class ProjectLoadController {
                                 "error", "Failed to save ontology: " + e.getMessage()
                         ));
             }
+            });
+        } catch (Exception e) {
+            log.error("[SAVE] Lock acquisition failed for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "error", "Failed to save ontology: " + e.getMessage()));
         }
     }
 
@@ -1898,10 +1890,20 @@ public class ProjectLoadController {
             @RequestParam(required = false) String username,
             @RequestParam(required = false, defaultValue = "false") boolean draft,
             @RequestBody Map<String, Object> request) {
-        // Shared with /save/{projectId}'s draft-publish lock: both endpoints reimport into
-        // the same project's graph, so they must not interleave with each other either.
-        Object lock = projectSaveLocks.computeIfAbsent(projectId, k -> new Object());
-        synchronized (lock) {
+        try {
+            return lockRegistry.runExclusive(projectId, () -> saveCodeViewAndSyncLocked(projectId, userId, username, draft, request));
+        } catch (Exception e) {
+            log.error("[CODE-VIEW-SAVE] Failed for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of(
+                            "success", false,
+                            "error", "Failed to save and sync code view: " + e.getMessage()
+                    ));
+        }
+    }
+
+    private ResponseEntity<Map<String, Object>> saveCodeViewAndSyncLocked(
+            String projectId, String userId, String username, boolean draft, Map<String, Object> request) {
         try {
             String content = (String) request.get("content");
             String format = (String) request.getOrDefault("format", "turtle");
@@ -1966,144 +1968,33 @@ public class ProjectLoadController {
             log.info("[CODE-VIEW-SAVE] Saving and syncing code view for project: {} in format: {}, size: {} bytes",
                      projectId, format, content.length());
 
-            // Step 1: Determine the RDF format for GraphDB import
-            boolean isOwlApiFormat = format.equalsIgnoreCase("owlxml")
-                    || format.equalsIgnoreCase("manchester")
-                    || format.equalsIgnoreCase("manchestersyntax")
-                    || format.equalsIgnoreCase("functional")
-                    || format.equalsIgnoreCase("functionalsyntax");
-
-            RDFFormat rdfFormat;
-            byte[] importBytes;
-
-            if (isOwlApiFormat) {
-                // OWL API formats need conversion to RDF/XML before GraphDB import
-                String ext = storageManager.extensionFor(format);
-                Path tempFile = Files.createTempFile("codeview-", "." + ext);
-                try {
-                    Files.writeString(tempFile, content, StandardCharsets.UTF_8);
-                    Path convertedFile = OWLFormatConverter.convertToRDFXML(tempFile);
-                    importBytes = Files.readAllBytes(convertedFile);
-                    Files.deleteIfExists(convertedFile);
-                } finally {
-                    Files.deleteIfExists(tempFile);
-                }
-                rdfFormat = RDFFormat.RDFXML;
-                log.info("[CODE-VIEW-SAVE] Converted {} to RDF/XML ({} bytes)", format, importBytes.length);
-            } else {
-                // Standard RDF formats — write to temp file and sanitize (like import pipeline)
-                String ext = storageManager.extensionFor(format);
-                Path tempFile = Files.createTempFile("codeview-", "." + ext);
-                try {
-                    Files.writeString(tempFile, content, StandardCharsets.UTF_8);
-                    // Sanitize: fixes malformed RDF/XML, missing namespaces, re-serializes via OWL API
-                    // Safe for all formats — skips non-RDF/XML files automatically
-                    try {
-                        OWLFormatConverter.sanitizeFileOnDisk(tempFile);
-                        log.info("[CODE-VIEW-SAVE] Sanitization completed for format: {}", format);
-                    } catch (Exception sanitizeEx) {
-                        log.warn("[CODE-VIEW-SAVE] Sanitization failed (continuing with original): {}", sanitizeEx.getMessage());
-                    }
-                    importBytes = Files.readAllBytes(tempFile);
-                } finally {
-                    Files.deleteIfExists(tempFile);
-                }
-                rdfFormat = switch (format.toLowerCase()) {
-                    case "turtle", "ttl" -> RDFFormat.TURTLE;
-                    case "ntriples", "nt" -> RDFFormat.NTRIPLES;
-                    default -> RDFFormat.RDFXML;
-                };
-            }
-
-            // Step 2: Reimport into GraphDB
-            log.info("[CODE-VIEW-SAVE] Reimporting {} bytes into GraphDB as {} (draft={}, targetGraph={})",
-                    importBytes.length, rdfFormat, draft, targetGraphOverride);
+            String ext = storageManager.extensionFor(format);
+            Path contentFile = Files.createTempFile("codeview-", "." + ext);
+            Path oldContentFile = null;
             try {
-                try (InputStream is = new ByteArrayInputStream(importBytes)) {
-                    datasetService.bulkLoadChunked(projectId, is, rdfFormat, importBytes.length, ImportOptions.defaults(), null, targetGraphOverride);
+                Files.writeString(contentFile, content, StandardCharsets.UTF_8);
+                if (oldBytes != null) {
+                    oldContentFile = Files.createTempFile("codeview-olddiff-", ".rdf");
+                    Files.write(oldContentFile, oldBytes);
                 }
-            } catch (RuntimeException bulkEx) {
-                if (rdfFormat == RDFFormat.RDFXML && isXmlStructuralError(bulkEx)) {
-                    log.warn("[CODE-VIEW-SAVE] RDF/XML reimport failed with structural XML error; retrying after OWL API re-serialization for project: {}. Error: {}",
-                            projectId, bulkEx.getMessage());
-                    importBytes = retryCodeViewImportAfterReserialization(projectId, format, content, targetGraphOverride);
-                } else {
-                    throw bulkEx;
-                }
-            }
-            log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
-            if (ontologyMutationService != null) {
-                try {
-                    ontologyMutationService.invalidateReasonerCaches(projectId);
-                } catch (Exception cacheEx) {
-                    log.warn("[CODE-VIEW-SAVE] Failed busting reasoner caches for project {} (non-fatal): {}",
-                            projectId, cacheEx.getMessage());
-                }
-            }
+                CodeViewReimportPipeline.ReimportResult result = codeViewReimportPipeline.reimport(
+                        new CodeViewReimportPipeline.ReimportRequest(
+                                projectId, format, contentFile, draft, userId, username, targetGraphOverride, oldContentFile));
 
-            if (oldBytes != null) {
-                try {
-                    String effectiveUserId = (userId != null && !userId.isBlank()) ? userId : "anonymous";
-                    if (desktopMode) {
-                        effectiveUserId = DESKTOP_USER_ID;
-                    }
-                    String effectiveUsername = (username != null && !username.isBlank()) ? username : "System";
-
-                    Model oldModel = parseToModel(oldBytes, RDFFormat.RDFXML);
-                    Model newModel = parseToModel(importBytes, rdfFormat);
-                    recordOntologyDiff(projectId, effectiveUserId, effectiveUsername, oldModel, newModel, draft);
-                } catch (Exception diffEx) {
-                    log.warn("[CODE-VIEW-SAVE] Failed to record change history diff (save itself succeeded): {}", diffEx.getMessage());
+                return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "projectId", projectId,
+                        "format", format,
+                        "message", "Code view saved and synced across all formats",
+                        "sourceVersion", result.sourceVersion()
+                ));
+            } finally {
+                Files.deleteIfExists(contentFile);
+                if (oldContentFile != null) {
+                    Files.deleteIfExists(oldContentFile);
                 }
             }
-
-            // bulkLoadChunked() above cleared the dirty marker as if disk now matched Fuseki,
-            // but code-view-save never touches ontology.original/ontology.current.* on disk —
-            // only the separate code-view cache below. Re-assert dirty so the next hierarchy
-            // snapshot rebuild (and any OWLAPI re-warm) re-exports fresh from Fuseki instead of
-            // silently parsing whatever stale file happens to be on disk.
-            datasetService.markProjectDirty(projectId);
-            if (ontologyCache != null) {
-                ontologyCache.evict(projectId);
-                log.info("[CODE-VIEW-SAVE] Evicted in-memory OWLAPI cache for project {} (now stale vs. reimported Fuseki data)", projectId);
-            }
-            metadataService.incrementMutationVersion(projectId);
-
-            if (hierarchyIndexService != null) {
-                hierarchyIndexService.scheduleBuild(projectId);
-            }
-
-            if (ontologyQueryService != null) {
-                ontologyQueryService.evictIndividualAndAnnotationPropertyCaches(projectId);
-            }
-            // Step 3: Clear ALL code-view caches (stale after reimport)
-            storageManager.clearCodeViewCache(projectId);
-            log.info("[CODE-VIEW-SAVE] All format caches cleared");
-
-            // Step 4: Store the saved format's cache (preserves the user's edited content).
-            // For standard RDF formats, cache what was ACTUALLY imported (importBytes), not the
-            // raw `content` the user typed: sanitizeFileOnDisk() or the structural-error retry
-            // above may have rewritten invalid input into valid RDF/XML before it reached GraphDB.
-            // Caching pre-fix `content` here would permanently re-serve that broken document on
-            // every later /export call (including SWRL/SQWRL rule execution), even though GraphDB
-            // itself now holds valid data — every OWLAPI parser fails identically on it forever,
-            // until some unrelated mutation clears the cache. The OWL-API-format branch above
-            // (owlxml/manchester/functional) is exempt: its importBytes were converted to RDF/XML
-            // for GraphDB import, a different format than `format`, so raw `content` is still right.
-            String cachedContent = isOwlApiFormat ? content : new String(importBytes, StandardCharsets.UTF_8);
-            storageManager.storeCodeViewCache(projectId, cachedContent, format);
-            log.info("[CODE-VIEW-SAVE] Current format cache restored");
-
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "projectId", projectId,
-                    "format", format,
-                    "message", "Code view saved and synced across all formats",
-                    // Hand back the post-save version so the client can update its baseline
-                    // in place instead of needing a full reload just to save again.
-                    "sourceVersion", storageManager.getPublicGraphVersion(projectId)
-            ));
         } catch (Exception e) {
             log.error("[CODE-VIEW-SAVE] Failed for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -2112,157 +2003,8 @@ public class ProjectLoadController {
                             "error", "Failed to save and sync code view: " + e.getMessage()
                     ));
         }
-            }
-            }
-
-    private Model parseToModel(byte[] bytes, RDFFormat format) throws IOException {
-        Model model = new LinkedHashModel();
-        RDFParser parser = Rio.createParser(format);
-        parser.setRDFHandler(new StatementCollector(model));
-        try (InputStream is = new ByteArrayInputStream(bytes)) {
-            parser.parse(is, "");
-        }
-        return model;
     }
 
-    /** Skips blank-node subjects/objects — restrictions, RDF lists, SWRL bodies, etc. */
-    private boolean isNamedTriple(Statement st) {
-        return st.getSubject() instanceof IRI
-                && !(st.getObject() instanceof org.eclipse.rdf4j.model.BNode);
-    }
-
-    private String extractLocalName(String iri) {
-        int idx = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
-        return idx >= 0 && idx < iri.length() - 1 ? iri.substring(idx + 1) : iri;
-    }
-
-    private String findLabel(Model model, org.eclipse.rdf4j.model.Resource subject) {
-        return model.filter(subject, RDFS.LABEL, null).stream()
-                .findFirst()
-                .map(st -> st.getObject().stringValue())
-                .orElseGet(() -> extractLocalName(subject.stringValue()));
-    }
-
-    private void recordNamedStatementChange(String projectId, String userId, String username,
-                                             Statement st, boolean isAddition, Model context,
-                                             List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> draftOps) {
-        String subjectIri = st.getSubject().stringValue();
-        IRI predicate = st.getPredicate();
-        String label = findLabel(context, st.getSubject());
-
-        if (predicate.equals(RDF.TYPE) && st.getObject() instanceof IRI typeIri) {
-            String opType = switch (typeIri.stringValue()) {
-                case "http://www.w3.org/2002/07/owl#Class" -> isAddition ? "createClass" : "deleteClass";
-                case "http://www.w3.org/2002/07/owl#ObjectProperty" -> isAddition ? "createObjectProperty" : "deleteObjectProperty";
-                case "http://www.w3.org/2002/07/owl#DatatypeProperty" -> isAddition ? "createDataProperty" : "deleteDataProperty";
-                case "http://www.w3.org/2002/07/owl#AnnotationProperty" -> isAddition ? "createAnnotationProperty" : "deleteAnnotationProperty";
-                case "http://www.w3.org/2000/01/rdf-schema#Datatype" -> isAddition ? "createDatatype" : "deleteDatatype";
-                case "http://www.w3.org/2002/07/owl#NamedIndividual" -> isAddition ? "createIndividual" : "deleteIndividual";
-                default -> null;
-            };
-            if (opType != null) {
-                historyService.recordEdit(projectId, userId, username, opType,
-                        subjectIri, label, null, null,
-                        opType + " operation via Code View", null);
-                if (draftOps != null) {
-                    draftOps.add(self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp
-                            .forTypeAssertion(opType, subjectIri, label));
-                }
-            }
-            return;
-        }
-
-        if (predicate.equals(RDFS.SUBCLASSOF) && st.getObject() instanceof IRI parentIri) {
-            String opType = isAddition ? "addSubClassOf" : "removeSubClassOf";
-            historyService.recordEdit(projectId, userId, username,
-                    opType, subjectIri, label,
-                    isAddition ? null : parentIri.stringValue(),
-                    isAddition ? parentIri.stringValue() : null,
-                    "subClassOf changed via Code View", null);
-            if (draftOps != null) {
-                draftOps.add(self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp
-                        .forSubClassOfChange(opType, subjectIri, label, parentIri.stringValue(), isAddition));
-            }
-            return;
-        }
-
-        if (predicate.equals(RDFS.LABEL) || predicate.equals(RDFS.COMMENT)) {
-            String opType = isAddition ? "addAnnotation" : "removeAnnotation";
-            historyService.recordEdit(projectId, userId, username,
-                    opType, subjectIri, label, null, st.getObject().stringValue(),
-                    "Annotation changed via Code View", predicate.stringValue());
-            if (draftOps != null) {
-                draftOps.add(self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp
-                        .forPropertyAssertion(opType, subjectIri, label, predicate.stringValue(), st.getObject().stringValue()));
-            }
-            return;
-        }
-
-        String opType = isAddition ? "addStatement" : "removeStatement";
-        historyService.recordEdit(projectId, userId, username,
-                opType, subjectIri, label,
-                isAddition ? null : st.getObject().stringValue(),
-                isAddition ? st.getObject().stringValue() : null,
-                "Property assertion changed via Code View (" + predicate.stringValue() + ")",
-                predicate.stringValue());
-        if (draftOps != null) {
-            draftOps.add(self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp
-                    .forPropertyAssertion(opType, subjectIri, label, predicate.stringValue(), st.getObject().stringValue()));
-        }
-    }
-
-    private static final int BULK_DIFF_THRESHOLD = 60;
-
-    private void recordOntologyDiff(String projectId, String userId, String username,
-                                     Model oldModel, Model newModel, boolean draft) {
-        Set<Statement> added = new LinkedHashSet<>(newModel);
-        added.removeAll(oldModel);
-        Set<Statement> removed = new LinkedHashSet<>(oldModel);
-        removed.removeAll(newModel);
-
-        int namedChangeCount = 0;
-        for (Statement st : added) {
-            if (isNamedTriple(st)) namedChangeCount++;
-        }
-        for (Statement st : removed) {
-            if (isNamedTriple(st)) namedChangeCount++;
-        }
-
-        if (namedChangeCount > BULK_DIFF_THRESHOLD) {
-            historyService.recordEdit(projectId, userId, username,
-                    "bulkPopulation", null, null, null, null,
-                    "Code View save added/changed " + namedChangeCount
-                            + " statements — logged as a single bulk entry rather than one per statement",
-                    null);
-            log.info("[CODE-VIEW-SAVE] Skipped per-triple change logging for bulk save ({} named changes)", namedChangeCount);
-            return;
-        }
-
-        List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> draftOps =
-                draft ? new java.util.ArrayList<>() : null;
-
-        int structuralChanges = 0;
-        for (Statement st : added) {
-            if (!isNamedTriple(st)) { structuralChanges++; continue; }
-            recordNamedStatementChange(projectId, userId, username, st, true, newModel, draftOps);
-        }
-        for (Statement st : removed) {
-            if (!isNamedTriple(st)) { structuralChanges++; continue; }
-            recordNamedStatementChange(projectId, userId, username, st, false, oldModel, draftOps);
-        }
-        if (structuralChanges > 0) {
-            historyService.recordEdit(projectId, userId, username,
-                    "codeViewStructuralEdit", null, null, null, null,
-                    "Code View save modified " + structuralChanges
-                            + " structural axiom(s) (restrictions, unions, SWRL rules, disjoint-class lists, etc.)",
-                    null);
-        }
-
-        if (draft && draftOps != null && !draftOps.isEmpty()) {
-            String sessionId = java.util.UUID.randomUUID().toString();
-            draftTrackingService.recordDrafts(projectId, userId, username, draftOps, sessionId);
-        }
-    }
 
     /**
      * Get the last modified timestamp for a project (for sync checking)
@@ -2294,62 +2036,6 @@ public class ProjectLoadController {
                             "error", "Failed to get timestamp: " + e.getMessage()
                     ));
         }
-    }
-
-    private byte[] retryCodeViewImportAfterReserialization(String projectId, String format, String content, String targetGraphOverride)
-            throws IOException, org.semanticweb.owlapi.model.OWLOntologyCreationException,
-                   org.semanticweb.owlapi.model.OWLOntologyStorageException {
-        String ext = storageManager.extensionFor(format);
-        Path tempFile = Files.createTempFile("codeview-retry-", "." + ext);
-        Path convertedFile = null;
-
-        try {
-            Files.writeString(tempFile, content, StandardCharsets.UTF_8);
-            convertedFile = OWLFormatConverter.convertToRDFXML(tempFile);
-            byte[] retryBytes = Files.readAllBytes(convertedFile);
-            log.info("[CODE-VIEW-SAVE] OWL API re-serialization successful ({} bytes), retrying GraphDB import", retryBytes.length);
-            try (InputStream retryStream = new ByteArrayInputStream(retryBytes)) {
-                datasetService.bulkLoadChunked(projectId, retryStream, RDFFormat.RDFXML, retryBytes.length, ImportOptions.defaults(), null, targetGraphOverride);
-            }
-            return retryBytes;
-        } finally {
-            if (convertedFile != null) {
-                Files.deleteIfExists(convertedFile);
-            }
-            Files.deleteIfExists(tempFile);
-        }
-    }
-
-    private boolean isXmlStructuralError(Throwable ex) {
-        Throwable current = ex;
-        while (current != null) {
-            String message = current.getMessage();
-            if (message != null) {
-                String lower = message.toLowerCase(Locale.ROOT);
-                if (lower.contains("must be terminated") ||
-                    lower.contains("end-tag") ||
-                    lower.contains("end tag") ||
-                    lower.contains("unexpected end of file") ||
-                    lower.contains("premature end of file") ||
-                    lower.contains("content is not allowed in prolog") ||
-                    lower.contains("invalid xml") ||
-                    lower.contains("invalid iri") ||
-                    lower.contains("invalidvalueexception") ||
-                    lower.contains("illegalstateexception") ||
-                    lower.contains("illegal state")) {
-                    return true;
-                }
-                if (current.getClass().getName().contains("SAXParseException")) {
-                    boolean isNamespaceError = lower.contains("prefix")
-                            && (lower.contains("bound") || lower.contains("not bound"));
-                    if (!isNamespaceError) {
-                        return true;
-                    }
-                }
-            }
-            current = current.getCause();
-        }
-        return false;
     }
 
     /**

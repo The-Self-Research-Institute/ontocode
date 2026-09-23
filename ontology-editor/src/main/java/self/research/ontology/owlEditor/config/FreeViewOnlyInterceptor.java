@@ -34,7 +34,10 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         "/**/validate",
         "/**/reload/**",
         "/**/code-view-cache",
-        "/**/upload-by-file-ref/**"      // loads OWL file from storage into working graph (needed to view)
+        "/**/upload-by-file-ref/**",     // loads OWL file from storage into working graph (needed to view)
+        "/api/v1/code-assistant/sessions",
+        "/api/v1/code-assistant/sessions/*/tools/read_context",
+        "/api/v1/code-assistant/sessions/*/tools/run_sparql"
     );
 
     // PUT/DELETE paths allowed for FREE plan (non-ontology operations)
