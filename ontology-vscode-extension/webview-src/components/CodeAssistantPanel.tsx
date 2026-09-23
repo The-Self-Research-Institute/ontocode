@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, AlertCircle, Send, X, Lock } from "lucide-react";
+import { Bot, Loader2, AlertCircle, Send, X, Lock, Copy, Check } from "lucide-react";
 import { hasApiKey, setStoredApiKey } from "../services/LlmInsightsService";
 import { CodeAssistantModelSwitcher } from "./CodeAssistantModelSwitcher";
 import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
@@ -59,8 +59,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const [statusText, setStatusText] = useState("");
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const entriesRef = useRef<ChatEntry[]>(entries);
   useEffect(() => {
     entriesRef.current = entries;
@@ -99,7 +102,19 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   }, []);
 
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
+
+  useEffect(() => {
+    const container = transcriptScrollRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom < 120) {
+      transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
   }, [entries, busy, statusText]);
 
   const updateReviewEntry = (
@@ -227,6 +242,16 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     }
   };
 
+  const copyText = async (entryId: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(entryId);
+      setTimeout(() => setCopiedId((current) => (current === entryId ? null : current)), 1500);
+    } catch {
+      /* clipboard unavailable or denied */
+    }
+  };
+
   const runCommand = (command: (typeof slashCommands)[number]) => {
     if (command.disabled) return;
     command.run();
@@ -286,7 +311,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {entries.length === 0 && (
           <div className="space-y-3">
             <p className="text-sm text-gray-500">
@@ -337,7 +362,16 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                     <div className="max-w-[85%] bg-gray-100 rounded-lg rounded-bl-sm px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
                       {entry.text}
                     </div>
-                    <CodeAssistantContextUsed events={entry.contextUsed} />
+                    <div className="flex items-center gap-3 mt-1">
+                      <button
+                        onClick={() => copyText(entry.id, entry.text)}
+                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                      >
+                        {copiedId === entry.id ? <Check size={12} /> : <Copy size={12} />}
+                        {copiedId === entry.id ? "Copied" : "Copy"}
+                      </button>
+                      <CodeAssistantContextUsed events={entry.contextUsed} />
+                    </div>
                   </div>
                 );
               }
@@ -424,10 +458,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                 </div>
               )}
               <textarea
+                ref={composerRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleComposerKeyDown}
-                rows={2}
+                rows={1}
                 disabled={busy || !projectId || !configured}
                 placeholder={
                   !configured
@@ -436,7 +471,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                       ? "Describe the change you want..."
                       : "Type your question..."
                 }
-                className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-none disabled:opacity-50"
+                className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-none disabled:opacity-50 min-h-[44px] max-h-[160px] overflow-y-auto"
               />
               <button
                 onClick={submitMessage}
