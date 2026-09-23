@@ -57,9 +57,6 @@ export function describeLoopStage(event: LoopStageEvent): string {
 
 const TECHNICAL_ERROR_PATTERN = /Exception|\{[a-zA-Z]+=|com\.[a-z][\w.]*\.|Caused by:|StackTrace|at [\w.$]+\(/;
 
-// Backend infra failures (a downed Mongo, a timed-out socket, a dropped connection) can leak
-// their raw driver exception text into an error response. That's fine for logs, not for a chat
-// bubble — collapse anything that reads like an internal exception into one short, plain line.
 export function toFriendlyErrorMessage(raw: string): string {
   const looksTechnical = raw.length > 180 || TECHNICAL_ERROR_PATTERN.test(raw);
   if (!looksTechnical) return raw;

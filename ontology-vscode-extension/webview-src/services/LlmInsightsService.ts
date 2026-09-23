@@ -143,9 +143,6 @@ export function getProviderModels(provider: LlmProvider): KnownModel[] {
 }
 
 const BUDGET_TIER = /(lite|mini|nano|-8b|small)/i;
-// Gemini's "Pro" tier has repeatedly shown a hard 0 free-tier quota on real keys (confirmed
-// live twice) — it's often billing-only, unlike Flash which is the intended free workhorse.
-// Never auto-pick it over a model that actually works on a free key.
 const GEMINI_PAID_TIER = /(^|-)pro(-|$)/i;
 
 export function isLikelyPaidOnlyModel(provider: LlmProvider, modelId: string): boolean {
@@ -173,8 +170,6 @@ async function listGeminiModels(key: string): Promise<KnownModel[]> {
     }))
     .filter((m: KnownModel) => m.id);
 
-  // Gemma models share this API but are a separate, less reliable open-weight family
-  // (tighter free quota, more prone to 503s) — never let one outrank an actual Gemini model.
   const gemini = known.filter((m) => m.id.startsWith('gemini-'));
   const other = known.filter((m) => !m.id.startsWith('gemini-'));
 
@@ -284,6 +279,30 @@ export function getStoredModel(): string {
 export function setStoredModel(model: string): void {
   try {
     if (model) localStorage.setItem(MODEL_STORAGE, model);
+  } catch {
+    /* ignore */
+  }
+}
+
+const MAX_TOKENS_STORAGE = 'ontocode_llm_max_response_tokens';
+export const DEFAULT_MAX_RESPONSE_TOKENS = 8192;
+const MIN_MAX_RESPONSE_TOKENS = 512;
+const MAX_MAX_RESPONSE_TOKENS = 32768;
+
+export function getStoredMaxResponseTokens(): number {
+  try {
+    const stored = Number(localStorage.getItem(MAX_TOKENS_STORAGE));
+    if (Number.isInteger(stored) && stored >= MIN_MAX_RESPONSE_TOKENS && stored <= MAX_MAX_RESPONSE_TOKENS) return stored;
+    return DEFAULT_MAX_RESPONSE_TOKENS;
+  } catch {
+    return DEFAULT_MAX_RESPONSE_TOKENS;
+  }
+}
+
+export function setStoredMaxResponseTokens(value: number): void {
+  try {
+    const clamped = Math.round(Math.min(MAX_MAX_RESPONSE_TOKENS, Math.max(MIN_MAX_RESPONSE_TOKENS, value)));
+    localStorage.setItem(MAX_TOKENS_STORAGE, String(clamped));
   } catch {
     /* ignore */
   }

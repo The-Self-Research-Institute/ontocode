@@ -1,5 +1,7 @@
-import type { ToolDefinition, ConversationState, ToolResultForModel } from "./codeAssistantProviders";
+import type { ToolDefinition, ConversationState, ToolResultForModel, HistoryTurn } from "./codeAssistantProviders";
 import { startAssistantConversation, requestNextTurn } from "./codeAssistantProviders";
+
+export type { HistoryTurn };
 import { validateAgainstSchema } from "./codeAssistantValidation";
 import {
   readContext,
@@ -177,8 +179,9 @@ export async function runAssistantLoop(
   userMessage: string,
   onStage: (event: LoopStageEvent) => void,
   signal?: AbortSignal,
+  history: HistoryTurn[] = [],
 ): Promise<LoopOutcome> {
-  let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage);
+  let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage, history);
 
   for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
     onStage({ stage: "calling-provider" });

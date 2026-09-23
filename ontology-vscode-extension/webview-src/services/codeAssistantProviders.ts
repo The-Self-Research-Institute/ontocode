@@ -1,4 +1,12 @@
-import { getStoredApiKey, getStoredModel, getStoredProvider, LlmConfigError, LlmProvider, LlmRequestError } from "./LlmInsightsService";
+import {
+  getStoredApiKey,
+  getStoredMaxResponseTokens,
+  getStoredModel,
+  getStoredProvider,
+  LlmConfigError,
+  LlmProvider,
+  LlmRequestError,
+} from "./LlmInsightsService";
 
 export interface JsonSchema {
   type: string;
@@ -38,19 +46,30 @@ export interface ConversationState {
   nativeMessages: unknown[];
 }
 
+export interface HistoryTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
 export class ProviderProtocolError extends LlmRequestError {}
 
 function newToolCallId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 }
 
-function startConversation(provider: LlmProvider, systemPrompt: string, userMessage: string): ConversationState {
+function startConversation(
+  provider: LlmProvider,
+  systemPrompt: string,
+  history: HistoryTurn[],
+  userMessage: string,
+): ConversationState {
   if (provider === "openai") {
     return {
       provider,
       systemPrompt,
       nativeMessages: [
         { role: "system", content: systemPrompt },
+        ...history.map((h) => ({ role: h.role, content: h.text })),
         { role: "user", content: userMessage },
       ],
     };
@@ -59,13 +78,16 @@ function startConversation(provider: LlmProvider, systemPrompt: string, userMess
     return {
       provider,
       systemPrompt,
-      nativeMessages: [{ role: "user", content: userMessage }],
+      nativeMessages: [...history.map((h) => ({ role: h.role, content: h.text })), { role: "user", content: userMessage }],
     };
   }
   return {
     provider,
     systemPrompt,
-    nativeMessages: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userMessage}` }] }],
+    nativeMessages: [
+      ...history.map((h) => ({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.text }] })),
+      { role: "user", parts: [{ text: userMessage }] },
+    ],
   };
 }
 
@@ -81,16 +103,15 @@ function toGeminiFunctionDeclaration(tool: ToolDefinition) {
   return { name: tool.name, description: tool.description, parameters: tool.parameters };
 }
 
-const MAX_RESPONSE_TOKENS = 4096;
-
 function buildRequestBody(conversation: ConversationState, model: string, tools: ToolDefinition[]): Record<string, unknown> {
+  const maxTokens = getStoredMaxResponseTokens();
   if (conversation.provider === "openai") {
     return {
       model,
       messages: conversation.nativeMessages,
       tools: tools.map(toOpenAiTool),
       tool_choice: "auto",
-      max_tokens: MAX_RESPONSE_TOKENS,
+      max_tokens: maxTokens,
       temperature: 0.2,
     };
   }
@@ -100,13 +121,14 @@ function buildRequestBody(conversation: ConversationState, model: string, tools:
       system: conversation.systemPrompt,
       messages: conversation.nativeMessages,
       tools: tools.map(toClaudeTool),
-      max_tokens: MAX_RESPONSE_TOKENS,
+      max_tokens: maxTokens,
     };
   }
   return {
+    systemInstruction: { parts: [{ text: conversation.systemPrompt }] },
     contents: conversation.nativeMessages,
     tools: [{ functionDeclarations: tools.map(toGeminiFunctionDeclaration) }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: MAX_RESPONSE_TOKENS },
+    generationConfig: { temperature: 0.2, maxOutputTokens: maxTokens },
   };
 }
 
@@ -124,8 +146,6 @@ function providerEndpoint(provider: LlmProvider, model: string, key: string): { 
         "Content-Type": "application/json",
         "x-api-key": key,
         "anthropic-version": "2023-06-01",
-        // Anthropic's API blocks direct browser calls by default (no CORS) — this opts in,
-        // required since the key never leaves the browser in this app's design.
         "anthropic-dangerous-direct-browser-access": "true",
       },
     };
@@ -287,10 +307,6 @@ async function extractProviderErrorMessage(res: Response): Promise<string | null
   }
 }
 
-// Provider quota-exceeded bodies (Gemini especially) can be a multi-hundred-character dump:
-// a headline sentence, docs links, several repeated "* Quota exceeded for metric: ..." lines,
-// and a trailing "Please retry in Ns". Collapse that into one short, actionable line instead
-// of showing the raw provider text in the chat.
 function summarizeQuotaMessage(detail: string): string {
   if (detail.length <= 160 && !detail.includes("\n") && !detail.includes(" * ")) return detail;
   const headline = (detail.match(/^[^.]*\./)?.[0] ?? detail.split(/\s\*\s|\n/)[0]).trim().replace(/\.$/, "");
@@ -307,9 +323,6 @@ async function mapHttpError(provider: LlmProvider, res: Response): Promise<LlmRe
   if (status === 401 || status === 403) return new LlmRequestError(`Invalid or unauthorized API key for ${provider}.`);
   if (status === 404) return new LlmRequestError(`Model not found or unavailable for ${provider}.`);
   if (status === 429) {
-    // Free-tier quotas (e.g. Gemini's per-minute AND per-day caps) return 429 too — retrying
-    // within a few seconds does nothing for a per-day cap, so surface the provider's own
-    // reason instead of guessing.
     const detail = await extractProviderErrorMessage(res);
     return new LlmRequestError(detail ? `Rate limit reached: ${summarizeQuotaMessage(detail)}` : "Rate limit reached. Try again shortly.");
   }
@@ -317,9 +330,6 @@ async function mapHttpError(provider: LlmProvider, res: Response): Promise<LlmRe
   return new LlmRequestError(`${provider} API error (HTTP ${status}).`);
 }
 
-// Only 503 (genuine transient overload) is worth an automatic retry. 429 is left alone —
-// Gemini's free tier includes a requests-per-day cap as low as 20-30/day, and blindly
-// retrying that within a couple of seconds just burns another attempt against it for nothing.
 const RETRYABLE_STATUSES = new Set([503]);
 const MAX_TRANSIENT_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 1000;
@@ -341,9 +351,10 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 export async function startAssistantConversation(
   systemPrompt: string,
   userMessage: string,
+  history: HistoryTurn[] = [],
 ): Promise<ConversationState> {
   const provider = getStoredProvider();
-  return startConversation(provider, systemPrompt, userMessage);
+  return startConversation(provider, systemPrompt, history, userMessage);
 }
 
 export async function requestNextTurn(

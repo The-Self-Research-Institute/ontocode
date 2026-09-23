@@ -7,6 +7,9 @@ import {
   setStoredApiKey,
   getStoredModel,
   setStoredModel,
+  getStoredMaxResponseTokens,
+  setStoredMaxResponseTokens,
+  DEFAULT_MAX_RESPONSE_TOKENS,
   getAvailableProviders,
   getProviderModels,
   refreshAvailableModels,
@@ -32,6 +35,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
   const [provider, setProvider] = useState<LlmProvider>(getStoredProvider());
   const [apiKey, setApiKey] = useState(getStoredApiKey());
   const [model, setModel] = useState(getStoredModel());
+  const [maxResponseTokens, setMaxResponseTokens] = useState(getStoredMaxResponseTokens());
   const [showKey, setShowKey] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
@@ -106,6 +110,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
     setStoredProvider(provider);
     setStoredApiKey(apiKey);
     setStoredModel(modelToSave);
+    setStoredMaxResponseTokens(maxResponseTokens);
 
     setMessage({ type: 'success', text: `Saved ${providers.find(p => p.id === provider)?.label} settings.` });
     setTimeout(() => setMessage(null), 3000);
@@ -274,6 +279,25 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
         </select>
         <p className={`text-xs mt-1 ${modelsSource === 'live' ? 'text-green-600' : 'text-gray-400'}`}>
           {modelsSource === 'live' ? '✓ Live list from your API key' : 'Default list — add your API key above to fetch the real one'}
+        </p>
+      </div>
+
+      {/* Advanced */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Max response length (tokens)
+        </label>
+        <input
+          type="number"
+          min={512}
+          max={32768}
+          step={512}
+          value={maxResponseTokens}
+          onChange={(e) => setMaxResponseTokens(Number(e.target.value) || DEFAULT_MAX_RESPONSE_TOKENS)}
+          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          Longer answers and larger propose_edit changes need more tokens; a low value risks the response being cut off mid-way.
         </p>
       </div>
 

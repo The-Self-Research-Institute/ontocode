@@ -72,9 +72,6 @@ export const CodeAssistantModelSwitcher: React.FC<CodeAssistantModelSwitcherProp
         return;
       }
       setModels(live);
-      // A currently-selected model that's likely billing-only (e.g. Gemini Pro, confirmed
-      // zero free-tier quota on real keys) gets swapped for the top free-tier alternative
-      // automatically, instead of leaving the user stuck retrying the same dead model.
       const currentModel = getStoredModel();
       if (isLikelyPaidOnlyModel(provider, currentModel) && live.length && live[0].id !== currentModel) {
         setModel(live[0].id);

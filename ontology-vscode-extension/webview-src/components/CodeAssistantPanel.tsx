@@ -6,7 +6,7 @@ import { CodeAssistantReviewGroups, type GroupDecision } from "./CodeAssistantRe
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
 import { createAssistantSession, applyEditGroup, AssistantApiError, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
-import { runAssistantLoop, type LoopOutcome } from "../services/codeAssistantLoop";
+import { runAssistantLoop, type LoopOutcome, type HistoryTurn } from "../services/codeAssistantLoop";
 import { ACTIONS, getApiBaseUrl, buildSystemPrompt, describeLoopStage, toFriendlyErrorMessage, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
 
 export type { CodeAssistantAction };
@@ -134,6 +134,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       ]);
       return;
     }
+    const history: HistoryTurn[] = entries.flatMap((entry): HistoryTurn[] => {
+      if (entry.role === "user") return [{ role: "user", text: entry.text }];
+      if (entry.role === "assistant" && entry.kind === "answer") return [{ role: "assistant", text: entry.text }];
+      return [];
+    });
     setEntries((prev) => [...prev, { id: nextEntryId(), role: "user", text, action }]);
     setInput("");
     setBusy(true);
@@ -155,6 +160,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         text,
         (event) => setStatusText(describeLoopStage(event)),
         controller.signal,
+        history,
       );
       appendOutcome(outcome, session.sessionId);
     } catch (e) {
