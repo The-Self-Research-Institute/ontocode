@@ -121,6 +121,13 @@ export interface LoopStageEvent {
   detail?: string;
 }
 
+export interface ContextEvent {
+  tool: string;
+  args: Record<string, unknown>;
+  result: unknown;
+  isError: boolean;
+}
+
 function newClientGroupId(): string {
   return `grp_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -203,6 +210,7 @@ export async function runAssistantLoop(
   onStage: (event: LoopStageEvent) => void,
   signal?: AbortSignal,
   history: HistoryTurn[] = [],
+  onContext?: (event: ContextEvent) => void,
 ): Promise<LoopOutcome> {
   let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage, history);
 
@@ -246,6 +254,9 @@ export async function runAssistantLoop(
     onStage({ stage: "calling-tool", detail: turn.calls.map((c) => c.name).join(", ") });
     const outcomes = await Promise.all(turn.calls.map((call) => dispatchToolCall(ctx, call.name, call.args, signal)));
     onStage({ stage: "tool-result", detail: turn.calls.map((c) => c.name).join(", ") });
+    turn.calls.forEach((call, idx) => {
+      onContext?.({ tool: call.name, args: call.args, result: outcomes[idx].result, isError: outcomes[idx].isError });
+    });
     const results: ToolResultForModel[] = turn.calls.map((call, idx) => ({
       toolCallId: call.toolCallId,
       name: call.name,

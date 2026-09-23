@@ -10,6 +10,7 @@ interface CodeAssistantReviewGroupsProps {
   errors?: Record<string, string>;
   onApply: (serverGroupId: string) => void;
   onSkip: (serverGroupId: string) => void;
+  onApplyAll?: () => void;
 }
 
 export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps> = ({
@@ -18,10 +19,25 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
   errors,
   onApply,
   onSkip,
+  onApplyAll,
 }) => {
+  const pendingCount = groups.filter((g) => (decisions[g.serverGroupId] ?? "pending") === "pending" && g.validation.passed).length;
+  const isApplyingAny = groups.some((g) => decisions[g.serverGroupId] === "applying");
+
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-600">Review each group. Nothing is applied until you approve it.</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm text-gray-600">Review each group. Nothing is applied until you approve it.</p>
+        {onApplyAll && pendingCount > 1 && (
+          <button
+            onClick={onApplyAll}
+            disabled={isApplyingAny}
+            className="px-3 py-1.5 text-xs font-semibold text-white bg-green-700 rounded-md hover:bg-green-800 disabled:opacity-50 flex-shrink-0"
+          >
+            Apply All ({pendingCount})
+          </button>
+        )}
+      </div>
       {groups.map((group) => {
         const decision = decisions[group.serverGroupId] ?? "pending";
         return (

@@ -2,11 +2,12 @@ import React, { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, AlertCircle, Send, X, Lock } from "lucide-react";
 import { hasApiKey, setStoredApiKey } from "../services/LlmInsightsService";
 import { CodeAssistantModelSwitcher } from "./CodeAssistantModelSwitcher";
+import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
 import { CodeAssistantReviewGroups, type GroupDecision } from "./CodeAssistantReviewGroups";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
 import { createAssistantSession, applyEditGroup, AssistantApiError, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
-import { runAssistantLoop, type LoopOutcome, type HistoryTurn } from "../services/codeAssistantLoop";
+import { runAssistantLoop, type LoopOutcome, type HistoryTurn, type ContextEvent } from "../services/codeAssistantLoop";
 import { ACTIONS, getApiBaseUrl, buildSystemPrompt, describeLoopStage, toFriendlyErrorMessage, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
 
 export type { CodeAssistantAction };
@@ -20,7 +21,7 @@ interface CodeAssistantPanelProps {
 
 type ChatEntry =
   | { id: string; role: "user"; text: string; action: CodeAssistantAction }
-  | { id: string; role: "assistant"; kind: "answer"; text: string }
+  | { id: string; role: "assistant"; kind: "answer"; text: string; contextUsed: ContextEvent[] }
   | {
       id: string;
       role: "assistant";
@@ -29,6 +30,7 @@ type ChatEntry =
       groups: ProposedEditGroupResult[];
       decisions: Record<string, GroupDecision>;
       errors: Record<string, string>;
+      contextUsed: ContextEvent[];
     }
   | { id: string; role: "assistant"; kind: "error"; text: string };
 
@@ -59,6 +61,10 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const [commandIndex, setCommandIndex] = useState(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const entriesRef = useRef<ChatEntry[]>(entries);
+  useEffect(() => {
+    entriesRef.current = entries;
+  }, [entries]);
 
   const slashCommands = [
     { cmd: "/ask", label: "Ask", description: "Ask a question about this document", disabled: false, run: () => setAction("ask") },
@@ -105,9 +111,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     );
   };
 
-  const appendOutcome = (outcome: LoopOutcome, sessionId: string) => {
+  const appendOutcome = (outcome: LoopOutcome, sessionId: string, contextUsed: ContextEvent[]) => {
     if (outcome.kind === "answer") {
-      setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text }]);
+      setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text, contextUsed }]);
       return;
     }
     if (outcome.kind === "propose") {
@@ -117,7 +123,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       });
       setEntries((prev) => [
         ...prev,
-        { id: nextEntryId(), role: "assistant", kind: "review", sessionId, groups: outcome.result.groups, decisions, errors: {} },
+        { id: nextEntryId(), role: "assistant", kind: "review", sessionId, groups: outcome.result.groups, decisions, errors: {}, contextUsed },
       ]);
       return;
     }
@@ -154,6 +160,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         { projectId, documentPath: documentPath ?? "", actionType: action, actionContext: JSON.stringify({}) },
         controller.signal,
       );
+      const contextEvents: ContextEvent[] = [];
       const outcome = await runAssistantLoop(
         { apiBaseUrl, token, session },
         buildSystemPrompt(action, documentPath),
@@ -161,8 +168,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         (event) => setStatusText(describeLoopStage(event)),
         controller.signal,
         history,
+        (event) => contextEvents.push(event),
       );
-      appendOutcome(outcome, session.sessionId);
+      appendOutcome(outcome, session.sessionId, contextEvents);
     } catch (e) {
       if (controller.signal.aborted) return;
       const raw = e instanceof AssistantApiError || e instanceof Error ? e.message : "Something went wrong talking to the assistant.";
@@ -205,6 +213,18 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
 
   const skipGroup = (entryId: string, serverGroupId: string) => {
     updateReviewEntry(entryId, (e) => ({ ...e, decisions: { ...e.decisions, [serverGroupId]: "skipped" } }));
+  };
+
+  const applyAllPending = async (entryId: string, sessionId: string) => {
+    const entry = entriesRef.current.find((e) => e.id === entryId);
+    if (!entry || entry.role !== "assistant" || entry.kind !== "review") return;
+    const serverGroupIds = entry.groups.filter((g) => g.validation.passed).map((g) => g.serverGroupId);
+    for (const serverGroupId of serverGroupIds) {
+      const current = entriesRef.current.find((e) => e.id === entryId);
+      if (!current || current.role !== "assistant" || current.kind !== "review") break;
+      if (current.decisions[serverGroupId] !== "pending") continue;
+      await applyGroup(entryId, sessionId, serverGroupId);
+    }
   };
 
   const runCommand = (command: (typeof slashCommands)[number]) => {
@@ -313,10 +333,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
               }
               if (entry.kind === "answer") {
                 return (
-                  <div key={entry.id} className="flex justify-start">
+                  <div key={entry.id} className="flex flex-col items-start">
                     <div className="max-w-[85%] bg-gray-100 rounded-lg rounded-bl-sm px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
                       {entry.text}
                     </div>
+                    <CodeAssistantContextUsed events={entry.contextUsed} />
                   </div>
                 );
               }
@@ -329,7 +350,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                       errors={entry.errors}
                       onApply={(groupId) => applyGroup(entry.id, entry.sessionId, groupId)}
                       onSkip={(groupId) => skipGroup(entry.id, groupId)}
+                      onApplyAll={() => applyAllPending(entry.id, entry.sessionId)}
                     />
+                    <CodeAssistantContextUsed events={entry.contextUsed} />
                   </div>
                 );
               }
