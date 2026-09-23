@@ -15,19 +15,6 @@ import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import java.time.Instant;
 import java.util.Optional;
 
-/**
- * Owns the AI Assistant's immutable-snapshot session: pins a project's revision at
- * creation time, and is the sole source of truth for the retrieval-attempt budget
- * shared across read_context and run_sparql (decremented atomically so concurrent
- * calls can't both succeed past zero).
- *
- * <p>Pins {@link ProjectMetadataService#getMutationVersion}, not
- * {@link MainGraphRevisionService} — the latter only advances on draft-publish
- * (DraftTrackingService's own workflow) and would miss changes from the general
- * mutation path or from a Code View save (ProjectLoadController.saveCodeViewAndSync
- * bumps mutationVersion, never mainGraphRevision), which is exactly the surface
- * this assistant reads and edits.
- */
 @Slf4j
 @Service
 public class AssistantSessionService {
@@ -77,12 +64,6 @@ public class AssistantSessionService {
         return saved;
     }
 
-    /**
-     * Returns the session only if it belongs to the caller, is ACTIVE, and hasn't passed
-     * its deadline. A session found past its deadline is flipped to EXPIRED as a side
-     * effect so it doesn't need a separate sweep — every caller that touches it eventually
-     * observes and finalizes the expiry.
-     */
     public Optional<AssistantSessionDocument> getActiveSession(String sessionId, String userEmail) {
         Optional<AssistantSessionDocument> found = sessionRepository.findByIdAndUserEmail(sessionId, userEmail);
         if (found.isEmpty()) {
@@ -99,11 +80,6 @@ public class AssistantSessionService {
         return Optional.of(session);
     }
 
-    /**
-     * Atomically decrements the shared retrieval budget only if it's still positive —
-     * a plain read-then-write here would let two concurrent tool calls both succeed
-     * past zero.
-     */
     public boolean tryConsumeRetrievalAttempt(String sessionId) {
         Query query = Query.query(Criteria.where("_id").is(sessionId)
                 .and("status").is(AssistantSessionStatus.ACTIVE)

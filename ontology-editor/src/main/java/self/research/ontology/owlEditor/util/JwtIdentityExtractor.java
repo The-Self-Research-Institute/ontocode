@@ -8,12 +8,6 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Reads the caller's email out of an already-authenticated request's Bearer JWT.
- * Same trust assumption as the rest of this codebase's controllers: signature
- * verification happens upstream (gateway/auth filter) before a request reaches
- * here — this only decodes claims from a token already treated as trusted.
- */
 @Slf4j
 public final class JwtIdentityExtractor {
 

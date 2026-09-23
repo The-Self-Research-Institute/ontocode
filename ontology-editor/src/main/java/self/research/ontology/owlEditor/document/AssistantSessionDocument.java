@@ -25,12 +25,10 @@ public class AssistantSessionDocument {
     private String actionType;
     private String actionContext;
 
-    /** mainGraphRevision pinned at session creation — the immutable snapshot every tool call reads against. */
     private Long pinnedRevision;
 
     private AssistantSessionStatus status;
 
-    /** Shared budget: decremented atomically by both read_context and run_sparql. */
     private Integer retrievalAttemptsRemaining;
 
     private Integer tokenBudgetRemaining;

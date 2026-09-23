@@ -57,6 +57,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -1019,6 +1020,64 @@ public class SparqlDatasetService {
             // while the real message only ever showed up in this server-side log line.
             throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);
         }
+    }
+
+    public record CappedSparqlResult(List<String> vars, List<Map<String, String>> rows, boolean truncated) {}
+
+    public CappedSparqlResult execSelectCapped(String projectId, String sparqlQuery, int timeoutSeconds,
+                                                int maxRows, long maxBytesApprox) {
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
+            String scoped = sparqlQuery;
+            if (scoped.matches("(?si).*\\bFROM\\s+<.*")) {
+                scoped = scoped.replaceAll("(?i)\\bFROM\\s+<[^>]+>", " ");
+            }
+            if (!scoped.matches("(?si).*\\bFROM\\s+<.*")) {
+                scoped = scoped.replaceFirst("(?i)WHERE", buildFromClause(conn, projectId) + " WHERE");
+            }
+
+            TupleQuery query = conn.prepareTupleQuery(scoped);
+            query.setIncludeInferred(false);
+            query.setMaxExecutionTime(timeoutSeconds);
+
+            List<String> vars;
+            List<Map<String, String>> rows = new ArrayList<>();
+            boolean truncated = false;
+            long approxBytes = 0;
+            try (TupleQueryResult result = query.evaluate()) {
+                vars = new ArrayList<>(result.getBindingNames());
+                while (result.hasNext()) {
+                    if (rows.size() >= maxRows) {
+                        truncated = true;
+                        break;
+                    }
+                    BindingSet binding_ = result.next();
+                    Map<String, String> row = new LinkedHashMap<>();
+                    for (String var : vars) {
+                        String value = toCappedValue(binding_.hasBinding(var) ? binding_.getValue(var) : null);
+                        approxBytes += var.length() + (value != null ? value.length() : 0);
+                        row.put(var, value);
+                    }
+                    if (approxBytes > maxBytesApprox) {
+                        truncated = true;
+                        break;
+                    }
+                    rows.add(row);
+                }
+            }
+            log.info("[GRAPHDB] capped SELECT project={} rows={} truncated={}", projectId, rows.size(), truncated);
+            return new CappedSparqlResult(vars, rows, truncated);
+        } catch (Exception e) {
+            log.error("[GRAPHDB] capped SELECT failed for project {}", projectId, e);
+            throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);
+        }
+    }
+
+    private String toCappedValue(org.eclipse.rdf4j.model.Value node) {
+        if (node == null) {
+            return null;
+        }
+        return node.stringValue();
     }
 
     /**
