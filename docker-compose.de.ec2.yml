@@ -97,6 +97,7 @@ services:
     # Fuseki crashes with "Data service name already registered".
     volumes:
       - fuseki-data:/fuseki/databases
+      - ./fuseki-config.ttl:/fuseki/configuration/ontocode.ttl:ro
     networks:
       - ontology-net
     deploy:
