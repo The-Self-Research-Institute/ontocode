@@ -583,10 +583,10 @@ async function startDesktop() {
         '--ontocode.desktop.owlapi-first=true',
         `--ontocode.desktop.plugins.bundled-dir=${path.join(RESOURCES_DIR, 'plugin-bundles')}`,
         '--app.email.enabled=false',
-        '--jira.enabled=false',
+        '--openproject.enabled=false',
         '--spring.mail.host=localhost',
         '--management.health.mail.enabled=false',
-        '--jira.api.token=noop',
+        '--openproject.api.key=noop',
     ];
 
     const desktopEnv = {

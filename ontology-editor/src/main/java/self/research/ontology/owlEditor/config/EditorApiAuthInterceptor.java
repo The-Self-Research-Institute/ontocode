@@ -9,13 +9,21 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.HandlerMapping;
+import self.research.ontology.owlEditor.document.ProjectDocument;
+import self.research.ontology.owlEditor.repository.ProjectRepository;
 
 import javax.crypto.SecretKey;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Component
 public class EditorApiAuthInterceptor implements HandlerInterceptor {
@@ -29,6 +37,14 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             "/ws/**",
             "/api/v1/issues/report"
     );
+
+    private final ProjectRepository projectRepository;
+    private final MongoTemplate mongoTemplate;
+
+    public EditorApiAuthInterceptor(ProjectRepository projectRepository, MongoTemplate mongoTemplate) {
+        this.projectRepository = projectRepository;
+        this.mongoTemplate = mongoTemplate;
+    }
 
     @Value("${jwt.secret:}")
     private String jwtSecret;
@@ -91,7 +107,18 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             if (claims.getSubject() == null || claims.getSubject().isBlank()) {
                 throw new IllegalArgumentException("missing subject");
             }
-            request.setAttribute("jwtEmail", claims.getSubject());
+            String jwtEmail = claims.getSubject();
+            request.setAttribute("jwtEmail", jwtEmail);
+
+            String projectId = pathVariable(request, "projectId");
+            if (projectId != null && !hasProjectAccess(projectId, jwtEmail)) {
+                log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json");
+                response.getWriter().write("{\"error\":\"You do not have access to this project\"}");
+                return false;
+            }
+
             return true;
         } catch (Exception e) {
             log.debug("Invalid JWT for {} {}: {}", method, path, e.getMessage());
@@ -100,5 +127,26 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             response.getWriter().write("{\"error\":\"Invalid or expired token\"}");
             return false;
         }
+    }
+
+    private boolean hasProjectAccess(String projectId, String email) {
+        Optional<ProjectDocument> direct = projectRepository.findById(projectId);
+        if (direct.isPresent() && direct.get().isAccessibleBy(email)) {
+            return true;
+        }
+        int compositeSep = projectId.indexOf("--");
+        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
+        Query query = new Query(Criteria.where("projectId").is(parentProjectId).orOperator(
+                Criteria.where("ownerEmail").is(email),
+                Criteria.where("members").elemMatch(Criteria.where("email").is(email))));
+        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String pathVariable(HttpServletRequest request, String name) {
+        Object attr = request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE);
+        if (!(attr instanceof Map)) return null;
+        String value = ((Map<String, String>) attr).get(name);
+        return value == null || value.isBlank() ? null : value;
     }
 }

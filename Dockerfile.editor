@@ -5,6 +5,7 @@ WORKDIR /build
 
 # Copy parent pom first for better caching
 COPY pom.xml .
+COPY checkstyle.xml checkstyle-suppressions.xml ./
 
 # Copy all service directories (Maven needs them for module resolution even if not all are used)
 COPY shared/ ./shared/
@@ -18,8 +19,12 @@ COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
 # Build shared modules first (these are dependencies for all services)
 # Uses BuildKit cache for ~/.m2 to avoid re-downloading dependencies on every build.
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-        clean install -pl shared/common-models,shared/common-utils,ontology-editor -DskipTests -B -ntp
+    sh -c 'for attempt in 1 2 3; do \
+        mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
+            clean install -pl shared/common-models,shared/common-utils,ontology-editor -DskipTests -B -ntp && exit 0; \
+        echo "Editor module build failed, retrying ($$attempt/3)..."; \
+    done; \
+    exit 1'
 
 # Runtime stage
 FROM eclipse-temurin:21-jre

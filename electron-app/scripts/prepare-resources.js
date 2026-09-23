@@ -15,6 +15,8 @@ const JRE_DIR    = path.join(RESOURCES, 'jre');
 
 const JRE17_DIR  = path.join(RESOURCES, 'jre17');
 
+const JRE_CACHE_ROOT = path.join(RESOURCES, '.jre-cache');
+
 const TARGET_PLATFORM = process.env.TARGET_PLATFORM || process.platform;
 const CROSS_BUILDING = TARGET_PLATFORM !== process.platform;
 
@@ -89,6 +91,30 @@ function javaMajorVersion(javaBin) {
 }
 
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); }
+
+function jreCacheDir(marker) { return path.join(JRE_CACHE_ROOT, marker); }
+
+function restoreJreFromCache(marker, destDir, javaBinRelPath) {
+    const cacheDir = jreCacheDir(marker);
+    const cachedJavaBin = path.join(cacheDir, javaBinRelPath);
+    if (!fs.existsSync(cachedJavaBin)) return false;
+
+    fs.rmSync(destDir, { recursive: true, force: true });
+    fs.cpSync(cacheDir, destDir, { recursive: true });
+    console.log(`  ✓  Restored ${marker} JRE from local cache (no download needed)`);
+    return true;
+}
+
+function saveJreToCache(marker, srcDir) {
+    try {
+        const cacheDir = jreCacheDir(marker);
+        fs.rmSync(cacheDir, { recursive: true, force: true });
+        ensureDir(JRE_CACHE_ROOT);
+        fs.cpSync(srcDir, cacheDir, { recursive: true });
+    } catch (err) {
+        console.warn(`  ⚠  Could not cache ${marker} JRE for reuse: ${err.message}`);
+    }
+}
 
 function copyIfExists(src, dest, label) {
     if (fs.existsSync(src)) {
@@ -390,9 +416,15 @@ async function bundleJre() {
         console.log(`  ✓  Bundled JRE for ${expectedMarker} already present (existence check only — can't exec-verify a foreign binary)`);
         return;
     } else if (fs.existsSync(JRE_DIR) && actualMarker !== expectedMarker) {
-        console.log(`  ℹ  Bundled JRE was prepared for ${actualMarker || 'an untracked build'}, need ${expectedMarker} — re-fetching`);
-        fs.rmSync(JRE_DIR, { recursive: true, force: true });
+        console.log(`  ℹ  Bundled JRE was prepared for ${actualMarker || 'an untracked build'}, need ${expectedMarker}`);
     }
+
+    const javaBinRelPath = path.relative(JRE_DIR, javaBin);
+    if (restoreJreFromCache(expectedMarker, JRE_DIR, javaBinRelPath)) {
+        fs.writeFileSync(JRE_ARCH_MARKER, expectedMarker);
+        return;
+    }
+    fs.rmSync(JRE_DIR, { recursive: true, force: true });
 
     if (!SKIP_JLINK && await tryJlink()) {
         ensureDir(JRE_DIR);
@@ -403,6 +435,7 @@ async function bundleJre() {
     await downloadTemurin();
     if (fs.existsSync(javaBin)) {
         fs.writeFileSync(JRE_ARCH_MARKER, expectedMarker);
+        saveJreToCache(expectedMarker, JRE_DIR);
     }
 }
 
@@ -462,9 +495,14 @@ async function tryJlink() {
     }
 }
 
+const JRE17_ARCH_MARKER = path.join(JRE17_DIR, '.prepared-for');
+
 async function bundleSwrlJre() {
     const javaBin = path.join(JRE17_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java');
-    if (!CROSS_BUILDING && fs.existsSync(javaBin)) {
+    const expectedMarker = `${TARGET_PLATFORM}-${TARGET_ARCH}`;
+    const actualMarker = fs.existsSync(JRE17_ARCH_MARKER) ? fs.readFileSync(JRE17_ARCH_MARKER, 'utf8').trim() : null;
+
+    if (!SKIP_JLINK && fs.existsSync(javaBin) && actualMarker === expectedMarker) {
         const major = javaMajorVersion(javaBin);
         if (major === null) {
             console.warn('  ⚠  Existing SWRL JRE unreadable — re-creating');
@@ -476,12 +514,21 @@ async function bundleSwrlJre() {
             console.log(`  ✓  Bundled SWRL JRE already present: Java ${major}`);
             return;
         }
-    } else if (CROSS_BUILDING && fs.existsSync(javaBin)) {
-        console.log(`  ✓  Bundled SWRL JRE for ${TARGET_PLATFORM} already present (existence check only — can't exec-verify a foreign binary)`);
+    } else if (SKIP_JLINK && fs.existsSync(javaBin) && actualMarker === expectedMarker) {
+        console.log(`  ✓  Bundled SWRL JRE for ${expectedMarker} already present (existence check only — can't exec-verify a foreign binary)`);
         return;
+    } else if (fs.existsSync(JRE17_DIR) && actualMarker !== expectedMarker) {
+        console.log(`  ℹ  Bundled SWRL JRE was prepared for ${actualMarker || 'an untracked build'}, need ${expectedMarker}`);
     }
 
-    if (!CROSS_BUILDING) {
+    const javaBinRelPath = path.relative(JRE17_DIR, javaBin);
+    if (restoreJreFromCache(`swrl-${expectedMarker}`, JRE17_DIR, javaBinRelPath)) {
+        fs.writeFileSync(JRE17_ARCH_MARKER, expectedMarker);
+        return;
+    }
+    fs.rmSync(JRE17_DIR, { recursive: true, force: true });
+
+    if (!SKIP_JLINK) {
         const jdk17Home = findJdkHome(17);
         if (jdk17Home) {
             const jlinkBin = path.join(jdk17Home, 'bin', process.platform === 'win32' ? 'jlink.exe' : 'jlink');
@@ -491,13 +538,13 @@ async function bundleSwrlJre() {
                 console.warn(`  ⚠  ${jdk17Home} is Java ${jdkMajor || '?'}, not 17 — ignoring`);
             } else if (fs.existsSync(jlinkBin)) {
                 console.log(`  → Creating SWRL's dedicated JDK 17 JRE with jlink from ${jdk17Home} (this takes ~30 s)…`);
-                fs.rmSync(JRE17_DIR, { recursive: true, force: true });
                 try {
                     execSync(
                         `"${jlinkBin}" --add-modules ${JLINK_MODULES} --output "${JRE17_DIR}" --strip-debug --no-man-pages --no-header-files --compress=2`,
                         { stdio: 'inherit', timeout: 120_000 },
                     );
                     console.log('  ✓  SWRL JDK 17 JRE created via jlink (~60-80 MB)');
+                    fs.writeFileSync(JRE17_ARCH_MARKER, expectedMarker);
                     return;
                 } catch (err) {
                     console.warn(`  ⚠  jlink failed for SWRL JRE: ${err.message}`);
@@ -512,6 +559,10 @@ async function bundleSwrlJre() {
     }
 
     await downloadTemurin17();
+    if (fs.existsSync(javaBin)) {
+        fs.writeFileSync(JRE17_ARCH_MARKER, expectedMarker);
+        saveJreToCache(`swrl-${expectedMarker}`, JRE17_DIR);
+    }
 }
 
 async function downloadTemurin17() {

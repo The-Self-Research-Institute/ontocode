@@ -19,6 +19,8 @@ public class SubmitReasoningJobRequest {
     private String expression;
     private List<String> queryTypes;
     private String reasonerType;
+    private Integer maxJustifications;
+    private String explanationMode;
     private String ownerEmail;
     private Map<String, Object> params;
 }

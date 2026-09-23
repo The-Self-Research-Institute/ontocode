@@ -4,6 +4,7 @@ FROM maven:3.9-eclipse-temurin-21-alpine AS build
 WORKDIR /build
 
 COPY pom.xml .
+COPY checkstyle.xml checkstyle-suppressions.xml ./
 # Maven validates all modules listed in the parent POM even when building a subset.
 COPY shared/ ./shared/
 COPY ontology-auth/ ./ontology-auth/
@@ -14,8 +15,12 @@ COPY ontology-plugin-service/ ./ontology-plugin-service/
 COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
 
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-        clean install -pl shared/common-utils,ontology-reasoner-worker -DskipTests -B -ntp
+    sh -c 'for attempt in 1 2 3; do \
+        mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
+            clean install -pl shared/common-utils,ontology-reasoner-worker -DskipTests -B -ntp && exit 0; \
+        echo "Reasoner-worker module build failed, retrying ($$attempt/3)..."; \
+    done; \
+    exit 1'
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app

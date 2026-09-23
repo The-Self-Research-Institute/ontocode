@@ -7,6 +7,7 @@ WORKDIR /build
 
 # Copy parent pom first for better caching
 COPY pom.xml .
+COPY checkstyle.xml checkstyle-suppressions.xml ./
 
 # Maven reactor needs every listed module's pom.xml to exist, even for a -pl build.
 # Copy only pom.xml stubs for modules we're NOT building (no source needed).
@@ -24,21 +25,29 @@ COPY ontology-swrl/ ./ontology-swrl/
 # Parent POM defaults to Java 21, but this image is JDK 17 (required for SWRLAPI).
 # Force shared modules to Java 17 bytecode so they compile and link here.
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -Dhttp.keepAlive=false \
-        -Dmaven.wagon.http.retryHandler.count=10 \
-        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-        clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp \
-        -Djava.version=17 \
-        -Dmaven.compiler.source=17 \
-        -Dmaven.compiler.target=17 \
-        -Dmaven.compiler.release=17
+    sh -c 'for attempt in 1 2 3; do \
+        mvn -Dhttp.keepAlive=false \
+            -Dmaven.wagon.http.retryHandler.count=10 \
+            -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+            clean install -pl shared/common-models,shared/common-utils -DskipTests -B -ntp \
+            -Djava.version=17 \
+            -Dmaven.compiler.source=17 \
+            -Dmaven.compiler.target=17 \
+            -Dmaven.compiler.release=17 && exit 0; \
+        echo "Shared module build failed, retrying ($$attempt/3)..."; \
+    done; \
+    exit 1'
 
 # Build SWRL module - package goal includes spring-boot:repackage automatically
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -Dhttp.keepAlive=false \
-        -Dmaven.wagon.http.retryHandler.count=10 \
-        -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-        clean package -pl ontology-swrl -DskipTests -B -ntp
+    sh -c 'for attempt in 1 2 3; do \
+        mvn -Dhttp.keepAlive=false \
+            -Dmaven.wagon.http.retryHandler.count=10 \
+            -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
+            clean package -pl ontology-swrl -DskipTests -B -ntp && exit 0; \
+        echo "SWRL module build failed, retrying ($$attempt/3)..."; \
+    done; \
+    exit 1'
 
 # Runtime stage - MUST use Java 17 JDK (NOT JRE) so Drools can compile
 # generated Java rule classes at runtime via the JavaDialect compiler.

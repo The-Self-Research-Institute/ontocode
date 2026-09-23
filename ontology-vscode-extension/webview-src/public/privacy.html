@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Policy — OntoCode Studio</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: #f7f7f9;
+    color: #1f2328;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  header .badge {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: #eef0ff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #4f46e5;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  h1 {
+    font-size: 1.5rem;
+    margin: 0;
+  }
+  .effective-date {
+    color: #6b7280;
+    font-size: 0.85rem;
+    margin: 4px 0 32px;
+  }
+  section {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+  }
+  h2 {
+    font-size: 1rem;
+    margin: 0 0 8px;
+    color: #111827;
+  }
+  p { margin: 0 0 8px; color: #374151; }
+  p:last-child { margin-bottom: 0; }
+  ul { margin: 8px 0 0; padding-left: 20px; color: #374151; }
+  li { margin-bottom: 6px; }
+  a { color: #4f46e5; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  footer {
+    text-align: center;
+    color: #9ca3af;
+    font-size: 0.8rem;
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="badge">OS</div>
+      <h1>Privacy Policy</h1>
+    </header>
+    <p class="effective-date">Effective date: September 15, 2026</p>
+
+    <section>
+      <h2>1. Who We Are</h2>
+      <p>
+        The Self Research Institute operates OntoCode Studio, an ontology editing and knowledge-graph
+        platform available as a web application, a VS Code extension, and a standalone desktop application
+        for Windows, macOS, and Linux. We are the data controller for personal information collected
+        through the service.
+      </p>
+    </section>
+
+    <section>
+      <h2>2. Information We Collect</h2>
+      <ul>
+        <li><strong>Account data:</strong> username, email address, and encrypted password hash — only if you create an account.</li>
+        <li><strong>Billing data:</strong> subscription plan and payment method details, processed securely via Stripe. We do not store full card numbers.</li>
+        <li><strong>Usage data:</strong> ontology files you upload or sync, project activity, and collaboration events — only for projects you choose to store or share via our cloud service.</li>
+        <li><strong>Technical data:</strong> a one-way hashed version of your IP address, browser/app version, and referrer — collected when you visit our desktop download page — plus error logs used to diagnose crashes. We do not store your raw IP address.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>3. The Desktop Application, VS Code Extension, and Web Application</h2>
+      <p>
+        The VS Code extension and the web application both support either a self-hosted deployment or our
+        cloud-hosted service, configured per installation. If you use the cloud-hosted service, your account
+        and identity data is maintained as described in Section 2, and your ontology edits, project data, and
+        collaboration events (presence, cursor position, edit locks) are synced to our servers in real time —
+        the same usage data and ontology data handling already described in Sections 2 and 6. If you
+        self-host instead, that data stays on your own infrastructure.
+      </p>
+      <p>
+        In both the VS Code extension and the web application: if you use the in-app "Report Issue" feature,
+        the description, diagnostic details, and system information you submit are sent to our servers and
+        logged in our internal issue tracker so our team can act on them. If you use the citation-insertion
+        feature, the DOI you enter is sent to our backend to be validated against the official DOI registry
+        (doi.org) on your behalf. If you optionally connect your own Zotero account by providing a Zotero API
+        key, the application communicates directly with Zotero's API using that key to retrieve your citation
+        library, and stores that key in your browser's local storage — this connection is between your device
+        and Zotero directly; we do not see or store your Zotero data. If you enable the optional AI Insights
+        feature, see Section 6 for how that data flows directly to your chosen third-party provider.
+      </p>
+      <p>
+        The desktop application does not currently require or support any account or sign-in, and does not
+        sync ontology data to our servers — it operates as a local, standalone tool. Your ontology projects,
+        and the bundled MongoDB and Apache Jena Fuseki data stores used to power editing and reasoning, are
+        stored on your own device. The desktop application does make a small number of network calls:
+      </p>
+      <ul>
+        <li>If installed via a direct download (not through Microsoft Store), an automatic update and version check against our own download servers, so the app can offer you new releases. Store installs are updated by Microsoft Store instead, and never contact our download servers for this purpose.</li>
+        <li>The same "Report Issue" and optional Zotero-connection behavior described above — these work identically to the VS Code extension and web application.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>4. How We Use Your Information</h2>
+      <ul>
+        <li>Providing, maintaining, and improving OntoCode Studio.</li>
+        <li>Processing payments and managing subscriptions.</li>
+        <li>Sending transactional emails (account verification, billing receipts, security alerts).</li>
+        <li>Responding to support requests.</li>
+        <li>Privacy-friendly, hashed analytics on our download page, to understand which platforms and versions people are downloading.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>5. Data Sharing</h2>
+      <p>
+        We do not sell your personal data. We share data only with trusted service providers necessary to
+        operate the platform (for example, Stripe for billing, Google for transactional email delivery, and
+        cloud infrastructure providers), and only to the extent required to deliver those services. All
+        providers are contractually bound to handle your data securely.
+      </p>
+      <p>
+        California residents: we do not sell or share personal information as those terms are defined under
+        the CCPA, so no opt-out mechanism is required. California residents may still exercise the access,
+        deletion, and correction rights described in Section 9 by contacting us at the address below.
+      </p>
+    </section>
+
+    <section>
+      <h2>6. Ontology Data</h2>
+      <p>
+        The ontology files and knowledge graphs you create belong to you. Where you choose to use our cloud
+        service, we store them to provide the service and, if you collaborate, to share them with your team
+        members. We do not use your ontology content to train AI models or for any purpose beyond providing
+        the service.
+      </p>
+      <p>
+        If you enable the optional AI Insights feature and provide your own API key for a third-party AI
+        provider (Anthropic, OpenAI, or Google), portions of your ontology structure are sent directly from
+        your device to that provider to generate insights and answers. This happens directly between your
+        device and the provider you choose — we never see your API key or that data, and its handling is
+        governed by your chosen provider's own terms and privacy policy.
+      </p>
+    </section>
+
+    <section>
+      <h2>7. Data Retention</h2>
+      <p>
+        We retain your account data for as long as your account is active. When you delete your account: your
+        account record and any issue-tracker submissions you filed are deleted immediately; projects and
+        workspaces you solely own, with no other collaborators, are permanently deleted immediately, including
+        their ontology content and files; and for anything you own that still has other collaborators, you
+        choose at deletion time to transfer ownership to one of them or delete it anyway — if you choose to
+        delete it, it is flagged for deletion and permanently removed within 30 days, subject to legal
+        obligations. Hashed download-page analytics (which cannot be traced back to you) may be retained
+        indefinitely.
+      </p>
+      <p>
+        Outside of account deletion, support requests and issue-tracker submissions (including diagnostic logs
+        and system information) are automatically deleted after 24 months from submission. If a report was
+        also forwarded to our issue tracker (OpenProject), that copy follows our issue-tracker provider's own
+        retention practices. You can request earlier deletion of your reports at any time — see Section 9.
+      </p>
+    </section>
+
+    <section>
+      <h2>8. Security</h2>
+      <p>
+        We implement industry-standard security measures, including encryption in transit (TLS) and at
+        rest. Passwords are stored as salted hashes and never in plain text. Despite these measures, no
+        system is completely secure, and we cannot guarantee absolute security.
+      </p>
+    </section>
+
+    <section>
+      <h2>9. Your Rights</h2>
+      <p>
+        Depending on your jurisdiction, you may have the right to access, correct, or delete your personal
+        data, or to restrict or object to certain processing.
+      </p>
+      <p>
+        Where GDPR applies, our legal basis for processing is: performance of a contract (account and billing
+        data), legitimate interest (hashed IP address, browser/app version, referrer, and error logs used for
+        download-page analytics and crash diagnosis), and consent (optional features like AI Insights).
+      </p>
+      <p>
+        To exercise these rights, contact us at
+        <a href="mailto:support@selfresearch.org"> support@selfresearch.org</a>.
+      </p>
+    </section>
+
+    <section>
+      <h2>10. Cookies and Local Storage</h2>
+      <p>
+        The desktop application and the VS Code extension do not use browser cookies. The web application,
+        and the embedded interface inside the desktop application and VS Code extension, may use session
+        tokens and local storage for authentication purposes when you sign in, and to store your Zotero API
+        key and configuration if you choose to connect a Zotero account.
+      </p>
+    </section>
+
+    <section>
+      <h2>11. Governing Law</h2>
+      <p>
+        This Privacy Policy and any disputes arising from it are governed by the laws of the State of
+        Oklahoma, USA, without regard to conflict-of-law principles.
+      </p>
+    </section>
+
+    <section>
+      <h2>12. Changes to This Policy</h2>
+      <p>
+        We may update this Privacy Policy from time to time. We will notify you of significant changes by
+        email where possible, and will always display the effective date at the top of this document.
+      </p>
+    </section>
+
+    <section>
+      <h2>13. Contact Us</h2>
+      <p>
+        For privacy-related enquiries, please contact our data protection contact at
+        <a href="mailto:support@selfresearch.org"> support@selfresearch.org</a>.
+      </p>
+    </section>
+
+    <footer>© 2026 The Self Research Institute · OntoCode Studio</footer>
+  </div>
+</body>
+</html>

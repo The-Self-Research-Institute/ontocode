@@ -5,8 +5,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class MainGraphRevisionService {
 
-    private static final String META_KEY = "mainGraphRevision";
-
     private final ProjectMetadataService metadataService;
 
     public MainGraphRevisionService(ProjectMetadataService metadataService) {
@@ -14,11 +12,7 @@ public class MainGraphRevisionService {
     }
 
     public long getRevision(String projectId) {
-        return metadataService.readMeta(projectId)
-                .map(meta -> meta.get(META_KEY))
-                .filter(Number.class::isInstance)
-                .map(n -> ((Number) n).longValue())
-                .orElse(0L);
+        return metadataService.getMainGraphRevision(projectId);
     }
 
     public long incrementRevision(String projectId) {

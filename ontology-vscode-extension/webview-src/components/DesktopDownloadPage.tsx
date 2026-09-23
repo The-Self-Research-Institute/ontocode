@@ -86,6 +86,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   const [availablePlatforms, setAvailablePlatforms] = useState<PlatformKey[]>(["windows-x64"]);
   const [releases, setReleases] = useState<Partial<Record<PlatformKey, ReleaseInfo>>>({});
   const [linuxDeb, setLinuxDeb] = useState<ReleaseInfo | null>(null);
+  const [linuxDebArm64, setLinuxDebArm64] = useState<ReleaseInfo | null>(null);
   const [linuxArm64, setLinuxArm64] = useState<ReleaseInfo | null>(null);
   const [linuxFlatpak, setLinuxFlatpak] = useState<ReleaseInfo | null>(null);
   const [requirements, setRequirements] = useState<SystemRequirements | null>(null);
@@ -118,6 +119,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           if (!found.includes(platform)) setPlatform(found[0]);
         }
         if (data?.latest?.["linux-deb"]) setLinuxDeb(data.latest["linux-deb"]);
+        if (data?.latest?.["linux-deb-arm64"]) setLinuxDebArm64(data.latest["linux-deb-arm64"]);
         // linux-arm64 / linux-flatpak are secondary Linux package options
         // alongside the primary AppImage (same pattern as .deb).
         if (data?.latest?.["linux-arm64"]) setLinuxArm64(data.latest["linux-arm64"]);
@@ -169,6 +171,10 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
 
   const handleDebDownload = () => {
     openExternal(`${RELEASE_BASE}/linux-deb?clientOs=${encodeURIComponent(detectClientOs())}`);
+  };
+
+  const handleDebArm64Download = () => {
+    openExternal(`${RELEASE_BASE}/linux-deb-arm64?clientOs=${encodeURIComponent(detectClientOs())}`);
   };
 
   const handleArm64Download = () => {
@@ -300,6 +306,17 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             >
               <Download size={12} />
               Prefer a .deb package? Download for Debian/Ubuntu (v{linuxDeb.version})
+            </button>
+          )}
+
+          {platform === "linux-x64" && linuxDebArm64 && (
+            <button
+              type="button"
+              onClick={handleDebArm64Download}
+              className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
+            >
+              <Download size={12} />
+              On ARM64 Debian/Ubuntu? Download the ARM64 .deb (v{linuxDebArm64.version})
             </button>
           )}
 

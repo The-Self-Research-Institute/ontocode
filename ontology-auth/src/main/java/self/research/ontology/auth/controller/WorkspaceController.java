@@ -930,20 +930,15 @@ public class WorkspaceController {
             if (target == null) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Member not found in workspace"));
             }
-            Workspace.WorkspaceRole previousRole = target.getRole();
-
-            // If promoting to OWNER, demote previous owner to ADMIN
             if (role == Workspace.WorkspaceRole.OWNER) {
-                workspace.getMembers().stream()
-                    .filter(m -> m.getRole() == Workspace.WorkspaceRole.OWNER)
-                    .forEach(m -> m.setRole(Workspace.WorkspaceRole.ADMIN));
-                workspace.setOwnerId(userId);
+                workspaceService.transferOwnership(workspaceId, workspace.getOwnerId(), userId);
+            } else {
+                Workspace.WorkspaceRole previousRole = target.getRole();
+                target.setRole(role);
+                workspaceService.updateWorkspace(workspace);
+                // Backfill or remove WS_EDITOR_LINK_ADMIN project entries when admin role changes
+                workspaceService.syncAdminRoleChangeToProjects(workspace, userId, previousRole, role);
             }
-            target.setRole(role);
-            workspaceService.updateWorkspace(workspace);
-
-            // Backfill or remove WS_EDITOR_LINK_ADMIN project entries when admin role changes
-            workspaceService.syncAdminRoleChangeToProjects(workspace, userId, previousRole, role);
 
             log.info("Member {} role changed to {} in workspace {} by {}", userId, role, workspaceId, username);
             return ResponseEntity.ok(Map.of("message", "Role updated successfully", "role", role.name()));

@@ -295,11 +295,10 @@ public class DraftTrackingService {
         draftRepository.saveAll(unappliedDrafts);
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);
-            meta.put("mainGraphRevision", mainGraphRevisionService.getRevision(projectId));
             metadataService.writeMeta(projectId, meta);
         }, metadataExecutor);
     }
-    
+
     /**
      * Publish a copy-on-switch draft session atomically via SPARQL MOVE GRAPH.
      * Conflict detection: if main has advanced since the copy, block unless force=true.
@@ -339,7 +338,6 @@ public class DraftTrackingService {
 
             CompletableFuture.runAsync(() -> {
                 Map<String, Object> meta = indexService.computeMetadata(projectId);
-                meta.put("mainGraphRevision", mainGraphRevisionService.getRevision(projectId));
                 metadataService.writeMeta(projectId, meta);
             }, metadataExecutor);
 

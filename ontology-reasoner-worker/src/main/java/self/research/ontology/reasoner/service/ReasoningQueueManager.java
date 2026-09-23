@@ -47,6 +47,17 @@ public class ReasoningQueueManager {
                                              List<String> queryTypes,
                                              String reasonerType,
                                              String ownerEmail) {
+        return enqueue(jobType, projectId, expression, queryTypes, reasonerType, ownerEmail, null, null);
+    }
+
+    public synchronized ReasoningJob enqueue(ReasoningJob.JobType jobType,
+                                             String projectId,
+                                             String expression,
+                                             List<String> queryTypes,
+                                             String reasonerType,
+                                             String ownerEmail,
+                                             Integer maxJustifications,
+                                             String explanationMode) {
         long tripleCount = editorClient.getTripleCount(projectId);
         int slotWeight = concurrencyPolicy.slotWeight(tripleCount);
 
@@ -59,6 +70,8 @@ public class ReasoningQueueManager {
                 .expression(expression)
                 .queryTypes(queryTypes)
                 .reasonerType(reasonerType)
+                .maxJustifications(maxJustifications)
+                .explanationMode(explanationMode)
                 .status(ReasoningJob.Status.QUEUED)
                 .queuePosition(queue.size() + 1)
                 .estimatedWaitTimeMs(0)

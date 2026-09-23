@@ -1,15 +1,26 @@
 package self.research.ontology.auth.service;
 
+import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import self.research.ontology.auth.model.FileMetadata;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.Workspace;
+import self.research.ontology.auth.repository.FileMetadataRepository;
 import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.model.User;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -21,16 +32,103 @@ public class ProjectService {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
 
+    /** Mirrors PROJECT_SCOPED_COLLECTIONS in scripts/delete-user-complete.js */
+    private static final List<String> PROJECT_SCOPED_COLLECTIONS = List.of(
+        "ontology_annotation_properties", "ontology_axioms", "ontology_classes", "ontology_datatypes",
+        "ontology_individuals", "ontology_properties", "ontology_search_index", "ontologies",
+        "sparql_queries", "swrl_rules", "datatype_definitions"
+    );
+
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
     private final UserRepository userRepository;
     private final SystemSettingsService systemSettingsService;
+    private final FileMetadataRepository fileMetadataRepository;
+    private final MongoTemplate mongoTemplate;
+    private final GridFsTemplate gridFsTemplate;
+    private final RestTemplate restTemplate = new RestTemplate();
 
-    public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository, UserRepository userRepository, SystemSettingsService systemSettingsService) {
+    @Value("${ONTOLOGY_EDITOR_URL:http://localhost:8083}")
+    private String editorServiceUrl;
+
+    public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository,
+                           UserRepository userRepository, SystemSettingsService systemSettingsService,
+                           FileMetadataRepository fileMetadataRepository, MongoTemplate mongoTemplate,
+                           GridFsTemplate gridFsTemplate) {
         this.projectRepository = projectRepository;
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.systemSettingsService = systemSettingsService;
+        this.fileMetadataRepository = fileMetadataRepository;
+        this.mongoTemplate = mongoTemplate;
+        this.gridFsTemplate = gridFsTemplate;
+    }
+
+    public void hardDeleteProjectCompletely(String projectId, String userId) {
+        Optional<Project> projectOpt = findProjectByIdTolerant(projectId);
+        if (projectOpt.isEmpty()) {
+            return;
+        }
+        Project project = projectOpt.get();
+        if (!project.getOwnerId().equals(userId)) {
+            throw new SecurityException("Only the project owner can permanently delete this project");
+        }
+        long otherActiveMembers = project.getMembers().stream()
+                .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                .count();
+        if (otherActiveMembers > 0) {
+            throw new IllegalStateException("Project still has other members — transfer ownership or use the regular delete instead");
+        }
+
+        purgeProjectData(project);
+        log.info("Permanently deleted project {} (owner {}, no other members)", projectId, userId);
+    }
+
+    public void purgeProjectData(Project project) {
+        String projectId = project.getProjectId();
+        clearFusekiGraphsForProject(project);
+
+        List<FileMetadata> files = fileMetadataRepository.findByProjectId(projectId);
+        List<ObjectId> gridFsIds = files.stream()
+                .map(FileMetadata::getGridfsId)
+                .filter(id -> id != null && ObjectId.isValid(id))
+                .map(ObjectId::new)
+                .collect(Collectors.toList());
+        if (!gridFsIds.isEmpty()) {
+            gridFsTemplate.delete(Query.query(Criteria.where("_id").in(gridFsIds)));
+        }
+        fileMetadataRepository.deleteAll(files);
+
+        for (String collection : PROJECT_SCOPED_COLLECTIONS) {
+            mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), collection);
+        }
+        mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), "draft_pull_requests");
+        mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), "project_shares");
+        mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), "issue_reports");
+        for (String collection : List.of("ontology_changes", "history_changes", "draft_changes", "draft_sessions")) {
+            mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), collection);
+        }
+
+        projectRepository.delete(project);
+    }
+
+    private void clearFusekiGraphsForProject(Project project) {
+        String base = editorServiceUrl.endsWith("/") ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
+        for (Project.FileMetadataInfo fileInfo : project.getFiles()) {
+            String fileId = fileInfo.getFileId();
+            if (fileId == null || fileId.isEmpty()) continue;
+            deleteGraphDbGraph(base, project.getProjectId() + "/" + fileId);
+        }
+        deleteGraphDbGraph(base, project.getProjectId());
+    }
+
+    private void deleteGraphDbGraph(String editorBaseUrl, String graphProjectId) {
+        try {
+            String url = editorBaseUrl + "/api/ontology/project/" + URLEncoder.encode(graphProjectId, StandardCharsets.UTF_8);
+            restTemplate.delete(url);
+        } catch (Exception e) {
+            log.warn("Failed to clear Fuseki graph {} during permanent delete (continuing): {}", graphProjectId, e.getMessage());
+        }
     }
 
     /**
@@ -362,15 +460,18 @@ public class ProjectService {
             throw new SecurityException("Only project owner or a workspace owner/admin can update member roles");
         }
 
-        // Cannot change the owner's role
         if (project.getOwnerId().equals(targetUserId)) {
             throw new IllegalArgumentException("Cannot change the project owner's role");
         }
 
         // Validate role
         String normalizedRole = newRole == null ? "" : newRole.toUpperCase();
-        if (!List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
-            throw new IllegalArgumentException("Invalid role. Must be ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
+        boolean isOwnershipTransfer = normalizedRole.equals("OWNER");
+        if (!isOwnershipTransfer && !List.of("ADMIN", "EDITOR", "DRAFT_EDITOR", "VIEWER").contains(normalizedRole)) {
+            throw new IllegalArgumentException("Invalid role. Must be OWNER, ADMIN, EDITOR, DRAFT_EDITOR, or VIEWER");
+        }
+        if (isOwnershipTransfer && !project.getOwnerId().equals(userId)) {
+            throw new SecurityException("Only the project owner can transfer ownership");
         }
 
         Project.ProjectMember member = project.getMember(targetUserId);
@@ -381,14 +482,22 @@ public class ProjectService {
         Workspace workspace = workspaceRepository.findByWorkspaceId(project.getWorkspaceId())
                 .orElseThrow(() -> new IllegalStateException("Workspace not found"));
 
-        if (Project.WS_EDITOR_LINK_OWNER.equals(member.getWorkspaceEditorLink())) {
+        if (Project.WS_EDITOR_LINK_OWNER.equals(member.getWorkspaceEditorLink()) && !isOwnershipTransfer) {
             throw new IllegalArgumentException("The workspace owner's access on this project cannot be changed.");
         }
         if (Project.WS_EDITOR_LINK_ADMIN.equals(member.getWorkspaceEditorLink())
-                && !workspace.getOwnerId().equals(userId)) {
+                && !isOwnershipTransfer && !workspace.getOwnerId().equals(userId)) {
             throw new SecurityException("Only the workspace owner can change this workspace administrator's project role.");
         }
 
+        if (isOwnershipTransfer) {
+            Project.ProjectMember previousOwnerMember = project.getMember(project.getOwnerId());
+            if (previousOwnerMember != null) {
+                previousOwnerMember.setRole("ADMIN");
+            }
+            project.setOwnerId(targetUserId);
+            member.setWorkspaceEditorLink(null);
+        }
         member.setRole(normalizedRole);
         return projectRepository.save(project);
     }

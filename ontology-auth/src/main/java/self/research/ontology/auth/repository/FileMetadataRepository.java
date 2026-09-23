@@ -5,11 +5,14 @@ import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 import self.research.ontology.auth.model.FileMetadata;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface FileMetadataRepository extends MongoRepository<FileMetadata, String> {
+
+    List<FileMetadata> findAllByIsDeletedTrueAndDeletedAtBefore(LocalDateTime cutoff);
 
     Optional<FileMetadata> findByFileId(String fileId);
 
@@ -17,6 +20,8 @@ public interface FileMetadataRepository extends MongoRepository<FileMetadata, St
     Optional<FileMetadata> findActiveByFileId(String fileId);
 
     List<FileMetadata> findByProjectIdAndStatus(String projectId, String status);
+
+    List<FileMetadata> findByProjectId(String projectId);
 
     @Query("{ 'projectId': ?0, 'status': ?1, $or: [ { 'isDeleted': { $exists: false } }, { 'isDeleted': false } ] }")
     List<FileMetadata> findActiveByProjectIdAndStatus(String projectId, String status);

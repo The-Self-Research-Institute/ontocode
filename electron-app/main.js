@@ -23,6 +23,13 @@ const proxy    = require('./services/ProxyServer');
 const autoUpdater = require('./services/AutoUpdater');
 const detectJava = require('./scripts/detect-java');
 
+if (process.platform === 'linux') {
+    if (process.env.WAYLAND_DISPLAY) {
+        process.env.XDG_SESSION_TYPE = 'wayland';
+    }
+    app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+}
+
 // ── Crash safety net ───────────────────────────────────────────────────────────
 // Without this, an uncaught exception or unhandled rejection anywhere in the main
 // process (e.g. during backend startup) kills the process with zero trace: no
@@ -755,6 +762,14 @@ function setupMenu(win) {
                             dialog.showMessageBox(win, {
                                 title: 'Updates',
                                 message: 'Updates are only checked in the packaged desktop app.',
+                                buttons: ['OK'],
+                            });
+                            return;
+                        }
+                        if (result.status === 'store-managed') {
+                            dialog.showMessageBox(win, {
+                                title: 'Updates',
+                                message: 'This copy of OntoCode Studio is managed by Microsoft Store, which keeps it up to date automatically.',
                                 buttons: ['OK'],
                             });
                             return;

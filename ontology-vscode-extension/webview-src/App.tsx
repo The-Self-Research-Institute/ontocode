@@ -405,6 +405,21 @@ const AppContent = () => {
   // Set to true by clearLastOpenedSelection when the user explicitly navigates away,
   // so any in-flight auto-restore async chain doesn't override their navigation.
   const autoRestoreCancelledRef = useRef(false);
+
+  const lastSeenUserKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const userKey = user?.email ?? null;
+    if (lastSeenUserKeyRef.current !== userKey) {
+      lastSeenUserKeyRef.current = userKey;
+      autoRestoredRef.current = false;
+      autoRestoreCancelledRef.current = false;
+      setSelectedProjectId(null);
+      setSelectedProjectName("");
+      setSelectedFileId(null);
+      setSelectedFileName("");
+    }
+  }, [user]);
+
   useEffect(() => {
     // Desktop: always land on My projects first; session restore is web/cloud UX.
     if (isDesktop()) {

@@ -40,6 +40,9 @@ FILTER=("$@")
 #   BUILD_PLATFORMS=linux/amd64,linux/arm64
 BUILD_PLATFORMS="${BUILD_PLATFORMS:-linux/amd64}"
 
+GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+GIT_SUBJECT="$(git log -1 --format='%s' 2>/dev/null || echo unknown)"
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 should_build() {
@@ -84,10 +87,11 @@ build() {
     echo " Dockerfile : $file"
     echo " Image      : $REGISTRY/$tag:$VERSION"
     echo " Platforms  : $BUILD_PLATFORMS"
+    echo " Commit     : $GIT_SHA ($GIT_SUBJECT)"
     echo " Started    : $(ts)"
     local _t0
     _t0=$(date +%s)
-    local build_args=()
+    local build_args=(--build-arg "GIT_COMMIT=$GIT_SHA")
     if [[ "$tag" == "ontocode-web" ]]; then
         if [[ "$VERSION" == "dev" ]]; then
             build_args=(--build-arg "API_BASE_URL=https://ontocodedevapi.selfresearch.org")
@@ -95,17 +99,30 @@ build() {
             build_args=(--build-arg "API_BASE_URL=https://ontocodeapi.selfresearch.org")
         fi
     fi
+    local _buildlog
+    _buildlog="$(mktemp)"
     # shellcheck disable=SC2086
     docker buildx build \
         --platform "$BUILD_PLATFORMS" \
         -t "$REGISTRY/$tag:$VERSION" \
         -f "$file" \
+        --label "org.opencontainers.image.revision=$GIT_SHA" \
+        --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         "${build_args[@]}" \
         $extra \
         --push \
         --progress=plain \
-        .
+        . 2>&1 | tee "$_buildlog"
+    local _rc=${PIPESTATUS[0]}
+    local _cached _total
+    _cached=$(grep -c 'CACHED \[' "$_buildlog" 2>/dev/null || echo 0)
+    _total=$(grep -c '^#[0-9]* \[.*[0-9]*/[0-9]*\]' "$_buildlog" 2>/dev/null || echo 0)
+    rm -f "$_buildlog"
+    if [[ $_rc -ne 0 ]]; then
+        return $_rc
+    fi
     echo " [$(ts)] DONE  $tag pushed  (${BUILD_INDEX}/${BUILD_TOTAL})  elapsed=$(( $(date +%s) - _t0 ))s"
+    echo " Layers     : ${_cached}/${_total} cached  (revision label: $GIT_SHA — verify with: docker inspect --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}' $REGISTRY/$tag:$VERSION)"
 }
 
 # Builds run SEQUENTIALLY. Default is linux/amd64 to avoid QEMU arm64.

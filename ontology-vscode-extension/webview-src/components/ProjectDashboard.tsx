@@ -535,15 +535,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     member.workspaceEditorLink !== "WORKSPACE_OWNER" &&
     (member.workspaceEditorLink !== "WORKSPACE_ADMIN" || isWorkspaceOwner);
 
-  /** Resolved workspace role: JWT, team membership, or workspace owner id. */
   const workspaceRoleResolved = useMemo((): WorkspaceRole | null => {
-    const jwt = normalizeRole(user?.workspaceRole);
-    if ((WORKSPACE_ROLES as readonly string[]).includes(jwt)) return jwt as WorkspaceRole;
     if (user?.userId && workspaceOwnerId && user.userId === workspaceOwnerId) return "OWNER";
     const fromTeam = currentUserInTeam?.roles
       ?.map((r) => normalizeRole(r))
       .find((r) => (WORKSPACE_ROLES as readonly string[]).includes(r));
-    return fromTeam ? (fromTeam as WorkspaceRole) : null;
+    if (fromTeam) return fromTeam as WorkspaceRole;
+    const jwt = normalizeRole(user?.workspaceRole);
+    return (WORKSPACE_ROLES as readonly string[]).includes(jwt) ? (jwt as WorkspaceRole) : null;
   }, [user?.workspaceRole, user?.userId, workspaceOwnerId, currentUserInTeam]);
 
   const effectiveWorkspaceRole = workspaceRoleResolved;
@@ -979,6 +978,30 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     });
   };
 
+  const handleTransferWorkspaceOwnership = async (member: TeamMember) => {
+    if (!user?.workspaceId) return;
+    showConfirm({
+      title: "Transfer Ownership",
+      message: `Make ${member.username} (${member.email}) the owner of this workspace? You will be demoted to Admin and will no longer be able to delete this workspace or transfer its ownership.`,
+      type: "warning",
+      confirmText: "Transfer Ownership",
+      onConfirm: async () => {
+        try {
+          await apiClient.put(`/api/workspaces/${user.workspaceId}/members/${member.id}/role`, {
+            role: "OWNER",
+          });
+          showToast(`${member.username} is now the owner of this workspace`, "success");
+          await loadData();
+        } catch (error: any) {
+          console.error("Error transferring workspace ownership:", error);
+          const errorMessage = error?.error || error?.response?.data?.error || error?.message || "Failed to transfer ownership";
+          showToast(errorMessage, "error");
+        }
+        setConfirmModal(null);
+      },
+    });
+  };
+
   const handleCancelInvitation = async (member: TeamMember) => {
     if (!member.invitationToken) {
       showToast("Cannot cancel invitation: Token not found", "error");
@@ -1129,11 +1152,33 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   // Update member role in project
   const handleUpdateProjectMemberRole = async (project: Project, member: ProjectMember, newRole: string) => {
+    if (newRole === "OWNER") {
+      showConfirm({
+        title: "Transfer Ownership",
+        message: `Make ${member.username} (${member.email}) the owner of "${project.name}"? You will be demoted to Admin and will no longer be able to delete this project or transfer its ownership.`,
+        type: "warning",
+        confirmText: "Transfer Ownership",
+        onConfirm: async () => {
+          await applyProjectMemberRoleUpdate(project, member, newRole);
+          setConfirmModal(null);
+        },
+      });
+      return;
+    }
+    await applyProjectMemberRoleUpdate(project, member, newRole);
+  };
+
+  const applyProjectMemberRoleUpdate = async (project: Project, member: ProjectMember, newRole: string) => {
     try {
       await apiClient.patch(`/api/projects/${project.projectId}/members/${member.userId}/role`, {
         role: newRole,
       });
-      showToast(`${member.username}'s role updated to ${newRole}`, "success");
+      showToast(
+        newRole === "OWNER"
+          ? `${member.username} is now the owner of "${project.name}"`
+          : `${member.username}'s role updated to ${newRole}`,
+        "success"
+      );
       // Refresh project data
       const updatedProjectResponse = await apiClient.get(`/api/projects/${project.projectId}`);
       const updatedProject =
@@ -1813,6 +1858,18 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               );
                             })}
                           </div>
+                          {isWorkspaceOwner &&
+                            member.email !== user?.email &&
+                            member.status !== "PENDING" &&
+                            !member.roles.some(r => r.toUpperCase() === "OWNER") && (
+                              <button
+                                onClick={() => handleTransferWorkspaceOwnership(member)}
+                                className="px-2 py-1 text-xs font-medium text-purple-600 hover:bg-purple-50 rounded border border-purple-200"
+                                title="Transfer workspace ownership to this member"
+                              >
+                                Make Owner
+                              </button>
+                            )}
                           {canInviteMembers &&
                             member.email !== user?.email &&
                             member.status !== "PENDING" &&
@@ -2187,6 +2244,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                                   disabled={member.role === "OWNER" || projectMemberRoleLocked(member)}
                                 >
                                   {member.role === "OWNER" && <option value="OWNER">Owner</option>}
+                                  {member.role !== "OWNER" &&
+                                    !projectMemberRoleLocked(member) &&
+                                    projectRoleForUser(projectSettingsModal) === "OWNER" && (
+                                      <option value="OWNER">Make Owner</option>
+                                    )}
                                   {member.role === "ADMIN" && <option value="ADMIN">Admin</option>}
                                   <option value="EDITOR">Editor</option>
                                   <option value="DRAFT_EDITOR">Draft Editor</option>

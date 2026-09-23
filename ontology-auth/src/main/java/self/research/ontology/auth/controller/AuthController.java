@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -16,19 +17,26 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.auth.dto.AuthRequests.*;
+import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
+import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.AuditService;
 import self.research.ontology.auth.service.EmailService;
 import self.research.ontology.auth.service.EnterpriseBypassService;
+import self.research.ontology.auth.service.IssueReportClient;
+import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.service.RateLimitService;
+import self.research.ontology.auth.service.StripeService;
 import self.research.ontology.auth.service.SystemSettingsService;
+import self.research.ontology.auth.service.WorkspaceService;
 import self.research.ontology.auth.util.JwtUtil;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -41,12 +49,17 @@ public class AuthController {
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
+    private final ProjectRepository projectRepository;
+    private final ProjectService projectService;
+    private final WorkspaceService workspaceService;
+    private final StripeService stripeService;
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
     private final RateLimitService rateLimitService;
     private final AuditService auditService;
     private final SystemSettingsService systemSettingsService;
     private final EnterpriseBypassService enterpriseBypassService;
+    private final IssueReportClient issueReportClient;
 
     @Value("${app.admin.password:}")
     private String adminPassword;
@@ -75,23 +88,33 @@ public class AuthController {
                           JwtUtil jwtUtil,
                           UserRepository userRepository,
                           WorkspaceRepository workspaceRepository,
+                          ProjectRepository projectRepository,
+                          ProjectService projectService,
+                          WorkspaceService workspaceService,
+                          StripeService stripeService,
                           PasswordEncoder passwordEncoder,
                           EmailService emailService,
                           RateLimitService rateLimitService,
                           AuditService auditService,
                           SystemSettingsService systemSettingsService,
-                          EnterpriseBypassService enterpriseBypassService) {
+                          EnterpriseBypassService enterpriseBypassService,
+                          IssueReportClient issueReportClient) {
         this.authenticationManager = authenticationManager;
         this.userDetailsService = userDetailsService;
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
+        this.projectRepository = projectRepository;
+        this.projectService = projectService;
+        this.workspaceService = workspaceService;
+        this.stripeService = stripeService;
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
         this.rateLimitService = rateLimitService;
         this.auditService = auditService;
         this.systemSettingsService = systemSettingsService;
         this.enterpriseBypassService = enterpriseBypassService;
+        this.issueReportClient = issueReportClient;
     }
 
     private boolean isDomainAllowed(String email) {
@@ -654,6 +677,166 @@ public class AuthController {
             log.error("Error changing password", e);
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "Failed to change password: " + e.getMessage()
+            ));
+        }
+    }
+
+    @GetMapping("/account/deletion-impact")
+    public ResponseEntity<?> getAccountDeletionImpact(@RequestHeader("Authorization") String authHeader) {
+        try {
+            String token = authHeader.replace("Bearer ", "");
+            String email = jwtUtil.extractEmail(token);
+            Optional<User> userOpt = userRepository.findByEmail(email);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+            String userId = userOpt.get().getId();
+
+            List<Map<String, Object>> workspaces = workspaceRepository.findByOwnerId(userId).stream()
+                    .map(w -> {
+                        List<Map<String, Object>> otherMembers = w.getMembers().stream()
+                                .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                                .map(m -> Map.<String, Object>of("userId", m.getUserId(), "username", m.getUsername(), "email", m.getEmail()))
+                                .collect(Collectors.toList());
+                        Map<String, Object> dto = new HashMap<>();
+                        dto.put("workspaceId", w.getWorkspaceId());
+                        dto.put("name", w.getName());
+                        dto.put("otherMembers", otherMembers);
+                        dto.put("hasOtherMembers", !otherMembers.isEmpty());
+                        return dto;
+                    })
+                    .collect(Collectors.toList());
+
+            List<Map<String, Object>> projects = projectRepository.findByOwnerId(userId).stream()
+                    .map(p -> {
+                        List<Map<String, Object>> otherMembers = p.getMembers().stream()
+                                .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                                .map(m -> Map.<String, Object>of("userId", m.getUserId(), "username", m.getUsername(), "email", m.getEmail()))
+                                .collect(Collectors.toList());
+                        String visibility = p.getVisibility();
+                        boolean isPrivate = "PRIVATE".equals(visibility)
+                                || (visibility == null && otherMembers.isEmpty());
+                        Map<String, Object> dto = new HashMap<>();
+                        dto.put("projectId", p.getProjectId());
+                        dto.put("name", p.getName());
+                        dto.put("workspaceId", p.getWorkspaceId());
+                        dto.put("isPrivate", isPrivate);
+                        dto.put("otherMembers", otherMembers);
+                        dto.put("hasOtherMembers", !otherMembers.isEmpty());
+                        return dto;
+                    })
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(Map.of("workspaces", workspaces, "projects", projects));
+        } catch (Exception e) {
+            log.error("Error computing account deletion impact", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to compute deletion impact: " + e.getMessage()));
+        }
+    }
+
+    public static class OwnershipResolution {
+        public String type;
+        public String id;
+        public String action;
+        public String transferToUserId;
+    }
+
+    public static class AccountDeleteRequest {
+        public List<OwnershipResolution> resolutions;
+    }
+
+    @PostMapping("/account/delete")
+    public ResponseEntity<?> deleteAccount(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody(required = false) AccountDeleteRequest request) {
+        try {
+            String token = authHeader.replace("Bearer ", "");
+            String email = jwtUtil.extractEmail(token);
+
+            Optional<User> userOpt = userRepository.findByEmail(email);
+            if (userOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            }
+            User user = userOpt.get();
+            String userId = user.getId();
+
+            List<OwnershipResolution> resolutions = request != null && request.resolutions != null
+                    ? request.resolutions : List.of();
+            List<OwnershipResolution> validResolutions = resolutions.stream()
+                    .filter(r -> "TRANSFER".equalsIgnoreCase(r.action)
+                            && r.transferToUserId != null && !r.transferToUserId.isBlank())
+                    .collect(Collectors.toList());
+
+            for (OwnershipResolution resolution : validResolutions) {
+                if ("project".equalsIgnoreCase(resolution.type)) {
+                    projectService.updateMemberRole(resolution.id, userId, resolution.transferToUserId, "OWNER");
+                }
+            }
+            for (OwnershipResolution resolution : validResolutions) {
+                if ("workspace".equalsIgnoreCase(resolution.type)) {
+                    workspaceService.transferOwnership(resolution.id, userId, resolution.transferToUserId);
+                }
+            }
+
+            List<Workspace> ownedWorkspaces = workspaceRepository.findByOwnerId(userId);
+            List<Project> ownedProjects = projectRepository.findByOwnerId(userId);
+
+            if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
+                try {
+                    stripeService.cancelSubscriptionImmediately(user);
+                } catch (Exception e) {
+                    log.error("Failed to cancel Stripe subscription during account deletion for {}", email, e);
+                }
+            }
+
+            Set<String> hardDeletedWorkspaceIds = new HashSet<>();
+            for (Workspace workspace : ownedWorkspaces) {
+                boolean hasOtherMembers = workspace.getMembers().stream()
+                        .anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId));
+                if (hasOtherMembers) {
+                    workspaceService.deleteWorkspace(workspace.getWorkspaceId(), userId);
+                } else {
+                    workspaceService.hardDeleteWorkspaceCompletely(workspace.getWorkspaceId(), userId);
+                    hardDeletedWorkspaceIds.add(workspace.getWorkspaceId());
+                }
+            }
+
+            for (Project project : ownedProjects) {
+                if (hardDeletedWorkspaceIds.contains(project.getWorkspaceId())) {
+                    continue;
+                }
+                boolean hasOtherMembers = project.getMembers().stream()
+                        .anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId));
+                if (hasOtherMembers) {
+                    projectService.deleteProject(project.getProjectId(), userId);
+                } else {
+                    projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+                }
+            }
+
+            for (Project project : projectRepository.findByMembers_UserId(userId)) {
+                if (!project.getOwnerId().equals(userId)) {
+                    project.removeMember(userId);
+                    projectRepository.save(project);
+                }
+            }
+
+            for (Workspace workspace : workspaceRepository.findByMembers_UserId(userId)) {
+                if (!workspace.getOwnerId().equals(userId)) {
+                    workspaceService.removeMember(workspace.getWorkspaceId(), userId);
+                }
+            }
+
+            issueReportClient.deleteIssueReportsForUser(email);
+
+            userRepository.delete(user);
+            auditService.logAccountDeleted(user.getUsername());
+
+            return ResponseEntity.ok(Map.of("message", "Account deleted successfully"));
+        } catch (Exception e) {
+            log.error("Error deleting account", e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "error", "Failed to delete account: " + e.getMessage()
             ));
         }
     }

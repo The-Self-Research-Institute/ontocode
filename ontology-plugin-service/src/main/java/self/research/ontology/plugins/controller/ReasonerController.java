@@ -197,6 +197,12 @@ public class ReasonerController {
         }
     }
 
+    static class OntologyImportInProgressException extends RuntimeException {
+        OntologyImportInProgressException(String message) {
+            super(message);
+        }
+    }
+
     /**
      * Map an endpoint failure to a response: a missing ontology becomes a 404
      * with a diagnose hint, anything else a 500. Shared by every reasoning
@@ -218,6 +224,15 @@ public class ReasonerController {
                 "projectId", projectId,
                 "technicalDetail", technicalDetail,
                 "suggestion", "Please upload an ontology file for this project. Use /api/reasoner/diagnose/" + projectId + " to investigate."
+            ));
+        }
+        if (e instanceof OntologyImportInProgressException) {
+            return ResponseEntity.status(202).body(Map.of(
+                "success", false,
+                "error", message,
+                "errorType", "ONTOLOGY_IMPORT_IN_PROGRESS",
+                "projectId", projectId,
+                "suggestion", "The ontology is still being imported. Wait a few seconds and retry."
             ));
         }
         if (e instanceof IllegalArgumentException && message != null && message.contains("No enum constant")) {
@@ -350,7 +365,7 @@ public class ReasonerController {
     private String editorOntologyFileUrl(String projectId) {
         String encoded = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
         String base = editorServiceUrl.endsWith("/") ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
-        return base + "/api/ontology-file/" + encoded;
+        return base + "/api/ontology-file/" + encoded + "?forceExport=true";
     }
 
     /**
@@ -386,7 +401,7 @@ public class ReasonerController {
 
             ResponseEntity<byte[]> response = restTemplate.exchange(
                 url, org.springframework.http.HttpMethod.GET, editorAuthEntity(), byte[].class);
-            
+
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
                 try (InputStream inputStream = new java.io.ByteArrayInputStream(response.getBody())) {
                     OWLOntology ontology = loadOntologyFromStream(projectId, inputStream, "editor service");
@@ -395,9 +410,15 @@ public class ReasonerController {
                         return ontology;
                     }
                 }
+            } else if (response.getStatusCode() == HttpStatus.ACCEPTED) {
+                log.info("Editor service reports import still in progress for project {}; not falling back", projectId);
+                throw new OntologyImportInProgressException(
+                    "Ontology import is still in progress for project " + projectId + "; retry once it completes.");
             } else {
                 log.warn("Editor service returned status {} for project {}", response.getStatusCode(), projectId);
             }
+        } catch (OntologyImportInProgressException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("Could not fetch ontology from editor service for project {}: {}", projectId, e.getMessage());
         }
@@ -653,30 +674,60 @@ public class ReasonerController {
      * Explain why the ontology is inconsistent
      * POST /api/reasoner/{projectId}/explain-inconsistency
      */
-    @PostMapping("/{projectId}/explain-inconsistency")
-    public ResponseEntity<Map<String, Object>> explainInconsistency(
-            @PathVariable String projectId,
-            @RequestBody Map<String, String> request
-    ) {
-        try {
-            String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            log.info("Explaining inconsistency for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.putAll(explanation);
-            
-            return ResponseEntity.ok(result);
-            
-        } catch (Exception e) {
-            return reasoningFailure(e, projectId, "explaining inconsistency");
+   @PostMapping("/{projectId}/explain-inconsistency")
+public ResponseEntity<Map<String, Object>> explainInconsistency(
+        @PathVariable String projectId,
+        @RequestBody Map<String, String> request
+) {
+    try {
+        String requestedReasonerType = request.getOrDefault("reasonerType", "HERMIT");
+
+        int maxJustifications = 10;
+        if (request.containsKey("maxJustifications")) {
+            maxJustifications = Integer.parseInt(request.get("maxJustifications"));
         }
+
+        String mode = request.getOrDefault("mode", "regular");
+
+        // Same worker-offload pattern as consistency/classify/realize/inferred-axioms —
+        // this endpoint used to be the one gap that always fell through to this
+        // controller's own long-lived ontologyCache, so it could keep answering from a
+        // stale pre-edit (or, right after upload, pre-import) snapshot even once the
+        // sidebar's worker-backed consistency check had already moved on.
+        if (workerAvailable()) {
+            return submitExplainInconsistencyToWorker(projectId, requestedReasonerType, mode, maxJustifications);
+        }
+
+        ReasonerType requestedType = ReasonerType.valueOf(requestedReasonerType.toUpperCase());
+        ReasonerType type = (requestedType == ReasonerType.ELK || requestedType == ReasonerType.STRUCTURAL)
+            ? ReasonerType.HERMIT
+            : requestedType;
+
+        if (type != requestedType) {
+            log.info("Explain-inconsistency: upgrading reasoner {} -> {} for project {}",
+                requestedType, type, projectId);
+        }
+
+        log.info("Explaining inconsistency for project: {} with {} (mode={})", projectId, type, mode);
+
+        OWLOntology ontology = loadOntology(projectId);
+
+        Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type, maxJustifications, mode);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("usedReasoner", type.getDisplayName());
+        if (type != requestedType) {
+            result.put("reasonerUpgraded", true);
+        }
+        result.putAll(explanation);
+
+        return ResponseEntity.ok(result);
+
+    } catch (Exception e) {
+        return reasoningFailure(e, projectId, "explaining inconsistency");
     }
+}
 
     /**
      * Get inferred axioms
@@ -993,6 +1044,25 @@ public class ReasonerController {
      */
     private ResponseEntity<Map<String, Object>> submitToWorker(String jobType, String projectId, String reasonerType) {
         Map<String, Object> worker = reasonerWorkerClient.submit(jobType, projectId, reasonerType);
+        if (Boolean.FALSE.equals(worker.get("success"))) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", ReasoningFriendlyErrors.forUser(String.valueOf(worker.get("error")))));
+        }
+        String jobId = String.valueOf(worker.get("jobId"));
+        return ResponseEntity.accepted().body(Map.of(
+                "async", true,
+                "taskId", jobId,
+                "jobId", jobId,
+                "status", worker.getOrDefault("status", "QUEUED"),
+                "pollUrl", "/api/dl-query/jobs/" + jobId));
+    }
+
+    /** Same async-accepted contract as {@link #submitToWorker}, plus the explanation-only fields. */
+    private ResponseEntity<Map<String, Object>> submitExplainInconsistencyToWorker(
+            String projectId, String reasonerType, String explanationMode, int maxJustifications) {
+        Map<String, Object> worker = reasonerWorkerClient.submit(
+                "REASONER_EXPLAIN_INCONSISTENCY", projectId, reasonerType, explanationMode, maxJustifications);
         if (Boolean.FALSE.equals(worker.get("success"))) {
             return ResponseEntity.status(500).body(Map.of(
                     "success", false,

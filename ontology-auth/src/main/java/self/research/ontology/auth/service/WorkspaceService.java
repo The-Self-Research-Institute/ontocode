@@ -11,6 +11,7 @@ import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.model.Workspace.WorkspaceMember;
 import self.research.ontology.auth.model.Workspace.WorkspaceRole;
 import self.research.ontology.auth.repository.FileMetadataRepository;
+import self.research.ontology.auth.repository.InvitationRepository;
 import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
@@ -35,19 +36,66 @@ public class WorkspaceService {
     private final FileMetadataRepository fileMetadataRepository;
     private final PlanFeatureConfigService planFeatureConfigService;
     private final SystemSettingsService systemSettingsService;
+    private final InvitationRepository invitationRepository;
+    private final ProjectService projectService;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                            UserRepository userRepository,
                            ProjectRepository projectRepository,
                            FileMetadataRepository fileMetadataRepository,
                            PlanFeatureConfigService planFeatureConfigService,
-                           SystemSettingsService systemSettingsService) {
+                           SystemSettingsService systemSettingsService,
+                           InvitationRepository invitationRepository,
+                           ProjectService projectService) {
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.projectRepository = projectRepository;
         this.fileMetadataRepository = fileMetadataRepository;
         this.planFeatureConfigService = planFeatureConfigService;
         this.systemSettingsService = systemSettingsService;
+        this.invitationRepository = invitationRepository;
+        this.projectService = projectService;
+    }
+
+    public void hardDeleteWorkspaceCompletely(String workspaceId, String userId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+        if (!workspace.getOwnerId().equals(userId)) {
+            throw new SecurityException("Only the workspace owner can permanently delete this workspace");
+        }
+        long otherActiveMembers = workspace.getMembers().stream()
+                .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
+                .count();
+        if (otherActiveMembers > 0) {
+            throw new IllegalStateException("Workspace still has other members — transfer ownership or use the regular delete instead");
+        }
+
+        for (Project project : projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE")) {
+            if (!userId.equals(project.getOwnerId())) {
+                log.warn("Skipping hard-delete of project {} in workspace {}: owner is {}, not {}",
+                        project.getProjectId(), workspaceId, project.getOwnerId(), userId);
+                continue;
+            }
+            try {
+                projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+            } catch (IllegalStateException e) {
+                log.warn("Skipping hard-delete of project {} in workspace {}: {}",
+                        project.getProjectId(), workspaceId, e.getMessage());
+            }
+        }
+
+        invitationRepository.deleteByWorkspaceId(workspaceId);
+        workspaceRepository.delete(workspace);
+        log.info("Permanently deleted workspace {} (owner {}, no other members)", workspaceId, userId);
+    }
+
+    public void purgeWorkspaceData(Workspace workspace) {
+        String workspaceId = workspace.getWorkspaceId();
+        for (Project project : projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE")) {
+            projectService.purgeProjectData(project);
+        }
+        invitationRepository.deleteByWorkspaceId(workspaceId);
+        workspaceRepository.delete(workspace);
     }
 
     /**
@@ -479,6 +527,76 @@ public class WorkspaceService {
                 });
     }
 
+    @Transactional
+    public void syncOwnerTransferToProjects(Workspace workspace, String previousOwnerId, String newOwnerId) {
+        if (newOwnerId == null || newOwnerId.equals(previousOwnerId)) {
+            return;
+        }
+
+        List<Project> projects = projectRepository.findByWorkspaceId(workspace.getWorkspaceId());
+        for (Project project : projects) {
+            String visibility = project.getVisibility();
+            boolean isPrivate = "PRIVATE".equals(visibility)
+                    || (visibility == null && (project.getMembers() == null || project.getMembers().size() <= 1));
+            if (isPrivate) {
+                continue;
+            }
+
+            boolean dirty = projectService.applyImplicitWorkspaceLeadershipEditors(project, workspace);
+
+            if (previousOwnerId != null && previousOwnerId.equals(project.getOwnerId())) {
+                Project.ProjectMember oldOwnerMember = project.getMember(previousOwnerId);
+                if (oldOwnerMember != null) {
+                    oldOwnerMember.setRole("ADMIN");
+                }
+                project.setOwnerId(newOwnerId);
+                Project.ProjectMember newOwnerMember = project.getMember(newOwnerId);
+                if (newOwnerMember != null) {
+                    newOwnerMember.setRole("OWNER");
+                    newOwnerMember.setWorkspaceEditorLink(null);
+                }
+                dirty = true;
+            } else if (previousOwnerId != null) {
+                Project.ProjectMember oldOwnerMember = project.getMember(previousOwnerId);
+                if (oldOwnerMember != null && Project.WS_EDITOR_LINK_OWNER.equals(oldOwnerMember.getWorkspaceEditorLink())) {
+                    oldOwnerMember.setWorkspaceEditorLink(Project.WS_EDITOR_LINK_ADMIN);
+                    dirty = true;
+                }
+            }
+
+            if (dirty) {
+                project.setUpdatedAt(LocalDateTime.now());
+                projectRepository.save(project);
+                log.info("Synced owner transfer ({} -> {}) onto project {}",
+                        previousOwnerId, newOwnerId, project.getProjectId());
+            }
+        }
+    }
+
+    @Transactional
+    public Workspace transferOwnership(String workspaceId, String currentOwnerId, String newOwnerId) {
+        Workspace workspace = workspaceRepository.findByWorkspaceId(workspaceId)
+                .orElseThrow(() -> new IllegalArgumentException("Workspace not found"));
+        if (!workspace.getOwnerId().equals(currentOwnerId)) {
+            throw new SecurityException("Only the current workspace owner can transfer ownership");
+        }
+        Workspace.WorkspaceMember target = workspace.getMember(newOwnerId);
+        if (target == null) {
+            throw new IllegalArgumentException("Member not found in workspace");
+        }
+
+        workspace.getMembers().stream()
+                .filter(m -> m.getRole() == WorkspaceRole.OWNER)
+                .forEach(m -> m.setRole(WorkspaceRole.ADMIN));
+        workspace.setOwnerId(newOwnerId);
+        target.setRole(WorkspaceRole.OWNER);
+        workspace = updateWorkspace(workspace);
+
+        syncOwnerTransferToProjects(workspace, currentOwnerId, newOwnerId);
+
+        return workspace;
+    }
+
     /**
      * Update workspace details
      */
@@ -630,7 +748,7 @@ public class WorkspaceService {
         log.info("Soft deleted workspace: {} by user: {}", workspaceId, userId);
         
         // Cascade soft delete to all projects in this workspace
-        List<Project> projects = projectRepository.findByWorkspaceId(workspaceId);
+        List<Project> projects = projectRepository.findByWorkspaceIdAndStatus(workspaceId, "ACTIVE");
         for (Project project : projects) {
             if (!Boolean.TRUE.equals(project.getIsDeleted())) {
                 project.setIsDeleted(true);

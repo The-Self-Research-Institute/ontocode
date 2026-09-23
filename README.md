@@ -20,7 +20,7 @@ A **microservices-based ontology editing platform** with a **VS Code extension**
   - [Import and Export](#import-and-export)
   - [Citation Management](#citation-management)
   - [Queue Management](#queue-management)
-  - [Jira Integration](#jira-integration)
+  - [OpenProject Integration](#openproject-integration)
   - [Built-in User Guide](#built-in-user-guide)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
@@ -147,10 +147,10 @@ OntoCode automatically formats and inserts citations into the ontology file and 
 - Real-time WebSocket notifications for queue status
 - Max 1 concurrent import to prevent Fuseki conflicts
 
-### Jira Integration
+### OpenProject Integration
 
-- **Bug reporting**: Help > Report Issue creates Jira cards automatically
-- **API token authentication**: Secure connection via Jira API tokens
+- **Bug reporting**: Help > Report Issue creates OpenProject work packages automatically
+- **API key authentication**: Secure connection via OpenProject API keys
 - **Connection testing**: Built-in validation endpoint
 
 ### Built-in User Guide

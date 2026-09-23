@@ -146,6 +146,7 @@ import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
+import { buildEntityIri } from "../utils/entityIri";
 import { PluginMarketplace } from "./PluginMarketplace";
 import { pluginLoader } from "../services/pluginLoader";
 import { checkForPluginUpdates, clearPluginUpdateCache } from "../services/pluginUpdateChecker";
@@ -3494,6 +3495,21 @@ const Dashboard: React.FC<DashboardProps> = ({
       setReasonerResults(results);
             console.log("[Dashboard] reasoner bundle:", results);
       console.log("[Dashboard] FIRST inferred class item:", JSON.stringify((results as any)?.classHierarchy?.[0], null, 2));
+
+      if ((results as any)?.inconsistent === true) {
+        setConsistencyResult({
+          consistent: false,
+          isConsistent: false,
+          reasonerType: selectedReasoner,
+          projectId,
+          issues: (results as any).issues,
+        });
+        notificationService.error(
+          "Ontology Inconsistent",
+          (results as any).message || "Classification found the ontology is inconsistent. Open Explain Inconsistency to inspect the causes.",
+        );
+        return;
+      }
 
       const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
       const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
@@ -8921,6 +8937,74 @@ const updateItemInState = useCallback(
     };
   }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
+  // Shared by the handleRefresh* callbacks below. On desktop, a mutation can leave the OWLAPI
+  // in-memory model briefly evicted/re-warming — a plain GET right after create/delete can land
+  // on that transient "warming" response (data: []), which would otherwise wipe the whole list.
+  // Retry instead of trusting it. Returns null if the list is still warming after retries, so
+  // callers can log their own entity-specific warning and keep the current list.
+  const fetchEntityListWithWarmup = useCallback(
+    async (endpoint: string, listField: string): Promise<any[] | null> => {
+      if (!projectId) return null;
+      if (isDesktop()) {
+        await waitForDesktopOwlApiReady(projectId);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      const res = await getOntologyListWithRetry<any>(withDraftScope(endpoint));
+      if (res === null) return null;
+      return Array.isArray(res?.data) ? res.data : Array.isArray(res?.[listField]) ? res[listField] : [];
+    },
+    [projectId],
+  );
+
+  // Returns the freshly-fetched list so callers can verify a specific just-applied change
+  // actually shows up (see handleCreateAnnotationProperty / handleAnnotationSuperpropertyConfirm)
+  // instead of trusting a single fetch — desktop's OWLAPI cache has a version-check/evict/rewarm
+  // cycle (OwlApiMutationCoordinator.ensureFreshForRead) that can race with two back-to-back
+  // mutations (create-then-link is two separate requests), so a read moments later can
+  // land mid-rewarm and see the entity without its just-added relationship.
+  const handleRefreshAnnotationProperties = useCallback(async (): Promise<AnnotationProperty[]> => {
+    if (!projectId) return [];
+    const rawProperties = await fetchEntityListWithWarmup(
+      `/api/ontology/annotation-properties/${encodeProjectId(projectId)}`,
+      "annotationProperties",
+    );
+    if (rawProperties === null) {
+      console.warn("[Dashboard] Annotation properties still warming after retries — keeping current list");
+      return [];
+    }
+    const merged = mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty));
+    setAnnotationProperties(merged);
+    setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
+    return merged;
+  }, [projectId, fetchEntityListWithWarmup]);
+
+  const handleRefreshIndividuals = useCallback(async () => {
+    if (!projectId) return;
+    const individuals = await fetchEntityListWithWarmup(
+      `/api/ontology/individuals/${encodeProjectId(projectId)}?limit=10000`,
+      "individuals",
+    );
+    if (individuals === null) {
+      console.warn("[Dashboard] Individuals still warming after retries — keeping current list");
+      return;
+    }
+    setIndividuals(individuals);
+  }, [projectId, fetchEntityListWithWarmup]);
+
+  const handleRefreshDatatypes = useCallback(async () => {
+    if (!projectId) return;
+    const datatypes = await fetchEntityListWithWarmup(
+      `/api/ontology/datatypes/${encodeProjectId(projectId)}`,
+      "datatypes",
+    );
+    if (datatypes === null) {
+      console.warn("[Dashboard] Datatypes still warming after retries — keeping current list");
+      return;
+    }
+    setDatatypes(datatypes);
+  }, [projectId, fetchEntityListWithWarmup]);
+
   // Handle rollback events from Change Assistant plugin - refresh data
   useEffect(() => {
     const handleRollback = (event: Event) => {
@@ -8936,6 +9020,9 @@ const updateItemInState = useCallback(
       const originalAuthor = detail.originalAuthor || "Unknown";
       const oldValue = detail.oldValue;
       const newValue = detail.newValue;
+      handleRefreshIndividuals();
+      handleRefreshAnnotationProperties();
+      handleRefreshDatatypes();
 
       // Build notification message with value changes if available
       let message = `${rollbackUser} rolled back change by ${originalAuthor}`;
@@ -9112,7 +9199,14 @@ const updateItemInState = useCallback(
     return () => {
       window.removeEventListener("ontologyRollback", handleRollback as EventListener);
     };
-  }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
+  }, [
+    projectId,
+    selectedItem,
+    entitiesTab,
+    handleRefreshIndividuals,
+    handleRefreshAnnotationProperties,
+    handleRefreshDatatypes,
+  ]); // Removed fetchData, showNotification to prevent infinite loop
 
   // Handle file share notifications
   useEffect(() => {
@@ -10045,48 +10139,6 @@ const updateItemInState = useCallback(
       } as OntologyMetadata;
     });
   }, []);
-
-  // Returns the freshly-fetched list so callers can verify a specific just-applied change
-  // actually shows up (see handleCreateAnnotationProperty / handleAnnotationSuperpropertyConfirm)
-  // instead of trusting a single fetch — desktop's OWLAPI cache has a version-check/evict/rewarm
-  // cycle (OwlApiMutationCoordinator.ensureFreshForRead) that can race with two back-to-back
-  // mutations (create-then-link is two separate requests), so a read moments later can
-  // land mid-rewarm and see the entity without its just-added relationship.
-  const handleRefreshAnnotationProperties = useCallback(async (): Promise<AnnotationProperty[]> => {
-    if (!projectId) return [];
-    if (isDesktop()) {
-      await waitForDesktopOwlApiReady(projectId);
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-    // On desktop, a mutation can leave the OWLAPI in-memory model briefly evicted/re-warming —
-    // a plain GET right after create/delete can land on that transient "warming" response
-    // (data: []), which would otherwise wipe the whole list. Retry instead of trusting it.
-    const res = await getOntologyListWithRetry<any>(
-      withDraftScope(`/api/ontology/annotation-properties/${encodeProjectId(projectId)}`),
-    );
-    if (res === null) {
-      console.warn("[Dashboard] Annotation properties still warming after retries — keeping current list");
-      return [];
-    }
-    const rawProperties = Array.isArray(res?.data)
-      ? res.data
-      : Array.isArray(res?.annotationProperties)
-        ? res.annotationProperties
-        : [];
-    console.log(
-      "[TRACE] Full rawProperties:",
-      rawProperties
-    );
-    const merged = mergeAnnotationProperties(rawProperties.map(mapAnnotationProperty));
-    setAnnotationProperties(merged);
-    setAnnotationPropertyHierarchy(buildAnnotationPropertyHierarchy(merged));
-    return merged;
-  }, [projectId]);
-
-  // Retry handleRefreshAnnotationProperties until `isVisible` finds the just-applied change in
-  // the fresh list, instead of trusting one fetch right after a mutation — same pattern as
-  // ClassEditor's reloadDetailsUntilRestrictionVisible, for the same class of backend race.
   const refreshAnnotationPropertiesUntilVisible = useCallback(
     async (isVisible: (props: AnnotationProperty[]) => boolean, maxAttempts = 6, delayMs = 500) => {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -10800,6 +10852,44 @@ const updateItemInState = useCallback(
     handleRefreshAnnotationProperties,
   ]);
 
+  const flattenTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
+    return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
+  }, []);
+
+  const effectiveOntologyIri = useMemo(() => {
+    if (metadata?.ontologyIRI) return metadata.ontologyIRI;
+    const sampleIri =
+      flattenTree(classHierarchy).find((n) => n.id && n.id !== "http://www.w3.org/2002/07/owl#Thing")?.id ||
+      flattenTree(objectPropertyHierarchy).find((n) => n.id)?.id ||
+      flattenTree(dataPropertyHierarchy).find((n) => n.id)?.id ||
+      individuals.find((i) => i.id)?.id;
+    if (!sampleIri) return undefined;
+    const hashIndex = sampleIri.lastIndexOf('#');
+    if (hashIndex > -1) return sampleIri.slice(0, hashIndex);
+    const slashIndex = sampleIri.lastIndexOf('/');
+    if (slashIndex > -1) return sampleIri.slice(0, slashIndex);
+    return undefined;
+  }, [metadata?.ontologyIRI, classHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, individuals, flattenTree]);
+
+  const classExistingIris = useMemo(
+    () => flattenTree(classHierarchy).map((n) => n.id),
+    [flattenTree, classHierarchy],
+  );
+  const objectPropertyExistingIris = useMemo(
+    () => flattenTree(objectPropertyHierarchy).map((n) => n.id),
+    [flattenTree, objectPropertyHierarchy],
+  );
+  const dataPropertyExistingIris = useMemo(
+    () => flattenTree(dataPropertyHierarchy).map((n) => n.id),
+    [flattenTree, dataPropertyHierarchy],
+  );
+  const annotationPropertyExistingIris = useMemo(
+    () => flattenTree(annotationPropertyHierarchy).map((n) => n.id),
+    [flattenTree, annotationPropertyHierarchy],
+  );
+  const individualExistingIris = useMemo(() => individuals.map((i) => i.id), [individuals]);
+  const datatypeExistingIris = useMemo(() => datatypes.map((d) => d.id), [datatypes]);
+
   // Handler for creating object properties with name parameter
   const handleAddObjectProperty = useCallback(
     async (type: "subclass" | "sibling", parentId?: string, name?: string) => {
@@ -10811,9 +10901,11 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddObjectProperty] Creating property:", name, "type:", type, "parentId:", parentId);
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const cleanName = (name || "NewObjectProperty").replace(/\s+/g, "_");
-        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewObjectProperty");
+        if (flattenTree(objectPropertyHierarchy).some((n) => n.id === newIri)) {
+          showNotification(`An object property with IRI "${newIri}" already exists.`, "error");
+          return;
+        }
 
         let parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
 
@@ -10848,7 +10940,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, metadata, objectPropertyHierarchy, user, refreshProperties, showNotification],
+    [projectId, effectiveOntologyIri, flattenTree, objectPropertyHierarchy, user, refreshProperties, showNotification],
   );
 
   // Handler for creating data properties with name parameter
@@ -10862,9 +10954,11 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddDataProperty] Creating property:", name, "type:", type, "parentId:", parentId);
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const cleanName = (name || "NewDataProperty").replace(/\s+/g, "_");
-        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewDataProperty");
+        if (flattenTree(dataPropertyHierarchy).some((n) => n.id === newIri)) {
+          showNotification(`A data property with IRI "${newIri}" already exists.`, "error");
+          return;
+        }
 
         let parentIri = "http://www.w3.org/2002/07/owl#topDataProperty";
 
@@ -10899,7 +10993,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, metadata, dataPropertyHierarchy, user, refreshProperties, showNotification],
+    [projectId, effectiveOntologyIri, flattenTree, dataPropertyHierarchy, user, refreshProperties, showNotification],
   );
 
   // Handler for creating classes with name parameter (for inline creation in dialogs)
@@ -10913,9 +11007,11 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddClassInline] Creating class:", name, "type:", type, "parentId:", parentId);
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const cleanName = (name || "NewClass").replace(/\s+/g, "_");
-        const newIri = `${baseIri}${baseIri.endsWith("#") || baseIri.endsWith("/") ? "" : "#"}${cleanName}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewClass");
+        if (flattenTree(classHierarchy).some((n) => n.id === newIri)) {
+          showNotification(`A class with IRI "${newIri}" already exists.`, "error");
+          return;
+        }
 
         let parentIri = "http://www.w3.org/2002/07/owl#Thing";
 
@@ -11029,7 +11125,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, metadata, classHierarchy, user, loadChildren, showNotification, expandedNodes, markAsUnsaved],
+    [projectId, effectiveOntologyIri, flattenTree, classHierarchy, user, loadChildren, showNotification, expandedNodes, markAsUnsaved],
   );
 
   const handleAddItem = useCallback(
@@ -11231,8 +11327,7 @@ const updateItemInState = useCallback(
       const type = addClassType;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         // Determine parent IRI based on type
         let parentIri = "http://www.w3.org/2002/07/owl#Thing";
@@ -11418,7 +11513,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create entity. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addClassType, entitiesTab, metadata, classHierarchy, markAsUnsaved, refreshProperties, loadChildren],
+    [projectId, selectedItem, addClassType, entitiesTab, effectiveOntologyIri, classHierarchy, markAsUnsaved, refreshProperties, loadChildren],
   );
 
   const handleCreateObjectProperty = useCallback(
@@ -11428,8 +11523,7 @@ const updateItemInState = useCallback(
       const type = addPropertyType;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         let parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
         if (type === "subproperty" && selectedItem?.id) {
@@ -11494,7 +11588,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create property. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, metadata, markAsUnsaved, refreshProperties],
+    [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, effectiveOntologyIri, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateDataProperty = useCallback(
@@ -11504,8 +11598,7 @@ const updateItemInState = useCallback(
       const type = addPropertyType;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         let parentIri = "http://www.w3.org/2002/07/owl#topDataProperty";
         if (type === "subproperty" && selectedItem?.id) {
@@ -11570,7 +11663,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create data property. See console for details.", "error");
       }
     },
-    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, metadata, markAsUnsaved, refreshProperties],
+    [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, effectiveOntologyIri, markAsUnsaved, refreshProperties],
   );
 
   const handleCreateDatatype = useCallback(
@@ -11578,8 +11671,7 @@ const updateItemInState = useCallback(
       if (!projectId) return;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         await ontologyMutationService.createDatatype(
           projectId,
@@ -11605,7 +11697,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create datatype. See console for details.", "error");
       }
     },
-    [projectId, metadata, markAsUnsaved, showNotification],
+    [projectId, effectiveOntologyIri, markAsUnsaved, showNotification],
   );
 
   const handleCreateAnnotationProperty = useCallback(
@@ -11613,8 +11705,7 @@ const updateItemInState = useCallback(
       if (!projectId) return;
 
       try {
-        const baseIri = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-        const newIri = `${baseIri}#${name.replace(/\s+/g, "_")}`;
+        const newIri = buildEntityIri(effectiveOntologyIri, name);
 
         // Bug #45: support sub-annotation-properties. createAnnotationProperty now takes the
         // parent directly (matching createObjectProperty/createDataProperty) so the declaration
@@ -11658,7 +11749,7 @@ const updateItemInState = useCallback(
     },
     [
       projectId,
-      metadata,
+      effectiveOntologyIri,
       markAsUnsaved,
       showNotification,
       addPropertyType,
@@ -11679,8 +11770,7 @@ const updateItemInState = useCallback(
         return;
       }
 
-      const base = (metadata as any)?.ontologyIRI || "http://example.com/onto";
-      const id = `${base}#${name.replace(/\s+/g, "_")}`;
+      const id = buildEntityIri(effectiveOntologyIri, name);
 
       // Determine the class IRI - use selected class if available, otherwise owl:Thing
       const classIri =
@@ -11708,7 +11798,7 @@ const updateItemInState = useCallback(
         showNotification("Failed to create individual. See console for details.", "error");
       }
     },
-    [projectId, metadata, entitiesTab, selectedItem, markAsUnsaved, showNotification],
+    [projectId, effectiveOntologyIri, entitiesTab, selectedItem, markAsUnsaved, showNotification],
   );
 
   const handleMakeSiblingsDisjoint = useCallback(async () => {
@@ -12286,10 +12376,6 @@ const updateItemInState = useCallback(
     [classHierarchy],
   );
 
-  const flattenTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
-    return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
-  }, []);
-
   useEffect(() => {
     const handleCollaborationNavigate = (event: Event) => {
       const detail = (event as CustomEvent<CollaborationNavigateDetail>).detail;
@@ -12635,40 +12721,47 @@ const updateItemInState = useCallback(
         // JSON string. Small files fall through to the normal full-content fetch below
         // (now a server-side cache hit, since the probe generated the cache file).
         // Older backends without /content-page fall through too.
-        try {
-          const probe = await apiClient.get<{
-            success: boolean;
-            content: string;
-            startLine: number;
-            lineCount: number;
-            totalLines: number;
-            totalBytes: number;
-            sourceVersion?: number;
-          }>(`/api/ontology/${projectId}/content-page`, {
-            format,
-            startLine: "0",
-            lineCount: String(CODE_VIEW_PAGE_LINES),
-          });
-          if (probe?.success && Number(probe.totalBytes) > getCodeViewEditableCeiling(format)) {
-            setCodeViewContent(probe.content ?? "");
-            setCodeViewPage({
-              startLine: 0,
-              lineCount: Number(probe.lineCount) || 0,
-              totalLines: Number(probe.totalLines) || 0,
-              totalBytes: Number(probe.totalBytes) || 0,
+        // /content-page (and the on-disk cache it populates as a side effect) aren't
+        // draft-aware yet — skip the probe entirely in draft mode so it can't refresh that
+        // shared cache with public content while a private draft is being viewed, and go
+        // straight to /content, which does correctly export fresh from the draft graph.
+        if (!isDraftScopeActive()) {
+          try {
+            const probe = await apiClient.get<{
+              success: boolean;
+              content: string;
+              startLine: number;
+              lineCount: number;
+              totalLines: number;
+              totalBytes: number;
+              sourceVersion?: number;
+            }>(`/api/ontology/${projectId}/content-page`, {
+              format,
+              startLine: "0",
+              lineCount: String(CODE_VIEW_PAGE_LINES),
             });
-            setCodeViewTruncation(null);
-            setCodeViewFormat(format);
-            setCodeViewSourceVersion(probe.sourceVersion != null ? Number(probe.sourceVersion) : null);
-            setHasLocalCodeViewChanges(false);
-            codeViewDirtyRef.current = false;
-            return;
+            if (probe?.success && Number(probe.totalBytes) > getCodeViewEditableCeiling(format)) {
+              setCodeViewContent(probe.content ?? "");
+              setCodeViewPage({
+                startLine: 0,
+                lineCount: Number(probe.lineCount) || 0,
+                totalLines: Number(probe.totalLines) || 0,
+                totalBytes: Number(probe.totalBytes) || 0,
+              });
+              setCodeViewTruncation(null);
+              setCodeViewFormat(format);
+              setCodeViewSourceVersion(probe.sourceVersion != null ? Number(probe.sourceVersion) : null);
+              setHasLocalCodeViewChanges(false);
+              codeViewDirtyRef.current = false;
+              return;
+            }
+          } catch (probeError) {
+            console.warn("[Dashboard] content-page probe unavailable, using full content path:", probeError);
           }
-        } catch (probeError) {
-          console.warn("[Dashboard] content-page probe unavailable, using full content path:", probeError);
         }
         setCodeViewPage(null);
 
+        const codeViewContentEffectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
         const response = await apiClient.get<{
           success: boolean;
           content: string;
@@ -12676,7 +12769,11 @@ const updateItemInState = useCallback(
           cached?: boolean;
           error?: string;
           sourceVersion?: number;
-        }>(`/api/ontology/${projectId}/content`, { format, forceRefresh: forceRefresh ? "true" : "false" });
+        }>(`/api/ontology/${projectId}/content`, {
+          format,
+          forceRefresh: forceRefresh ? "true" : "false",
+          ...(isDraftScopeActive() ? { draft: "true", userId: codeViewContentEffectiveUserId } : {}),
+        });
         if (response.success) {
           setCodeViewSourceVersion(response.sourceVersion != null ? Number(response.sourceVersion) : null);
           // Guard the editor against huge documents (see codeViewTruncation).
@@ -12888,20 +12985,6 @@ const updateItemInState = useCallback(
         return;
       }
 
-      // Code-view save does a whole-ontology reimport into the PUBLIC/main graph
-      // (bulkLoadChunked) — it has no draft-graph path. In the WEBAPP, saving it while in
-      // Draft mode would overwrite the shared public ontology, so block it there.
-      // Desktop is single-user and ALWAYS in "private" mode (Save-to-publish);
-      // there is no shared public graph to protect and code-view save is a normal desktop
-      // operation, so it must NOT be blocked on desktop.
-      if (!isDesktop() && ontologyMutationService.isPrivateEditMode()) {
-        notificationService.error(
-          "Not available in Draft Mode",
-          "Source (code view) editing writes to the public ontology and isn't supported in Draft Mode. Switch to Public mode to edit source, or use the entity editors to make draft changes.",
-        );
-        return;
-      }
-
       if (!projectId) {
         console.error("[Dashboard] No projectId available for save");
         notificationService.error("Save Failed", "No project selected");
@@ -12985,21 +13068,22 @@ const updateItemInState = useCallback(
           "size:",
           content.length,
         );
-
-        // Single path: reimport into the ontology and sync all format caches. No cache-only
-        // fallback — a save that didn't reach the ontology must never look like it succeeded,
-        // since Graph View / Hierarchy Tree / DL Query all read from the ontology, not this cache.
+        const codeViewEffectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        const codeViewSaveParams = new URLSearchParams({
+          userId: codeViewEffectiveUserId,
+          username: user?.username || "Anonymous",
+          ...(isDraftScopeActive() ? { draft: "true" } : {}),
+        });
         let response: any;
         try {
-          response = await apiClient.post(`/api/ontology/${projectId}/code-view-save`, {
-            content: content,
-            format: codeViewFormat,
-            // Checked server-side against the current public-graph version; a mismatch means
-            // the ontology changed elsewhere since this content was loaded (see the 409 handling
-            // below). Omitted entirely if we never got a version (e.g. very first load raced an
-            // older backend) — the backend treats that as "skip the check" rather than failing closed.
-            ...(codeViewSourceVersion != null ? { expectedSourceVersion: codeViewSourceVersion } : {}),
-          });
+          response = await apiClient.post(
+            `/api/ontology/${projectId}/code-view-save?${codeViewSaveParams.toString()}`,
+            {
+              content: content,
+              format: codeViewFormat,
+              ...(codeViewSourceVersion != null ? { expectedSourceVersion: codeViewSourceVersion } : {}),
+            },
+          );
         } catch (syncError: any) {
           if (syncError?.status === 409 || syncError?.data?.conflictBlocked) {
             const conflictMsg =
@@ -13031,6 +13115,9 @@ const updateItemInState = useCallback(
           lastClassHierarchyRefreshAt.current = 0;
           refreshClassHierarchy();
           refreshProperties();
+          handleRefreshAnnotationProperties();
+          handleRefreshIndividuals();
+          handleRefreshDatatypes();
           // Let other open views (Graph View plugin, etc.) know the ontology changed so they
           // can drop their caches and refetch too — mirrors ontologyMutationService's broadcast
           // for normal entity-editor mutations, which this save path bypasses (it POSTs directly
@@ -13069,6 +13156,9 @@ const updateItemInState = useCallback(
       setShowProPromptType,
       refreshClassHierarchy,
       refreshProperties,
+      handleRefreshAnnotationProperties,
+      handleRefreshIndividuals,
+      handleRefreshDatatypes,
     ],
   );
 
@@ -17678,6 +17768,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         isOpen={isCreateIndividualModalOpen}
         onClose={() => setCreateIndividualModalOpen(false)}
         onCreate={handleAddIndividual}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={individualExistingIris}
       />
       <CreateIndividualModal
         isOpen={isCreateIndividualForClassOpen}
@@ -17693,6 +17785,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
             notificationService.error("Create Failed", "Could not create individual.");
           }
         }}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={individualExistingIris}
       />
       <AddClassDialog
         isOpen={isAddClassDialogOpen}
@@ -17701,6 +17795,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         type={addClassType}
         parentLabel={classParentLabel}
         syncMode={syncMode}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={classExistingIris}
       />
       <AddObjectPropertyDialog
         isOpen={isAddPropertyDialogOpen}
@@ -17717,11 +17813,21 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         propertyType={
           entitiesTab === "ObjectProperties" ? "object" : entitiesTab === "DataProperties" ? "data" : "annotation"
         }
+        ontologyIri={effectiveOntologyIri}
+        existingIris={
+          entitiesTab === "ObjectProperties"
+            ? objectPropertyExistingIris
+            : entitiesTab === "DataProperties"
+              ? dataPropertyExistingIris
+              : annotationPropertyExistingIris
+        }
       />
       <AddDatatypeDialog
         isOpen={isAddDatatypeDialogOpen}
         onClose={() => setAddDatatypeDialogOpen(false)}
         onCreate={handleCreateDatatype}
+        ontologyIri={effectiveOntologyIri}
+        existingIris={datatypeExistingIris}
       />
       <AddAnnotationDialog
         isOpen={isAddAnnotationDialogOpen}
@@ -17736,7 +17842,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         }}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isEditAnnotationDialogOpen}
@@ -17774,7 +17880,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         initialDatatype={editAnnotationData?.datatype || ""}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddImportDialog
         isOpen={showImportDialog}
@@ -17894,7 +18000,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         initialDatatype={shortenDatatype(ontologyAnnotationEditTarget?.datatype)}
         onCreateProperty={handleDialogCreateAnnotationProperty}
         onRefreshProperties={handleRefreshAnnotationProperties}
-        ontologyNamespace={metadata?.ontologyIRI ? `${metadata.ontologyIRI}#` : undefined}
+        ontologyNamespace={effectiveOntologyIri ? `${effectiveOntologyIri}#` : undefined}
       />
       <AddAnnotationDialog
         isOpen={isQuickNoteDialogOpen}
@@ -18861,6 +18967,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                     dataPropertyHierarchy={dataPropertyHierarchy}
                     individuals={individuals}
                     setIndividuals={setIndividuals}
+                    datatypes={datatypes}
                     markAsUnsaved={markAsUnsaved}
                     isViewOnly={isViewOnlyMember}
                     onViewOnlyAction={handleViewOnlyAction}

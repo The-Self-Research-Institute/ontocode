@@ -63,9 +63,9 @@ win:
 # is reserved there (Publisher ID, Package/Identity Name, Publisher Display Name) —
 # they must match character-for-character or Store certification rejects the package.
 appx:
-  identityName: ontocode-desktop
-  publisher: "CN=OntoCode Studio Test"
-  publisherDisplayName: OntoCode Studio
+  identityName: SelfResearch.OntocodeStudio
+  publisher: "CN=48F0ADC2-1FD0-4664-AD5E-C80F7D22F534"
+  publisherDisplayName: Self Research
   applicationId: OntoCodeStudio
   # capabilities defaults to ['runFullTrust'], required for Electron's child-process
   # spawning (bundled MongoDB + two JVMs) and normal file I/O — do not remove.
@@ -135,6 +135,7 @@ linux:
     - target: deb
       arch:
         - x64
+        - arm64
   icon: build-assets/icon-512.png
   category: Development
   maintainer: "OntoCode Studio <pranesh@coretopia.com>"

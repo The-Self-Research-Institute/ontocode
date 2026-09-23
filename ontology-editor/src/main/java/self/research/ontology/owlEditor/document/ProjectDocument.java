@@ -4,11 +4,12 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 @Document(collection = "projects")
 public class ProjectDocument {
-    
+
     @Id
     private String id;
     private String name;
@@ -24,6 +25,21 @@ public class ProjectDocument {
     private Map<String, Object> metadata;
     /** Monotonic counter bumped on every Fuseki write; used to invalidate stale OWLAPI caches. */
     private Long mutationVersion;
+    private Long mainGraphRevision;
+    private List<MemberRef> members;
+
+    public static class MemberRef {
+        private String email;
+        public String getEmail() { return email; }
+        public void setEmail(String email) { this.email = email; }
+    }
+
+    public boolean isAccessibleBy(String email) {
+        if (email == null || email.isBlank()) return false;
+        if (email.equalsIgnoreCase(ownerEmail)) return true;
+        if (members == null) return false;
+        return members.stream().anyMatch(m -> m != null && email.equalsIgnoreCase(m.getEmail()));
+    }
 
     public ProjectDocument() {
     }
@@ -139,5 +155,21 @@ public class ProjectDocument {
 
     public void setMutationVersion(Long mutationVersion) {
         this.mutationVersion = mutationVersion;
+    }
+
+    public Long getMainGraphRevision() {
+        return mainGraphRevision;
+    }
+
+    public void setMainGraphRevision(Long mainGraphRevision) {
+        this.mainGraphRevision = mainGraphRevision;
+    }
+
+    public List<MemberRef> getMembers() {
+        return members;
+    }
+
+    public void setMembers(List<MemberRef> members) {
+        this.members = members;
     }
 }

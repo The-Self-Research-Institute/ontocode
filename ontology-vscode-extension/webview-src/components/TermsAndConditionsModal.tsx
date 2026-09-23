@@ -52,12 +52,6 @@ export const TermsAndConditionsModal: React.FC<Props> = ({ isOpen, onClose }) =>
 
         {/* Body */}
         <div className="overflow-y-auto px-6 py-5 text-sm text-gray-700 space-y-5 leading-relaxed">
-          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-amber-800 text-xs">
-            These Terms and Conditions are currently being finalised and will be published before the official
-            launch of {PRODUCT}. By creating an account during the beta period you acknowledge that these terms
-            may change before the final release.
-          </div>
-
           <section>
             <h3 className="font-semibold text-gray-900 mb-1">1. Acceptance of Terms</h3>
             <p>

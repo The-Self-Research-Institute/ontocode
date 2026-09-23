@@ -186,13 +186,12 @@ services:
         -DentityExpansionLimit=100000000
         -Djdk.xml.entityExpansionLimit=100000000
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
-      JIRA_ENABLED: ${JIRA_ENABLED:-true}
-      JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
-      JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-uma@coretopia.com}
-      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
-      JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
-      JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
-      JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      OPENPROJECT_ENABLED: ${OPENPROJECT_ENABLED:-true}
+      OPENPROJECT_HOST: ${OPENPROJECT_HOST:-https://openproject.coretopia.com}
+      OPENPROJECT_API_KEY: ${OPENPROJECT_API_KEY:-}
+      OPENPROJECT_PROJECT_ID: ${OPENPROJECT_PROJECT_ID:-TSRI}
+      OPENPROJECT_PARENT_ID: ${OPENPROJECT_PARENT_ID:-TSRI-103}
+      OPENPROJECT_DEFAULT_TYPE: ${OPENPROJECT_DEFAULT_TYPE:-Task}
       # Import concurrency: 1 on t3.large, 2 on t3.xlarge, 3 on t3.2xlarge
       ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
     depends_on:

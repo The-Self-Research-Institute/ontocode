@@ -84,9 +84,9 @@ class IssueReportService {
         }
     }
 
-    async validateJiraConnection(): Promise<{ success: boolean; message: string }> {
+    async validateOpenProjectConnection(): Promise<{ success: boolean; message: string }> {
         try {
-            const url = `${this.editorUrl}/api/v1/issues/jira/validate`;
+            const url = `${this.editorUrl}/api/v1/issues/openproject/validate`;
 
             const response = await fetch(url, {
                 method: 'GET'

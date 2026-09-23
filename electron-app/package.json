@@ -1,6 +1,6 @@
 {
   "name": "ontocode-desktop",
-  "version": "1.2.1-beta.1",
+  "version": "1.2.2-beta.1",
   "description": "OntoCode Studio Ontology Editor – Desktop (Electron + bundled backend)",
   "homepage": "https://ontocode.selfresearch.org",
   "author": "OntoCode Studio",
@@ -24,7 +24,7 @@
     "dist:mac:dev": "npm run dist:mac",
 
     "dist:linux:x64": "npm run prepare-resources:linux-x64 && npm run build-web && electron-builder --linux --x64",
-    "dist:linux:arm64": "npm run prepare-resources:linux-arm64 && electron-builder --linux --arm64",
+    "dist:linux:arm64": "npm run prepare-resources:linux-arm64 && npm run build-web && electron-builder --linux --arm64",
     "dist:linux": "npm run dist:linux:x64 && npm run dist:linux:arm64",
     "dist:linux:dev": "npm run dist:linux",
     "dist:linux:flatpak": "npm run prepare-resources && npm run build-web && electron-builder --linux flatpak"

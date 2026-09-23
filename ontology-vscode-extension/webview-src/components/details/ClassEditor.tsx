@@ -284,7 +284,8 @@ const ClassEditor: React.FC<{
   onRefreshIndividuals?: () => void;
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction }) => {
+  existingIris?: string[];
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction, existingIris = [] }) => {
   // Get current user for tracking mutations
   const { user } = useAuth();
   const collaboration = useCollaboration();
@@ -2730,6 +2731,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
         currentLabel={item.label}
         entityType="Class"
         onSave={handleSaveIRI}
+        existingIris={existingIris}
       />
     </div>
   );

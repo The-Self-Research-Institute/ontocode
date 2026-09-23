@@ -1,23 +1,38 @@
 import React, { useState } from 'react';
+import { computeEntityIriPreview } from '../../utils/entityIri';
+import { IriPreviewField } from './IriPreviewField';
+import { CreateButton } from './CreateButton';
 
 interface AddDatatypeDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onCreate: (name: string) => void;
+  /** Ontology base IRI, used to compute the live IRI preview (matches backend's {ontologyIri}#{name} convention). */
+  ontologyIri?: string;
+  /** Every existing datatype IRI, used to block duplicate creation before it reaches the backend. */
+  existingIris?: string[];
 }
 
 const AddDatatypeDialog: React.FC<AddDatatypeDialogProps> = ({
   isOpen,
   onClose,
-  onCreate
+  onCreate,
+  ontologyIri,
+  existingIris = [],
 }) => {
   const [name, setName] = useState('');
 
   if (!isOpen) return null;
 
+  const { trimmedName, computedIri, isDuplicate, canCreate } = computeEntityIriPreview(
+    ontologyIri,
+    name,
+    existingIris,
+  );
+
   const handleCreate = () => {
-    if (name.trim()) {
-      onCreate(name.trim());
+    if (canCreate) {
+      onCreate(trimmedName);
       setName('');
       onClose();
     }
@@ -66,15 +81,11 @@ const AddDatatypeDialog: React.FC<AddDatatypeDialogProps> = ({
               autoFocus
             />
           </div>
-          <div>
-            <label className="font-medium text-black block mb-2">IRI Preview</label>
-            <input
-              type="text"
-              disabled
-              value="(auto-generated from ontology IRI + datatype name)"
-              className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-md text-gray-500 text-xs"
-            />
-          </div>
+          <IriPreviewField
+            computedIri={computedIri}
+            isDuplicate={isDuplicate}
+            placeholder="(auto-generated from ontology IRI + datatype name)"
+          />
           <p className="text-[11px] text-gray-500">
             Tip: You can define restrictions and data ranges after creating the datatype in the entity editor.
           </p>
@@ -86,12 +97,7 @@ const AddDatatypeDialog: React.FC<AddDatatypeDialogProps> = ({
           >
             Cancel
           </button>
-          <button
-            onClick={handleCreate}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            Create
-          </button>
+          <CreateButton onClick={handleCreate} disabled={!canCreate} />
         </div>
       </div>
     </div>

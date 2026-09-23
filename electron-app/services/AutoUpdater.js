@@ -208,6 +208,10 @@ function start(window) {
         console.log('[AutoUpdater] Windows-only feed — skipped on', process.platform);
         return;
     }
+    if (process.windowsStore) {
+        console.log('[AutoUpdater] Skipped — Microsoft Store handles updates for this install');
+        return;
+    }
 
     mainWindow = window;
     configure();
@@ -229,6 +233,9 @@ async function checkForUpdates(manual = true) {
     }
     if (!app.isPackaged || process.platform !== 'win32') {
         return { ...lastStatus, status: 'dev-skipped' };
+    }
+    if (process.windowsStore) {
+        return { ...lastStatus, status: 'store-managed' };
     }
     try {
         if (manual) broadcastStatus({ status: 'checking', error: null });
