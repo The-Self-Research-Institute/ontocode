@@ -15519,14 +15519,15 @@ const updateItemInState = useCallback(
                   </button>
                   <button
                     onClick={() => setShowCodeAssistant((v) => !v)}
-                    className={`px-3 py-1 text-sm rounded-md flex items-center gap-1 ${showCodeAssistant
+                    className={`relative overflow-hidden px-3 py-1 text-sm rounded-md flex items-center gap-1 ${showCodeAssistant
                         ? "bg-purple-600 text-white hover:bg-purple-700"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300"
                       }`}
                     title="Ask the AI assistant about this document"
                   >
-                    <Bot size={16} />
-                    Fix with AI
+                    {!showCodeAssistant && <span className="ask-ai-shimmer" />}
+                    <Bot size={16} className="relative" />
+                    <span className="relative">Ask AI</span>
                   </button>
                   {/* <button
                     onClick={() => {

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, AlertCircle, Send, X, Lock, Copy, Check } from "lucide-react";
+import { Bot, AlertCircle, Send, X, Lock, Copy, Check } from "lucide-react";
 import { hasApiKey, setStoredApiKey } from "../services/LlmInsightsService";
 import { CodeAssistantModelSwitcher } from "./CodeAssistantModelSwitcher";
 import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
@@ -292,11 +292,12 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--color-background)" }}>
       <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="bg-white bg-opacity-20 p-1.5 rounded-lg flex-shrink-0">
-            <Bot className="text-white" size={20} />
+          <div className="relative bg-white bg-opacity-20 p-1.5 rounded-lg flex-shrink-0">
+            <span className="absolute inset-0 rounded-lg bg-white ask-ai-glow" />
+            <Bot className="relative text-white" size={20} />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-bold text-white leading-tight">Fix with AI</h2>
+            <h2 className="text-sm font-bold text-white leading-tight">Ask AI</h2>
             {documentPath && <p className="text-purple-100 text-xs truncate max-w-[280px]">{documentPath}</p>}
           </div>
         </div>
@@ -400,7 +401,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
 
             {busy && (
               <div className="flex items-center gap-2 text-gray-500 text-sm px-1">
-                <Loader2 size={14} className="animate-spin" />
+                <span className="flex items-center gap-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-bounce" style={{ animationDelay: "300ms" }} />
+                </span>
                 <span>{statusText || "Working..."}</span>
                 <button onClick={cancelRun} className="ml-auto text-xs font-semibold text-purple-700 hover:underline">
                   Cancel

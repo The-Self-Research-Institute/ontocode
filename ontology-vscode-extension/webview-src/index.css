@@ -1145,3 +1145,32 @@ textarea.code-editor-textarea {
   /* Login/Signup form */
   .w-full.max-w-md { max-width: 100%; }
 }
+
+@keyframes ask-ai-glow-pulse {
+  0%, 100% { opacity: 0.12; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(1.12); }
+}
+.ask-ai-glow {
+  animation: ask-ai-glow-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes ask-ai-shimmer-sweep {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+.ask-ai-shimmer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.ask-ai-shimmer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: linear-gradient(115deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: ask-ai-shimmer-sweep 3.2s ease-in-out infinite;
+}

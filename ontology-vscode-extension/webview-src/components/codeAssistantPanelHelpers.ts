@@ -61,7 +61,7 @@ export function toFriendlyErrorMessage(raw: string): string {
   const looksTechnical = raw.length > 180 || TECHNICAL_ERROR_PATTERN.test(raw);
   if (!looksTechnical) return raw;
   // eslint-disable-next-line no-console
-  console.error("[Fix with AI] raw error:", raw);
+  console.error("[Ask AI] raw error:", raw);
   if (/timed?\s*out|timeout/i.test(raw)) {
     return "The server took too long to respond. Try again in a moment.";
   }
