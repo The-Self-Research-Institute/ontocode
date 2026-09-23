@@ -67,7 +67,7 @@ class AssistantSparqlToolServiceTest {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
         when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
         when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
-                .thenReturn(new CappedSparqlResult(List.of("s"), List.of(), false));
+                .thenReturn(new CappedSparqlResult(List.of("s"), List.of(), false, null));
 
         AssistantSparqlToolService.SparqlToolResult result = toolService.runSparql(
                 "s1", "u@x.com", "PREFIX ex: <http://example.org/> SELECT ?s WHERE { ?s a ex:Thing }");
@@ -88,19 +88,47 @@ class AssistantSparqlToolServiceTest {
     }
 
     @Test
-    void returnsCappedRowsAndTruncatedFlagOnSuccess() {
+    void returnsCappedRowsOnSuccessWhenUnderCap() {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
         when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
         when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
-                .thenReturn(new CappedSparqlResult(List.of("s", "p"), List.of(Map.of("s", "a", "p", "b")), true));
+                .thenReturn(new CappedSparqlResult(List.of("s", "p"), List.of(Map.of("s", "a", "p", "b")), false, null));
 
         AssistantSparqlToolService.SparqlToolResult result =
                 toolService.runSparql("s1", "u@x.com", "SELECT ?s ?p WHERE { ?s ?p ?o }");
 
         assertTrue(result.isOk());
-        assertTrue(result.isTruncated());
+        assertFalse(result.isTruncated());
         assertEquals(1, result.getRowCount());
         assertEquals(42L, result.getRevision());
+    }
+
+    @Test
+    void returnsRowCapExceededErrorWhenRowCapHit() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("s"), List.of(), true, "ROW_CAP_EXCEEDED"));
+
+        AssistantSparqlToolService.SparqlToolResult result =
+                toolService.runSparql("s1", "u@x.com", "SELECT ?s WHERE { ?s ?p ?o }");
+
+        assertFalse(result.isOk());
+        assertEquals("ROW_CAP_EXCEEDED", result.getErrorCode());
+    }
+
+    @Test
+    void returnsByteCapExceededErrorWhenByteCapHit() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("s"), List.of(), true, "BYTE_CAP_EXCEEDED"));
+
+        AssistantSparqlToolService.SparqlToolResult result =
+                toolService.runSparql("s1", "u@x.com", "SELECT ?s WHERE { ?s ?p ?o }");
+
+        assertFalse(result.isOk());
+        assertEquals("BYTE_CAP_EXCEEDED", result.getErrorCode());
     }
 
     @Test

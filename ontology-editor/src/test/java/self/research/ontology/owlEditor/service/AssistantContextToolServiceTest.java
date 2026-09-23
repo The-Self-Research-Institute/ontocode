@@ -71,7 +71,7 @@ class AssistantContextToolServiceTest {
         when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
         when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
                 .thenReturn(new CappedSparqlResult(List.of("p", "o"),
-                        List.of(Map.of("p", "rdf:type", "o", "owl:Class")), false));
+                        List.of(Map.of("p", "rdf:type", "o", "owl:Class")), false, null));
 
         ContextToolResult result = toolService.readContext(
                 "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "definitions");
@@ -80,6 +80,21 @@ class AssistantContextToolServiceTest {
         assertEquals("complete", result.getCoverage());
         assertEquals(1, result.getItems().size());
         assertEquals("definitions", result.getItems().get(0).getKind());
+    }
+
+    @Test
+    void identifierCapExceededMarksCoveragePartialWithoutFailingTheWholeCall() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("p", "o"), List.of(), true, "ROW_CAP_EXCEEDED"));
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "definitions");
+
+        assertTrue(result.isOk());
+        assertEquals("partial", result.getCoverage());
+        assertTrue(result.getItems().isEmpty());
     }
 
     @Test

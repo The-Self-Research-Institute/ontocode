@@ -25,7 +25,13 @@ export const READ_CONTEXT_TOOL: ToolDefinition = {
           required: ["type", "value"],
           properties: {
             type: { type: "string", enum: ["identifier", "range"] },
-            value: { type: "string" },
+            value: {
+              type: "string",
+              description:
+                "For type \"identifier\": a full IRI. For type \"range\": " +
+                "\"<format>:<startLine>-<lineCount>\", e.g. \"turtle:100-50\" for 50 lines starting at line 100. " +
+                "format is one of turtle, rdfxml, manchester, functional.",
+            },
           },
         },
       },

@@ -1022,7 +1022,8 @@ public class SparqlDatasetService {
         }
     }
 
-    public record CappedSparqlResult(List<String> vars, List<Map<String, String>> rows, boolean truncated) {}
+    public record CappedSparqlResult(List<String> vars, List<Map<String, String>> rows, boolean truncated,
+                                      String capExceeded) {}
 
     public CappedSparqlResult execSelectCapped(String projectId, String sparqlQuery, int timeoutSeconds,
                                                 int maxRows, long maxBytesApprox) {
@@ -1042,13 +1043,13 @@ public class SparqlDatasetService {
 
             List<String> vars;
             List<Map<String, String>> rows = new ArrayList<>();
-            boolean truncated = false;
+            String capExceeded = null;
             long approxBytes = 0;
             try (TupleQueryResult result = query.evaluate()) {
                 vars = new ArrayList<>(result.getBindingNames());
                 while (result.hasNext()) {
                     if (rows.size() >= maxRows) {
-                        truncated = true;
+                        capExceeded = "ROW_CAP_EXCEEDED";
                         break;
                     }
                     BindingSet binding_ = result.next();
@@ -1059,14 +1060,15 @@ public class SparqlDatasetService {
                         row.put(var, value);
                     }
                     if (approxBytes > maxBytesApprox) {
-                        truncated = true;
+                        capExceeded = "BYTE_CAP_EXCEEDED";
                         break;
                     }
                     rows.add(row);
                 }
             }
-            log.info("[GRAPHDB] capped SELECT project={} rows={} truncated={}", projectId, rows.size(), truncated);
-            return new CappedSparqlResult(vars, rows, truncated);
+            boolean truncated = capExceeded != null;
+            log.info("[GRAPHDB] capped SELECT project={} rows={} capExceeded={}", projectId, rows.size(), capExceeded);
+            return new CappedSparqlResult(vars, rows, truncated, capExceeded);
         } catch (Exception e) {
             log.error("[GRAPHDB] capped SELECT failed for project {}", projectId, e);
             throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);

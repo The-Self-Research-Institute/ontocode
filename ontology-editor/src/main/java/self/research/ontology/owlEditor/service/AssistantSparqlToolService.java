@@ -60,6 +60,12 @@ public class AssistantSparqlToolService {
         try {
             SparqlDatasetService.CappedSparqlResult capped = datasetService.execSelectCapped(
                     session.getProjectId(), query, timeoutSeconds, maxRows, maxBytes);
+            if (capped.capExceeded() != null) {
+                return SparqlToolResult.builder().ok(false).errorCode(capped.capExceeded())
+                        .message("Query matched more rows/bytes than the assistant's cap allows ("
+                                + capped.rows().size() + " rows collected before the cap). Narrow the query and try again.")
+                        .build();
+            }
             return SparqlToolResult.builder()
                     .ok(true)
                     .rows(capped.rows())

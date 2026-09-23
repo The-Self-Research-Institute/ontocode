@@ -94,6 +94,10 @@ public class AssistantContextToolService {
                 : "SELECT ?s ?p WHERE { ?s ?p <" + iri + "> }";
         SparqlDatasetService.CappedSparqlResult result =
                 datasetService.execSelectCapped(projectId, query, 10, 100, 50_000);
+        if (result.capExceeded() != null) {
+            throw new IllegalStateException("Identifier " + iri + " has more " + kind
+                    + " than the assistant's read cap allows (" + result.capExceeded() + ")");
+        }
 
         StringBuilder text = new StringBuilder();
         for (Map<String, String> row : result.rows()) {
