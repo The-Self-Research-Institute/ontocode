@@ -52,6 +52,7 @@ import {
   Crown,
   Rocket,
   Bug,
+  Bot,
   FolderOpen,
   LayoutDashboard,
   AlertTriangle,
@@ -110,6 +111,7 @@ import { CollaborativeCursors } from "./CollaborativeCursor";
 import ShareDialog from "./ShareDialog";
 import MergeWizard from "./MergeWizard";
 import { ReportIssueModal } from "./ReportIssueModal";
+import { CodeAssistantPanel } from "./CodeAssistantPanel";
 import { UserGuideModal } from "./UserGuideModal";
 import { OpenSourceLicensesModal } from "./OpenSourceLicensesModal";
 import ThemeSettings from "./ThemeSettings";
@@ -209,6 +211,7 @@ const TopMenuBar = ({
   onOpenPluginMarketplace,
   hasPluginUpdates,
   onOpenHistory,
+  onOpenAssistant,
   onReportBug,
   onRequestFeature,
   onOpenUserGuide,
@@ -269,6 +272,7 @@ const TopMenuBar = ({
   onOpenPluginMarketplace: () => void;
   hasPluginUpdates?: boolean;
   onOpenHistory: () => void;
+  onOpenAssistant: () => void;
   onReportBug: () => void;
   onRequestFeature: () => void;
   onOpenUserGuide: () => void;
@@ -779,6 +783,16 @@ const TopMenuBar = ({
                         User Guide
                       </button>
                     )}
+                    <button
+                      onClick={() => {
+                        onOpenAssistant();
+                        setOpenMenu(null);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <Bot size={14} />
+                      Fix with AI
+                    </button>
                     <button
                       onClick={() => {
                         onReportBug();
@@ -2407,6 +2421,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
+  const [isCodeAssistantOpen, setIsCodeAssistantOpen] = useState(false);
   const [reportIssueType, setReportIssueType] = useState<"Bug" | "Task">("Bug");
   const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -18545,6 +18560,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           hasPluginUpdates={hasPluginUpdates}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
+          onOpenAssistant={() => setIsCodeAssistantOpen(true)}
            onReportBug={() => {
             setReportIssueType("Bug");
             setIsReportIssueModalOpen(true);
@@ -19606,6 +19622,16 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           ontologyFilePath={activeFileName || undefined}
           initialIssueType={reportIssueType}
           onClose={() => setIsReportIssueModalOpen(false)}
+        />
+      )}
+
+      {/* Code Assistant Panel */}
+      {isCodeAssistantOpen && (
+        <CodeAssistantPanel
+          projectName={projectId || undefined}
+          projectId={projectId || undefined}
+          documentPath={activeFileName || undefined}
+          onClose={() => setIsCodeAssistantOpen(false)}
         />
       )}
 
