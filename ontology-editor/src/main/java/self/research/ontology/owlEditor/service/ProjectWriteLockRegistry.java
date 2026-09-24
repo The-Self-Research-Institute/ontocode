@@ -2,33 +2,49 @@ package self.research.ontology.owlEditor.service;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+@Slf4j
 @Service
 public class ProjectWriteLockRegistry {
 
     static final String WAIT_TIMER = "assistant.lock.wait";
     static final String HOLD_TIMER = "assistant.lock.hold";
     static final String MODE_TAG = "mode";
+    public static final String LOCAL_MODE = "local";
+    public static final String MONGO_MODE = "mongo";
 
     private final ConcurrentHashMap<String, ReentrantReadWriteLock> locks = new ConcurrentHashMap<>();
+    private final ProjectWriteLeaseManager leaseManager;
     private final Timer exclusiveWait;
     private final Timer exclusiveHold;
     private final Timer sharedWait;
     private final Timer sharedHold;
 
     public ProjectWriteLockRegistry() {
-        this((MeterRegistry) null);
+        this(null, null);
     }
 
     public ProjectWriteLockRegistry(MeterRegistry meterRegistry) {
+        this(null, meterRegistry);
+    }
+
+    public ProjectWriteLockRegistry(ProjectWriteLeaseManager leaseManager, MeterRegistry meterRegistry) {
+        this.leaseManager = leaseManager;
         this.exclusiveWait = timer(meterRegistry, WAIT_TIMER, "exclusive");
         this.exclusiveHold = timer(meterRegistry, HOLD_TIMER, "exclusive");
         this.sharedWait = timer(meterRegistry, WAIT_TIMER, "shared");
@@ -36,8 +52,44 @@ public class ProjectWriteLockRegistry {
     }
 
     @Autowired
-    public ProjectWriteLockRegistry(ObjectProvider<MeterRegistry> meterRegistry) {
-        this(meterRegistry.getIfAvailable());
+    public ProjectWriteLockRegistry(
+            @Value("${ontocode.assistant.lock.mode:local}") String mode,
+            @Value("${ontocode.assistant.lock.lease-ttl-ms:30000}") long leaseTtlMs,
+            @Value("${ontocode.assistant.lock.lease-renew-interval-ms:10000}") long leaseRenewIntervalMs,
+            @Value("${ontocode.assistant.lock.lease-acquire-timeout-ms:120000}") long leaseAcquireTimeoutMs,
+            ObjectProvider<MongoTemplate> mongoTemplate,
+            ObjectProvider<MeterRegistry> meterRegistry) {
+        this(createLeaseManager(mode, leaseTtlMs, leaseRenewIntervalMs, leaseAcquireTimeoutMs,
+                mongoTemplate, meterRegistry.getIfAvailable()), meterRegistry.getIfAvailable());
+    }
+
+    static ProjectWriteLeaseManager createLeaseManager(String mode, long leaseTtlMs, long leaseRenewIntervalMs,
+                                                       long leaseAcquireTimeoutMs,
+                                                       ObjectProvider<MongoTemplate> mongoTemplate,
+                                                       MeterRegistry meterRegistry) {
+        String normalized = mode == null ? LOCAL_MODE : mode.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isEmpty() || LOCAL_MODE.equals(normalized)) {
+            return null;
+        }
+        if (!MONGO_MODE.equals(normalized)) {
+            throw new IllegalStateException("Unknown ontocode.assistant.lock.mode '" + mode
+                    + "'; expected " + LOCAL_MODE + " or " + MONGO_MODE);
+        }
+        MongoTemplate template = mongoTemplate.getIfAvailable();
+        if (template == null) {
+            throw new IllegalStateException("ontocode.assistant.lock.mode=mongo needs a MongoTemplate bean");
+        }
+        ProjectWriteLeaseManager.Settings settings = ProjectWriteLeaseManager.Settings.of(
+                Duration.ofMillis(leaseTtlMs),
+                Duration.ofMillis(leaseRenewIntervalMs),
+                Duration.ofMillis(leaseAcquireTimeoutMs));
+        log.info("[WriteLock] Using Mongo write leases (ttl {} ms, renew every {} ms, wait up to {} ms)",
+                leaseTtlMs, leaseRenewIntervalMs, leaseAcquireTimeoutMs);
+        return new ProjectWriteLeaseManager(template, Clock.systemUTC(), settings, meterRegistry);
+    }
+
+    public String getMode() {
+        return leaseManager == null ? LOCAL_MODE : MONGO_MODE;
     }
 
     public <T> T runExclusive(String projectId, Callable<T> work) throws Exception {
@@ -45,11 +97,19 @@ public class ProjectWriteLockRegistry {
         ReentrantReadWriteLock.WriteLock lock = lockFor(projectId).writeLock();
         lock.lock();
         try {
-            record(exclusiveWait, waitStart);
+            ProjectWriteLeaseManager.Lease lease;
+            try {
+                lease = leaseManager != null && lock.getHoldCount() == 1 ? leaseManager.acquire(projectId) : null;
+            } finally {
+                record(exclusiveWait, waitStart);
+            }
             long holdStart = System.nanoTime();
             try {
                 return work.call();
             } finally {
+                if (lease != null) {
+                    lease.release();
+                }
                 record(exclusiveHold, holdStart);
             }
         } finally {
@@ -71,6 +131,13 @@ public class ProjectWriteLockRegistry {
             }
         } finally {
             lock.unlock();
+        }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        if (leaseManager != null) {
+            leaseManager.close();
         }
     }
 

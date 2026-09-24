@@ -5,19 +5,32 @@ import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import self.research.ontology.owlEditor.document.ProjectWriteLeaseDocument;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ProjectWriteLockRegistryTest {
 
@@ -177,7 +190,12 @@ class ProjectWriteLockRegistryTest {
                 return null;
             }));
             assertTrue(readerStarted.await(4, TimeUnit.SECONDS));
-            Future<?> writer = pool.submit(() -> registry.runExclusive("proj-1", () -> null));
+            CountDownLatch writerAboutToLock = new CountDownLatch(1);
+            Future<?> writer = pool.submit(() -> {
+                writerAboutToLock.countDown();
+                return registry.runExclusive("proj-1", () -> null);
+            });
+            assertTrue(writerAboutToLock.await(4, TimeUnit.SECONDS));
             Thread.sleep(250);
             releaseReader.countDown();
             reader.get(4, TimeUnit.SECONDS);
@@ -232,5 +250,244 @@ class ProjectWriteLockRegistryTest {
         Timer timer = meters.find(name).tag("mode", mode).timer();
         assertNotNull(timer, name + " " + mode);
         return timer;
+    }
+
+    private static ProjectWriteLeaseManager leaseManager(InMemoryLeaseCollection collection, Duration acquireTimeout) {
+        return new ProjectWriteLeaseManager(collection.template, Clock.systemUTC(),
+                new ProjectWriteLeaseManager.Settings(Duration.ofSeconds(30), Duration.ofSeconds(10), acquireTimeout,
+                        Duration.ofMillis(10), Duration.ofMillis(40)),
+                null);
+    }
+
+    @Test
+    @Timeout(5)
+    void mongoModeHoldsTheProjectLeaseOnlyWhileExclusiveWorkRuns() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(1)), null);
+        try {
+            AtomicReference<ProjectWriteLeaseDocument> duringWork = new AtomicReference<>();
+
+            registry.runExclusive("proj-1", () -> {
+                duringWork.set(collection.get("proj-1"));
+                return null;
+            });
+
+            assertEquals("mongo", registry.getMode());
+            assertNotNull(duringWork.get());
+            assertNotNull(duringWork.get().getOwnerToken());
+            assertNull(collection.get("proj-1"));
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    @Timeout(5)
+    void mongoModeReleasesTheLeaseAndLocalLockWhenTheWorkThrows() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(1)), null);
+        try {
+            assertThrows(IllegalStateException.class, () -> registry.runExclusive("proj-1", () -> {
+                throw new IllegalStateException("apply failed");
+            }));
+
+            assertNull(collection.get("proj-1"));
+            assertEquals("again", registry.runExclusive("proj-1", () -> "again"));
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    @Timeout(5)
+    void mongoModeNestedExclusiveOnTheSameThreadTakesTheLeaseOnce() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofMillis(300)), null);
+        try {
+            String result = registry.runExclusive("proj-1", () -> registry.runExclusive("proj-1", () -> {
+                assertNotNull(collection.get("proj-1"));
+                return "nested";
+            }));
+
+            assertEquals("nested", result);
+            assertEquals(1, collection.insertAttempts.get());
+            assertNull(collection.get("proj-1"));
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    void twoNodesSharingTheLeaseStoreNeverRunExclusiveWorkForTheSameProjectAtOnce() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        ProjectWriteLockRegistry nodeA = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(5)), null);
+        ProjectWriteLockRegistry nodeB = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(5)), null);
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maxActive = new AtomicInteger();
+        AtomicInteger completed = new AtomicInteger();
+        ExecutorService pool = Executors.newFixedThreadPool(4);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (int worker = 0; worker < 4; worker++) {
+                ProjectWriteLockRegistry node = worker % 2 == 0 ? nodeA : nodeB;
+                futures.add(pool.submit(() -> {
+                    for (int i = 0; i < 5; i++) {
+                        node.runExclusive("proj-1", () -> {
+                            maxActive.accumulateAndGet(active.incrementAndGet(), Math::max);
+                            Thread.sleep(5);
+                            active.decrementAndGet();
+                            return completed.incrementAndGet();
+                        });
+                    }
+                    return null;
+                }));
+            }
+            for (Future<?> future : futures) {
+                future.get(9, TimeUnit.SECONDS);
+            }
+        } finally {
+            pool.shutdownNow();
+            nodeA.shutdown();
+            nodeB.shutdown();
+        }
+
+        assertEquals(20, completed.get());
+        assertEquals(1, maxActive.get());
+        assertNull(collection.get("proj-1"));
+    }
+
+    @Test
+    @Timeout(5)
+    void mongoModeExclusiveOnAnotherNodeWaitsUntilTheFirstNodeReleases() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ProjectWriteLockRegistry nodeA = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(3)), null);
+        ProjectWriteLockRegistry nodeB = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(3)), meters);
+        CountDownLatch aEntered = new CountDownLatch(1);
+        CountDownLatch releaseA = new CountDownLatch(1);
+        AtomicBoolean bRanWhileAActive = new AtomicBoolean(false);
+        AtomicBoolean aActive = new AtomicBoolean(true);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> a = pool.submit(() -> nodeA.runExclusive("proj-1", () -> {
+                aEntered.countDown();
+                releaseA.await(4, TimeUnit.SECONDS);
+                aActive.set(false);
+                return null;
+            }));
+            assertTrue(aEntered.await(4, TimeUnit.SECONDS));
+            CountDownLatch bAboutToLock = new CountDownLatch(1);
+            Future<?> b = pool.submit(() -> {
+                bAboutToLock.countDown();
+                return nodeB.runExclusive("proj-1", () -> {
+                    bRanWhileAActive.set(aActive.get());
+                    return null;
+                });
+            });
+            assertTrue(bAboutToLock.await(4, TimeUnit.SECONDS));
+            Thread.sleep(250);
+            assertFalse(b.isDone());
+            releaseA.countDown();
+            a.get(4, TimeUnit.SECONDS);
+            b.get(4, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+            nodeA.shutdown();
+            nodeB.shutdown();
+        }
+
+        assertFalse(bRanWhileAActive.get());
+        assertTrue(timer(meters, "assistant.lock.wait", "exclusive").max(TimeUnit.MILLISECONDS) >= 200);
+    }
+
+    @Test
+    @Timeout(5)
+    void mongoModeLeaseTimeoutSkipsTheWorkAndFreesTheLocalLock() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        collection.put("proj-1", "other-node-token", Instant.now().plusSeconds(600));
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofMillis(200)), meters);
+        AtomicBoolean workRan = new AtomicBoolean(false);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            assertThrows(ProjectWriteLeaseUnavailableException.class, () -> registry.runExclusive("proj-1", () -> {
+                workRan.set(true);
+                return null;
+            }));
+
+            assertFalse(workRan.get());
+            assertEquals("other-node-token", collection.get("proj-1").getOwnerToken());
+            assertEquals(1, timer(meters, "assistant.lock.wait", "exclusive").count());
+            assertEquals(0, timer(meters, "assistant.lock.hold", "exclusive").count());
+            assertEquals("read", pool.submit(() -> registry.runShared("proj-1", () -> "read")).get(2, TimeUnit.SECONDS));
+        } finally {
+            pool.shutdownNow();
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    @Timeout(5)
+    void mongoModeSharedReadsStayLocalAndNeverTouchTheLeaseStore() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        collection.put("proj-1", "other-node-token", Instant.now().plusSeconds(600));
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofMillis(100)), null);
+        try {
+            assertEquals("read", registry.runShared("proj-1", () -> "read"));
+
+            assertEquals(0, collection.insertAttempts.get());
+            assertEquals("other-node-token", collection.get("proj-1").getOwnerToken());
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    void springConstructorDefaultsToLocalModeAndNeverAsksForMongo() throws Exception {
+        ObjectProvider<MongoTemplate> mongo = provider(null);
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry("local", 30000, 10000, 120000, mongo, provider(null));
+
+        assertEquals("local", registry.getMode());
+        assertEquals(1, (int) registry.runExclusive("proj-1", () -> 1));
+    }
+
+    @Test
+    void springConstructorBuildsMongoModeFromTheProperty() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(" Mongo ", 30000, 10000, 1000,
+                provider(collection.template), provider(meters));
+        try {
+            AtomicReference<ProjectWriteLeaseDocument> duringWork = new AtomicReference<>();
+            registry.runExclusive("proj-1", () -> {
+                duringWork.set(collection.get("proj-1"));
+                return null;
+            });
+
+            assertEquals("mongo", registry.getMode());
+            assertNotNull(duringWork.get());
+            assertEquals(1, timer(meters, "assistant.lock.hold", "exclusive").count());
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    void springConstructorRejectsMongoModeWithoutAMongoTemplateAndUnknownModes() {
+        assertThrows(IllegalStateException.class,
+                () -> new ProjectWriteLockRegistry("mongo", 30000, 10000, 1000, provider(null), provider(null)));
+        assertThrows(IllegalStateException.class,
+                () -> new ProjectWriteLockRegistry("redis", 30000, 10000, 1000, provider(null), provider(null)));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ProjectWriteLockRegistry("mongo", 10000, 10000, 1000,
+                        provider(new InMemoryLeaseCollection().template), provider(null)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> ObjectProvider<T> provider(T value) {
+        ObjectProvider<T> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(value);
+        return provider;
     }
 }
