@@ -422,6 +422,24 @@ class AssistantEditProposalServiceTest {
     }
 
     @Test
+    void coverageMatchesWholeTokensAndIgnoresStringLiteralsInTurtle() throws Exception {
+        mockLiveContent("turtle", 1, 1, ":OldClass a owl:Class .");
+        Path fullDocument = Files.createTempFile("proposal-fulldoc-", ".ttl");
+        Files.writeString(fullDocument,
+                "@prefix : <http://example.org/> .\n"
+                        + ":OldClass a owl:Class .\n"
+                        + ":OldClassExtra a owl:Class .\n"
+                        + ":Other rdfs:comment \"\"\"mentions\n:OldClass in a long string\"\"\" .\n",
+                StandardCharsets.UTF_8);
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(fullDocument);
+        EditInput edit = new EditInput("turtle", new EditRange(1, 1), ":OldClass a owl:Class .", ":NewClass a owl:Class .");
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(new EditGroupInput("c1", List.of(edit))));
+
+        assertTrue(checkNamed(result.getGroups().get(0), "complete_reference_coverage").get().passed());
+    }
+
+    @Test
     void editThatDoesNotRemoveAnyIdentifierSkipsCoverageScanEntirely() throws Exception {
         mockLiveContent("turtle", 1, 1, ":A rdfs:comment \"old text\" .");
         EditInput edit = new EditInput("turtle", new EditRange(1, 1), ":A rdfs:comment \"old text\" .", ":A rdfs:comment \"new text\" .");
