@@ -25,6 +25,7 @@ public class AssistantSparqlToolService {
     private final AssistantSessionService sessionService;
     private final SparqlDatasetService datasetService;
     private final ProjectWriteLockRegistry lockRegistry;
+    private final AssistantAdmissionLimiter admissionLimiter;
 
     @Value("${assistant.sparql.max-rows:200}")
     private int maxRows;
@@ -36,10 +37,12 @@ public class AssistantSparqlToolService {
     private int timeoutSeconds;
 
     public AssistantSparqlToolService(AssistantSessionService sessionService, SparqlDatasetService datasetService,
-                                       ProjectWriteLockRegistry lockRegistry) {
+                                       ProjectWriteLockRegistry lockRegistry,
+                                       AssistantAdmissionLimiter admissionLimiter) {
         this.sessionService = sessionService;
         this.datasetService = datasetService;
         this.lockRegistry = lockRegistry;
+        this.admissionLimiter = admissionLimiter;
     }
 
     public SparqlToolResult runSparql(String sessionId, String userEmail, String query) {
@@ -59,6 +62,21 @@ public class AssistantSparqlToolService {
                     .message("Only SELECT queries are allowed").build();
         }
 
+        AssistantAdmissionLimiter.ToolAdmission admission =
+                admissionLimiter.tryAcquireTool(userEmail, session.getProjectId());
+        if (admission instanceof AssistantAdmissionLimiter.Rejected rejected) {
+            return SparqlToolResult.builder().ok(false).errorCode("RATE_LIMITED")
+                    .message("Too many assistant tool calls are running (" + rejected.limit()
+                            + " limit). Retry in " + rejected.retryAfterSeconds() + "s.")
+                    .retryAfterSeconds(rejected.retryAfterSeconds())
+                    .build();
+        }
+        try (AssistantAdmissionLimiter.Admitted ignored = (AssistantAdmissionLimiter.Admitted) admission) {
+            return runAdmitted(sessionId, session, query);
+        }
+    }
+
+    private SparqlToolResult runAdmitted(String sessionId, AssistantSessionDocument session, String query) {
         if (!sessionService.tryConsumeRetrievalAttempt(sessionId)) {
             return SparqlToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
                     .message("Retrieval budget exhausted for this session")
@@ -134,5 +152,6 @@ public class AssistantSparqlToolService {
         private Integer retrievalCallsRemaining;
         private String errorCode;
         private String message;
+        private Integer retryAfterSeconds;
     }
 }

@@ -8,4 +8,6 @@ public class AssistantSessionCreateRequest {
     private String documentPath;
     private String actionType;
     private String actionContext;
+    private String provider;
+    private String model;
 }

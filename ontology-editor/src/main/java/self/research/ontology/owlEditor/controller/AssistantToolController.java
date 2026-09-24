@@ -2,6 +2,8 @@ package self.research.ontology.owlEditor.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,6 +20,7 @@ import self.research.ontology.owlEditor.service.AssistantSparqlToolService;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService.SparqlToolResult;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Slf4j
@@ -26,6 +29,8 @@ import java.util.Map;
 @CrossOrigin(originPatterns = "*", allowedHeaders = "*", allowCredentials = "false",
         methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class AssistantToolController {
+
+    private static final String RATE_LIMITED = "RATE_LIMITED";
 
     private final AssistantSparqlToolService sparqlToolService;
     private final AssistantContextToolService contextToolService;
@@ -42,7 +47,7 @@ public class AssistantToolController {
         return JwtIdentityExtractor.extractEmail(httpRequest)
                 .map(userEmail -> {
                     SparqlToolResult result = sparqlToolService.runSparql(sessionId, userEmail, request.query());
-                    return ResponseEntity.ok(toBody(result));
+                    return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
                 })
                 .orElseGet(AssistantToolController::unauthorized);
     }
@@ -54,14 +59,35 @@ public class AssistantToolController {
                 .map(userEmail -> {
                     ContextToolResult result = contextToolService.readContext(
                             sessionId, userEmail, request.targets(), request.kind());
-                    return ResponseEntity.ok(toBody(result));
+                    return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
                 })
                 .orElseGet(AssistantToolController::unauthorized);
     }
 
+    private static ResponseEntity<Map<String, Object>> respond(String errorCode, Integer retryAfterSeconds, Map<String, Object> body) {
+        if (RATE_LIMITED.equals(errorCode)) {
+            int retryAfter = retryAfterSeconds != null ? retryAfterSeconds : 1;
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfter))
+                    .body(body);
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    private static Map<String, Object> errorBody(String errorCode, String message, Integer retryAfterSeconds) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", false);
+        body.put("errorCode", errorCode);
+        body.put("message", message);
+        if (retryAfterSeconds != null) {
+            body.put("retryAfterSeconds", retryAfterSeconds);
+        }
+        return body;
+    }
+
     private static Map<String, Object> toBody(SparqlToolResult result) {
         if (!result.isOk()) {
-            return Map.of("ok", false, "errorCode", result.getErrorCode(), "message", result.getMessage());
+            return errorBody(result.getErrorCode(), result.getMessage(), result.getRetryAfterSeconds());
         }
         return Map.of(
                 "ok", true,
@@ -72,7 +98,7 @@ public class AssistantToolController {
 
     private static Map<String, Object> toBody(ContextToolResult result) {
         if (!result.isOk()) {
-            return Map.of("ok", false, "errorCode", result.getErrorCode(), "message", result.getMessage());
+            return errorBody(result.getErrorCode(), result.getMessage(), result.getRetryAfterSeconds());
         }
         return Map.of(
                 "ok", true,
