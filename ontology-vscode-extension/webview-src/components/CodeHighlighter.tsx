@@ -68,6 +68,7 @@ interface CodeHighlighterProps {
   canExport?: boolean;
   /** Called when a gated export action is clicked on a non-paid plan. */
   onExportProAction?: () => void;
+  onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
 }
 
 /** Imperative handle so callers outside the editor (e.g. a Problems panel) can jump to a line. */
@@ -107,6 +108,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   syntaxError,
   canExport = true,
   onExportProAction,
+  onUnsavedChangesChange,
 }, forwardedRef) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -122,6 +124,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   const [wordWrap, setWordWrap] = useState(false);
   const [editedContent, setEditedContent] = useState<Map<number, string>>(new Map());
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const onUnsavedChangesChangeRef = useRef(onUnsavedChangesChange);
+  onUnsavedChangesChangeRef.current = onUnsavedChangesChange;
+  useEffect(() => {
+    onUnsavedChangesChangeRef.current?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges]);
+  useEffect(() => () => onUnsavedChangesChangeRef.current?.(false), []);
   const [showAddDoiDialog, setShowAddDoiDialog] = useState(false);
   const [doiInputValue, setDoiInputValue] = useState("");
   const [doiInputError, setDoiInputError] = useState<string | null>(null);

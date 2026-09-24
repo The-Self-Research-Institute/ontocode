@@ -9,7 +9,15 @@ import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
 import { createAssistantSession, applyEditGroup, AssistantApiError, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
 import { runAssistantLoop, type LoopOutcome, type HistoryTurn, type ContextEvent } from "../services/codeAssistantLoop";
-import { ACTIONS, getApiBaseUrl, buildSystemPrompt, describeLoopStage, toFriendlyErrorMessage, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
+import {
+  ACTIONS,
+  getApiBaseUrl,
+  buildSystemPrompt,
+  describeLoopStage,
+  resolveApplyBlock,
+  toFriendlyErrorMessage,
+  type CodeAssistantAction,
+} from "./codeAssistantPanelHelpers";
 import {
   applyRemapResult,
   buildApplyAllQueue,
@@ -27,6 +35,7 @@ interface CodeAssistantPanelProps {
   projectId?: string;
   projectName?: string;
   documentPath?: string;
+  hasUnsavedCodeViewChanges?: boolean;
   onClose?: () => void;
 }
 
@@ -63,6 +72,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   projectId,
   projectName,
   documentPath,
+  hasUnsavedCodeViewChanges = false,
   onClose,
 }) => {
   const { user } = useAuth();
@@ -84,6 +94,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const applyBusyRef = useRef(false);
   const [applyBusy, setApplyBusy] = useState(false);
   const mountedRef = useRef(true);
+  const applyBlock = resolveApplyBlock({ hasUnsavedCodeViewChanges, recoveryLocked: false });
+  const applyBlockRef = useRef(applyBlock);
+  applyBlockRef.current = applyBlock;
 
   const commitEntries = (updater: (prev: ChatEntry[]) => ChatEntry[]) => {
     entriesRef.current = updater(entriesRef.current);
@@ -264,9 +277,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     }
   };
 
-  const currentApplyBlock = (): string | null => {
-    return null;
-  };
+  const currentApplyBlock = (): string | null => applyBlockRef.current?.shortReason ?? null;
 
   const applyGroup = async (entryId: string, sessionId: string, serverGroupId: string) => {
     if (applyBusyRef.current || currentApplyBlock()) return;
@@ -484,6 +495,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                       applyAllRun={entry.applyAllRun ?? null}
                       applyAllSummary={entry.applyAllSummary ?? null}
                       applyBusy={applyBusy}
+                      applyBlockedReason={applyBlock?.message ?? null}
                     />
                     <CodeAssistantContextUsed events={entry.contextUsed} />
                   </div>

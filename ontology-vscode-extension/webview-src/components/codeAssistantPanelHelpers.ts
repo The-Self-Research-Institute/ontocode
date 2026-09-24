@@ -55,6 +55,27 @@ export function describeLoopStage(event: LoopStageEvent): string {
   return "";
 }
 
+export const UNSAVED_CODE_VIEW_MESSAGE =
+  "Save or discard your Code View changes first, then ask again so the proposal matches the saved version.";
+
+export const RECOVERY_LOCKED_APPLY_MESSAGE =
+  "Applying is paused until the recovery notice above is resolved.";
+
+export interface ApplyBlock {
+  message: string;
+  shortReason: string;
+}
+
+export function resolveApplyBlock(state: { hasUnsavedCodeViewChanges: boolean; recoveryLocked: boolean }): ApplyBlock | null {
+  if (state.recoveryLocked) {
+    return { message: RECOVERY_LOCKED_APPLY_MESSAGE, shortReason: "the project is locked for recovery" };
+  }
+  if (state.hasUnsavedCodeViewChanges) {
+    return { message: UNSAVED_CODE_VIEW_MESSAGE, shortReason: "there are unsaved Code View changes" };
+  }
+  return null;
+}
+
 const TECHNICAL_ERROR_PATTERN = /Exception|\{[a-zA-Z]+=|com\.[a-z][\w.]*\.|Caused by:|StackTrace|at [\w.$]+\(/;
 
 export function toFriendlyErrorMessage(raw: string): string {

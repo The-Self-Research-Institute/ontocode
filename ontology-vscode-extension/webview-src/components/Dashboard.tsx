@@ -2579,6 +2579,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => window.removeEventListener("ontocode:export-status", onExportStatus);
   }, []);
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
+  const [codeViewHasUnsavedEdits, setCodeViewHasUnsavedEdits] = useState(false);
   const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
   // Opaque version handed back by /content and /content-page, checked back on save so a
   // mutation made elsewhere (another tab, Class Hierarchy edit) while Code View was open
@@ -15686,6 +15687,7 @@ const updateItemInState = useCallback(
                         readOnly={isViewOnlyMember || !!codeViewTruncation || !!codeViewPage}
                         canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
                         onExportProAction={handleExportProAction}
+                        onUnsavedChangesChange={setCodeViewHasUnsavedEdits}
                       />
                     )}
                   </div>
@@ -15718,6 +15720,7 @@ const updateItemInState = useCallback(
                     projectName={projectId || undefined}
                     projectId={projectId || undefined}
                     documentPath={activeFileName || undefined}
+                    hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
                     onClose={() => setShowCodeAssistant(false)}
                   />
                 </div>
