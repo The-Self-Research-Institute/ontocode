@@ -111,6 +111,16 @@ import ShareDialog from "./ShareDialog";
 import MergeWizard from "./MergeWizard";
 import { ReportIssueModal } from "./ReportIssueModal";
 import { CodeAssistantPanel } from "./CodeAssistantPanel";
+import { CodeAssistantRecoveryBanner } from "./CodeAssistantRecoveryBanner";
+import {
+  clearRecoveryLock,
+  fetchRecoveryState,
+  RecoveryApiError,
+  restorePreviousVersion,
+  UNLOCKED_RECOVERY_STATE,
+  type RecoveryState,
+} from "../services/codeAssistantRecovery";
+import { getApiBaseUrl as getCodeAssistantApiBaseUrl } from "./codeAssistantPanelHelpers";
 import { AskAiIcon } from "./AskAiIcon";
 import { UserGuideModal } from "./UserGuideModal";
 import { OpenSourceLicensesModal } from "./OpenSourceLicensesModal";
@@ -2499,6 +2509,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [highlightedLineNumbers, setHighlightedLineNumbers] = useState<Map<number, { startCol: number; endCol: number } | "full"> | undefined>(undefined);
   const pendingHighlightTextsRef = useRef<string[] | null>(null);
   const highlightClearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [recoveryState, setRecoveryState] = useState<RecoveryState>(UNLOCKED_RECOVERY_STATE);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const recoveryRequestRef = useRef(0);
   const [isDownloadingCodeView, setIsDownloadingCodeView] = useState(false);
   // Tracks the in-flight Code View download's requestId so the real
   // "downloadOntologyComplete"/"downloadOntologyFailed" host reply can clear
@@ -12909,6 +12923,56 @@ const updateItemInState = useCallback(
     [fetchCodeViewContent, codeViewFormat],
   );
 
+  const refreshRecoveryState = useCallback(async () => {
+    const requestId = ++recoveryRequestRef.current;
+    if (!projectId) {
+      setRecoveryState(UNLOCKED_RECOVERY_STATE);
+      return;
+    }
+    try {
+      const next = await fetchRecoveryState(getCodeAssistantApiBaseUrl(), user?.token, projectId);
+      if (requestId === recoveryRequestRef.current) setRecoveryState(next);
+    } catch (e) {
+      if (requestId !== recoveryRequestRef.current) return;
+      if (e instanceof RecoveryApiError && e.status === 404) setRecoveryState(UNLOCKED_RECOVERY_STATE);
+    }
+  }, [projectId, user?.token]);
+
+  useEffect(() => {
+    setRecoveryState(UNLOCKED_RECOVERY_STATE);
+    setRecoveryError(null);
+    void refreshRecoveryState();
+  }, [projectId, user?.token, refreshRecoveryState]);
+
+  useEffect(() => {
+    if (!recoveryState.locked) return;
+    const recheck = () => void refreshRecoveryState();
+    window.addEventListener("focus", recheck);
+    return () => window.removeEventListener("focus", recheck);
+  }, [recoveryState.locked, refreshRecoveryState]);
+
+  const runDashboardRecoveryAction = async (
+    request: (apiBaseUrl: string, token: string | undefined, projectId: string) => Promise<void>,
+    failurePrefix: string,
+  ) => {
+    if (!projectId) return;
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      await request(getCodeAssistantApiBaseUrl(), user?.token, projectId);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "unexpected error";
+      setRecoveryError(`${failurePrefix}: ${message}`);
+    } finally {
+      await refreshRecoveryState();
+      setRecoveryBusy(false);
+    }
+  };
+
+  const restoreProjectFromRecovery = () =>
+    runDashboardRecoveryAction(restorePreviousVersion, "Couldn't restore the previous version");
+  const unlockProjectFromRecovery = () => runDashboardRecoveryAction(clearRecoveryLock, "Couldn't unlock the project");
+
   // Navigate to another window of a large document in paged Code View mode.
   const loadCodeViewPage = useCallback(
     async (startLine: number) => {
@@ -13064,6 +13128,14 @@ const updateItemInState = useCallback(
       if (!projectId) {
         console.error("[Dashboard] No projectId available for save");
         notificationService.error("Save Failed", "No project selected");
+        return;
+      }
+
+      if (recoveryState.locked) {
+        notificationService.error(
+          "Save Disabled",
+          "This project is locked for recovery. Restore the previous version or confirm it looks right before saving.",
+        );
         return;
       }
 
@@ -13229,6 +13301,7 @@ const updateItemInState = useCallback(
       isViewOnlyMember,
       codeViewTruncation,
       codeViewPage,
+      recoveryState.locked,
       setShowProPromptType,
       refreshClassHierarchy,
       refreshProperties,
@@ -15704,6 +15777,15 @@ const updateItemInState = useCallback(
                           </button>
                         </div>
                       </div>
+                    )}
+                    {recoveryState.locked && (
+                      <CodeAssistantRecoveryBanner
+                        state={recoveryState}
+                        busy={recoveryBusy}
+                        error={recoveryError}
+                        onRestore={restoreProjectFromRecovery}
+                        onClear={unlockProjectFromRecovery}
+                      />
                     )}
                     {codeViewLoading ? (
                       <div className="flex items-center justify-center h-64">
