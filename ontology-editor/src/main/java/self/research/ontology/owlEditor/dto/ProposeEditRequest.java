@@ -8,5 +8,11 @@ public record ProposeEditRequest(List<EditGroupInput> groups) {
 
     public record EditInput(String targetPath, EditRange range, String originalText, String newText) {}
 
-    public record EditGroupInput(String clientGroupId, List<EditInput> edits) {}
+    public record EditOperation(String type, String targetPath, String targetIdentifier, String replacementIdentifier) {}
+
+    public record EditGroupInput(String clientGroupId, List<EditInput> edits, EditOperation operation) {
+        public EditGroupInput(String clientGroupId, List<EditInput> edits) {
+            this(clientGroupId, edits, null);
+        }
+    }
 }

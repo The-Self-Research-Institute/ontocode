@@ -13,8 +13,14 @@ import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.Edit
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditGroupInput;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditInput;
+import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditOperation;
+import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditRange;
 import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 
+import java.io.BufferedReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -31,12 +37,16 @@ public class AssistantEditProposalService {
     private final StorageManager storageManager;
     private final AssistantEditSyntaxValidator syntaxValidator;
     private final AssistantEditReferenceCoverageValidator referenceCoverageValidator;
+    private final AssistantRenameService renameService;
 
     @Value("${assistant.propose.max-edit-bytes:200000}")
     private int maxEditBytes;
 
     @Value("${assistant.propose.max-edits-per-group:20}")
     private int maxEditsPerGroup;
+
+    @Value("${assistant.propose.max-rename-lines:5000}")
+    private int maxRenameLines;
 
     @Value("${assistant.propose.max-groups-per-request:10}")
     private int maxGroupsPerRequest;
@@ -48,12 +58,14 @@ public class AssistantEditProposalService {
                                          AssistantEditGroupRepository groupRepository,
                                          StorageManager storageManager,
                                          AssistantEditSyntaxValidator syntaxValidator,
-                                         AssistantEditReferenceCoverageValidator referenceCoverageValidator) {
+                                         AssistantEditReferenceCoverageValidator referenceCoverageValidator,
+                                         AssistantRenameService renameService) {
         this.sessionService = sessionService;
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
         this.syntaxValidator = syntaxValidator;
         this.referenceCoverageValidator = referenceCoverageValidator;
+        this.renameService = renameService;
     }
 
     public ProposeEditResult propose(String sessionId, String userEmail, List<EditGroupInput> groups) {
@@ -89,7 +101,29 @@ public class AssistantEditProposalService {
     private GroupProposalOutcome proposeOneGroup(AssistantSessionDocument session, EditGroupInput groupInput,
                                                   long publicGraphVersion, Instant now, Instant expiresAt) {
         List<CheckResult> checks = new ArrayList<>();
-        List<EditInput> sortedEdits = groupInput.edits().stream()
+        List<EditInput> inputEdits = groupInput.edits() == null ? List.of() : groupInput.edits();
+        EditOperation operation = groupInput.operation();
+        boolean derived = operation != null;
+        if (derived) {
+            String operationPath = operation.targetPath() == null ? "" : operation.targetPath();
+            if (!inputEdits.isEmpty()) {
+                return rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
+                        new CheckResult(RENAME_CHECK, false,
+                                "A group can carry either explicit edits or an operation, not both."));
+            }
+            AssistantRenameService.RenameDerivation derivation =
+                    renameService.derive(session.getProjectId(), operation, maxRenameLines);
+            if (!derivation.ok()) {
+                return rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
+                        new CheckResult(RENAME_CHECK, false, derivation.detail()));
+            }
+            checks.add(new CheckResult(RENAME_CHECK, true, derivation.detail()));
+            inputEdits = derivation.edits().stream()
+                    .map(e -> new EditInput(operation.targetPath(), new EditRange(e.line(), 1), e.originalText(),
+                            e.newText()))
+                    .toList();
+        }
+        List<EditInput> sortedEdits = inputEdits.stream()
                 .sorted(Comparator.comparingLong(e -> e.range() == null ? Long.MAX_VALUE : e.range().startLine()))
                 .toList();
         String targetPath = sortedEdits.isEmpty() ? "" : sortedEdits.get(0).targetPath();
@@ -106,12 +140,14 @@ public class AssistantEditProposalService {
         boolean noOverlap = sortedEdits.size() <= 1 || hasNoIntraGroupOverlap(sortedEdits);
         checks.add(new CheckResult("no_intra_group_overlap", noOverlap));
 
-        boolean sizeOk = sortedEdits.size() <= maxEditsPerGroup
-                && sortedEdits.stream().allMatch(e -> e.newText().length() <= maxEditBytes);
+        int maxEdits = derived ? maxRenameLines : maxEditsPerGroup;
+        boolean sizeOk = sortedEdits.size() <= maxEdits
+                && sortedEdits.stream().allMatch(e -> e.newText() != null && e.newText().length() <= maxEditBytes);
         checks.add(new CheckResult("size_limits", sizeOk));
 
         boolean liveMatch = singleTargetPath && rangeWellFormed
-                && sortedEdits.stream().allMatch(e -> matchesLiveContent(session.getProjectId(), e));
+                && (derived ? noOverlap && matchesLiveContentInOnePass(session.getProjectId(), targetPath, sortedEdits)
+                : sortedEdits.stream().allMatch(e -> matchesLiveContent(session.getProjectId(), e)));
         checks.add(new CheckResult("original_text_matches_live", liveMatch));
 
         boolean structurallySound = hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
@@ -132,6 +168,23 @@ public class AssistantEditProposalService {
                 .map(e -> new DiffEntry(e.targetPath(), e.originalText(), e.newText()))
                 .toList();
 
+        return persistGroup(session, groupInput, targetPath, editEntries, passed, publicGraphVersion, now, expiresAt,
+                checks, diff);
+    }
+
+    private GroupProposalOutcome rejectGroup(AssistantSessionDocument session, EditGroupInput groupInput,
+                                             String targetPath, long publicGraphVersion, Instant now,
+                                             Instant expiresAt, CheckResult failedCheck) {
+        List<CheckResult> checks = new ArrayList<>();
+        checks.add(failedCheck);
+        return persistGroup(session, groupInput, targetPath, List.of(), false, publicGraphVersion, now, expiresAt,
+                checks, List.of());
+    }
+
+    private GroupProposalOutcome persistGroup(AssistantSessionDocument session, EditGroupInput groupInput,
+                                              String targetPath, List<EditEntry> editEntries, boolean passed,
+                                              long publicGraphVersion, Instant now, Instant expiresAt,
+                                              List<CheckResult> checks, List<DiffEntry> diff) {
         AssistantEditGroupDocument document = AssistantEditGroupDocument.builder()
                 .id(UUID.randomUUID().toString())
                 .sessionId(session.getId())
@@ -158,6 +211,46 @@ public class AssistantEditProposalService {
                 .checks(checks)
                 .diff(diff)
                 .build();
+    }
+
+    private boolean matchesLiveContentInOnePass(String projectId, String targetPath, List<EditInput> sortedEdits) {
+        try {
+            Path file = storageManager.ensureCodeViewFile(projectId, targetPath);
+            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                long lineNo = 0;
+                String line = reader.readLine();
+                for (EditInput edit : sortedEdits) {
+                    long start = edit.range().startLine();
+                    int count = edit.range().lineCount();
+                    if (count == 0) {
+                        continue;
+                    }
+                    while (line != null && lineNo < start) {
+                        line = reader.readLine();
+                        lineNo++;
+                    }
+                    StringBuilder live = new StringBuilder();
+                    for (int k = 0; k < count; k++) {
+                        if (line == null) {
+                            return false;
+                        }
+                        if (k > 0) {
+                            live.append('\n');
+                        }
+                        live.append(line);
+                        line = reader.readLine();
+                        lineNo++;
+                    }
+                    if (!live.toString().equals(edit.originalText())) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        } catch (Exception e) {
+            log.warn("[Assistant] Live-content check failed for {}: {}", targetPath, e.getMessage());
+            return false;
+        }
     }
 
     private boolean isRangeWellFormed(EditInput edit) {
@@ -242,6 +335,8 @@ public class AssistantEditProposalService {
     private CheckResult toCheckResult(AssistantEditReferenceCoverageValidator.CoverageResult result) {
         return new CheckResult("complete_reference_coverage", result.covered(), result.detail());
     }
+
+    public static final String RENAME_CHECK = "rename_occurrences_complete";
 
     public record CheckResult(String name, boolean passed, String detail) {
         public CheckResult(String name, boolean passed) {

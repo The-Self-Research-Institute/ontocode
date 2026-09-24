@@ -48,6 +48,9 @@ class AssistantEditProposalServiceTest {
     @Mock
     private LineRangeSpliceWriter spliceWriter;
 
+    @Mock
+    private SparqlDatasetService datasetService;
+
     private AssistantEditSyntaxValidator syntaxValidator;
 
     private AssistantEditReferenceCoverageValidator referenceCoverageValidator;
@@ -60,7 +63,8 @@ class AssistantEditProposalServiceTest {
         syntaxValidator = new AssistantEditSyntaxValidator(storageManager, spliceWriter);
         referenceCoverageValidator = new AssistantEditReferenceCoverageValidator(storageManager);
         proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager,
-                syntaxValidator, referenceCoverageValidator);
+                syntaxValidator, referenceCoverageValidator,
+                new AssistantRenameService(storageManager, new AssistantGraphIdentifierLookup(datasetService)));
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 20);
         ReflectionTestUtils.setField(proposalService, "maxGroupsPerRequest", 10);
@@ -415,6 +419,24 @@ class AssistantEditProposalServiceTest {
 
         GroupProposalOutcome outcome = result.getGroups().get(0);
         assertTrue(checkNamed(outcome, "complete_reference_coverage").get().passed());
+    }
+
+    @Test
+    void coverageMatchesWholeTokensAndIgnoresStringLiteralsInTurtle() throws Exception {
+        mockLiveContent("turtle", 1, 1, ":OldClass a owl:Class .");
+        Path fullDocument = Files.createTempFile("proposal-fulldoc-", ".ttl");
+        Files.writeString(fullDocument,
+                "@prefix : <http://example.org/> .\n"
+                        + ":OldClass a owl:Class .\n"
+                        + ":OldClassExtra a owl:Class .\n"
+                        + ":Other rdfs:comment \"\"\"mentions\n:OldClass in a long string\"\"\" .\n",
+                StandardCharsets.UTF_8);
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(fullDocument);
+        EditInput edit = new EditInput("turtle", new EditRange(1, 1), ":OldClass a owl:Class .", ":NewClass a owl:Class .");
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(new EditGroupInput("c1", List.of(edit))));
+
+        assertTrue(checkNamed(result.getGroups().get(0), "complete_reference_coverage").get().passed());
     }
 
     @Test
