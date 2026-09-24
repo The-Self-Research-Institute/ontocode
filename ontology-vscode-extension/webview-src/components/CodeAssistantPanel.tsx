@@ -7,11 +7,13 @@ import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
 import { CodeAssistantReviewGroups, type GroupDecision, type ApplyAllRunState } from "./CodeAssistantReviewGroups";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
-import { createAssistantSession, applyEditGroup, AssistantApiError, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
-import { runAssistantLoop, type LoopOutcome, type HistoryTurn, type ContextEvent } from "../services/codeAssistantLoop";
+import { createAssistantSession, applyEditGroup, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
+import { runAssistantLoop, type LoopOutcome, type ContextEvent } from "../services/codeAssistantLoop";
+import { CodeAssistantDeadEndNotice } from "./CodeAssistantDeadEndNotice";
 import {
   ACTIONS,
   getApiBaseUrl,
+  buildConversationHistory,
   buildSystemPrompt,
   describeLoopStage,
   resolveApplyBlock,
@@ -27,7 +29,7 @@ import {
   runApplyAll,
   type ApplyOneResult,
 } from "../services/codeAssistantApplyQueue";
-import { errorSignalFrom, parseHttpStatus } from "../services/codeAssistantDeadEnd";
+import { errorSignalFrom, parseHttpStatus, toDeadEnd, type DeadEnd } from "../services/codeAssistantDeadEnd";
 
 export type { CodeAssistantAction };
 
@@ -54,7 +56,20 @@ type ChatEntry =
       applyAllRun?: ApplyAllRunState | null;
       applyAllSummary?: string | null;
     }
-  | { id: string; role: "assistant"; kind: "error"; text: string };
+  | {
+      id: string;
+      role: "assistant";
+      kind: "error";
+      text: string;
+      deadEnd?: DeadEnd;
+      retry?: PromptToRetry;
+      retryAt?: number | null;
+    };
+
+interface PromptToRetry {
+  text: string;
+  action: CodeAssistantAction;
+}
 
 type ReviewEntry = Extract<ChatEntry, { kind: "review" }>;
 
@@ -75,7 +90,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   hasUnsavedCodeViewChanges = false,
   onClose,
 }) => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { isFree, getUpgradeMessage } = useSubscription();
   const [configured, setConfigured] = useState(hasApiKey());
   const [action, setAction] = useState<CodeAssistantAction>("ask");
@@ -85,6 +100,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const busyRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
@@ -163,6 +180,19 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     }
   }, [entries, busy, statusText]);
 
+  const lastEntry = entries.length > 0 ? entries[entries.length - 1] : undefined;
+  const pendingRetryAt =
+    lastEntry && lastEntry.role === "assistant" && lastEntry.kind === "error" && lastEntry.retryAt ? lastEntry.retryAt : null;
+  useEffect(() => {
+    if (pendingRetryAt === null || pendingRetryAt <= Date.now()) return;
+    const timer = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= pendingRetryAt) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [pendingRetryAt]);
+
   const updateReviewEntry = (
     entryId: string,
     updater: (entry: ReviewEntry) => ReviewEntry,
@@ -172,7 +202,42 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     );
   };
 
-  const appendOutcome = (outcome: LoopOutcome, sessionId: string, contextUsed: ContextEvent[]) => {
+  const setBusyNow = (value: boolean) => {
+    busyRef.current = value;
+    setBusy(value);
+  };
+
+  const appendError = (text: string) => {
+    commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text }]);
+  };
+
+  const reportFailure = (source: unknown, fallbackMessage: string, prompt: PromptToRetry) => {
+    const signal = errorSignalFrom(source, fallbackMessage);
+    const deadEnd = toDeadEnd(signal);
+    if (!deadEnd) {
+      appendError(toFriendlyErrorMessage(signal.message));
+      return;
+    }
+    const seconds = deadEnd.action.kind === "retry-after" ? deadEnd.action.seconds : null;
+    const startedAt = Date.now();
+    setNow(startedAt);
+    commitEntries((prev) => [
+      ...prev,
+      {
+        id: nextEntryId(),
+        role: "assistant",
+        kind: "error",
+        text: deadEnd.message,
+        deadEnd,
+        retry: prompt,
+        retryAt: seconds ? startedAt + seconds * 1000 : null,
+      },
+    ]);
+    setInput((current) => (current.trim() ? current : prompt.text));
+    setAction(prompt.action);
+  };
+
+  const appendOutcome = (outcome: LoopOutcome, sessionId: string, contextUsed: ContextEvent[], prompt: PromptToRetry) => {
     if (outcome.kind === "answer") {
       commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text, contextUsed }]);
       return;
@@ -188,27 +253,26 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       ]);
       return;
     }
-    commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(outcome.reason) }]);
-  };
-
-  const submitMessage = async () => {
-    const text = input.trim();
-    if (!text || busy) return;
-    if (!projectId) {
-      commitEntries((prev) => [
-        ...prev,
-        { id: nextEntryId(), role: "assistant", kind: "error", text: "No project is open. Open a project, then try again." },
-      ]);
+    if (outcome.errorCode) {
+      reportFailure(outcome, outcome.reason, prompt);
       return;
     }
-    const history: HistoryTurn[] = entries.flatMap((entry): HistoryTurn[] => {
-      if (entry.role === "user") return [{ role: "user", text: entry.text }];
-      if (entry.role === "assistant" && entry.kind === "answer") return [{ role: "assistant", text: entry.text }];
-      return [];
-    });
-    commitEntries((prev) => [...prev, { id: nextEntryId(), role: "user", text, action }]);
-    setInput("");
-    setBusy(true);
+    appendError(toFriendlyErrorMessage(outcome.reason));
+  };
+
+  const submitMessage = async (override?: PromptToRetry) => {
+    const text = (override?.text ?? input).trim();
+    const turnAction = override?.action ?? action;
+    if (!text || busyRef.current) return;
+    if (!projectId) {
+      appendError("No project is open. Open a project, then try again.");
+      return;
+    }
+    const prompt: PromptToRetry = { text, action: turnAction };
+    const history = buildConversationHistory(entriesRef.current);
+    commitEntries((prev) => [...prev, { id: nextEntryId(), role: "user", text, action: turnAction }]);
+    setInput((current) => (!override || current.trim() === text ? "" : current));
+    setBusyNow(true);
     setStatusText("Starting...");
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -218,33 +282,35 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       const session: AssistantSession = await createAssistantSession(
         apiBaseUrl,
         token,
-        { projectId, documentPath: documentPath ?? "", actionType: action, actionContext: JSON.stringify({}) },
+        { projectId, documentPath: documentPath ?? "", actionType: turnAction, actionContext: JSON.stringify({}) },
         controller.signal,
       );
       const contextEvents: ContextEvent[] = [];
       const outcome = await runAssistantLoop(
         { apiBaseUrl, token, session },
-        buildSystemPrompt(action, documentPath),
+        buildSystemPrompt(turnAction, documentPath),
         text,
         (event) => setStatusText(describeLoopStage(event)),
         controller.signal,
         history,
         (event) => contextEvents.push(event),
       );
-      appendOutcome(outcome, session.sessionId, contextEvents);
+      if (controller.signal.aborted) return;
+      appendOutcome(outcome, session.sessionId, contextEvents, prompt);
     } catch (e) {
       if (controller.signal.aborted) return;
-      const raw = e instanceof AssistantApiError || e instanceof Error ? e.message : "Something went wrong talking to the assistant.";
-      commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(raw) }]);
+      reportFailure(e, "Something went wrong talking to the assistant.", prompt);
     } finally {
-      setBusy(false);
-      setStatusText("");
+      if (abortControllerRef.current === controller) {
+        setBusyNow(false);
+        setStatusText("");
+      }
     }
   };
 
   const cancelRun = () => {
     abortControllerRef.current?.abort();
-    setBusy(false);
+    setBusyNow(false);
     setStatusText("");
   };
 
@@ -393,6 +459,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     }
   };
 
+  const resubmit = (retry: PromptToRetry | undefined) => {
+    if (!retry) return;
+    void submitMessage(retry);
+  };
+
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--color-background)" }}>
       <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-3 flex items-center justify-between flex-shrink-0">
@@ -501,6 +572,19 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                   </div>
                 );
               }
+              if (entry.deadEnd) {
+                return (
+                  <CodeAssistantDeadEndNotice
+                    key={entry.id}
+                    deadEnd={entry.deadEnd}
+                    active={!busy && entry.id === lastEntry?.id}
+                    retryAt={entry.retryAt ?? null}
+                    now={now}
+                    onResubmit={() => resubmit(entry.retry)}
+                    onSignIn={() => logout(true)}
+                  />
+                );
+              }
               return (
                 <div key={entry.id} className="flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-900 text-sm chat-message-enter">
                   <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
@@ -590,7 +674,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                 className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-none disabled:opacity-50 min-h-[44px] max-h-[160px] overflow-y-auto"
               />
               <button
-                onClick={submitMessage}
+                onClick={() => void submitMessage()}
                 disabled={busy || !input.trim() || !projectId || !configured}
                 className="p-2.5 text-white bg-purple-600 rounded-lg hover:bg-purple-700 active:scale-90 transition-transform disabled:opacity-50 disabled:active:scale-100 flex-shrink-0"
                 title="Send"

@@ -1,7 +1,7 @@
 import { MessageSquare, Pencil, Search, type LucideIcon } from "lucide-react";
 import { getGatewayUrl, getRemoteApiBaseUrl } from "../config/deploymentConfig";
 import { isDesktop } from "../utils/desktop";
-import type { LoopStageEvent } from "../services/codeAssistantLoop";
+import type { HistoryTurn, LoopStageEvent } from "../services/codeAssistantLoop";
 
 export type CodeAssistantAction = "ask" | "local-edit" | "project-findings";
 
@@ -45,6 +45,26 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
     editable,
     "Ground every claim in what read_context or run_sparql actually returned. If you don't have enough information, say so instead of guessing.",
   ].join("\n");
+}
+
+export interface HistoryEntryLike {
+  role: "user" | "assistant";
+  kind?: string;
+  text?: string;
+}
+
+export function buildConversationHistory(entries: HistoryEntryLike[]): HistoryTurn[] {
+  const turns: HistoryTurn[] = [];
+  entries.forEach((entry, index) => {
+    if (entry.role === "user") {
+      const next = entries[index + 1];
+      if (next && next.role === "assistant" && next.kind === "error") return;
+      turns.push({ role: "user", text: entry.text ?? "" });
+      return;
+    }
+    if (entry.kind === "answer") turns.push({ role: "assistant", text: entry.text ?? "" });
+  });
+  return turns;
 }
 
 export function describeLoopStage(event: LoopStageEvent): string {
