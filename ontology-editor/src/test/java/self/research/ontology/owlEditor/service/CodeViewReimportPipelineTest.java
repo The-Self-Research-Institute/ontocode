@@ -192,4 +192,46 @@ class CodeViewReimportPipelineTest {
 
         verify(metadataService).incrementMutationVersion("proj-1");
     }
+
+    @Test
+    void restoreSnapshotReloadsTheGraphAsRdfXmlAndInvalidatesCaches() throws Exception {
+        Path snapshot = fileWith("owl",
+                "<?xml version=\"1.0\"?><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"></rdf:RDF>");
+
+        long version = pipeline.restoreSnapshot("proj-1", snapshot);
+
+        assertEquals(9L, version);
+        verify(datasetService).bulkLoadChunked(eq("proj-1"), any(InputStream.class), eq(RDFFormat.RDFXML),
+                eq(Files.size(snapshot)), any(ImportOptions.class), isNull(), isNull());
+        verify(datasetService).markProjectDirty("proj-1");
+        verify(metadataService).incrementMutationVersion("proj-1");
+        verify(storageManager).clearCodeViewCache("proj-1");
+        verify(storageManager, never()).storeCodeViewCache(anyString(), any(), anyString());
+        verify(historyService, never()).recordEdit(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void restoreSnapshotWithMissingFileFailsWithoutTouchingTheGraph() {
+        Path missing = Path.of(System.getProperty("java.io.tmpdir"), "does-not-exist-" + System.nanoTime() + ".owl");
+
+        org.junit.jupiter.api.Assertions.assertThrows(java.io.IOException.class,
+                () -> pipeline.restoreSnapshot("proj-1", missing));
+
+        verify(datasetService, never()).bulkLoadChunked(anyString(), any(InputStream.class), any(RDFFormat.class),
+                anyLong(), any(ImportOptions.class), any(), any());
+        verify(metadataService, never()).incrementMutationVersion(anyString());
+    }
+
+    @Test
+    void restoreSnapshotPropagatesAGraphFailureAndLeavesCachesAlone() throws Exception {
+        Path snapshot = fileWith("owl", "<rdf:RDF/>");
+        doThrow(new RuntimeException("GraphDB down")).when(datasetService).bulkLoadChunked(anyString(),
+                any(InputStream.class), any(RDFFormat.class), anyLong(), any(ImportOptions.class), any(), any());
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> pipeline.restoreSnapshot("proj-1", snapshot));
+
+        verify(metadataService, never()).incrementMutationVersion(anyString());
+        verify(storageManager, never()).clearCodeViewCache(anyString());
+    }
 }
