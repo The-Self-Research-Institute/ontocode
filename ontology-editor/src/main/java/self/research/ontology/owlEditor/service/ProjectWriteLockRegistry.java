@@ -16,6 +16,7 @@ import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 @Slf4j
@@ -29,6 +30,7 @@ public class ProjectWriteLockRegistry {
     public static final String MONGO_MODE = "mongo";
 
     private final ConcurrentHashMap<String, ReentrantReadWriteLock> locks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ReentrantLock> leaseGates = new ConcurrentHashMap<>();
     private final ProjectWriteLeaseManager leaseManager;
     private final Timer exclusiveWait;
     private final Timer exclusiveHold;
@@ -94,22 +96,45 @@ public class ProjectWriteLockRegistry {
 
     public <T> T runExclusive(String projectId, Callable<T> work) throws Exception {
         long waitStart = System.nanoTime();
-        ReentrantReadWriteLock.WriteLock lock = lockFor(projectId).writeLock();
-        lock.lock();
+        if (leaseManager == null) {
+            return runWithWriteLock(projectId, work, waitStart);
+        }
+        ReentrantReadWriteLock local = lockFor(projectId);
+        if (local.getReadHoldCount() > 0 && !local.isWriteLockedByCurrentThread()) {
+            throw new IllegalStateException("Cannot take the exclusive write lock for project " + projectId
+                    + " while this thread holds its shared read lock");
+        }
+        ReentrantLock gate = leaseGateFor(projectId);
+        gate.lock();
         try {
             ProjectWriteLeaseManager.Lease lease;
             try {
-                lease = leaseManager != null && lock.getHoldCount() == 1 ? leaseManager.acquire(projectId) : null;
-            } finally {
+                lease = gate.getHoldCount() == 1 ? leaseManager.acquire(projectId) : null;
+            } catch (Exception e) {
                 record(exclusiveWait, waitStart);
+                throw e;
             }
-            long holdStart = System.nanoTime();
             try {
-                return work.call();
+                return runWithWriteLock(projectId, work, waitStart);
             } finally {
                 if (lease != null) {
                     lease.release();
                 }
+            }
+        } finally {
+            gate.unlock();
+        }
+    }
+
+    private <T> T runWithWriteLock(String projectId, Callable<T> work, long waitStart) throws Exception {
+        ReentrantReadWriteLock.WriteLock lock = lockFor(projectId).writeLock();
+        lock.lock();
+        try {
+            record(exclusiveWait, waitStart);
+            long holdStart = System.nanoTime();
+            try {
+                return work.call();
+            } finally {
                 record(exclusiveHold, holdStart);
             }
         } finally {
@@ -143,6 +168,10 @@ public class ProjectWriteLockRegistry {
 
     private ReentrantReadWriteLock lockFor(String projectId) {
         return locks.computeIfAbsent(projectId, k -> new ReentrantReadWriteLock());
+    }
+
+    private ReentrantLock leaseGateFor(String projectId) {
+        return leaseGates.computeIfAbsent(projectId, k -> new ReentrantLock());
     }
 
     private static Timer timer(MeterRegistry registry, String name, String mode) {

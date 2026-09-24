@@ -428,6 +428,56 @@ class ProjectWriteLockRegistryTest {
     }
 
     @Test
+    @Timeout(10)
+    void mongoModeLocalReadsKeepRunningWhileAWriterWaitsForAnotherNodesLease() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        collection.put("proj-1", "other-node-token", Instant.now().plusSeconds(600));
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(8)), null);
+        AtomicBoolean writerRan = new AtomicBoolean(false);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> writer = pool.submit(() -> registry.runExclusive("proj-1", () -> {
+                writerRan.set(true);
+                return null;
+            }));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
+            while (collection.insertAttempts.get() < 2) {
+                assertTrue(System.nanoTime() < deadline, "writer never started waiting for the lease");
+                Thread.sleep(5);
+            }
+
+            assertEquals("read", pool.submit(() -> registry.runShared("proj-1", () -> "read")).get(2, TimeUnit.SECONDS));
+            assertFalse(writerRan.get());
+
+            collection.delete("proj-1");
+            writer.get(4, TimeUnit.SECONDS);
+            assertTrue(writerRan.get());
+            assertNull(collection.get("proj-1"));
+        } finally {
+            pool.shutdownNow();
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    @Timeout(5)
+    void mongoModeRefusesToUpgradeASharedReadInsteadOfDeadlockingWhileHoldingTheLease() throws Exception {
+        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(1)), null);
+        try {
+            assertThrows(IllegalStateException.class, () -> registry.runShared("proj-1",
+                    () -> registry.runExclusive("proj-1", () -> "never")));
+
+            assertEquals(0, collection.insertAttempts.get());
+            assertNull(collection.get("proj-1"));
+            assertEquals("after", registry.runExclusive("proj-1", () -> "after"));
+            assertEquals(3, (int) registry.runExclusive("proj-1", () -> registry.runShared("proj-1", () -> 3)));
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
     @Timeout(5)
     void mongoModeSharedReadsStayLocalAndNeverTouchTheLeaseStore() throws Exception {
         InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
