@@ -20,12 +20,15 @@ import {
   type AssistantErrorCode,
   type AssistantSession,
   type ProposedEditGroupInput,
+  type ProposedEdit,
+  type ReadContextTarget,
   type ProposeResult,
 } from "./codeAssistantSession";
 
 export const READ_CONTEXT_TOOL: ToolDefinition = {
   name: "read_context",
-  description: "Read definitions, diagnostics, or references for identifiers or ranges in the pinned document snapshot.",
+  description:
+    "Read definitions, diagnostics, or references for identifiers, statements, or line ranges in the pinned document snapshot.",
   parameters: {
     type: "object",
     required: ["targets", "kind"],
@@ -36,18 +39,32 @@ export const READ_CONTEXT_TOOL: ToolDefinition = {
           type: "object",
           required: ["type", "value"],
           properties: {
-            type: { type: "string", enum: ["identifier", "range"] },
+            type: {
+              type: "string",
+              enum: ["identifier", "range", "statement"],
+              description:
+                "\"identifier\" looks up an entity by IRI. \"range\" reads raw lines. " +
+                "\"statement\" returns every statement block in which the entity is the subject, each with its exact line range " +
+                "(\"<startLine>-<lineCount>\"), which is the easiest way to get the text and range to edit.",
+            },
             value: {
               type: "string",
               description:
-                "For type \"identifier\": a full IRI. For type \"range\": " +
-                "\"<format>:<startLine>-<lineCount>\", e.g. \"turtle:100-50\" for 50 lines starting at line 100. " +
+                "For type \"identifier\": a full IRI. For type \"statement\": a full IRI or a prefixed name such as ex:Pizza. " +
+                "For type \"range\": \"<format>:<startLine>-<lineCount>\", e.g. \"turtle:100-50\" for 50 lines starting at line 100. " +
                 "format is one of turtle, rdfxml, manchester, functional.",
             },
           },
         },
       },
-      kind: { type: "string", enum: ["definitions", "diagnostics", "references"] },
+      kind: {
+        type: "string",
+        enum: ["definitions", "diagnostics", "references"],
+        description:
+          "\"definitions\" returns the declarations and axioms of the targets. " +
+          "\"diagnostics\" returns the real parse errors and warnings the document currently has, each item's text starting with " +
+          "\"ERROR:\" or \"WARNING:\" and carrying the line range it applies to. \"references\" returns where the targets are used.",
+      },
     },
   },
 };
@@ -66,7 +83,9 @@ export const RUN_SPARQL_TOOL: ToolDefinition = {
 
 export const PROPOSE_EDIT_TOOL: ToolDefinition = {
   name: "propose_edit",
-  description: "Propose one or more grouped, dependent edits for human review. Nothing is applied until the user approves a group.",
+  description:
+    "Propose one or more grouped, dependent edits for human review. Nothing is applied until the user approves a group. " +
+    "To rename an identifier, use propose_rename instead of writing the edits by hand: it finds every occurrence for you.",
   parameters: {
     type: "object",
     required: ["groups"],
@@ -111,7 +130,35 @@ export const PROPOSE_EDIT_TOOL: ToolDefinition = {
   },
 };
 
-export const ASSISTANT_TOOLS: ToolDefinition[] = [READ_CONTEXT_TOOL, RUN_SPARQL_TOOL, PROPOSE_EDIT_TOOL];
+export const PROPOSE_RENAME_TOOL: ToolDefinition = {
+  name: "propose_rename",
+  description:
+    "Propose renaming one identifier everywhere it occurs in the document, for human review. The server finds and rewrites every " +
+    "occurrence and validates the result, so do not read or list the occurrences first. Call it alone in its turn. " +
+    "Nothing is applied until the user approves it.",
+  parameters: {
+    type: "object",
+    required: ["targetPath", "targetIdentifier", "replacementIdentifier"],
+    properties: {
+      targetPath: {
+        type: "string",
+        description: "The serialization format to rename in: one of turtle, rdfxml, owlxml, manchester, functional.",
+      },
+      targetIdentifier: {
+        type: "string",
+        description: "The identifier to rename, as a full IRI or a prefixed name exactly as it appears in the document.",
+      },
+      replacementIdentifier: {
+        type: "string",
+        description: "The new identifier, in the same form (full IRI or prefixed name) as targetIdentifier.",
+      },
+    },
+  },
+};
+
+export const ASSISTANT_TOOLS: ToolDefinition[] = [READ_CONTEXT_TOOL, RUN_SPARQL_TOOL, PROPOSE_EDIT_TOOL, PROPOSE_RENAME_TOOL];
+
+const PROPOSAL_TOOLS = new Set([PROPOSE_EDIT_TOOL.name, PROPOSE_RENAME_TOOL.name]);
 
 const MAX_LOOP_ITERATIONS = 12;
 const MAX_CALLS_PER_TURN = 8;
@@ -228,7 +275,8 @@ async function dispatchToolCall(
       const targetsRaw = Array.isArray(args.targets) ? args.targets : [];
       const targets = targetsRaw.map((t) => {
         const rec = t as Record<string, unknown>;
-        return { type: rec.type === "range" ? "range" as const : "identifier" as const, value: String(rec.value ?? "") };
+        const type: ReadContextTarget["type"] = rec.type === "range" || rec.type === "statement" ? rec.type : "identifier";
+        return { type, value: String(rec.value ?? "") };
       });
       const kind = args.kind === "diagnostics" || args.kind === "references" ? args.kind : "definitions";
       const res = await readContext(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, { targets, kind }, signal);
@@ -243,7 +291,7 @@ async function dispatchToolCall(
       const groups: ProposedEditGroupInput[] = groupsRaw.map((g) => {
         const rec = g as Record<string, unknown>;
         const editsRaw = Array.isArray(rec.edits) ? rec.edits : [];
-        const edits: ProposedEditGroupInput["edits"] = editsRaw.map((e) => {
+        const edits: ProposedEdit[] = editsRaw.map((e) => {
           const editRec = e as Record<string, unknown>;
           return {
             targetPath: String(editRec.targetPath ?? ""),
@@ -255,6 +303,23 @@ async function dispatchToolCall(
         return { clientGroupId: newClientGroupId(), edits };
       });
       const res = await proposeEditGroups(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, groups, signal);
+      return { result: { groupCount: res.groups.length }, isError: false, proposeResult: res };
+    }
+    if (name === "propose_rename") {
+      const targetPath = String(args.targetPath ?? "").trim();
+      const targetIdentifier = String(args.targetIdentifier ?? "").trim();
+      const replacementIdentifier = String(args.replacementIdentifier ?? "").trim();
+      if (!targetPath || !targetIdentifier || !replacementIdentifier) {
+        return { result: { error: "targetPath, targetIdentifier and replacementIdentifier must all be non-empty." }, isError: true };
+      }
+      if (targetIdentifier === replacementIdentifier) {
+        return { result: { error: "replacementIdentifier is the same as targetIdentifier, so there is nothing to rename." }, isError: true };
+      }
+      const group: ProposedEditGroupInput = {
+        clientGroupId: newClientGroupId(),
+        operation: { type: "rename_identifier", targetPath, targetIdentifier, replacementIdentifier },
+      };
+      const res = await proposeEditGroups(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, [group], signal);
       return { result: { groupCount: res.groups.length }, isError: false, proposeResult: res };
     }
     return { result: { error: `Tool "${name}" has no dispatcher.` }, isError: true };
@@ -302,11 +367,17 @@ export async function runAssistantLoop(
       return { kind: "answer", text: turn.text };
     }
 
-    const hasPropose = turn.calls.some((c) => c.name === "propose_edit");
+    const proposalNames = [...new Set(turn.calls.map((c) => c.name).filter((n) => PROPOSAL_TOOLS.has(n)))];
+    const hasPropose = proposalNames.length > 0;
     if (hasPropose && turn.calls.length > 1) {
-      onStage({ stage: "stopped", detail: "propose_edit mixed with other calls" });
+      const label = proposalNames.join(" and ");
+      onStage({ stage: "stopped", detail: `${label} mixed with other calls` });
       const results: ToolResultForModel[] = turn.calls.map((c) =>
-        resultFor(c, { error: "propose_edit must be the only tool call in a turn. Call it alone once you're ready to propose changes." }, true),
+        resultFor(
+          c,
+          { error: `${label} must be the only tool call in a turn. Call it alone once you're ready to propose changes.` },
+          true,
+        ),
       );
       conversation = advance(results);
       continue;
@@ -314,11 +385,11 @@ export async function runAssistantLoop(
 
     if (hasPropose) {
       const proposeCall = turn.calls[0];
-      onStage({ stage: "calling-tool", detail: "propose_edit" });
+      onStage({ stage: "calling-tool", detail: proposeCall.name });
       const outcome = await dispatchToolCall(ctx, proposeCall.name, proposeCall.args, signal);
       if (outcome.isError || !outcome.proposeResult) {
         const detail = describeToolFailure(outcome.result);
-        onStage({ stage: "stopped", detail: "propose_edit failed" });
+        onStage({ stage: "stopped", detail: `${proposeCall.name} failed` });
         if (isDeadEndErrorCode(outcome.errorCode)) {
           return { kind: "stopped", reason: detail, errorCode: outcome.errorCode };
         }

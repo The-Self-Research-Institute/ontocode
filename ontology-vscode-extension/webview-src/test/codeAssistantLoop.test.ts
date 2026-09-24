@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { runAssistantLoop, type LoopContext } from "../services/codeAssistantLoop";
+import {
+  runAssistantLoop,
+  ASSISTANT_TOOLS,
+  PROPOSE_RENAME_TOOL,
+  READ_CONTEXT_TOOL,
+  type LoopContext,
+} from "../services/codeAssistantLoop";
 import * as providers from "../services/codeAssistantProviders";
 import type { AssistantSession } from "../services/codeAssistantSession";
 
@@ -98,6 +104,140 @@ describe("runAssistantLoop — bounded dispatch per turn", () => {
     const [results] = advanceSpy.mock.calls[0] as [Array<{ isError: boolean }>];
     expect(results).toHaveLength(8);
     expect(results.every((r) => !r.isError)).toBe(true);
+  });
+});
+
+describe("propose_rename and read_context tool surface", () => {
+  const renameArgs = { targetPath: "turtle", targetIdentifier: "ex:Piza", replacementIdentifier: "ex:Pizza" };
+  const proposeResult = {
+    ok: true,
+    groups: [{ clientGroupId: "x", serverGroupId: "srv_1", validation: { passed: true, checks: [] }, diff: [] }],
+  };
+
+  it("exports propose_rename in ASSISTANT_TOOLS and points propose_edit at it", () => {
+    const names = ASSISTANT_TOOLS.map((t) => t.name);
+    expect(names).toEqual(["read_context", "run_sparql", "propose_edit", "propose_rename"]);
+    expect(PROPOSE_RENAME_TOOL.parameters.required).toEqual(["targetPath", "targetIdentifier", "replacementIdentifier"]);
+    expect(ASSISTANT_TOOLS.find((t) => t.name === "propose_edit")!.description).toMatch(/propose_rename/);
+  });
+
+  it("offers a statement target and describes diagnostics as real parse issues", () => {
+    const targetType = READ_CONTEXT_TOOL.parameters.properties!.targets.items!.properties!.type;
+    expect(targetType.enum).toContain("statement");
+    expect(targetType.description).toMatch(/statement/);
+    expect(READ_CONTEXT_TOOL.parameters.properties!.kind.description).toMatch(/parse errors and warnings/);
+  });
+
+  it("sends a rename as one operation group with no edits and ends the loop with the proposal", async () => {
+    stubConversation();
+    vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({
+      turn: { kind: "tool_calls", calls: [{ toolCallId: "r1", name: "propose_rename", args: renameArgs }] },
+      advance: vi.fn(),
+    });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, proposeResult));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "rename it", vi.fn());
+
+    expect(outcome).toEqual({ kind: "propose", result: proposeResult });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://localhost:8083/api/v1/code-assistant/sessions/s1/propose");
+    const body = JSON.parse(init.body);
+    expect(body.groups).toHaveLength(1);
+    expect(body.groups[0].edits).toBeUndefined();
+    expect(body.groups[0].clientGroupId).toMatch(/^grp_/);
+    expect(body.groups[0].operation).toEqual({ type: "rename_identifier", ...renameArgs });
+  });
+
+  it("rejects propose_rename mixed with other calls without dispatching anything", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({
+        turn: { kind: "tool_calls", calls: [{ toolCallId: "r1", name: "propose_rename", args: renameArgs }, sparqlCall("c2")] },
+        advance: advanceSpy,
+      })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "ok" }, advance: advanceSpy });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "rename it", vi.fn());
+
+    expect(outcome).toEqual({ kind: "answer", text: "ok" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const [results] = advanceSpy.mock.calls[0] as [Array<{ isError: boolean; result: { error: string } }>];
+    expect(results.every((r) => r.isError)).toBe(true);
+    expect(results[0].result.error).toMatch(/propose_rename must be the only tool call/);
+  });
+
+  it("rejects propose_edit and propose_rename in the same turn", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({
+        turn: {
+          kind: "tool_calls",
+          calls: [
+            { toolCallId: "r1", name: "propose_rename", args: renameArgs },
+            { toolCallId: "e1", name: "propose_edit", args: { groups: [] } },
+          ],
+        },
+        advance: advanceSpy,
+      })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "ok" }, advance: advanceSpy });
+    vi.stubGlobal("fetch", vi.fn());
+
+    await runAssistantLoop(baseCtx(), "system", "x", vi.fn());
+
+    const [results] = advanceSpy.mock.calls[0] as [Array<{ result: { error: string } }>];
+    expect(results[0].result.error).toMatch(/propose_rename and propose_edit must be the only tool call/);
+  });
+
+  it("stops without calling the backend when the rename is a no-op", async () => {
+    stubConversation();
+    vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({
+      turn: {
+        kind: "tool_calls",
+        calls: [{ toolCallId: "r1", name: "propose_rename", args: { ...renameArgs, replacementIdentifier: "ex:Piza" } }],
+      },
+      advance: vi.fn(),
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "x", vi.fn());
+
+    expect(outcome.kind).toBe("stopped");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("passes a statement target through to the backend", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({
+        turn: {
+          kind: "tool_calls",
+          calls: [{ toolCallId: "c1", name: "read_context", args: { targets: [{ type: "statement", value: "ex:Pizza" }], kind: "definitions" } }],
+        },
+        advance: advanceSpy,
+      })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "ok" }, advance: advanceSpy });
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        ok: true,
+        result: { items: [{ source: "turtle", range: "10-4", text: "ex:Pizza a owl:Class .", kind: "statement" }] },
+        provenance: { revision: 3, coverage: "complete" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runAssistantLoop(baseCtx(), "system", "x", vi.fn());
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).targets).toEqual([{ type: "statement", value: "ex:Pizza" }]);
+    const [results] = advanceSpy.mock.calls[0] as [Array<{ isError: boolean; result: { items: Array<{ kind: string }> } }>];
+    expect(results[0].isError).toBe(false);
+    expect(results[0].result.items[0].kind).toBe("statement");
   });
 });
 

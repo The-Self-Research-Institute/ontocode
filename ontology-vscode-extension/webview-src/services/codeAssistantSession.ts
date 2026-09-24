@@ -81,7 +81,7 @@ export function isDeadEndErrorCode(code: AssistantErrorCode | undefined): boolea
 }
 
 export interface ReadContextTarget {
-  type: "identifier" | "range";
+  type: "identifier" | "range" | "statement";
   value: string;
 }
 
@@ -105,15 +105,30 @@ export interface SparqlResult {
   provenance: { revision: number; coverage?: "partial" | "complete" };
 }
 
+export interface ProposedEdit {
+  targetPath: string;
+  range: unknown;
+  originalText: string;
+  newText: string;
+}
+
+export interface RenameIdentifierOperation {
+  type: "rename_identifier";
+  targetPath: string;
+  targetIdentifier: string;
+  replacementIdentifier: string;
+}
+
 export interface ProposedEditGroupInput {
   clientGroupId: string;
-  edits: Array<{ targetPath: string; range: unknown; originalText: string; newText: string }>;
+  edits?: ProposedEdit[];
+  operation?: RenameIdentifierOperation;
 }
 
 export interface ProposedEditGroupResult {
   clientGroupId: string;
   serverGroupId: string;
-  validation: { passed: boolean; checks: Array<{ name: string; passed: boolean }> };
+  validation: { passed: boolean; checks: Array<{ name: string; passed: boolean; detail?: string }> };
   diff: Array<{ targetPath: string; before: string; after: string }>;
 }
 
