@@ -98,6 +98,48 @@ class AssistantToolControllerTest {
         assertEquals(true, body.get("ok"));
     }
 
+    @Test
+    void rateLimitedReadContextBecomesHttp429WithRetryAfterHeaderAndBodyField() {
+        when(contextToolService.readContext(anyString(), anyString(), any(), anyString())).thenReturn(
+                ContextToolResult.builder().ok(false).errorCode("RATE_LIMITED").message("busy")
+                        .retryAfterSeconds(2).build());
+
+        ResponseEntity<?> response = controller.readContext(
+                "s1", new ReadContextRequest(List.of(), "definitions"), requestWithBearerToken());
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, response.getStatusCode());
+        assertEquals("2", response.getHeaders().getFirst("Retry-After"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals("RATE_LIMITED", body.get("errorCode"));
+        assertEquals(2, body.get("retryAfterSeconds"));
+        assertEquals(false, body.get("ok"));
+    }
+
+    @Test
+    void rateLimitedRunSparqlBecomesHttp429WithRetryAfterHeader() {
+        when(sparqlToolService.runSparql(anyString(), anyString(), anyString())).thenReturn(
+                SparqlToolResult.builder().ok(false).errorCode("RATE_LIMITED").message("busy")
+                        .retryAfterSeconds(5).build());
+
+        ResponseEntity<?> response = controller.runSparql(
+                "s1", new RunSparqlRequest("SELECT * WHERE { ?s ?p ?o }"), requestWithBearerToken());
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, response.getStatusCode());
+        assertEquals("5", response.getHeaders().getFirst("Retry-After"));
+    }
+
+    @Test
+    void errorWithNullMessageDoesNotBlowUp() {
+        when(sparqlToolService.runSparql(anyString(), anyString(), anyString())).thenReturn(
+                SparqlToolResult.builder().ok(false).errorCode("QUERY_ERROR").build());
+
+        ResponseEntity<?> response = controller.runSparql(
+                "s1", new RunSparqlRequest("SELECT * WHERE { ?s ?p ?o }"), requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+    }
+
     private MockHttpServletRequest requestWithBearerToken() {
         String payload = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"email\":\"user@example.com\"}".getBytes());

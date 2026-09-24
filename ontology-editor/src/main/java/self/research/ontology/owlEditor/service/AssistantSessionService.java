@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -12,6 +13,7 @@ import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument.AssistantSessionStatus;
 import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 
@@ -31,6 +33,9 @@ public class AssistantSessionService {
 
     @Value("${assistant.session.deadline-seconds:300}")
     private long deadlineSeconds;
+
+    @Value("${assistant.admission.session.max-active-per-user:20}")
+    private int maxActiveSessionsPerUser;
 
     public AssistantSessionService(AssistantSessionRepository sessionRepository,
                                     ProjectMetadataService metadataService,
@@ -62,6 +67,26 @@ public class AssistantSessionService {
         log.info("[Assistant] Session {} created for project {} pinned at revision {}",
                 saved.getId(), projectId, pinnedRevision);
         return saved;
+    }
+
+    public Optional<Integer> activeSessionLimitRetryAfter(String userEmail) {
+        Instant now = Instant.now();
+        Query active = Query.query(Criteria.where("userEmail").is(userEmail)
+                .and("status").is(AssistantSessionStatus.ACTIVE)
+                .and("expiresAt").gt(now));
+        long activeCount = mongoTemplate.count(active, AssistantSessionDocument.class);
+        if (activeCount < maxActiveSessionsPerUser) {
+            return Optional.empty();
+        }
+        AssistantSessionDocument soonest = mongoTemplate.findOne(
+                Query.of(active).with(Sort.by(Sort.Direction.ASC, "expiresAt")).limit(1),
+                AssistantSessionDocument.class);
+        long waitSeconds = soonest != null && soonest.getExpiresAt() != null
+                ? Duration.between(now, soonest.getExpiresAt()).toSeconds() + 1
+                : deadlineSeconds;
+        log.info("[Assistant] User {} has {} active sessions (limit {}), rejecting session create",
+                userEmail, activeCount, maxActiveSessionsPerUser);
+        return Optional.of((int) Math.max(1, Math.min(waitSeconds, Math.max(1, deadlineSeconds))));
     }
 
     public Optional<AssistantSessionDocument> getActiveSession(String sessionId, String userEmail) {

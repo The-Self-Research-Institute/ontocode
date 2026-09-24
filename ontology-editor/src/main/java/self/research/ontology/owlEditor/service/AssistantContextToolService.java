@@ -25,13 +25,16 @@ public class AssistantContextToolService {
     private final SparqlDatasetService datasetService;
     private final StorageManager storageManager;
     private final ProjectWriteLockRegistry lockRegistry;
+    private final AssistantAdmissionLimiter admissionLimiter;
 
     public AssistantContextToolService(AssistantSessionService sessionService, SparqlDatasetService datasetService,
-                                        StorageManager storageManager, ProjectWriteLockRegistry lockRegistry) {
+                                        StorageManager storageManager, ProjectWriteLockRegistry lockRegistry,
+                                        AssistantAdmissionLimiter admissionLimiter) {
         this.sessionService = sessionService;
         this.datasetService = datasetService;
         this.storageManager = storageManager;
         this.lockRegistry = lockRegistry;
+        this.admissionLimiter = admissionLimiter;
     }
 
     public ContextToolResult readContext(String sessionId, String userEmail, List<Target> targets, String kind) {
@@ -46,6 +49,18 @@ public class AssistantContextToolService {
             return revisionStale();
         }
 
+        AssistantAdmissionLimiter.ToolAdmission admission =
+                admissionLimiter.tryAcquireTool(userEmail, session.getProjectId());
+        if (admission instanceof AssistantAdmissionLimiter.Rejected rejected) {
+            return rateLimited(rejected);
+        }
+        try (AssistantAdmissionLimiter.Admitted ignored = (AssistantAdmissionLimiter.Admitted) admission) {
+            return readAdmitted(sessionId, session, targets, kind);
+        }
+    }
+
+    private ContextToolResult readAdmitted(String sessionId, AssistantSessionDocument session,
+                                           List<Target> targets, String kind) {
         if (!sessionService.tryConsumeRetrievalAttempt(sessionId)) {
             return ContextToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
                     .message("Retrieval budget exhausted for this session").build();
@@ -82,6 +97,14 @@ public class AssistantContextToolService {
     }
 
     private record TargetResolution(List<Item> items, boolean anyPartial) {}
+
+    private ContextToolResult rateLimited(AssistantAdmissionLimiter.Rejected rejected) {
+        return ContextToolResult.builder().ok(false).errorCode("RATE_LIMITED")
+                .message("Too many assistant tool calls are running (" + rejected.limit()
+                        + " limit). Retry in " + rejected.retryAfterSeconds() + "s.")
+                .retryAfterSeconds(rejected.retryAfterSeconds())
+                .build();
+    }
 
     private ContextToolResult revisionStale() {
         return ContextToolResult.builder().ok(false).errorCode("REVISION_STALE")
@@ -199,5 +222,6 @@ public class AssistantContextToolService {
         private Long revision;
         private String errorCode;
         private String message;
+        private Integer retryAfterSeconds;
     }
 }

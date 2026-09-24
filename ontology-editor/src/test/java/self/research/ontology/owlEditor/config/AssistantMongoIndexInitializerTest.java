@@ -48,6 +48,8 @@ class AssistantMongoIndexInitializerTest {
 
         assertEquals(new Document("projectId", 1).append("targetPath", 1).append("status", 1),
                 keys("assistant_edit_group", "projectId_targetPath_status"));
+        assertEquals(new Document("userEmail", 1).append("status", 1).append("expiresAt", 1),
+                keys("assistant_sessions", "userEmail_status_expiresAt"));
         assertEquals(new Document("projectId", 1).append("createdAt", 1),
                 keys("assistant_audit", "projectId_createdAt"));
         assertEquals(null, stored("assistant_audit", "projectId_createdAt").get("expireAfterSeconds"));
@@ -73,8 +75,10 @@ class AssistantMongoIndexInitializerTest {
         Map<String, Outcome> outcomes = initializer.ensureAll();
 
         assertEquals(Outcome.CONFLICT, outcomes.get("assistant_sessions.expiresAt_ttl"));
-        assertEquals(1, sessions.indexes.size());
+        assertEquals(1, sessions.indexes.stream().filter(d -> d.get("key", Document.class).containsKey("expiresAt")
+                && d.get("key", Document.class).size() == 1).count());
         assertEquals("legacy_expiry", sessions.indexes.get(0).getString("name"));
+        assertEquals(0L, sessions.indexes.get(0).get("expireAfterSeconds"));
         assertEquals(Outcome.CREATED, outcomes.get("assistant_audit.createdAt_ttl"));
     }
 

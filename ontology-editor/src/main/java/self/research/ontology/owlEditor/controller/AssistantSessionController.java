@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -13,8 +14,13 @@ import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.dto.AssistantSessionCreateRequest;
 import self.research.ontology.owlEditor.dto.AssistantSessionResponse;
+import self.research.ontology.owlEditor.service.AssistantAdmissionLimiter;
 import self.research.ontology.owlEditor.service.AssistantSessionService;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -24,9 +30,12 @@ import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 public class AssistantSessionController {
 
     private final AssistantSessionService sessionService;
+    private final AssistantAdmissionLimiter admissionLimiter;
 
-    public AssistantSessionController(AssistantSessionService sessionService) {
+    public AssistantSessionController(AssistantSessionService sessionService,
+                                      AssistantAdmissionLimiter admissionLimiter) {
         this.sessionService = sessionService;
+        this.admissionLimiter = admissionLimiter;
     }
 
     @PostMapping
@@ -40,6 +49,12 @@ public class AssistantSessionController {
         if (request.getProjectId() == null || request.getProjectId().isBlank()) {
             return ResponseEntity.badRequest()
                     .body(java.util.Map.of("ok", false, "message", "projectId is required"));
+        }
+
+        Optional<Integer> retryAfter = sessionService.activeSessionLimitRetryAfter(userEmail)
+                .or(() -> admissionLimiter.tryAdmitSessionCreate(userEmail));
+        if (retryAfter.isPresent()) {
+            return rateLimited(retryAfter.get());
         }
 
         AssistantSessionDocument session = sessionService.createSession(
@@ -62,5 +77,16 @@ public class AssistantSessionController {
                 .build();
 
         return ResponseEntity.ok(response);
+    }
+
+    private static ResponseEntity<Map<String, Object>> rateLimited(int retryAfterSeconds) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", false);
+        body.put("errorCode", "RATE_LIMITED");
+        body.put("message", "Too many assistant sessions. Retry in " + retryAfterSeconds + "s.");
+        body.put("retryAfterSeconds", retryAfterSeconds);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
+                .body(body);
     }
 }

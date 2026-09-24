@@ -43,6 +43,7 @@ class AssistantSessionServiceTest {
         ReflectionTestUtils.setField(service, "defaultRetrievalAttempts", 5);
         ReflectionTestUtils.setField(service, "defaultTokenBudget", 8000);
         ReflectionTestUtils.setField(service, "deadlineSeconds", 300L);
+        ReflectionTestUtils.setField(service, "maxActiveSessionsPerUser", 20);
         when(sessionRepository.save(any())).thenAnswer(inv -> {
             AssistantSessionDocument doc = inv.getArgument(0);
             if (doc.getId() == null) {
@@ -152,6 +153,40 @@ class AssistantSessionServiceTest {
 
         when(metadataService.getMutationVersion("proj-1")).thenReturn(42L);
         assertFalse(service.isRevisionStale(session));
+    }
+
+    @Test
+    void activeSessionLimitAllowsCreationBelowTheCapAndOnlyCountsLiveSessionsOfThatUser() {
+        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(19L);
+
+        assertTrue(service.activeSessionLimitRetryAfter("user@example.com").isEmpty());
+
+        org.mockito.ArgumentCaptor<Query> captor = org.mockito.ArgumentCaptor.forClass(Query.class);
+        org.mockito.Mockito.verify(mongoTemplate).count(captor.capture(), eq(AssistantSessionDocument.class));
+        org.bson.Document filter = captor.getValue().getQueryObject();
+        assertEquals("user@example.com", filter.get("userEmail"));
+        assertEquals(AssistantSessionStatus.ACTIVE, filter.get("status"));
+        assertTrue(((org.bson.Document) filter.get("expiresAt")).containsKey("$gt"));
+    }
+
+    @Test
+    void activeSessionLimitReportsSecondsUntilTheSoonestSessionExpires() {
+        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(20L);
+        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class)))
+                .thenReturn(baseSession().expiresAt(Instant.now().plusSeconds(45)).build());
+
+        Optional<Integer> retryAfter = service.activeSessionLimitRetryAfter("user@example.com");
+
+        assertTrue(retryAfter.isPresent());
+        assertTrue(retryAfter.get() >= 44 && retryAfter.get() <= 46, String.valueOf(retryAfter.get()));
+    }
+
+    @Test
+    void activeSessionLimitFallsBackToTheDeadlineWhenNoExpiryIsKnown() {
+        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(25L);
+        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(null);
+
+        assertEquals(Optional.of(300), service.activeSessionLimitRetryAfter("user@example.com"));
     }
 
     private AssistantSessionDocument.AssistantSessionDocumentBuilder baseSession() {

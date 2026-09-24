@@ -11,15 +11,22 @@ import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument.AssistantSessionStatus;
 import self.research.ontology.owlEditor.dto.AssistantSessionCreateRequest;
 import self.research.ontology.owlEditor.dto.AssistantSessionResponse;
+import self.research.ontology.owlEditor.service.AssistantAdmissionLimiter;
 import self.research.ontology.owlEditor.service.AssistantSessionService;
 
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AssistantSessionControllerTest {
@@ -32,7 +39,8 @@ class AssistantSessionControllerTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        controller = new AssistantSessionController(sessionService);
+        controller = new AssistantSessionController(sessionService, new AssistantAdmissionLimiter(4, 8, 32, 2, 1));
+        when(sessionService.activeSessionLimitRetryAfter(anyString())).thenReturn(Optional.empty());
     }
 
     @Test
@@ -86,7 +94,41 @@ class AssistantSessionControllerTest {
         assertEquals(5, body.getBudget().getMaxRetrievalCalls());
     }
 
-    /** A JWT whose payload decodes to {"email":"user@example.com"} — signature isn't checked here. */
+    @Test
+    void tooManyActiveSessionsReturns429WithRetryAfterAndCreatesNothing() {
+        AssistantSessionCreateRequest request = new AssistantSessionCreateRequest();
+        request.setProjectId("proj-1");
+        when(sessionService.activeSessionLimitRetryAfter("user@example.com")).thenReturn(Optional.of(37));
+
+        ResponseEntity<?> response = controller.createSession(request, requestWithBearerToken());
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, response.getStatusCode());
+        assertEquals("37", response.getHeaders().getFirst("Retry-After"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals("RATE_LIMITED", body.get("errorCode"));
+        assertEquals(37, body.get("retryAfterSeconds"));
+        verify(sessionService, never()).createSession(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void createsBeyondThePerMinuteRateAreRejectedWith429() {
+        AssistantSessionCreateRequest request = new AssistantSessionCreateRequest();
+        request.setProjectId("proj-1");
+        when(sessionService.createSession(anyString(), anyString(), any(), any(), any()))
+                .thenReturn(AssistantSessionDocument.builder().id("s").projectId("proj-1").pinnedRevision(1L)
+                        .retrievalAttemptsRemaining(5).expiresAt(Instant.now().plusSeconds(300)).build());
+
+        assertEquals(HttpStatus.OK, controller.createSession(request, requestWithBearerToken()).getStatusCode());
+        assertEquals(HttpStatus.OK, controller.createSession(request, requestWithBearerToken()).getStatusCode());
+        ResponseEntity<?> third = controller.createSession(request, requestWithBearerToken());
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, third.getStatusCode());
+        int retryAfter = Integer.parseInt(third.getHeaders().getFirst("Retry-After"));
+        assertTrue(retryAfter >= 1 && retryAfter <= 60);
+        verify(sessionService, times(2)).createSession(anyString(), anyString(), any(), any(), any());
+    }
+
     private MockHttpServletRequest requestWithBearerToken() {
         String payload = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"email\":\"user@example.com\"}".getBytes());

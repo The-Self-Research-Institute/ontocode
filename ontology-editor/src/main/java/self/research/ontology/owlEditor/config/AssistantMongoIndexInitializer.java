@@ -43,6 +43,8 @@ public class AssistantMongoIndexInitializer {
     public static List<IndexSpec> requiredIndexes() {
         return List.of(
                 new IndexSpec(SESSIONS_COLLECTION, "expiresAt_ttl", keys("expiresAt"), SESSION_TTL_GRACE),
+                new IndexSpec(SESSIONS_COLLECTION, "userEmail_status_expiresAt",
+                        keys("userEmail", "status", "expiresAt"), null),
                 new IndexSpec(EDIT_GROUP_COLLECTION, "expiresAt_ttl", keys("expiresAt"), Duration.ZERO),
                 new IndexSpec(EDIT_GROUP_COLLECTION, "projectId_targetPath_status",
                         keys("projectId", "targetPath", "status"), null),

@@ -9,6 +9,7 @@ import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument.AssistantSessionStatus;
 import self.research.ontology.owlEditor.service.SparqlDatasetService.CappedSparqlResult;
 
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,11 +33,14 @@ class AssistantSparqlToolServiceTest {
     private SparqlDatasetService datasetService;
 
     private AssistantSparqlToolService toolService;
+    private AssistantAdmissionLimiter limiter;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        toolService = new AssistantSparqlToolService(sessionService, datasetService, new ProjectWriteLockRegistry());
+        limiter = new AssistantAdmissionLimiter(4, 2, 32, 30, 3, Clock.systemUTC());
+        toolService = new AssistantSparqlToolService(sessionService, datasetService, new ProjectWriteLockRegistry(),
+                limiter);
         ReflectionTestUtils.setField(toolService, "maxRows", 200);
         ReflectionTestUtils.setField(toolService, "maxBytes", 200000L);
         ReflectionTestUtils.setField(toolService, "timeoutSeconds", 15);
@@ -204,6 +208,51 @@ class AssistantSparqlToolServiceTest {
 
         assertFalse(result.isOk());
         assertEquals("QUERY_ERROR", result.getErrorCode());
+    }
+
+    @Test
+    void projectCapacityRejectsWithRateLimitedAndNeverSpendsARetrievalAttempt() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        AssistantAdmissionLimiter.ToolAdmission a = limiter.tryAcquireTool("other1@x.com", "proj-1");
+        AssistantAdmissionLimiter.ToolAdmission b = limiter.tryAcquireTool("other2@x.com", "proj-1");
+
+        AssistantSparqlToolService.SparqlToolResult result =
+                toolService.runSparql("s1", "u@x.com", "SELECT * WHERE { ?s ?p ?o }");
+
+        assertFalse(result.isOk());
+        assertEquals("RATE_LIMITED", result.getErrorCode());
+        assertEquals(3, result.getRetryAfterSeconds());
+        org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never()).tryConsumeRetrievalAttempt(anyString());
+        assertEquals(0, limiter.inFlightForUser("u@x.com"));
+        ((AssistantAdmissionLimiter.Admitted) a).close();
+        ((AssistantAdmissionLimiter.Admitted) b).close();
+    }
+
+    @Test
+    void slotIsReleasedWhenTheQueryThrows() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenThrow(new RuntimeException("parse error"));
+
+        for (int i = 0; i < 6; i++) {
+            assertEquals("QUERY_ERROR",
+                    toolService.runSparql("s1", "u@x.com", "SELECT * WHERE { ?s ?p ?o }").getErrorCode());
+        }
+        assertEquals(0, limiter.inFlightForProject("proj-1"));
+        assertEquals(0, limiter.inFlightGlobal());
+    }
+
+    @Test
+    void nonSelectQueriesAreRejectedWithoutTakingASlot() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        AssistantAdmissionLimiter.ToolAdmission a = limiter.tryAcquireTool("other1@x.com", "proj-1");
+        AssistantAdmissionLimiter.ToolAdmission b = limiter.tryAcquireTool("other2@x.com", "proj-1");
+
+        assertEquals("NOT_SELECT_ONLY",
+                toolService.runSparql("s1", "u@x.com", "DELETE WHERE { ?s ?p ?o }").getErrorCode());
+        ((AssistantAdmissionLimiter.Admitted) a).close();
+        ((AssistantAdmissionLimiter.Admitted) b).close();
     }
 
     private AssistantSessionDocument activeSession() {
