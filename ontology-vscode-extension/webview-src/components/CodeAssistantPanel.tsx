@@ -4,12 +4,22 @@ import { AskAiIcon } from "./AskAiIcon";
 import { hasApiKey, setStoredApiKey } from "../services/LlmInsightsService";
 import { CodeAssistantModelSwitcher } from "./CodeAssistantModelSwitcher";
 import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
-import { CodeAssistantReviewGroups, type GroupDecision } from "./CodeAssistantReviewGroups";
+import { CodeAssistantReviewGroups, type GroupDecision, type ApplyAllRunState } from "./CodeAssistantReviewGroups";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
 import { createAssistantSession, applyEditGroup, AssistantApiError, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
 import { runAssistantLoop, type LoopOutcome, type HistoryTurn, type ContextEvent } from "../services/codeAssistantLoop";
 import { ACTIONS, getApiBaseUrl, buildSystemPrompt, describeLoopStage, toFriendlyErrorMessage, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
+import {
+  applyRemapResult,
+  buildApplyAllQueue,
+  classifyApplyFailure,
+  formatApplyAllSummary,
+  groupLabel,
+  runApplyAll,
+  type ApplyOneResult,
+} from "../services/codeAssistantApplyQueue";
+import { errorSignalFrom, parseHttpStatus } from "../services/codeAssistantDeadEnd";
 
 export type { CodeAssistantAction };
 
@@ -32,8 +42,12 @@ type ChatEntry =
       decisions: Record<string, GroupDecision>;
       errors: Record<string, string>;
       contextUsed: ContextEvent[];
+      applyAllRun?: ApplyAllRunState | null;
+      applyAllSummary?: string | null;
     }
   | { id: string; role: "assistant"; kind: "error"; text: string };
+
+type ReviewEntry = Extract<ChatEntry, { kind: "review" }>;
 
 let entryCounter = 0;
 function nextEntryId(): string {
@@ -66,9 +80,25 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const entriesRef = useRef<ChatEntry[]>(entries);
-  useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
+  const cancelApplyAllRef = useRef<Set<string>>(new Set());
+  const applyBusyRef = useRef(false);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const mountedRef = useRef(true);
+
+  const commitEntries = (updater: (prev: ChatEntry[]) => ChatEntry[]) => {
+    entriesRef.current = updater(entriesRef.current);
+    setEntries(entriesRef.current);
+  };
+
+  const findReviewEntry = (entryId: string): ReviewEntry | undefined => {
+    const found = entriesRef.current.find((e) => e.id === entryId);
+    return found && found.role === "assistant" && found.kind === "review" ? found : undefined;
+  };
+
+  const setApplyBusyNow = (value: boolean) => {
+    applyBusyRef.current = value;
+    setApplyBusy(value);
+  };
 
   const slashCommands = [
     { cmd: "/ask", label: "Ask", description: "Ask a question about this document", disabled: false, run: () => setAction("ask") },
@@ -80,7 +110,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       run: () => setAction("local-edit"),
     },
     { cmd: "/find", label: "Project findings", description: "Ask a question grounded in the whole project", disabled: false, run: () => setAction("project-findings") },
-    { cmd: "/clear", label: "Clear chat", description: "Start a new conversation", disabled: false, run: () => setEntries([]) },
+    { cmd: "/clear", label: "Clear chat", description: "Start a new conversation", disabled: applyBusy, run: () => commitEntries(() => []) },
     {
       cmd: "/logout",
       label: "Log out",
@@ -97,7 +127,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const activeCommandIndex = Math.min(commandIndex, Math.max(commandMatches.length - 1, 0));
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       abortControllerRef.current?.abort();
     };
   }, []);
@@ -120,16 +152,16 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
 
   const updateReviewEntry = (
     entryId: string,
-    updater: (entry: Extract<ChatEntry, { kind: "review" }>) => Extract<ChatEntry, { kind: "review" }>,
+    updater: (entry: ReviewEntry) => ReviewEntry,
   ) => {
-    setEntries((prev) =>
+    commitEntries((prev) =>
       prev.map((e) => (e.id === entryId && e.role === "assistant" && e.kind === "review" ? updater(e) : e)),
     );
   };
 
   const appendOutcome = (outcome: LoopOutcome, sessionId: string, contextUsed: ContextEvent[]) => {
     if (outcome.kind === "answer") {
-      setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text, contextUsed }]);
+      commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text, contextUsed }]);
       return;
     }
     if (outcome.kind === "propose") {
@@ -137,20 +169,20 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       outcome.result.groups.forEach((g) => {
         decisions[g.serverGroupId] = g.validation.passed ? "pending" : "failed";
       });
-      setEntries((prev) => [
+      commitEntries((prev) => [
         ...prev,
         { id: nextEntryId(), role: "assistant", kind: "review", sessionId, groups: outcome.result.groups, decisions, errors: {}, contextUsed },
       ]);
       return;
     }
-    setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(outcome.reason) }]);
+    commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(outcome.reason) }]);
   };
 
   const submitMessage = async () => {
     const text = input.trim();
     if (!text || busy) return;
     if (!projectId) {
-      setEntries((prev) => [
+      commitEntries((prev) => [
         ...prev,
         { id: nextEntryId(), role: "assistant", kind: "error", text: "No project is open. Open a project, then try again." },
       ]);
@@ -161,7 +193,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       if (entry.role === "assistant" && entry.kind === "answer") return [{ role: "assistant", text: entry.text }];
       return [];
     });
-    setEntries((prev) => [...prev, { id: nextEntryId(), role: "user", text, action }]);
+    commitEntries((prev) => [...prev, { id: nextEntryId(), role: "user", text, action }]);
     setInput("");
     setBusy(true);
     setStatusText("Starting...");
@@ -190,7 +222,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     } catch (e) {
       if (controller.signal.aborted) return;
       const raw = e instanceof AssistantApiError || e instanceof Error ? e.message : "Something went wrong talking to the assistant.";
-      setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(raw) }]);
+      commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(raw) }]);
     } finally {
       setBusy(false);
       setStatusText("");
@@ -203,27 +235,48 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     setStatusText("");
   };
 
-  const applyGroup = async (entryId: string, sessionId: string, serverGroupId: string) => {
-    updateReviewEntry(entryId, (e) => ({ ...e, decisions: { ...e.decisions, [serverGroupId]: "applying" } }));
+  const applyGroupOnce = async (entryId: string, sessionId: string, serverGroupId: string): Promise<ApplyOneResult> => {
+    updateReviewEntry(entryId, (e) => {
+      const errors = { ...e.errors };
+      delete errors[serverGroupId];
+      return { ...e, decisions: { ...e.decisions, [serverGroupId]: "applying" }, errors };
+    });
     try {
-      const apiBaseUrl = getApiBaseUrl();
-      const result = await applyEditGroup(apiBaseUrl, user?.token, sessionId, serverGroupId);
-      updateReviewEntry(entryId, (e) => {
-        const next: Record<string, GroupDecision> = { ...e.decisions, [serverGroupId]: "applied" };
-        for (const remap of result.remappedPendingGroups) {
-          if (remap.remapped && next[remap.serverGroupId] === "pending") {
-            next[remap.serverGroupId] = "stale";
-          }
-        }
-        return { ...e, decisions: next };
-      });
-    } catch (e) {
-      const raw = e instanceof AssistantApiError ? e.message : "Apply failed unexpectedly.";
-      updateReviewEntry(entryId, (e2) => ({
-        ...e2,
-        decisions: { ...e2.decisions, [serverGroupId]: "failed" },
-        errors: { ...e2.errors, [serverGroupId]: toFriendlyErrorMessage(raw) },
+      const result = await applyEditGroup(getApiBaseUrl(), user?.token, sessionId, serverGroupId);
+      updateReviewEntry(entryId, (e) => ({
+        ...e,
+        decisions: applyRemapResult(e.decisions, serverGroupId, result.remappedPendingGroups ?? []),
       }));
+      return { ok: true };
+    } catch (err) {
+      const signal = errorSignalFrom(err, "Apply failed unexpectedly.");
+      const failure = classifyApplyFailure(
+        signal.errorCode,
+        signal.status ?? parseHttpStatus(signal.message),
+        toFriendlyErrorMessage(signal.message),
+      );
+      updateReviewEntry(entryId, (e) => ({
+        ...e,
+        decisions: { ...e.decisions, [serverGroupId]: failure.decision },
+        errors: { ...e.errors, [serverGroupId]: failure.message },
+      }));
+      return { ok: false, failure };
+    }
+  };
+
+  const currentApplyBlock = (): string | null => {
+    return null;
+  };
+
+  const applyGroup = async (entryId: string, sessionId: string, serverGroupId: string) => {
+    if (applyBusyRef.current || currentApplyBlock()) return;
+    const entry = findReviewEntry(entryId);
+    if (!entry || (entry.decisions[serverGroupId] ?? "pending") !== "pending") return;
+    setApplyBusyNow(true);
+    try {
+      await applyGroupOnce(entryId, sessionId, serverGroupId);
+    } finally {
+      setApplyBusyNow(false);
     }
   };
 
@@ -232,15 +285,55 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   };
 
   const applyAllPending = async (entryId: string, sessionId: string) => {
-    const entry = entriesRef.current.find((e) => e.id === entryId);
-    if (!entry || entry.role !== "assistant" || entry.kind !== "review") return;
-    const serverGroupIds = entry.groups.filter((g) => g.validation.passed).map((g) => g.serverGroupId);
-    for (const serverGroupId of serverGroupIds) {
-      const current = entriesRef.current.find((e) => e.id === entryId);
-      if (!current || current.role !== "assistant" || current.kind !== "review") break;
-      if (current.decisions[serverGroupId] !== "pending") continue;
-      await applyGroup(entryId, sessionId, serverGroupId);
+    if (applyBusyRef.current || currentApplyBlock()) return;
+    const entry = findReviewEntry(entryId);
+    if (!entry) return;
+    const queue = buildApplyAllQueue(entry.groups, entry.decisions);
+    if (queue.length === 0) return;
+    cancelApplyAllRef.current.delete(entryId);
+    setApplyBusyNow(true);
+    updateReviewEntry(entryId, (e) => ({
+      ...e,
+      applyAllRun: { running: true, position: 0, total: queue.length, cancelRequested: false },
+      applyAllSummary: null,
+    }));
+    try {
+      const report = await runApplyAll(queue, {
+        readDecisions: () => findReviewEntry(entryId)?.decisions ?? {},
+        applyOne: (serverGroupId) => applyGroupOnce(entryId, sessionId, serverGroupId),
+        isCancelRequested: () => cancelApplyAllRef.current.has(entryId),
+        blockedReason: () => {
+          if (!mountedRef.current) return "the assistant panel was closed";
+          if (!findReviewEntry(entryId)) return "the conversation was cleared";
+          return currentApplyBlock();
+        },
+        onProgress: (progress) =>
+          updateReviewEntry(entryId, (e) => ({
+            ...e,
+            applyAllRun: {
+              running: true,
+              position: progress.position,
+              total: progress.total,
+              cancelRequested: e.applyAllRun?.cancelRequested ?? false,
+            },
+          })),
+      });
+      updateReviewEntry(entryId, (e) => ({
+        ...e,
+        applyAllRun: null,
+        applyAllSummary: formatApplyAllSummary(report, (id) => groupLabel(e.groups, id)),
+      }));
+    } finally {
+      cancelApplyAllRef.current.delete(entryId);
+      setApplyBusyNow(false);
     }
+  };
+
+  const cancelApplyAll = (entryId: string) => {
+    cancelApplyAllRef.current.add(entryId);
+    updateReviewEntry(entryId, (e) =>
+      e.applyAllRun ? { ...e, applyAllRun: { ...e.applyAllRun, cancelRequested: true } } : e,
+    );
   };
 
   const copyText = async (entryId: string, text: string) => {
@@ -387,6 +480,10 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                       onApply={(groupId) => applyGroup(entry.id, entry.sessionId, groupId)}
                       onSkip={(groupId) => skipGroup(entry.id, groupId)}
                       onApplyAll={() => applyAllPending(entry.id, entry.sessionId)}
+                      onCancelApplyAll={() => cancelApplyAll(entry.id)}
+                      applyAllRun={entry.applyAllRun ?? null}
+                      applyAllSummary={entry.applyAllSummary ?? null}
+                      applyBusy={applyBusy}
                     />
                     <CodeAssistantContextUsed events={entry.contextUsed} />
                   </div>
