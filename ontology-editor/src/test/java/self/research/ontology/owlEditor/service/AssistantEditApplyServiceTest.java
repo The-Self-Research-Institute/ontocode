@@ -16,12 +16,14 @@ import self.research.ontology.owlEditor.service.CodeViewReimportPipeline.Reimpor
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -49,6 +51,9 @@ class AssistantEditApplyServiceTest {
     @Mock
     private AssistantEditSyntaxValidator syntaxValidator;
 
+    @Mock
+    private SparqlDatasetService datasetService;
+
     private AssistantEditApplyService applyService;
     private Path splicedFile;
 
@@ -57,7 +62,7 @@ class AssistantEditApplyServiceTest {
         MockitoAnnotations.openMocks(this);
         ProjectWriteLockRegistry realLockRegistry = new ProjectWriteLockRegistry();
         applyService = new AssistantEditApplyService(groupRepository, storageManager, spliceWriter,
-                reimportPipeline, remapService, realLockRegistry, syntaxValidator);
+                reimportPipeline, remapService, realLockRegistry, syntaxValidator, datasetService);
         splicedFile = Files.createTempFile("apply-test-spliced-", ".ttl");
         when(storageManager.extensionFor(anyString())).thenReturn("ttl");
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(splicedFile);
@@ -286,5 +291,41 @@ class AssistantEditApplyServiceTest {
 
         assertFalse(result.isOk());
         assertEquals("APPLY_FAILED", result.getErrorCode());
+    }
+
+    @Test
+    void reimportFailureWithGraphLeftEmptyWarnsAgainstBlindRetry() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("connection reset mid-stream"));
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of(), List.of(), false, null));
+
+        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("APPLY_FAILED", result.getErrorCode());
+        assertTrue(result.getMessage().contains("appears empty"));
+        assertTrue(result.getMessage().contains("Do not assume retrying is safe"));
+    }
+
+    @Test
+    void reimportFailureWithGraphStillPopulatedSaysRetryIsSafe() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("connection reset mid-stream"));
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of("s"), List.of(Map.of("s", "x")), false, null));
+
+        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("APPLY_FAILED", result.getErrorCode());
+        assertTrue(result.getMessage().contains("still has content"));
+        assertTrue(result.getMessage().contains("retrying should be safe"));
     }
 }

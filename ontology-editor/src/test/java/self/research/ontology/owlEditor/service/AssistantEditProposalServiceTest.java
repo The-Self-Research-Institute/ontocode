@@ -374,6 +374,76 @@ class AssistantEditProposalServiceTest {
     }
 
     @Test
+    void incompleteRenameLeavingOtherReferencesFailsCoverageCheck() throws Exception {
+        mockLiveContent("turtle", 1, 1, ":OldClass a owl:Class .");
+        Path fullDocument = Files.createTempFile("proposal-fulldoc-", ".ttl");
+        Files.writeString(fullDocument,
+                "@prefix : <http://example.org/> .\n"
+                        + ":OldClass a owl:Class .\n"
+                        + ":Something rdfs:subClassOf :OldClass .\n",
+                StandardCharsets.UTF_8);
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(fullDocument);
+        EditInput edit = new EditInput("turtle", new EditRange(1, 1), ":OldClass a owl:Class .", ":NewClass a owl:Class .");
+        EditGroupInput group = new EditGroupInput("c1", List.of(edit));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertFalse(outcome.isValidationPassed());
+        assertFalse(checkNamed(outcome, "complete_reference_coverage").get().passed());
+        assertTrue(checkNamed(outcome, "complete_reference_coverage").get().detail().contains(":OldClass"));
+    }
+
+    @Test
+    void renameCoveringEveryOccurrencePassesCoverageCheck() throws Exception {
+        mockLiveContent("turtle", 1, 1, ":OldClass a owl:Class .");
+        Path fullDocument = Files.createTempFile("proposal-fulldoc-", ".ttl");
+        Files.writeString(fullDocument,
+                "@prefix : <http://example.org/> .\n"
+                        + ":OldClass a owl:Class .\n"
+                        + ":Something rdfs:comment \"unrelated\" .\n",
+                StandardCharsets.UTF_8);
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(fullDocument);
+        EditInput edit = new EditInput("turtle", new EditRange(1, 1), ":OldClass a owl:Class .", ":NewClass a owl:Class .");
+        EditGroupInput group = new EditGroupInput("c1", List.of(edit));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(checkNamed(outcome, "complete_reference_coverage").get().passed());
+    }
+
+    @Test
+    void editThatDoesNotRemoveAnyIdentifierSkipsCoverageScanEntirely() throws Exception {
+        mockLiveContent("turtle", 1, 1, ":A rdfs:comment \"old text\" .");
+        EditInput edit = new EditInput("turtle", new EditRange(1, 1), ":A rdfs:comment \"old text\" .", ":A rdfs:comment \"new text\" .");
+        EditGroupInput group = new EditGroupInput("c1", List.of(edit));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(outcome.isValidationPassed());
+        assertTrue(checkNamed(outcome, "complete_reference_coverage").get().passed());
+    }
+
+    @Test
+    void renamingAndReusingTheOldTokenElsewhereInTheSameGroupIsNotFlagged() throws Exception {
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage(":OldClass a owl:Class .", 1, 1, 10, 100));
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 10, 1))
+                .thenReturn(new StorageManager.CodeViewPage(":Other rdfs:comment \"mentions :OldClass\" .", 10, 1, 10, 100));
+        EditInput rename = new EditInput("turtle", new EditRange(1, 1), ":OldClass a owl:Class .", ":NewClass a owl:Class .");
+        EditInput keepsOldToken = new EditInput("turtle", new EditRange(10, 1),
+                ":Other rdfs:comment \"mentions :OldClass\" .", ":Other rdfs:comment \"still mentions :OldClass\" .");
+        EditGroupInput group = new EditGroupInput("c1", List.of(rename, keepsOldToken));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(checkNamed(outcome, "complete_reference_coverage").get().passed());
+    }
+
+    @Test
     void structurallyUnsoundGroupNeverReachesSpliceWriter() throws Exception {
         EditInput turtleEdit = new EditInput("turtle", new EditRange(1, 1), "old", "new");
         EditInput rdfxmlEdit = new EditInput("rdfxml", new EditRange(5, 1), "old2", "new2");

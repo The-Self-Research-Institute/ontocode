@@ -30,6 +30,7 @@ public class AssistantEditApplyService {
     private final AssistantEditGroupRemapService remapService;
     private final ProjectWriteLockRegistry lockRegistry;
     private final AssistantEditSyntaxValidator syntaxValidator;
+    private final SparqlDatasetService datasetService;
 
     public AssistantEditApplyService(AssistantEditGroupRepository groupRepository,
                                       StorageManager storageManager,
@@ -37,7 +38,8 @@ public class AssistantEditApplyService {
                                       CodeViewReimportPipeline reimportPipeline,
                                       AssistantEditGroupRemapService remapService,
                                       ProjectWriteLockRegistry lockRegistry,
-                                      AssistantEditSyntaxValidator syntaxValidator) {
+                                      AssistantEditSyntaxValidator syntaxValidator,
+                                      SparqlDatasetService datasetService) {
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
         this.spliceWriter = spliceWriter;
@@ -45,6 +47,7 @@ public class AssistantEditApplyService {
         this.remapService = remapService;
         this.lockRegistry = lockRegistry;
         this.syntaxValidator = syntaxValidator;
+        this.datasetService = datasetService;
     }
 
     public ApplyResult applyGroup(String serverGroupId, String userEmail) {
@@ -105,10 +108,15 @@ public class AssistantEditApplyService {
         Path splicedFile = spliceWriter.splice(sourceFile, extension, spliceEdits);
 
         try {
-            CodeViewReimportPipeline.ReimportResult reimportResult = reimportPipeline.reimport(
-                    new CodeViewReimportPipeline.ReimportRequest(
-                            group.getProjectId(), group.getTargetPath(), splicedFile, false,
-                            userEmail, userEmail, null, oldSnapshotFile, true));
+            CodeViewReimportPipeline.ReimportResult reimportResult;
+            try {
+                reimportResult = reimportPipeline.reimport(
+                        new CodeViewReimportPipeline.ReimportRequest(
+                                group.getProjectId(), group.getTargetPath(), splicedFile, false,
+                                userEmail, userEmail, null, oldSnapshotFile, true));
+            } catch (Exception reimportEx) {
+                return handleReimportFailure(group, reimportEx);
+            }
 
             group.setStatus(AssistantEditGroupStatus.APPLIED);
             group.setAppliedRevision(reimportResult.sourceVersion());
@@ -138,6 +146,36 @@ public class AssistantEditApplyService {
                     .build();
         } finally {
             Files.deleteIfExists(splicedFile);
+        }
+    }
+
+    private ApplyResult handleReimportFailure(AssistantEditGroupDocument group, Exception reimportEx) {
+        String baseMessage = reimportEx.getMessage() != null ? reimportEx.getMessage() : "Apply failed";
+        boolean graphLooksIntact = probeGraphNonEmpty(group.getProjectId());
+        if (!graphLooksIntact) {
+            log.error("[Assistant] CRITICAL: reimport failed for project {} and the graph now looks empty - "
+                    + "this can happen when a large reimport is interrupted mid-transaction (GraphDB commits in "
+                    + "batches for big documents, so a failure partway through can leave the graph cleared but "
+                    + "not fully reloaded). This project's data may need manual recovery from ontology history "
+                    + "or a backup. Original error: {}", group.getProjectId(), baseMessage, reimportEx);
+            return errorResult("APPLY_FAILED", baseMessage
+                    + " - the project's graph now appears empty. Do not assume retrying is safe; check with a human before continuing.");
+        }
+        log.warn("[Assistant] Reimport failed for project {} but the graph still has content - "
+                + "likely failed before completing any destructive write, retrying should be safe. Error: {}",
+                group.getProjectId(), baseMessage);
+        return errorResult("APPLY_FAILED", baseMessage + " - the project's graph still has content; retrying should be safe.");
+    }
+
+    private boolean probeGraphNonEmpty(String projectId) {
+        try {
+            SparqlDatasetService.CappedSparqlResult probe =
+                    datasetService.execSelectCapped(projectId, "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1", 5, 1, 1_000);
+            return !probe.rows().isEmpty();
+        } catch (Exception probeEx) {
+            log.warn("[Assistant] Post-failure graph integrity probe itself failed for project {} - "
+                    + "cannot confirm whether the graph is intact: {}", projectId, probeEx.getMessage());
+            return true;
         }
     }
 
