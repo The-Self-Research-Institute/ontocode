@@ -58,6 +58,22 @@ class AssistantSparqlToolServiceTest {
     }
 
     @Test
+    void revisionThatMovesDuringTheQueryDiscardsTheResultInsteadOfMislabelingIt() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(sessionService.isRevisionStale(any())).thenReturn(false, true);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("s"), List.of(Map.of("s", "a")), false, null));
+
+        AssistantSparqlToolService.SparqlToolResult result =
+                toolService.runSparql("s1", "u@x.com", "SELECT ?s WHERE { ?s ?p ?o }");
+
+        assertFalse(result.isOk());
+        assertEquals("REVISION_STALE", result.getErrorCode());
+        org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never()).tryConsumeTokenBudget(anyString(), anyInt());
+    }
+
+    @Test
     void returnsSessionNotFoundWhenSessionMissing() {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.empty());
 

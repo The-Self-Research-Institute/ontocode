@@ -57,6 +57,6 @@ public class AssistantEditGroupDocument {
     }
 
     public enum AssistantEditGroupStatus {
-        PENDING, APPLIED, STALE, CONFLICT, VALIDATION_FAILED, DISCARDED
+        PENDING, APPLIED, STALE, CONFLICT, VALIDATION_FAILED, DISCARDED, RECOVERY_REQUIRED
     }
 }

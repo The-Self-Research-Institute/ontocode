@@ -312,8 +312,8 @@ class AssistantEditApplyServiceTest {
 
         assertFalse(result.isOk());
         assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
-        assertTrue(result.getMessage().contains("has not been verified"));
-        assertTrue(result.getMessage().contains("paused"));
+        assertTrue(result.getMessage().contains("haven't been verified"));
+        assertTrue(result.getMessage().contains("won't be applied again"));
     }
 
     @Test
@@ -330,8 +330,35 @@ class AssistantEditApplyServiceTest {
 
         assertFalse(result.isOk());
         assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
-        assertTrue(result.getMessage().contains("has not been verified"));
-        assertTrue(result.getMessage().contains("paused"));
+        assertTrue(result.getMessage().contains("haven't been verified"));
+        assertTrue(result.getMessage().contains("won't be applied again"));
         assertFalse(result.getMessage().toLowerCase().contains("safe"));
+    }
+
+    @Test
+    void reimportFailureMarksGroupRecoveryRequiredSoItCannotBeReappliedByAccident() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("connection reset mid-stream"));
+
+        applyService.applyGroup("g1", "u@x.com");
+
+        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
+        verify(groupRepository).save(captor.capture());
+        assertEquals(AssistantEditGroupStatus.RECOVERY_REQUIRED, captor.getValue().getStatus());
+    }
+
+    @Test
+    void recoveryRequiredGroupIsNeverReappliedOnRetry() throws Exception {
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.RECOVERY_REQUIRED)));
+
+        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
     }
 }

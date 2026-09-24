@@ -3,10 +3,12 @@ package self.research.ontology.owlEditor.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -52,28 +54,31 @@ public class AssistantEditReferenceCoverageValidator {
                 .map(e -> new long[]{e.startLine(), e.startLine() + e.lineCount()})
                 .toList();
 
-        String fullText;
+        List<String> missed = new ArrayList<>();
+        Set<String> unresolved = new LinkedHashSet<>(removedTokens);
         try {
             Path sourceFile = storageManager.ensureCodeViewFile(projectId, targetPath);
-            fullText = Files.readString(sourceFile);
+            try (BufferedReader reader = Files.newBufferedReader(sourceFile)) {
+                String line;
+                long lineNo = 0;
+                while (!unresolved.isEmpty() && (line = reader.readLine()) != null) {
+                    if (!withinAnyRange(lineNo, editedRanges)) {
+                        Iterator<String> it = unresolved.iterator();
+                        while (it.hasNext()) {
+                            String token = it.next();
+                            if (line.contains(token)) {
+                                missed.add(token + " still appears at line " + lineNo);
+                                it.remove();
+                            }
+                        }
+                    }
+                    lineNo++;
+                }
+            }
         } catch (Exception e) {
             log.warn("[Assistant] complete_reference_coverage scan skipped for project {} targetPath {}: {}",
                     projectId, targetPath, e.getMessage());
             return new CoverageResult(true, null);
-        }
-
-        String[] lines = fullText.split("\n", -1);
-        List<String> missed = new ArrayList<>();
-        for (String token : removedTokens) {
-            for (int lineNo = 0; lineNo < lines.length; lineNo++) {
-                if (withinAnyRange(lineNo, editedRanges)) {
-                    continue;
-                }
-                if (lines[lineNo].contains(token)) {
-                    missed.add(token + " still appears at line " + lineNo);
-                    break;
-                }
-            }
         }
 
         if (missed.isEmpty()) {

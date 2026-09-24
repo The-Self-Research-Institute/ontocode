@@ -60,6 +60,24 @@ class AssistantContextToolServiceTest {
     }
 
     @Test
+    void revisionThatMovesDuringTheReadDiscardsTheResultInsteadOfMislabelingIt() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(sessionService.isRevisionStale(any())).thenReturn(false, true);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("p", "o"),
+                        List.of(Map.of("p", "rdf:type", "o", "owl:Class")), false, null));
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "definitions");
+
+        assertFalse(result.isOk());
+        assertEquals("REVISION_STALE", result.getErrorCode());
+        org.mockito.Mockito.verify(datasetService).execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong());
+        org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never()).tryConsumeTokenBudget(anyString(), anyInt());
+    }
+
+    @Test
     void returnsSessionNotFoundWhenSessionMissing() {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.empty());
 

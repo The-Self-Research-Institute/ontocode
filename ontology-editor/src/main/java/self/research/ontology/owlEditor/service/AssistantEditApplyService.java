@@ -84,6 +84,9 @@ public class AssistantEditApplyService {
                 return errorResult("STALE_GROUP", group.getStaleReason());
             case CONFLICT:
                 return errorResult("CONFLICT", "Document changed since this group was checked");
+            case RECOVERY_REQUIRED:
+                return errorResult("RECOVERY_REQUIRED", "An earlier attempt to apply this proposal failed partway "
+                        + "through, so it won't be applied again. Check the project's state before making further changes.");
             case PENDING:
                 break;
         }
@@ -169,9 +172,12 @@ public class AssistantEditApplyService {
                     + "intermediate-commit behavior that can empty it can also leave it partially reloaded). "
                     + "Non-empty does not mean intact. Original error: {}", group.getProjectId(), baseMessage, reimportEx);
         }
-        return errorResult("RECOVERY_REQUIRED", "Apply failed: " + baseMessage + ". The consistency of the "
-                + "source, graph, and history has not been verified. Further changes to this project are "
-                + "paused until its state is checked by a human.");
+        group.setStatus(AssistantEditGroupStatus.RECOVERY_REQUIRED);
+        group.setUpdatedAt(Instant.now());
+        groupRepository.save(group);
+        return errorResult("RECOVERY_REQUIRED", "Apply failed: " + baseMessage + ". The project's source, graph, "
+                + "and history may now be inconsistent and haven't been verified. This proposal won't be applied "
+                + "again; check the project's state before making further changes.");
     }
 
     private boolean probeGraphNonEmpty(String projectId) {

@@ -51,9 +51,7 @@ public class AssistantSparqlToolService {
         AssistantSessionDocument session = sessionOpt.get();
 
         if (sessionService.isRevisionStale(session)) {
-            return SparqlToolResult.builder().ok(false).errorCode("REVISION_STALE")
-                    .message("The project has changed since this session's snapshot was pinned. "
-                            + "Start a new request to get a fresh snapshot before reading further.").build();
+            return revisionStale();
         }
 
         if (query == null || !SELECT_ONLY.matcher(query).find()) {
@@ -68,8 +66,15 @@ public class AssistantSparqlToolService {
         }
 
         try {
-            SparqlDatasetService.CappedSparqlResult capped = lockRegistry.runShared(session.getProjectId(),
-                    () -> datasetService.execSelectCapped(session.getProjectId(), query, timeoutSeconds, maxRows, maxBytes));
+            Optional<SparqlDatasetService.CappedSparqlResult> readResult = lockRegistry.runShared(session.getProjectId(), () -> {
+                SparqlDatasetService.CappedSparqlResult read =
+                        datasetService.execSelectCapped(session.getProjectId(), query, timeoutSeconds, maxRows, maxBytes);
+                return sessionService.isRevisionStale(session) ? Optional.empty() : Optional.of(read);
+            });
+            if (readResult.isEmpty()) {
+                return revisionStale();
+            }
+            SparqlDatasetService.CappedSparqlResult capped = readResult.get();
             if (capped.capExceeded() != null) {
                 return SparqlToolResult.builder().ok(false).errorCode(capped.capExceeded())
                         .message("Query matched more rows/bytes than the assistant's cap allows ("
@@ -96,6 +101,12 @@ public class AssistantSparqlToolService {
             log.warn("[Assistant] run_sparql failed for session {}: {}", sessionId, msg);
             return SparqlToolResult.builder().ok(false).errorCode(errorCode).message(msg).build();
         }
+    }
+
+    private SparqlToolResult revisionStale() {
+        return SparqlToolResult.builder().ok(false).errorCode("REVISION_STALE")
+                .message("The project has changed since this session's snapshot was pinned. "
+                        + "Start a new request to get a fresh snapshot before reading further.").build();
     }
 
     private String resultText(List<Map<String, String>> rows) {

@@ -43,9 +43,7 @@ public class AssistantContextToolService {
         AssistantSessionDocument session = sessionOpt.get();
 
         if (sessionService.isRevisionStale(session)) {
-            return ContextToolResult.builder().ok(false).errorCode("REVISION_STALE")
-                    .message("The project has changed since this session's snapshot was pinned. "
-                            + "Start a new request to get a fresh snapshot before reading further.").build();
+            return revisionStale();
         }
 
         if (!sessionService.tryConsumeRetrievalAttempt(sessionId)) {
@@ -53,15 +51,21 @@ public class AssistantContextToolService {
                     .message("Retrieval budget exhausted for this session").build();
         }
 
-        TargetResolution resolution;
+        Optional<TargetResolution> readResult;
         try {
-            resolution = lockRegistry.runShared(session.getProjectId(),
-                    () -> resolveTargets(session.getProjectId(), dedupeTargets(targets), kind));
+            readResult = lockRegistry.runShared(session.getProjectId(), () -> {
+                TargetResolution read = resolveTargets(session.getProjectId(), dedupeTargets(targets), kind);
+                return sessionService.isRevisionStale(session) ? Optional.empty() : Optional.of(read);
+            });
         } catch (Exception e) {
             log.warn("[Assistant] read_context failed for session {}: {}", sessionId, e.getMessage());
             return ContextToolResult.builder().ok(false).errorCode("QUERY_ERROR")
                     .message(e.getMessage() != null ? e.getMessage() : "read_context failed").build();
         }
+        if (readResult.isEmpty()) {
+            return revisionStale();
+        }
+        TargetResolution resolution = readResult.get();
 
         int estimatedTokens = AssistantTokenEstimator.estimate(concatenatedText(resolution.items()));
         if (!sessionService.tryConsumeTokenBudget(sessionId, estimatedTokens)) {
@@ -78,6 +82,12 @@ public class AssistantContextToolService {
     }
 
     private record TargetResolution(List<Item> items, boolean anyPartial) {}
+
+    private ContextToolResult revisionStale() {
+        return ContextToolResult.builder().ok(false).errorCode("REVISION_STALE")
+                .message("The project has changed since this session's snapshot was pinned. "
+                        + "Start a new request to get a fresh snapshot before reading further.").build();
+    }
 
     private TargetResolution resolveTargets(String projectId, List<Target> targets, String kind) {
         List<Item> items = new ArrayList<>();
