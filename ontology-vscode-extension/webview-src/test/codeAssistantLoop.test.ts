@@ -101,6 +101,76 @@ describe("runAssistantLoop — bounded dispatch per turn", () => {
   });
 });
 
+describe("runAssistantLoop — tool result provenance", () => {
+  it("attaches provenance with the result's revision, the range, a short reason and the step", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [sparqlCall("c0")] }, advance: advanceSpy })
+      .mockResolvedValueOnce({
+        turn: {
+          kind: "tool_calls",
+          calls: [
+            { toolCallId: "c1", name: "read_context", args: { targets: [{ type: "range", value: "turtle:100-50" }], kind: "definitions" } },
+            { toolCallId: "c2", name: "run_sparql", args: { query: "SELECT ?s\n WHERE { ?s ?p ?o }" } },
+          ],
+        },
+        advance: advanceSpy,
+      })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: advanceSpy });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/read_context")
+          ? jsonResponse(200, { ok: true, result: { items: [] }, provenance: { revision: 9, coverage: "complete" } })
+          : jsonResponse(200, { ok: true, result: { rows: [], truncated: false, rowCount: 0 }, provenance: { revision: 9 } }),
+      ),
+    );
+
+    await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    const [secondRound] = advanceSpy.mock.calls[1] as [Array<{ provenance: Record<string, unknown> }>];
+    expect(secondRound[0].provenance).toEqual({
+      tool: "read_context",
+      format: "turtle",
+      range: "100-50",
+      revision: 9,
+      reason: "definitions for range turtle:100-50",
+      step: 2,
+    });
+    expect(secondRound[1].provenance).toEqual({
+      tool: "run_sparql",
+      format: "sparql",
+      revision: 9,
+      reason: "query: SELECT ?s WHERE { ?s ?p ?o }",
+      step: 2,
+    });
+  });
+
+  it("falls back to the session snapshot revision and document path when the result has none", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({
+        turn: { kind: "tool_calls", calls: [{ toolCallId: "c1", name: "read_context", args: { targets: [{ type: "identifier", value: "http://ex.org/A" }], kind: "references" } }] },
+        advance: advanceSpy,
+      })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: advanceSpy });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, { ok: false, errorCode: "BUDGET_EXHAUSTED", message: "no more" })));
+
+    await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    const [results] = advanceSpy.mock.calls[0] as [Array<{ provenance: Record<string, unknown> }>];
+    expect(results[0].provenance).toEqual({
+      tool: "read_context",
+      targetPath: "turtle",
+      revision: 1,
+      reason: "references for identifier http://ex.org/A",
+      step: 1,
+    });
+  });
+});
+
 describe("runAssistantLoop — dead-end tool errors", () => {
   const deadEnds: Array<[string, number, unknown]> = [
     ["REVISION_STALE", 409, { ok: false, errorCode: "REVISION_STALE", message: "the project changed" }],

@@ -8,6 +8,7 @@ import {
   LlmRequestError,
 } from "./LlmInsightsService";
 import { estimateTokensFromChars, requestBudgetFor, type RequestBudget } from "./codeAssistantBudget";
+import { compactHistory, compactOlderToolResults } from "./codeAssistantCompaction";
 
 export interface JsonSchema {
   type: string;
@@ -34,11 +35,32 @@ export type AssistantTurn =
   | { kind: "answer"; text: string }
   | { kind: "tool_calls"; calls: ToolCallRequest[] };
 
+export interface ToolResultProvenance {
+  tool: string;
+  targetPath?: string;
+  format?: string;
+  revision: number;
+  range?: string;
+  reason: string;
+  step: number;
+}
+
 export interface ToolResultForModel {
   toolCallId: string;
   name: string;
   result: unknown;
   isError: boolean;
+  provenance?: ToolResultProvenance;
+}
+
+function toolResultPayload(r: ToolResultForModel): unknown {
+  const inner = r.isError ? { error: r.result } : r.result;
+  return r.provenance ? { provenance: r.provenance, result: inner } : inner;
+}
+
+function geminiToolResponse(r: ToolResultForModel): unknown {
+  if (r.provenance) return toolResultPayload(r);
+  return r.isError ? { error: r.result } : { result: r.result };
 }
 
 export interface ConversationState {
@@ -71,9 +93,10 @@ function newToolCallId(prefix: string): string {
 function startConversation(
   provider: LlmProvider,
   systemPrompt: string,
-  history: HistoryTurn[],
+  fullHistory: HistoryTurn[],
   userMessage: string,
 ): ConversationState {
+  const history = compactHistory(fullHistory);
   if (provider === "openai") {
     return {
       provider,
@@ -239,7 +262,7 @@ function appendOpenAiToolResults(conversation: ConversationState, nativeAssistan
   const toolMessages = results.map((r) => ({
     role: "tool",
     tool_call_id: r.toolCallId,
-    content: JSON.stringify(r.isError ? { error: r.result } : r.result),
+    content: JSON.stringify(toolResultPayload(r)),
   }));
   return { ...conversation, nativeMessages: [...conversation.nativeMessages, nativeAssistantMessage, ...toolMessages] };
 }
@@ -283,7 +306,7 @@ function appendClaudeToolResults(conversation: ConversationState, nativeAssistan
   const toolResultContent = results.map((r) => ({
     type: "tool_result",
     tool_use_id: r.toolCallId,
-    content: JSON.stringify(r.isError ? { error: r.result } : r.result),
+    content: JSON.stringify(toolResultPayload(r)),
     is_error: r.isError,
   }));
   return {
@@ -329,7 +352,7 @@ function parseGeminiResponse(raw: GeminiResponse): { turn: AssistantTurn; native
 
 function appendGeminiToolResults(conversation: ConversationState, nativeAssistantParts: unknown, results: ToolResultForModel[]): ConversationState {
   const functionResponseParts = results.map((r) => ({
-    functionResponse: { name: r.name, response: r.isError ? { error: r.result } : { result: r.result } },
+    functionResponse: { name: r.name, response: geminiToolResponse(r) },
   }));
   return {
     ...conversation,
@@ -401,6 +424,25 @@ function requestTooLargeError(provider: LlmProvider, model: string, size: Reques
   );
 }
 
+export interface FittedRequest {
+  conversation: ConversationState;
+  body: Record<string, unknown>;
+  compactedRounds: number;
+}
+
+export function fitConversationToBudget(conversation: ConversationState, model: string, tools: ToolDefinition[]): FittedRequest {
+  const budget = requestBudgetFor(conversation.provider, model, getStoredMaxResponseTokens());
+  const body = buildRequestBody(conversation, model, tools);
+  if (fitsRequestBudget(measureRequest(body), budget)) return { conversation, body, compactedRounds: 0 };
+
+  const { messages, compactedRounds } = compactOlderToolResults(conversation.provider, conversation.nativeMessages);
+  const compacted: ConversationState = compactedRounds > 0 ? { ...conversation, nativeMessages: messages } : conversation;
+  const compactedBody = compactedRounds > 0 ? buildRequestBody(compacted, model, tools) : body;
+  const size = measureRequest(compactedBody);
+  if (!fitsRequestBudget(size, budget)) throw requestTooLargeError(conversation.provider, model, size, budget);
+  return { conversation: compacted, body: compactedBody, compactedRounds };
+}
+
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, ms);
@@ -425,7 +467,7 @@ export async function startAssistantConversation(
 }
 
 export async function requestNextTurn(
-  conversation: ConversationState,
+  inputConversation: ConversationState,
   tools: ToolDefinition[],
   signal?: AbortSignal,
   onRetry?: (attempt: number, maxAttempts: number, status: number) => void,
@@ -434,12 +476,7 @@ export async function requestNextTurn(
   if (!key) throw new LlmConfigError("No API key configured. Configure an AI provider to use the assistant.");
   const model = getStoredModel();
 
-  const body = buildRequestBody(conversation, model, tools);
-  const budget = requestBudgetFor(conversation.provider, model, getStoredMaxResponseTokens());
-  const size = measureRequest(body);
-  if (!fitsRequestBudget(size, budget)) {
-    throw requestTooLargeError(conversation.provider, model, size, budget);
-  }
+  const { conversation, body } = fitConversationToBudget(inputConversation, model, tools);
   const { url, headers } = providerEndpoint(conversation.provider, model, key);
 
   let res: Response;

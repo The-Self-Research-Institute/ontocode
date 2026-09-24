@@ -1,4 +1,12 @@
-import type { ToolDefinition, ConversationState, ToolResultForModel, HistoryTurn, ProviderUsage } from "./codeAssistantProviders";
+import type {
+  ToolDefinition,
+  ConversationState,
+  ToolResultForModel,
+  ToolResultProvenance,
+  ToolCallRequest,
+  HistoryTurn,
+  ProviderUsage,
+} from "./codeAssistantProviders";
 import { startAssistantConversation, requestNextTurn } from "./codeAssistantProviders";
 
 export type { HistoryTurn };
@@ -153,6 +161,50 @@ interface DispatchOutcome {
   proposeResult?: ProposeResult;
   errorCode?: AssistantErrorCode;
   errorMessage?: string;
+  revision?: number;
+}
+
+const PROVENANCE_REASON_CHARS = 160;
+
+function shorten(text: string, max: number = PROVENANCE_REASON_CHARS): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max)}...` : flat;
+}
+
+function rangeTargetParts(value: string): { format?: string; range?: string } {
+  const match = /^([a-z]+):(\d+-\d+)$/i.exec(value.trim());
+  return match ? { format: match[1].toLowerCase(), range: match[2] } : {};
+}
+
+export function buildToolProvenance(
+  session: AssistantSession,
+  name: string,
+  args: Record<string, unknown>,
+  revision: number | undefined,
+  step: number,
+): ToolResultProvenance {
+  const base = { tool: name, revision: typeof revision === "number" ? revision : session.snapshot.revision, step };
+  if (name === "read_context") {
+    const targets = (Array.isArray(args.targets) ? args.targets : []).map((t) => {
+      const rec = (t ?? {}) as Record<string, unknown>;
+      return { type: String(rec.type ?? ""), value: String(rec.value ?? "") };
+    });
+    const rangeParts = targets.filter((t) => t.type === "range").map((t) => rangeTargetParts(t.value));
+    const format = rangeParts.find((p) => p.format)?.format;
+    const ranges = rangeParts.map((p) => p.range).filter((r): r is string => Boolean(r));
+    const kind = typeof args.kind === "string" ? args.kind : "definitions";
+    const reason = shorten(`${kind} for ${targets.map((t) => `${t.type} ${t.value}`).join(", ") || "no targets"}`);
+    return {
+      ...base,
+      ...(format ? { format } : { targetPath: session.snapshot.documentPath }),
+      ...(ranges.length > 0 ? { range: ranges.join(",") } : {}),
+      reason,
+    };
+  }
+  if (name === "run_sparql") {
+    return { ...base, format: "sparql", reason: shorten(`query: ${String(args.query ?? "")}`) };
+  }
+  return { ...base, targetPath: session.snapshot.documentPath, reason: shorten(`${name} ${JSON.stringify(args ?? {})}`) };
 }
 
 async function dispatchToolCall(
@@ -180,11 +232,11 @@ async function dispatchToolCall(
       });
       const kind = args.kind === "diagnostics" || args.kind === "references" ? args.kind : "definitions";
       const res = await readContext(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, { targets, kind }, signal);
-      return { result: res.result, isError: false };
+      return { result: res.result, isError: false, revision: res.provenance?.revision };
     }
     if (name === "run_sparql") {
       const res = await runSparql(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, String(args.query ?? ""), signal);
-      return { result: res.result, isError: false };
+      return { result: res.result, isError: false, revision: res.provenance?.revision };
     }
     if (name === "propose_edit") {
       const groupsRaw = Array.isArray(args.groups) ? args.groups : [];
@@ -232,6 +284,14 @@ export async function runAssistantLoop(
   let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage, history);
 
   for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
+    const step = i + 1;
+    const resultFor = (call: ToolCallRequest, result: unknown, isError: boolean, revision?: number): ToolResultForModel => ({
+      toolCallId: call.toolCallId,
+      name: call.name,
+      result,
+      isError,
+      provenance: buildToolProvenance(ctx.session, call.name, call.args, revision, step),
+    });
     onStage({ stage: "calling-provider" });
     const { turn, advance } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal, (attempt, maxAttempts, status) => {
       onStage({ stage: "calling-provider", detail: `Provider busy (HTTP ${status}) — retrying ${attempt}/${maxAttempts}...` });
@@ -245,12 +305,9 @@ export async function runAssistantLoop(
     const hasPropose = turn.calls.some((c) => c.name === "propose_edit");
     if (hasPropose && turn.calls.length > 1) {
       onStage({ stage: "stopped", detail: "propose_edit mixed with other calls" });
-      const results: ToolResultForModel[] = turn.calls.map((c) => ({
-        toolCallId: c.toolCallId,
-        name: c.name,
-        result: { error: "propose_edit must be the only tool call in a turn. Call it alone once you're ready to propose changes." },
-        isError: true,
-      }));
+      const results: ToolResultForModel[] = turn.calls.map((c) =>
+        resultFor(c, { error: "propose_edit must be the only tool call in a turn. Call it alone once you're ready to propose changes." }, true),
+      );
       conversation = advance(results);
       continue;
     }
@@ -273,12 +330,9 @@ export async function runAssistantLoop(
 
     if (turn.calls.length > MAX_CALLS_PER_TURN) {
       onStage({ stage: "stopped", detail: `too many tool calls in one turn (${turn.calls.length})` });
-      const results: ToolResultForModel[] = turn.calls.map((c) => ({
-        toolCallId: c.toolCallId,
-        name: c.name,
-        result: { error: `Too many tool calls in one turn (${turn.calls.length}). Call at most ${MAX_CALLS_PER_TURN} tools per turn.` },
-        isError: true,
-      }));
+      const results: ToolResultForModel[] = turn.calls.map((c) =>
+        resultFor(c, { error: `Too many tool calls in one turn (${turn.calls.length}). Call at most ${MAX_CALLS_PER_TURN} tools per turn.` }, true),
+      );
       conversation = advance(results);
       continue;
     }
@@ -298,12 +352,9 @@ export async function runAssistantLoop(
         errorCode: deadEnd.errorCode,
       };
     }
-    const results: ToolResultForModel[] = turn.calls.map((call, idx) => ({
-      toolCallId: call.toolCallId,
-      name: call.name,
-      result: outcomes[idx].result,
-      isError: outcomes[idx].isError,
-    }));
+    const results: ToolResultForModel[] = turn.calls.map((call, idx) =>
+      resultFor(call, outcomes[idx].result, outcomes[idx].isError, outcomes[idx].revision),
+    );
 
     conversation = advance(results);
   }
