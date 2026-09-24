@@ -8,6 +8,7 @@ import {
   runSparql,
   proposeEditGroups,
   AssistantApiError,
+  isDeadEndErrorCode,
   type AssistantErrorCode,
   type AssistantSession,
   type ProposedEditGroupInput,
@@ -146,12 +147,20 @@ function describeToolFailure(result: unknown): string {
   return "unknown reason";
 }
 
+interface DispatchOutcome {
+  result: unknown;
+  isError: boolean;
+  proposeResult?: ProposeResult;
+  errorCode?: AssistantErrorCode;
+  errorMessage?: string;
+}
+
 async function dispatchToolCall(
   ctx: LoopContext,
   name: string,
   args: Record<string, unknown>,
   signal?: AbortSignal,
-): Promise<{ result: unknown; isError: boolean; proposeResult?: ProposeResult }> {
+): Promise<DispatchOutcome> {
   const tool = ASSISTANT_TOOLS.find((t) => t.name === name);
   if (!tool) {
     return { result: { error: `Unknown tool "${name}".` }, isError: true };
@@ -199,7 +208,12 @@ async function dispatchToolCall(
     return { result: { error: `Tool "${name}" has no dispatcher.` }, isError: true };
   } catch (e) {
     if (e instanceof AssistantApiError) {
-      return { result: { errorCode: e.errorCode, message: e.message }, isError: true };
+      return {
+        result: { errorCode: e.errorCode, message: e.message },
+        isError: true,
+        errorCode: e.errorCode,
+        errorMessage: e.message,
+      };
     }
     return { result: { message: e instanceof Error ? e.message : "Unknown error calling the tool endpoint." }, isError: true };
   }
@@ -248,7 +262,10 @@ export async function runAssistantLoop(
       if (outcome.isError || !outcome.proposeResult) {
         const detail = describeToolFailure(outcome.result);
         onStage({ stage: "stopped", detail: "propose_edit failed" });
-        return { kind: "stopped", reason: `The proposed edit couldn't be applied: ${detail}` };
+        if (isDeadEndErrorCode(outcome.errorCode)) {
+          return { kind: "stopped", reason: detail, errorCode: outcome.errorCode };
+        }
+        return { kind: "stopped", reason: `The proposed edit couldn't be applied: ${detail}`, errorCode: outcome.errorCode };
       }
       onStage({ stage: "propose" });
       return { kind: "propose", result: outcome.proposeResult };
@@ -272,6 +289,15 @@ export async function runAssistantLoop(
     turn.calls.forEach((call, idx) => {
       onContext?.({ tool: call.name, args: call.args, result: outcomes[idx].result, isError: outcomes[idx].isError });
     });
+    const deadEnd = outcomes.find((o) => isDeadEndErrorCode(o.errorCode));
+    if (deadEnd) {
+      onStage({ stage: "stopped", detail: deadEnd.errorCode });
+      return {
+        kind: "stopped",
+        reason: deadEnd.errorMessage ?? describeToolFailure(deadEnd.result),
+        errorCode: deadEnd.errorCode,
+      };
+    }
     const results: ToolResultForModel[] = turn.calls.map((call, idx) => ({
       toolCallId: call.toolCallId,
       name: call.name,
