@@ -73,6 +73,8 @@ class AssistantEditApplyServiceTest {
         when(syntaxValidator.isValid(anyString(), anyString(), any())).thenReturn(true);
         when(referenceCoverageValidator.check(anyString(), anyString(), any()))
                 .thenReturn(new AssistantEditReferenceCoverageValidator.CoverageResult(true, null));
+        when(storageManager.readCodeViewPage(anyString(), anyString(), anyLong(), anyInt()))
+                .thenReturn(new StorageManager.CodeViewPage("old", 1, 1, 10, 100));
     }
 
     private AssistantEditGroupDocument group(AssistantEditGroupStatus status, EditEntry... edits) {
@@ -154,7 +156,7 @@ class AssistantEditApplyServiceTest {
     }
 
     @Test
-    void pendingWithMatchingVersionSkipsLiveReCheckAndApplies() throws Exception {
+    void pendingWithMatchingVersionStillChecksLiveTextButSkipsSyntaxRecheckAndApplies() throws Exception {
         AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
                 edit(1, 1, "old", "new"));
         when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
@@ -167,7 +169,9 @@ class AssistantEditApplyServiceTest {
 
         assertTrue(result.isOk());
         assertEquals(10L, result.getNewRevision());
-        verify(storageManager, never()).readCodeViewPage(anyString(), anyString(), anyLong(), org.mockito.ArgumentMatchers.anyInt());
+        verify(storageManager).readCodeViewPage("proj-1", "turtle", 1, 1);
+        verify(syntaxValidator, never()).isValid(anyString(), anyString(), any());
+        verify(referenceCoverageValidator, never()).check(anyString(), anyString(), any());
     }
 
     @Test
@@ -385,5 +389,113 @@ class AssistantEditApplyServiceTest {
 
         assertEquals("VALIDATION_FAILED", result.getErrorCode());
         verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void matchingVersionWithChangedLiveTextIsAConflictSoARestartCannotHideAnEdit() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("edited elsewhere", 1, 1, 10, 100));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
+        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
+        verify(groupRepository).save(captor.capture());
+        assertEquals(AssistantEditGroupStatus.CONFLICT, captor.getValue().getStatus());
+    }
+
+    @Test
+    void everyReplacedRangeIsCheckedNotJustTheFirst() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"), edit(20, 2, "a\nb", "c"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 20, 2))
+                .thenReturn(new StorageManager.CodeViewPage("a\nchanged", 20, 2, 10, 100));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void insertionWithUnchangedVersionIsAppliedWithoutAComparison() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(3, 0, "", "ex:new a owl:Class ."));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 12L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
+                .thenReturn(List.of());
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        verify(storageManager, never()).readCodeViewPage(anyString(), anyString(), anyLong(), anyInt());
+    }
+
+    @Test
+    void insertionOnlyGroupWithChangedVersionIsAConflictBecauseItsPositionCannotBeVerified() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(3, 0, "", "ex:new a owl:Class ."));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(6L);
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("CONFLICT", result.getErrorCode());
+        assertTrue(result.getMessage().contains("inserted lines"));
+        verify(reimportPipeline, never()).reimport(any());
+        verify(syntaxValidator, never()).isValid(anyString(), anyString(), any());
+    }
+
+    @Test
+    void mixedGroupWithAnInsertionAndChangedVersionIsAConflict() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"), edit(8, 0, "", "ex:x a owl:Class ."));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(6L);
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void changedVersionWithMatchingTextButLostReferenceCoverageIsAConflict() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(6L);
+        when(referenceCoverageValidator.check(eq("proj-1"), eq("turtle"), any()))
+                .thenReturn(new AssistantEditReferenceCoverageValidator.CoverageResult(false, "ex:old still used"));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(syntaxValidator).isValid(eq("proj-1"), eq("turtle"), any());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void missingProposeVersionIsTreatedAsChanged() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"));
+        pending.setPublicGraphVersionAtPropose(null);
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(0L);
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 3L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
+                .thenReturn(List.of());
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        verify(syntaxValidator).isValid(eq("proj-1"), eq("turtle"), any());
     }
 }

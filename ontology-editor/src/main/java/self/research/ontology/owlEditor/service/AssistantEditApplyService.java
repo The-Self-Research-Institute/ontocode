@@ -98,21 +98,12 @@ public class AssistantEditApplyService {
 
         List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = toSpliceEdits(group);
 
-        boolean versionUnchanged = storageManager.getPublicGraphVersion(group.getProjectId())
-                == group.getPublicGraphVersionAtPropose();
-        if (!versionUnchanged) {
-            boolean liveMismatch = hasLiveMismatch(group);
-            boolean stillSyntaxValid = liveMismatch
-                    || syntaxValidator.isValid(group.getProjectId(), group.getTargetPath(), spliceEdits);
-            boolean stillCoversReferences = liveMismatch || !stillSyntaxValid
-                    || referenceCoverageValidator.check(group.getProjectId(), group.getTargetPath(),
-                            toCoverageEdits(group)).covered();
-            if (liveMismatch || !stillSyntaxValid || !stillCoversReferences) {
-                group.setStatus(AssistantEditGroupStatus.CONFLICT);
-                group.setUpdatedAt(Instant.now());
-                groupRepository.save(group);
-                return errorResult("CONFLICT", "Document changed since this group was checked");
-            }
+        String conflictMessage = findConflict(group, spliceEdits);
+        if (conflictMessage != null) {
+            group.setStatus(AssistantEditGroupStatus.CONFLICT);
+            group.setUpdatedAt(Instant.now());
+            groupRepository.save(group);
+            return errorResult("CONFLICT", conflictMessage);
         }
 
         Path sourceFile = storageManager.ensureCodeViewFile(group.getProjectId(), group.getTargetPath());
@@ -208,6 +199,32 @@ public class AssistantEditApplyService {
                 .map(e -> new AssistantEditReferenceCoverageValidator.CoverageEdit(
                         e.getStartLine(), e.getLineCount(), e.getOriginalText(), e.getNewText()))
                 .toList();
+    }
+
+    private String findConflict(AssistantEditGroupDocument group,
+                                List<LineRangeSpliceWriter.SpliceEdit> spliceEdits) throws IOException {
+        Long versionAtPropose = group.getPublicGraphVersionAtPropose();
+        boolean versionUnchanged = versionAtPropose != null
+                && storageManager.getPublicGraphVersion(group.getProjectId()) == versionAtPropose;
+        if (!versionUnchanged && group.getEdits().stream().anyMatch(e -> e.getLineCount() == 0)) {
+            return "Document changed since this group was checked, and the position of its inserted lines "
+                    + "can't be re-verified";
+        }
+        if (hasLiveMismatch(group)) {
+            return "Document changed since this group was checked";
+        }
+        if (versionUnchanged) {
+            return null;
+        }
+        if (!syntaxValidator.isValid(group.getProjectId(), group.getTargetPath(), spliceEdits)) {
+            return "Document changed since this group was checked, and the edit no longer parses against it";
+        }
+        if (!referenceCoverageValidator.check(group.getProjectId(), group.getTargetPath(),
+                toCoverageEdits(group)).covered()) {
+            return "Document changed since this group was checked, and the edit no longer covers every "
+                    + "reference it needs to";
+        }
+        return null;
     }
 
     private boolean hasLiveMismatch(AssistantEditGroupDocument group) throws IOException {
