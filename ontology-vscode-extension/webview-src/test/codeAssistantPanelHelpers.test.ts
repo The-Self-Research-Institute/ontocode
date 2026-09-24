@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { toFriendlyErrorMessage } from "../components/codeAssistantPanelHelpers";
+import { buildConversationHistory, toFriendlyErrorMessage } from "../components/codeAssistantPanelHelpers";
 
 describe("toFriendlyErrorMessage", () => {
   it("leaves a short, already-friendly message untouched", () => {
@@ -32,5 +32,33 @@ describe("toFriendlyErrorMessage", () => {
     const raw = "com.example.SomeInternalException: " + "x".repeat(200);
 
     expect(toFriendlyErrorMessage(raw)).toBe("Something went wrong on the server. Try again in a moment.");
+  });
+});
+
+describe("buildConversationHistory", () => {
+  it("keeps every answered turn in order without trimming", () => {
+    const entries = Array.from({ length: 40 }, (_, i) =>
+      i % 2 === 0 ? { role: "user" as const, text: `q${i}` } : { role: "assistant" as const, kind: "answer", text: `a${i}` },
+    );
+    const history = buildConversationHistory(entries);
+    expect(history).toHaveLength(40);
+    expect(history[0]).toEqual({ role: "user", text: "q0" });
+    expect(history[39]).toEqual({ role: "assistant", text: "a39" });
+  });
+
+  it("drops a prompt that only produced an error so a retry is not sent twice", () => {
+    const history = buildConversationHistory([
+      { role: "user", text: "first" },
+      { role: "assistant", kind: "answer", text: "answer" },
+      { role: "user", text: "failed" },
+      { role: "assistant", kind: "error", text: "boom" },
+      { role: "user", text: "proposal" },
+      { role: "assistant", kind: "review" },
+    ]);
+    expect(history).toEqual([
+      { role: "user", text: "first" },
+      { role: "assistant", text: "answer" },
+      { role: "user", text: "proposal" },
+    ]);
   });
 });

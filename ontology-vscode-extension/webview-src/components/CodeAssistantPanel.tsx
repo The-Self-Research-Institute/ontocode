@@ -4,12 +4,41 @@ import { AskAiIcon } from "./AskAiIcon";
 import { hasApiKey, setStoredApiKey } from "../services/LlmInsightsService";
 import { CodeAssistantModelSwitcher } from "./CodeAssistantModelSwitcher";
 import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
-import { CodeAssistantReviewGroups, type GroupDecision } from "./CodeAssistantReviewGroups";
+import { CodeAssistantReviewGroups, type GroupDecision, type ApplyAllRunState } from "./CodeAssistantReviewGroups";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
-import { createAssistantSession, applyEditGroup, AssistantApiError, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
-import { runAssistantLoop, type LoopOutcome, type HistoryTurn, type ContextEvent } from "../services/codeAssistantLoop";
-import { ACTIONS, getApiBaseUrl, buildSystemPrompt, describeLoopStage, toFriendlyErrorMessage, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
+import { createAssistantSession, applyEditGroup, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
+import { runAssistantLoop, type LoopOutcome, type ContextEvent } from "../services/codeAssistantLoop";
+import { CodeAssistantDeadEndNotice } from "./CodeAssistantDeadEndNotice";
+import { CodeAssistantRecoveryBanner } from "./CodeAssistantRecoveryBanner";
+import {
+  clearRecoveryLock,
+  fetchRecoveryState,
+  RecoveryApiError,
+  restorePreviousVersion,
+  UNLOCKED_RECOVERY_STATE,
+  type RecoveryState,
+} from "../services/codeAssistantRecovery";
+import {
+  ACTIONS,
+  getApiBaseUrl,
+  buildConversationHistory,
+  buildSystemPrompt,
+  describeLoopStage,
+  resolveApplyBlock,
+  toFriendlyErrorMessage,
+  type CodeAssistantAction,
+} from "./codeAssistantPanelHelpers";
+import {
+  applyRemapResult,
+  buildApplyAllQueue,
+  classifyApplyFailure,
+  formatApplyAllSummary,
+  groupLabel,
+  runApplyAll,
+  type ApplyOneResult,
+} from "../services/codeAssistantApplyQueue";
+import { errorSignalFrom, parseHttpStatus, toDeadEnd, type DeadEnd } from "../services/codeAssistantDeadEnd";
 
 export type { CodeAssistantAction };
 
@@ -17,7 +46,9 @@ interface CodeAssistantPanelProps {
   projectId?: string;
   projectName?: string;
   documentPath?: string;
+  hasUnsavedCodeViewChanges?: boolean;
   onClose?: () => void;
+  onProjectRestored?: () => void;
 }
 
 type ChatEntry =
@@ -32,8 +63,25 @@ type ChatEntry =
       decisions: Record<string, GroupDecision>;
       errors: Record<string, string>;
       contextUsed: ContextEvent[];
+      applyAllRun?: ApplyAllRunState | null;
+      applyAllSummary?: string | null;
     }
-  | { id: string; role: "assistant"; kind: "error"; text: string };
+  | {
+      id: string;
+      role: "assistant";
+      kind: "error";
+      text: string;
+      deadEnd?: DeadEnd;
+      retry?: PromptToRetry;
+      retryAt?: number | null;
+    };
+
+interface PromptToRetry {
+  text: string;
+  action: CodeAssistantAction;
+}
+
+type ReviewEntry = Extract<ChatEntry, { kind: "review" }>;
 
 let entryCounter = 0;
 function nextEntryId(): string {
@@ -49,9 +97,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   projectId,
   projectName,
   documentPath,
+  hasUnsavedCodeViewChanges = false,
   onClose,
+  onProjectRestored,
 }) => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { isFree, getUpgradeMessage } = useSubscription();
   const [configured, setConfigured] = useState(hasApiKey());
   const [action, setAction] = useState<CodeAssistantAction>("ask");
@@ -61,14 +111,46 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const busyRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const entriesRef = useRef<ChatEntry[]>(entries);
-  useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
+  const cancelApplyAllRef = useRef<Set<string>>(new Set());
+  const applyBusyRef = useRef(false);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const mountedRef = useRef(true);
+  const [recoveryState, setRecoveryState] = useState<RecoveryState>(UNLOCKED_RECOVERY_STATE);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const recoveryRequestRef = useRef(0);
+  const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
+  const tokenRef = useRef(user?.token);
+  tokenRef.current = user?.token;
+  const recoveryLocked = recoveryState.locked;
+  const recoveryLockedRef = useRef(recoveryLocked);
+  recoveryLockedRef.current = recoveryLocked;
+  const applyBlock = resolveApplyBlock({ hasUnsavedCodeViewChanges, recoveryLocked });
+  const applyBlockRef = useRef(applyBlock);
+  applyBlockRef.current = applyBlock;
+
+  const commitEntries = (updater: (prev: ChatEntry[]) => ChatEntry[]) => {
+    entriesRef.current = updater(entriesRef.current);
+    setEntries(entriesRef.current);
+  };
+
+  const findReviewEntry = (entryId: string): ReviewEntry | undefined => {
+    const found = entriesRef.current.find((e) => e.id === entryId);
+    return found && found.role === "assistant" && found.kind === "review" ? found : undefined;
+  };
+
+  const setApplyBusyNow = (value: boolean) => {
+    applyBusyRef.current = value;
+    setApplyBusy(value);
+  };
 
   const slashCommands = [
     { cmd: "/ask", label: "Ask", description: "Ask a question about this document", disabled: false, run: () => setAction("ask") },
@@ -80,7 +162,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       run: () => setAction("local-edit"),
     },
     { cmd: "/find", label: "Project findings", description: "Ask a question grounded in the whole project", disabled: false, run: () => setAction("project-findings") },
-    { cmd: "/clear", label: "Clear chat", description: "Start a new conversation", disabled: false, run: () => setEntries([]) },
+    { cmd: "/clear", label: "Clear chat", description: "Start a new conversation", disabled: applyBusy, run: () => commitEntries(() => []) },
     {
       cmd: "/logout",
       label: "Log out",
@@ -97,7 +179,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const activeCommandIndex = Math.min(commandIndex, Math.max(commandMatches.length - 1, 0));
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       abortControllerRef.current?.abort();
     };
   }, []);
@@ -118,18 +202,120 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     }
   }, [entries, busy, statusText]);
 
+  const lastEntry = entries.length > 0 ? entries[entries.length - 1] : undefined;
+  const pendingRetryAt =
+    lastEntry && lastEntry.role === "assistant" && lastEntry.kind === "error" && lastEntry.retryAt ? lastEntry.retryAt : null;
+  useEffect(() => {
+    if (pendingRetryAt === null || pendingRetryAt <= Date.now()) return;
+    const timer = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= pendingRetryAt) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [pendingRetryAt]);
+
   const updateReviewEntry = (
     entryId: string,
-    updater: (entry: Extract<ChatEntry, { kind: "review" }>) => Extract<ChatEntry, { kind: "review" }>,
+    updater: (entry: ReviewEntry) => ReviewEntry,
   ) => {
-    setEntries((prev) =>
+    commitEntries((prev) =>
       prev.map((e) => (e.id === entryId && e.role === "assistant" && e.kind === "review" ? updater(e) : e)),
     );
   };
 
-  const appendOutcome = (outcome: LoopOutcome, sessionId: string, contextUsed: ContextEvent[]) => {
+  const refreshRecovery = async (): Promise<void> => {
+    const pid = projectIdRef.current;
+    const requestId = ++recoveryRequestRef.current;
+    if (!pid) {
+      setRecoveryState(UNLOCKED_RECOVERY_STATE);
+      return;
+    }
+    try {
+      const next = await fetchRecoveryState(getApiBaseUrl(), tokenRef.current, pid);
+      if (requestId === recoveryRequestRef.current && mountedRef.current) setRecoveryState(next);
+    } catch (e) {
+      if (requestId !== recoveryRequestRef.current || !mountedRef.current) return;
+      if (e instanceof RecoveryApiError && e.status === 404) setRecoveryState(UNLOCKED_RECOVERY_STATE);
+    }
+  };
+
+  const noteRecoveryProblem = () => {
+    recoveryLockedRef.current = true;
+    setRecoveryState((prev) => (prev.locked ? prev : { ...prev, locked: true }));
+    void refreshRecovery();
+  };
+
+  useEffect(() => {
+    setRecoveryError(null);
+    void refreshRecovery();
+  }, [projectId]);
+
+  const runRecoveryAction = async (
+    request: (apiBaseUrl: string, token: string | undefined, projectId: string) => Promise<void>,
+    failurePrefix: string,
+    onSuccess?: () => void,
+  ) => {
+    const pid = projectIdRef.current;
+    if (!pid) return;
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      await request(getApiBaseUrl(), tokenRef.current, pid);
+      onSuccess?.();
+    } catch (e) {
+      const message = e instanceof Error ? toFriendlyErrorMessage(e.message) : "unexpected error";
+      if (mountedRef.current) setRecoveryError(`${failurePrefix}: ${message}`);
+    } finally {
+      await refreshRecovery();
+      if (mountedRef.current) setRecoveryBusy(false);
+    }
+  };
+
+  const restoreProject = () =>
+    runRecoveryAction(restorePreviousVersion, "Couldn't restore the previous version", () => onProjectRestored?.());
+
+  const unlockProject = () => runRecoveryAction(clearRecoveryLock, "Couldn't unlock the project");
+
+  const setBusyNow = (value: boolean) => {
+    busyRef.current = value;
+    setBusy(value);
+  };
+
+  const appendError = (text: string) => {
+    commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text }]);
+  };
+
+  const reportFailure = (source: unknown, fallbackMessage: string, prompt: PromptToRetry) => {
+    const signal = errorSignalFrom(source, fallbackMessage);
+    const deadEnd = toDeadEnd(signal);
+    if (!deadEnd) {
+      appendError(toFriendlyErrorMessage(signal.message));
+      return;
+    }
+    if (deadEnd.action.kind === "recovery") noteRecoveryProblem();
+    const seconds = deadEnd.action.kind === "retry-after" ? deadEnd.action.seconds : null;
+    const startedAt = Date.now();
+    setNow(startedAt);
+    commitEntries((prev) => [
+      ...prev,
+      {
+        id: nextEntryId(),
+        role: "assistant",
+        kind: "error",
+        text: deadEnd.message,
+        deadEnd,
+        retry: prompt,
+        retryAt: seconds ? startedAt + seconds * 1000 : null,
+      },
+    ]);
+    setInput((current) => (current.trim() ? current : prompt.text));
+    setAction(prompt.action);
+  };
+
+  const appendOutcome = (outcome: LoopOutcome, sessionId: string, contextUsed: ContextEvent[], prompt: PromptToRetry) => {
     if (outcome.kind === "answer") {
-      setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text, contextUsed }]);
+      commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text, contextUsed }]);
       return;
     }
     if (outcome.kind === "propose") {
@@ -137,33 +323,32 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       outcome.result.groups.forEach((g) => {
         decisions[g.serverGroupId] = g.validation.passed ? "pending" : "failed";
       });
-      setEntries((prev) => [
+      commitEntries((prev) => [
         ...prev,
         { id: nextEntryId(), role: "assistant", kind: "review", sessionId, groups: outcome.result.groups, decisions, errors: {}, contextUsed },
       ]);
       return;
     }
-    setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(outcome.reason) }]);
-  };
-
-  const submitMessage = async () => {
-    const text = input.trim();
-    if (!text || busy) return;
-    if (!projectId) {
-      setEntries((prev) => [
-        ...prev,
-        { id: nextEntryId(), role: "assistant", kind: "error", text: "No project is open. Open a project, then try again." },
-      ]);
+    if (outcome.errorCode) {
+      reportFailure(outcome, outcome.reason, prompt);
       return;
     }
-    const history: HistoryTurn[] = entries.flatMap((entry): HistoryTurn[] => {
-      if (entry.role === "user") return [{ role: "user", text: entry.text }];
-      if (entry.role === "assistant" && entry.kind === "answer") return [{ role: "assistant", text: entry.text }];
-      return [];
-    });
-    setEntries((prev) => [...prev, { id: nextEntryId(), role: "user", text, action }]);
-    setInput("");
-    setBusy(true);
+    appendError(toFriendlyErrorMessage(outcome.reason));
+  };
+
+  const submitMessage = async (override?: PromptToRetry) => {
+    const text = (override?.text ?? input).trim();
+    const turnAction = override?.action ?? action;
+    if (!text || busyRef.current || recoveryLockedRef.current) return;
+    if (!projectId) {
+      appendError("No project is open. Open a project, then try again.");
+      return;
+    }
+    const prompt: PromptToRetry = { text, action: turnAction };
+    const history = buildConversationHistory(entriesRef.current);
+    commitEntries((prev) => [...prev, { id: nextEntryId(), role: "user", text, action: turnAction }]);
+    setInput((current) => (!override || current.trim() === text ? "" : current));
+    setBusyNow(true);
     setStatusText("Starting...");
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -173,57 +358,82 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       const session: AssistantSession = await createAssistantSession(
         apiBaseUrl,
         token,
-        { projectId, documentPath: documentPath ?? "", actionType: action, actionContext: JSON.stringify({}) },
+        { projectId, documentPath: documentPath ?? "", actionType: turnAction, actionContext: JSON.stringify({}) },
         controller.signal,
       );
       const contextEvents: ContextEvent[] = [];
       const outcome = await runAssistantLoop(
         { apiBaseUrl, token, session },
-        buildSystemPrompt(action, documentPath),
+        buildSystemPrompt(turnAction, documentPath),
         text,
         (event) => setStatusText(describeLoopStage(event)),
         controller.signal,
         history,
         (event) => contextEvents.push(event),
       );
-      appendOutcome(outcome, session.sessionId, contextEvents);
+      if (controller.signal.aborted) return;
+      appendOutcome(outcome, session.sessionId, contextEvents, prompt);
     } catch (e) {
       if (controller.signal.aborted) return;
-      const raw = e instanceof AssistantApiError || e instanceof Error ? e.message : "Something went wrong talking to the assistant.";
-      setEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "error", text: toFriendlyErrorMessage(raw) }]);
+      reportFailure(e, "Something went wrong talking to the assistant.", prompt);
     } finally {
-      setBusy(false);
-      setStatusText("");
+      if (abortControllerRef.current === controller) {
+        setBusyNow(false);
+        setStatusText("");
+      }
     }
   };
 
   const cancelRun = () => {
     abortControllerRef.current?.abort();
-    setBusy(false);
+    setBusyNow(false);
     setStatusText("");
   };
 
-  const applyGroup = async (entryId: string, sessionId: string, serverGroupId: string) => {
-    updateReviewEntry(entryId, (e) => ({ ...e, decisions: { ...e.decisions, [serverGroupId]: "applying" } }));
+  const applyGroupOnce = async (entryId: string, sessionId: string, serverGroupId: string): Promise<ApplyOneResult> => {
+    updateReviewEntry(entryId, (e) => {
+      const errors = { ...e.errors };
+      delete errors[serverGroupId];
+      return { ...e, decisions: { ...e.decisions, [serverGroupId]: "applying" }, errors };
+    });
     try {
-      const apiBaseUrl = getApiBaseUrl();
-      const result = await applyEditGroup(apiBaseUrl, user?.token, sessionId, serverGroupId);
-      updateReviewEntry(entryId, (e) => {
-        const next: Record<string, GroupDecision> = { ...e.decisions, [serverGroupId]: "applied" };
-        for (const remap of result.remappedPendingGroups) {
-          if (remap.remapped && next[remap.serverGroupId] === "pending") {
-            next[remap.serverGroupId] = "stale";
-          }
-        }
-        return { ...e, decisions: next };
-      });
-    } catch (e) {
-      const raw = e instanceof AssistantApiError ? e.message : "Apply failed unexpectedly.";
-      updateReviewEntry(entryId, (e2) => ({
-        ...e2,
-        decisions: { ...e2.decisions, [serverGroupId]: "failed" },
-        errors: { ...e2.errors, [serverGroupId]: toFriendlyErrorMessage(raw) },
+      const result = await applyEditGroup(getApiBaseUrl(), user?.token, sessionId, serverGroupId);
+      updateReviewEntry(entryId, (e) => ({
+        ...e,
+        decisions: applyRemapResult(e.decisions, serverGroupId, result.remappedPendingGroups ?? []),
       }));
+      return { ok: true };
+    } catch (err) {
+      const signal = errorSignalFrom(err, "Apply failed unexpectedly.");
+      const failure = classifyApplyFailure(
+        signal.errorCode,
+        signal.status ?? parseHttpStatus(signal.message),
+        toFriendlyErrorMessage(signal.message),
+      );
+      updateReviewEntry(entryId, (e) => ({
+        ...e,
+        decisions: { ...e.decisions, [serverGroupId]: failure.decision },
+        errors: { ...e.errors, [serverGroupId]: failure.message },
+      }));
+      if (failure.checkRecovery) noteRecoveryProblem();
+      return { ok: false, failure };
+    }
+  };
+
+  const currentApplyBlock = (): string | null => {
+    if (recoveryLockedRef.current) return "the project is locked for recovery";
+    return applyBlockRef.current?.shortReason ?? null;
+  };
+
+  const applyGroup = async (entryId: string, sessionId: string, serverGroupId: string) => {
+    if (applyBusyRef.current || currentApplyBlock()) return;
+    const entry = findReviewEntry(entryId);
+    if (!entry || (entry.decisions[serverGroupId] ?? "pending") !== "pending") return;
+    setApplyBusyNow(true);
+    try {
+      await applyGroupOnce(entryId, sessionId, serverGroupId);
+    } finally {
+      setApplyBusyNow(false);
     }
   };
 
@@ -232,15 +442,55 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   };
 
   const applyAllPending = async (entryId: string, sessionId: string) => {
-    const entry = entriesRef.current.find((e) => e.id === entryId);
-    if (!entry || entry.role !== "assistant" || entry.kind !== "review") return;
-    const serverGroupIds = entry.groups.filter((g) => g.validation.passed).map((g) => g.serverGroupId);
-    for (const serverGroupId of serverGroupIds) {
-      const current = entriesRef.current.find((e) => e.id === entryId);
-      if (!current || current.role !== "assistant" || current.kind !== "review") break;
-      if (current.decisions[serverGroupId] !== "pending") continue;
-      await applyGroup(entryId, sessionId, serverGroupId);
+    if (applyBusyRef.current || currentApplyBlock()) return;
+    const entry = findReviewEntry(entryId);
+    if (!entry) return;
+    const queue = buildApplyAllQueue(entry.groups, entry.decisions);
+    if (queue.length === 0) return;
+    cancelApplyAllRef.current.delete(entryId);
+    setApplyBusyNow(true);
+    updateReviewEntry(entryId, (e) => ({
+      ...e,
+      applyAllRun: { running: true, position: 0, total: queue.length, cancelRequested: false },
+      applyAllSummary: null,
+    }));
+    try {
+      const report = await runApplyAll(queue, {
+        readDecisions: () => findReviewEntry(entryId)?.decisions ?? {},
+        applyOne: (serverGroupId) => applyGroupOnce(entryId, sessionId, serverGroupId),
+        isCancelRequested: () => cancelApplyAllRef.current.has(entryId),
+        blockedReason: () => {
+          if (!mountedRef.current) return "the assistant panel was closed";
+          if (!findReviewEntry(entryId)) return "the conversation was cleared";
+          return currentApplyBlock();
+        },
+        onProgress: (progress) =>
+          updateReviewEntry(entryId, (e) => ({
+            ...e,
+            applyAllRun: {
+              running: true,
+              position: progress.position,
+              total: progress.total,
+              cancelRequested: e.applyAllRun?.cancelRequested ?? false,
+            },
+          })),
+      });
+      updateReviewEntry(entryId, (e) => ({
+        ...e,
+        applyAllRun: null,
+        applyAllSummary: formatApplyAllSummary(report, (id) => groupLabel(e.groups, id)),
+      }));
+    } finally {
+      cancelApplyAllRef.current.delete(entryId);
+      setApplyBusyNow(false);
     }
+  };
+
+  const cancelApplyAll = (entryId: string) => {
+    cancelApplyAllRef.current.add(entryId);
+    updateReviewEntry(entryId, (e) =>
+      e.applyAllRun ? { ...e, applyAllRun: { ...e.applyAllRun, cancelRequested: true } } : e,
+    );
   };
 
   const copyText = async (entryId: string, text: string) => {
@@ -289,6 +539,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     }
   };
 
+  const resubmit = (retry: PromptToRetry | undefined) => {
+    if (!retry) return;
+    void submitMessage(retry);
+  };
+
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--color-background)" }}>
       <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-3 flex items-center justify-between flex-shrink-0">
@@ -312,6 +567,15 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         )}
       </div>
 
+      {recoveryLocked && (
+        <CodeAssistantRecoveryBanner
+          state={recoveryState}
+          busy={recoveryBusy}
+          error={recoveryError}
+          onRestore={() => void restoreProject()}
+          onClear={() => void unlockProject()}
+        />
+      )}
       <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {entries.length === 0 && (
           <div className="space-y-3">
@@ -387,9 +651,27 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                       onApply={(groupId) => applyGroup(entry.id, entry.sessionId, groupId)}
                       onSkip={(groupId) => skipGroup(entry.id, groupId)}
                       onApplyAll={() => applyAllPending(entry.id, entry.sessionId)}
+                      onCancelApplyAll={() => cancelApplyAll(entry.id)}
+                      applyAllRun={entry.applyAllRun ?? null}
+                      applyAllSummary={entry.applyAllSummary ?? null}
+                      applyBusy={applyBusy}
+                      applyBlockedReason={applyBlock?.message ?? null}
                     />
                     <CodeAssistantContextUsed events={entry.contextUsed} />
                   </div>
+                );
+              }
+              if (entry.deadEnd) {
+                return (
+                  <CodeAssistantDeadEndNotice
+                    key={entry.id}
+                    deadEnd={entry.deadEnd}
+                    active={!busy && entry.id === lastEntry?.id}
+                    retryAt={entry.retryAt ?? null}
+                    now={now}
+                    onResubmit={() => resubmit(entry.retry)}
+                    onSignIn={() => logout(true)}
+                  />
                 );
               }
               return (
@@ -470,9 +752,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleComposerKeyDown}
                 rows={1}
-                disabled={busy || !projectId || !configured}
+                disabled={busy || !projectId || !configured || recoveryLocked}
                 placeholder={
-                  !configured
+                  recoveryLocked
+                    ? "Paused until the recovery notice above is resolved..."
+                    : !configured
                     ? "Add an API key using the model picker below..."
                     : action === "local-edit"
                       ? "Describe the change you want..."
@@ -481,8 +765,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                 className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-none disabled:opacity-50 min-h-[44px] max-h-[160px] overflow-y-auto"
               />
               <button
-                onClick={submitMessage}
-                disabled={busy || !input.trim() || !projectId || !configured}
+                onClick={() => void submitMessage()}
+                disabled={busy || !input.trim() || !projectId || !configured || recoveryLocked}
                 className="p-2.5 text-white bg-purple-600 rounded-lg hover:bg-purple-700 active:scale-90 transition-transform disabled:opacity-50 disabled:active:scale-100 flex-shrink-0"
                 title="Send"
               >
