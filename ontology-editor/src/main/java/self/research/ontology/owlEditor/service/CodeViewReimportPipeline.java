@@ -173,22 +173,7 @@ public class CodeViewReimportPipeline {
                 }
             }
 
-            datasetService.markProjectDirty(req.projectId());
-            if (ontologyCache != null) {
-                ontologyCache.evict(req.projectId());
-                log.info("[CODE-VIEW-SAVE] Evicted in-memory OWLAPI cache for project {} (now stale vs. reimported Fuseki data)", req.projectId());
-            }
-            metadataService.incrementMutationVersion(req.projectId());
-
-            if (hierarchyIndexService != null) {
-                hierarchyIndexService.scheduleBuild(req.projectId());
-            }
-
-            if (ontologyQueryService != null) {
-                ontologyQueryService.evictIndividualAndAnnotationPropertyCaches(req.projectId());
-            }
-
-            storageManager.clearCodeViewCache(req.projectId());
+            invalidateAfterGraphReplaced(req.projectId());
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
 
             String cachedContent = isOwlApiFormat
@@ -206,6 +191,45 @@ public class CodeViewReimportPipeline {
                 Files.deleteIfExists(pristineCopy);
             }
         }
+    }
+
+    public long restoreSnapshot(String projectId, Path rdfXmlSnapshot) throws IOException {
+        if (rdfXmlSnapshot == null || !Files.isRegularFile(rdfXmlSnapshot)) {
+            throw new IOException("The pre-apply snapshot is missing, so the project can't be restored from it");
+        }
+        log.warn("[CODE-VIEW-SAVE] Restoring project {} from pre-apply snapshot {} ({} bytes)",
+                projectId, rdfXmlSnapshot.getFileName(), Files.size(rdfXmlSnapshot));
+        streamIntoGraphDb(projectId, rdfXmlSnapshot, RDFFormat.RDFXML, null);
+        if (ontologyMutationService != null) {
+            try {
+                ontologyMutationService.invalidateReasonerCaches(projectId);
+            } catch (Exception cacheEx) {
+                log.warn("[CODE-VIEW-SAVE] Failed busting reasoner caches for project {} after restore (non-fatal): {}",
+                        projectId, cacheEx.getMessage());
+            }
+        }
+        invalidateAfterGraphReplaced(projectId);
+        log.info("[CODE-VIEW-SAVE] Project {} restored from its pre-apply snapshot", projectId);
+        return storageManager.getPublicGraphVersion(projectId);
+    }
+
+    private void invalidateAfterGraphReplaced(String projectId) {
+        datasetService.markProjectDirty(projectId);
+        if (ontologyCache != null) {
+            ontologyCache.evict(projectId);
+            log.info("[CODE-VIEW-SAVE] Evicted in-memory OWLAPI cache for project {} (now stale vs. reimported Fuseki data)", projectId);
+        }
+        metadataService.incrementMutationVersion(projectId);
+
+        if (hierarchyIndexService != null) {
+            hierarchyIndexService.scheduleBuild(projectId);
+        }
+
+        if (ontologyQueryService != null) {
+            ontologyQueryService.evictIndividualAndAnnotationPropertyCaches(projectId);
+        }
+
+        storageManager.clearCodeViewCache(projectId);
     }
 
     private Path convertToRdfXml(Path sourceFile) throws IOException {
