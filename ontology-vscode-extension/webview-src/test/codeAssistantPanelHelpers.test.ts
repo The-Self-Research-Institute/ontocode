@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  buildSystemPrompt,
   buildConversationHistory,
   toFriendlyErrorMessage,
   MAX_HISTORY_TURNS,
@@ -119,5 +120,29 @@ describe("chat history storage", () => {
     saveStoredChatEntries("proj-1", [{ id: "a" }]);
     clearStoredChatEntries("proj-1");
     expect(loadStoredChatEntries("proj-1")).toBeNull();
+  });
+});
+
+describe("buildSystemPrompt", () => {
+  it("points local edits at statement reads for exact ranges and at propose_rename for renames", () => {
+    const prompt = buildSystemPrompt("local-edit", "a.ttl");
+    expect(prompt).toContain("propose_rename");
+    expect(prompt).toMatch(/read_context with a "statement" target/);
+    expect(prompt).toContain("(a.ttl)");
+    expect(prompt).toContain("Never claim an edit was applied");
+  });
+
+  it("tells read-only modes that neither proposal tool will work", () => {
+    for (const action of ["ask", "project-findings"] as const) {
+      const prompt = buildSystemPrompt(action);
+      expect(prompt).toContain("propose_edit and propose_rename will always be rejected");
+      expect(prompt).not.toContain("\"statement\" target");
+    }
+  });
+
+  it("stays short", () => {
+    for (const action of ["ask", "local-edit", "project-findings"] as const) {
+      expect(buildSystemPrompt(action, "a.ttl").length).toBeLessThan(1200);
+    }
   });
 });

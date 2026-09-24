@@ -5,12 +5,15 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.AssistantApplyOperationDocument;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.AssistantEditGroupStatus;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.EditEntry;
+import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
+import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -25,6 +28,7 @@ import java.util.Optional;
 public class AssistantEditApplyService {
 
     public static final String PROJECT_RECOVERY_LOCKED = "PROJECT_RECOVERY_LOCKED";
+    public static final String APPLY_OPERATION = "apply";
 
     private final AssistantEditGroupRepository groupRepository;
     private final StorageManager storageManager;
@@ -37,6 +41,8 @@ public class AssistantEditApplyService {
     private final SparqlDatasetService datasetService;
     private final AssistantApplyOperationService operationService;
     private final ProjectRecoveryLockService recoveryLockService;
+    private final AssistantAuditService auditService;
+    private final AssistantSessionRepository sessionRepository;
 
     public AssistantEditApplyService(AssistantEditGroupRepository groupRepository,
                                       StorageManager storageManager,
@@ -49,6 +55,25 @@ public class AssistantEditApplyService {
                                       SparqlDatasetService datasetService,
                                       AssistantApplyOperationService operationService,
                                       ProjectRecoveryLockService recoveryLockService) {
+        this(groupRepository, storageManager, spliceWriter, reimportPipeline, remapService, lockRegistry,
+                syntaxValidator, referenceCoverageValidator, datasetService, operationService, recoveryLockService,
+                null, null);
+    }
+
+    @Autowired
+    public AssistantEditApplyService(AssistantEditGroupRepository groupRepository,
+                                      StorageManager storageManager,
+                                      LineRangeSpliceWriter spliceWriter,
+                                      CodeViewReimportPipeline reimportPipeline,
+                                      AssistantEditGroupRemapService remapService,
+                                      ProjectWriteLockRegistry lockRegistry,
+                                      AssistantEditSyntaxValidator syntaxValidator,
+                                      AssistantEditReferenceCoverageValidator referenceCoverageValidator,
+                                      SparqlDatasetService datasetService,
+                                      AssistantApplyOperationService operationService,
+                                      ProjectRecoveryLockService recoveryLockService,
+                                      AssistantAuditService auditService,
+                                      AssistantSessionRepository sessionRepository) {
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
         this.spliceWriter = spliceWriter;
@@ -60,20 +85,46 @@ public class AssistantEditApplyService {
         this.datasetService = datasetService;
         this.operationService = operationService;
         this.recoveryLockService = recoveryLockService;
+        this.auditService = auditService;
+        this.sessionRepository = sessionRepository;
     }
 
     public ApplyResult applyGroup(String sessionId, String serverGroupId, String userEmail) {
         Optional<AssistantEditGroupDocument> initial = groupRepository.findById(serverGroupId);
         if (initial.isEmpty() || !belongsTo(initial.get(), sessionId, userEmail)) {
-            return errorResult("VALIDATION_FAILED", "Unknown or unauthorized proposal");
+            ApplyResult rejected = errorResult("VALIDATION_FAILED", "Unknown or unauthorized proposal");
+            audit(userEmail, null, sessionId, serverGroupId, rejected);
+            return rejected;
         }
         String projectId = initial.get().getProjectId();
 
+        ApplyResult result;
         try {
-            return lockRegistry.runExclusive(projectId, () -> applyLocked(sessionId, serverGroupId, userEmail));
+            result = lockRegistry.runExclusive(projectId, () -> applyLocked(sessionId, serverGroupId, userEmail));
         } catch (Exception e) {
             log.error("[Assistant] Unexpected failure applying group {}: {}", serverGroupId, e.getMessage(), e);
-            return errorResult("APPLY_FAILED", e.getMessage() != null ? e.getMessage() : "Apply failed");
+            result = errorResult("APPLY_FAILED", e.getMessage() != null ? e.getMessage() : "Apply failed");
+        }
+        audit(userEmail, projectId, sessionId, serverGroupId, result);
+        return result;
+    }
+
+    private void audit(String userEmail, String projectId, String sessionId, String groupId, ApplyResult result) {
+        if (auditService == null) {
+            return;
+        }
+        try {
+            Optional<AssistantSessionDocument> session = sessionRepository != null && sessionId != null
+                    ? sessionRepository.findById(sessionId)
+                            .filter(found -> userEmail != null && userEmail.equals(found.getUserEmail()))
+                    : Optional.empty();
+            String provider = session.map(AssistantSessionDocument::getProvider).orElse(null);
+            String model = session.map(AssistantSessionDocument::getModel).orElse(null);
+            auditService.record(new AssistantAuditService.AssistantAuditEvent(userEmail, projectId, sessionId,
+                    groupId, APPLY_OPERATION, result.getNewRevision(), provider, model,
+                    result.isOk() ? "ok" : "failed", result.getErrorCode(), result.getMessage()));
+        } catch (Exception e) {
+            log.warn("[Assistant] Could not audit apply of group {}: {}", groupId, e.getMessage());
         }
     }
 

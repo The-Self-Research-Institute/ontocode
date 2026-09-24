@@ -10,6 +10,7 @@ import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.util.AssistantTokenEstimator;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -21,11 +22,18 @@ import java.util.Set;
 @Service
 public class AssistantContextToolService {
 
+    static final Duration DIAGNOSTICS_TIMEOUT = Duration.ofSeconds(20);
+    static final String TYPE_RANGE = "range";
+    static final String TYPE_IDENTIFIER = "identifier";
+    static final String TYPE_STATEMENT = "statement";
+    static final Set<String> TARGET_TYPES = Set.of(TYPE_RANGE, TYPE_IDENTIFIER, TYPE_STATEMENT);
+
     private final AssistantSessionService sessionService;
     private final SparqlDatasetService datasetService;
     private final StorageManager storageManager;
     private final ProjectWriteLockRegistry lockRegistry;
     private final AssistantAdmissionLimiter admissionLimiter;
+    private final AssistantSourceContextReader sourceReader;
 
     public AssistantContextToolService(AssistantSessionService sessionService, SparqlDatasetService datasetService,
                                         StorageManager storageManager, ProjectWriteLockRegistry lockRegistry,
@@ -35,6 +43,7 @@ public class AssistantContextToolService {
         this.storageManager = storageManager;
         this.lockRegistry = lockRegistry;
         this.admissionLimiter = admissionLimiter;
+        this.sourceReader = new AssistantSourceContextReader(storageManager, DIAGNOSTICS_TIMEOUT);
     }
 
     public ContextToolResult readContext(String sessionId, String userEmail, List<Target> targets, String kind) {
@@ -115,22 +124,39 @@ public class AssistantContextToolService {
     private TargetResolution resolveTargets(String projectId, List<Target> targets, String kind) {
         List<Item> items = new ArrayList<>();
         boolean anyPartial = false;
+        List<Target> diagnosticTargets = new ArrayList<>();
         for (Target target : targets) {
+            if (target == null || target.type() == null || !TARGET_TYPES.contains(target.type())
+                    || target.value() == null || target.value().isBlank()) {
+                anyPartial = true;
+                items.add(Item.builder().kind("note").text("NOTE: Skipped a target that needs a type of range, "
+                        + "identifier or statement and a non-empty value.").build());
+                continue;
+            }
             try {
-                if ("range".equals(target.type())) {
-                    items.add(resolveRange(projectId, target.value()));
-                } else if ("identifier".equals(target.type())) {
-                    if ("diagnostics".equals(kind)) {
-                        anyPartial = true;
-                        log.info("[Assistant] diagnostics requested for {} — not yet backed by a real reasoner "
-                                + "signal in this service, returning partial coverage rather than fake data",
-                                target.value());
-                        continue;
-                    }
+                if (TYPE_STATEMENT.equals(target.type())) {
+                    AssistantSourceContextReader.SourceRead read = sourceReader.statements(projectId, target.value());
+                    items.addAll(read.items());
+                    anyPartial |= read.partial();
+                } else if ("diagnostics".equals(kind)) {
+                    diagnosticTargets.add(target);
+                } else if (TYPE_RANGE.equals(target.type())) {
+                    anyPartial |= addRange(projectId, target.value(), items);
+                } else {
                     items.add(resolveIdentifier(projectId, target.value(), kind));
                 }
             } catch (Exception e) {
                 log.warn("[Assistant] read_context target {} failed: {}", target.value(), e.getMessage());
+                anyPartial = true;
+            }
+        }
+        if ("diagnostics".equals(kind) && (!diagnosticTargets.isEmpty() || targets.isEmpty())) {
+            try {
+                AssistantSourceContextReader.SourceRead read = sourceReader.diagnostics(projectId, diagnosticTargets);
+                items.addAll(read.items());
+                anyPartial |= read.partial();
+            } catch (Exception e) {
+                log.warn("[Assistant] read_context diagnostics failed for project {}: {}", projectId, e.getMessage());
                 anyPartial = true;
             }
         }
@@ -139,6 +165,9 @@ public class AssistantContextToolService {
 
     private List<Target> dedupeTargets(List<Target> targets) {
         List<Target> deduped = new ArrayList<>();
+        if (targets == null) {
+            return deduped;
+        }
         Set<Target> seen = new HashSet<>();
         for (Target target : targets) {
             if (seen.add(target)) {
@@ -158,20 +187,17 @@ public class AssistantContextToolService {
         return sb.toString();
     }
 
-    private Item resolveRange(String projectId, String encodedRange) throws IOException {
-        String[] formatAndRange = encodedRange.split(":", 2);
-        String format = formatAndRange.length > 1 ? formatAndRange[0] : "turtle";
-        String[] bounds = (formatAndRange.length > 1 ? formatAndRange[1] : formatAndRange[0]).split("-", 2);
-        long startLine = Long.parseLong(bounds[0]);
-        int lineCount = bounds.length > 1 ? Integer.parseInt(bounds[1]) : 50;
-
-        StorageManager.CodeViewPage page = storageManager.readCodeViewPage(projectId, format, startLine, lineCount);
-        return Item.builder()
-                .source(format)
-                .range(startLine + "-" + (startLine + page.lineCount()))
+    private boolean addRange(String projectId, String encodedRange, List<Item> items) throws IOException {
+        AssistantSourceContextReader.RangeSpec range = AssistantSourceContextReader.parseRange(encodedRange);
+        StorageManager.CodeViewPage page = storageManager.readCodeViewPage(
+                projectId, range.format(), range.startLine(), range.lineCount());
+        items.add(Item.builder()
+                .source(range.format())
+                .range(range.startLine() + "-" + page.lineCount())
                 .text(page.content())
                 .kind("range")
-                .build();
+                .build());
+        return range.clamped();
     }
 
     private Item resolveIdentifier(String projectId, String iri, String kind) {

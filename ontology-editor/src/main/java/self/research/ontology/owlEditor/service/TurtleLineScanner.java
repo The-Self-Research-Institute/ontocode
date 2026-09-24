@@ -36,6 +36,14 @@ public final class TurtleLineScanner {
         this.base = initialBase;
     }
 
+    public TurtleLineScanner fork() {
+        TurtleLineScanner copy = new TurtleLineScanner(prefixes, base);
+        copy.openLongQuote = openLongQuote;
+        copy.directiveState = directiveState;
+        copy.pendingPrefix = pendingPrefix;
+        return copy;
+    }
+
     public Map<String, String> prefixes() {
         return prefixes;
     }
@@ -323,7 +331,7 @@ public final class TurtleLineScanner {
         if (namespace == null) {
             return new Token(Kind.PNAME, start, end, text, null, prefix, false, true);
         }
-        return new Token(Kind.PNAME, start, end, text, namespace + unescapeLocal(local), prefix, false, false);
+        return new Token(Kind.PNAME, start, end, text, namespace + unescapeLocalName(local), prefix, false, false);
     }
 
     private boolean startDirectiveIfKeyword(String word, boolean atForm) {
@@ -389,7 +397,7 @@ public final class TurtleLineScanner {
         }
     }
 
-    private static String unescapeLocal(String local) {
+    public static String unescapeLocalName(String local) {
         if (local.indexOf('\\') < 0) {
             return local;
         }

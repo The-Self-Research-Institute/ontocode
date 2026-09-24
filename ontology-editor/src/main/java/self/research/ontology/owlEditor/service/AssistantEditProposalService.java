@@ -25,12 +25,20 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class AssistantEditProposalService {
+
+    public static final String PROPOSE_OPERATION = "edit_propose";
+    public static final String RENAME_CHECK = "rename_occurrences_complete";
+
+    private static final int MAX_AUDIT_DETAIL_CHARS = 500;
 
     private final AssistantSessionService sessionService;
     private final AssistantEditGroupRepository groupRepository;
@@ -38,6 +46,8 @@ public class AssistantEditProposalService {
     private final AssistantEditSyntaxValidator syntaxValidator;
     private final AssistantEditReferenceCoverageValidator referenceCoverageValidator;
     private final AssistantRenameService renameService;
+    private final AssistantEditSemanticValidator semanticValidator;
+    private final AssistantAuditService auditService;
 
     @Value("${assistant.propose.max-edit-bytes:200000}")
     private int maxEditBytes;
@@ -59,31 +69,39 @@ public class AssistantEditProposalService {
                                          StorageManager storageManager,
                                          AssistantEditSyntaxValidator syntaxValidator,
                                          AssistantEditReferenceCoverageValidator referenceCoverageValidator,
-                                         AssistantRenameService renameService) {
+                                         AssistantRenameService renameService,
+                                         AssistantEditSemanticValidator semanticValidator,
+                                         AssistantAuditService auditService) {
         this.sessionService = sessionService;
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
         this.syntaxValidator = syntaxValidator;
         this.referenceCoverageValidator = referenceCoverageValidator;
         this.renameService = renameService;
+        this.semanticValidator = semanticValidator;
+        this.auditService = auditService;
     }
 
     public ProposeEditResult propose(String sessionId, String userEmail, List<EditGroupInput> groups) {
         Optional<AssistantSessionDocument> sessionOpt = sessionService.getActiveSession(sessionId, userEmail);
         if (sessionOpt.isEmpty()) {
+            audit(new AssistantAuditService.AssistantAuditEvent(userEmail, null, sessionId, null, PROPOSE_OPERATION,
+                    null, null, null, "rejected", "SESSION_NOT_FOUND", "Session not found, expired, or not yours"));
             return ProposeEditResult.builder().ok(false).errorCode("SESSION_NOT_FOUND")
                     .message("Session not found, expired, or not yours").build();
         }
         AssistantSessionDocument session = sessionOpt.get();
 
         if (!"local-edit".equals(session.getActionType())) {
-            return ProposeEditResult.builder().ok(false).errorCode("VALIDATION_FAILED")
-                    .message("This session's action type does not allow proposing edits").build();
+            return rejectRequest(session, "This session's action type does not allow proposing edits");
+        }
+
+        if (groups == null || groups.stream().anyMatch(Objects::isNull)) {
+            return rejectRequest(session, "The proposal has no groups list, or one of its groups is empty");
         }
 
         if (groups.size() > maxGroupsPerRequest) {
-            return ProposeEditResult.builder().ok(false).errorCode("VALIDATION_FAILED")
-                    .message("Too many groups in one proposal (max " + maxGroupsPerRequest + ")").build();
+            return rejectRequest(session, "Too many groups in one proposal (max " + maxGroupsPerRequest + ")");
         }
 
         long publicGraphVersion = storageManager.getPublicGraphVersion(session.getProjectId());
@@ -98,12 +116,21 @@ public class AssistantEditProposalService {
         return ProposeEditResult.builder().ok(true).groups(outcomes).build();
     }
 
+    private ProposeEditResult rejectRequest(AssistantSessionDocument session, String message) {
+        audit(new AssistantAuditService.AssistantAuditEvent(session.getUserEmail(), session.getProjectId(),
+                session.getId(), null, PROPOSE_OPERATION, session.getPinnedRevision(), session.getProvider(),
+                session.getModel(), "rejected", "VALIDATION_FAILED", message));
+        return ProposeEditResult.builder().ok(false).errorCode("VALIDATION_FAILED").message(message).build();
+    }
+
     private GroupProposalOutcome proposeOneGroup(AssistantSessionDocument session, EditGroupInput groupInput,
                                                   long publicGraphVersion, Instant now, Instant expiresAt) {
         List<CheckResult> checks = new ArrayList<>();
         List<EditInput> inputEdits = groupInput.edits() == null ? List.of() : groupInput.edits();
         EditOperation operation = groupInput.operation();
         boolean derived = operation != null;
+        Set<String> introducedByOperation = Set.of();
+        String renameSummary = null;
         if (derived) {
             String operationPath = operation.targetPath() == null ? "" : operation.targetPath();
             if (!inputEdits.isEmpty()) {
@@ -118,21 +145,32 @@ public class AssistantEditProposalService {
                         new CheckResult(RENAME_CHECK, false, derivation.detail()));
             }
             checks.add(new CheckResult(RENAME_CHECK, true, derivation.detail()));
+            introducedByOperation = Set.of(derivation.replacementIri());
+            renameSummary = AssistantRenameService.RENAME_IDENTIFIER + " <" + derivation.targetIri() + "> -> <"
+                    + derivation.replacementIri() + ">, " + derivation.occurrences() + " occurrences";
             inputEdits = derivation.edits().stream()
                     .map(e -> new EditInput(operation.targetPath(), new EditRange(e.line(), 1), e.originalText(),
                             e.newText()))
                     .toList();
         }
+        if (inputEdits.stream().anyMatch(Objects::isNull)) {
+            String path = inputEdits.stream().filter(Objects::nonNull).map(EditInput::targetPath)
+                    .filter(Objects::nonNull).findFirst().orElse("");
+            return rejectGroup(session, groupInput, path, publicGraphVersion, now, expiresAt,
+                    new CheckResult("range_well_formed", false, "An edit in this group is empty."));
+        }
         List<EditInput> sortedEdits = inputEdits.stream()
                 .sorted(Comparator.comparingLong(e -> e.range() == null ? Long.MAX_VALUE : e.range().startLine()))
                 .toList();
-        String targetPath = sortedEdits.isEmpty() ? "" : sortedEdits.get(0).targetPath();
+        String targetPath = sortedEdits.isEmpty() || sortedEdits.get(0).targetPath() == null
+                ? "" : sortedEdits.get(0).targetPath();
 
         boolean hasEdits = !sortedEdits.isEmpty();
         checks.add(new CheckResult("has_edits", hasEdits));
 
-        boolean singleTargetPath = sortedEdits.stream().map(EditInput::targetPath).distinct().count() <= 1;
-        checks.add(new CheckResult("single_target_path", singleTargetPath));
+        boolean singleTargetPath = !targetPath.isBlank()
+                && sortedEdits.stream().map(EditInput::targetPath).distinct().count() <= 1;
+        checks.add(new CheckResult("single_target_path", singleTargetPath || !hasEdits));
 
         boolean rangeWellFormed = sortedEdits.stream().allMatch(this::isRangeWellFormed);
         checks.add(new CheckResult("range_well_formed", rangeWellFormed));
@@ -151,15 +189,32 @@ public class AssistantEditProposalService {
         checks.add(new CheckResult("original_text_matches_live", liveMatch));
 
         boolean structurallySound = hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
-        boolean syntaxValid = !structurallySound
-                || syntaxValidator.isValid(session.getProjectId(), targetPath, toSpliceEdits(sortedEdits));
-        checks.add(new CheckResult("syntax_valid", syntaxValid));
+        CheckResult syntax;
+        if (structurallySound) {
+            AssistantEditSyntaxValidator.SyntaxResult result =
+                    syntaxValidator.check(session.getProjectId(), targetPath, toSpliceEdits(sortedEdits));
+            syntax = new CheckResult("syntax_valid", result.valid(), result.detail());
+        } else {
+            syntax = new CheckResult("syntax_valid", true);
+        }
+        checks.add(syntax);
 
         CheckResult referenceCoverage = !structurallySound
                 ? new CheckResult("complete_reference_coverage", true)
                 : toCheckResult(referenceCoverageValidator.check(
                         session.getProjectId(), targetPath, toCoverageEdits(sortedEdits)));
         checks.add(referenceCoverage);
+
+        if (!structurallySound) {
+            checks.addAll(AssistantEditSemanticValidator.skipped(
+                    "Skipped because the group failed its structural checks."));
+        } else if (!syntax.passed()) {
+            checks.addAll(AssistantEditSemanticValidator.skipped(
+                    "Skipped because the edited document does not parse."));
+        } else {
+            checks.addAll(semanticValidator.check(session.getProjectId(), targetPath,
+                    toSemanticEdits(sortedEdits), introducedByOperation));
+        }
 
         boolean passed = checks.stream().allMatch(CheckResult::passed);
 
@@ -168,8 +223,10 @@ public class AssistantEditProposalService {
                 .map(e -> new DiffEntry(e.targetPath(), e.originalText(), e.newText()))
                 .toList();
 
+        String summary = renameSummary != null ? renameSummary
+                : sortedEdits.size() + " edit" + (sortedEdits.size() == 1 ? "" : "s") + " on " + targetPath;
         return persistGroup(session, groupInput, targetPath, editEntries, passed, publicGraphVersion, now, expiresAt,
-                checks, diff);
+                checks, diff, summary);
     }
 
     private GroupProposalOutcome rejectGroup(AssistantSessionDocument session, EditGroupInput groupInput,
@@ -177,14 +234,17 @@ public class AssistantEditProposalService {
                                              Instant expiresAt, CheckResult failedCheck) {
         List<CheckResult> checks = new ArrayList<>();
         checks.add(failedCheck);
+        String summary = groupInput.operation() != null && groupInput.operation().type() != null
+                ? groupInput.operation().type() + " on " + targetPath
+                : "group on " + targetPath;
         return persistGroup(session, groupInput, targetPath, List.of(), false, publicGraphVersion, now, expiresAt,
-                checks, List.of());
+                checks, List.of(), summary);
     }
 
     private GroupProposalOutcome persistGroup(AssistantSessionDocument session, EditGroupInput groupInput,
                                               String targetPath, List<EditEntry> editEntries, boolean passed,
                                               long publicGraphVersion, Instant now, Instant expiresAt,
-                                              List<CheckResult> checks, List<DiffEntry> diff) {
+                                              List<CheckResult> checks, List<DiffEntry> diff, String summary) {
         AssistantEditGroupDocument document = AssistantEditGroupDocument.builder()
                 .id(UUID.randomUUID().toString())
                 .sessionId(session.getId())
@@ -204,6 +264,11 @@ public class AssistantEditProposalService {
         log.info("[Assistant] Proposed group {} for session {} status={}",
                 document.getId(), session.getId(), document.getStatus());
 
+        audit(new AssistantAuditService.AssistantAuditEvent(session.getUserEmail(), session.getProjectId(),
+                session.getId(), document.getId(), PROPOSE_OPERATION, publicGraphVersion, session.getProvider(),
+                session.getModel(), passed ? "pending" : "validation_failed", passed ? null : "VALIDATION_FAILED",
+                auditDetail(summary, checks)));
+
         return GroupProposalOutcome.builder()
                 .clientGroupId(groupInput.clientGroupId())
                 .serverGroupId(document.getId())
@@ -211,6 +276,24 @@ public class AssistantEditProposalService {
                 .checks(checks)
                 .diff(diff)
                 .build();
+    }
+
+    private String auditDetail(String summary, List<CheckResult> checks) {
+        String failed = checks.stream().filter(c -> !c.passed()).map(CheckResult::name)
+                .collect(Collectors.joining(", "));
+        String detail = failed.isEmpty() ? summary : summary + "; failed: " + failed;
+        return detail.length() <= MAX_AUDIT_DETAIL_CHARS ? detail : detail.substring(0, MAX_AUDIT_DETAIL_CHARS);
+    }
+
+    private void audit(AssistantAuditService.AssistantAuditEvent event) {
+        if (auditService == null) {
+            return;
+        }
+        try {
+            auditService.record(event);
+        } catch (Exception e) {
+            log.warn("[Assistant] Could not audit {}: {}", event.operation(), e.getMessage());
+        }
     }
 
     private boolean matchesLiveContentInOnePass(String projectId, String targetPath, List<EditInput> sortedEdits) {
@@ -332,11 +415,16 @@ public class AssistantEditProposalService {
                 .toList();
     }
 
+    private List<AssistantEditSemanticValidator.SemanticEdit> toSemanticEdits(List<EditInput> sortedEdits) {
+        return sortedEdits.stream()
+                .map(e -> new AssistantEditSemanticValidator.SemanticEdit(
+                        e.range().startLine(), e.range().lineCount(), e.originalText(), e.newText()))
+                .toList();
+    }
+
     private CheckResult toCheckResult(AssistantEditReferenceCoverageValidator.CoverageResult result) {
         return new CheckResult("complete_reference_coverage", result.covered(), result.detail());
     }
-
-    public static final String RENAME_CHECK = "rename_occurrences_complete";
 
     public record CheckResult(String name, boolean passed, String detail) {
         public CheckResult(String name, boolean passed) {

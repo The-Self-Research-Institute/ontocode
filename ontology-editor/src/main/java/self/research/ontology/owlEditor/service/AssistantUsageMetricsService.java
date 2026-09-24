@@ -3,6 +3,7 @@ package self.research.ontology.owlEditor.service;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
@@ -12,8 +13,10 @@ import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +32,7 @@ public class AssistantUsageMetricsService {
     public static final long MAX_TOKENS_PER_KIND = 5_000_000L;
     static final int MAX_MODEL_TAG_VALUES = 24;
     static final int MAX_MODEL_TAG_LENGTH = 48;
+    static final int MAX_NEW_MODEL_TAGS_PER_USER = 6;
 
     private static final Pattern RAW_MODEL_PATTERN = Pattern.compile("^[a-z0-9][a-z0-9._-]*$");
     private static final Pattern DATE_SUFFIX = Pattern.compile("-(\\d{8}|\\d{4}-\\d{2}-\\d{2}|latest)$");
@@ -52,6 +56,8 @@ public class AssistantUsageMetricsService {
     private final MeterRegistry registry;
     private final AssistantSessionRepository sessionRepository;
     private final Set<String> admittedModels = new HashSet<>();
+    private final Map<String, Integer> admissionsByUser = new HashMap<>();
+    private final AssistantProviderProxyService proxyService;
     private final Clock clock = Clock.systemUTC();
     private final AssistantProviderRateLimiter rateLimiter;
 
@@ -59,9 +65,17 @@ public class AssistantUsageMetricsService {
     private long maxSessionAgeMinutes = 60;
 
     public AssistantUsageMetricsService(MeterRegistry registry, AssistantSessionRepository sessionRepository,
+                                        int reportsPerMinute) {
+        this(registry, sessionRepository, null, reportsPerMinute);
+    }
+
+    @Autowired
+    public AssistantUsageMetricsService(MeterRegistry registry, AssistantSessionRepository sessionRepository,
+                                        AssistantProviderProxyService proxyService,
                                         @Value("${assistant.usage.reports-per-minute:120}") int reportsPerMinute) {
         this.registry = registry;
         this.sessionRepository = sessionRepository;
+        this.proxyService = proxyService;
         this.rateLimiter = new AssistantProviderRateLimiter(Math.max(1, reportsPerMinute), Duration.ofMinutes(1),
                 10_000, clock);
     }
@@ -75,7 +89,7 @@ public class AssistantUsageMetricsService {
             return UsageOutcome.rejected(400, "VALIDATION_FAILED", "provider must be claude, openai or gemini");
         }
         if (report.model() == null || report.model().isBlank() || report.model().length() > 200) {
-            return UsageOutcome.rejected(400, "VALIDATION_FAILED", "model is required");
+            return UsageOutcome.rejected(400, "VALIDATION_FAILED", "model is required and must be at most 200 characters");
         }
         if (report.latencyMs() == null || report.latencyMs() < 0 || report.latencyMs() > MAX_LATENCY_MS) {
             return UsageOutcome.rejected(400, "VALIDATION_FAILED",
@@ -98,7 +112,7 @@ public class AssistantUsageMetricsService {
             return new UsageOutcome(429, "RATE_LIMITED", "Too many usage reports", decision.retryAfterSeconds());
         }
 
-        String modelTag = normalizeModel(provider, report.model());
+        String modelTag = normalizeModel(provider, report.model(), userEmail);
         Timer.builder(LATENCY_TIMER)
                 .description("Latency of assistant LLM provider calls as reported by the client")
                 .tag("provider", provider)
@@ -113,27 +127,18 @@ public class AssistantUsageMetricsService {
     }
 
     String normalizeModel(String provider, String rawModel) {
-        if (rawModel == null) {
+        return normalizeModel(provider, rawModel, null);
+    }
+
+    String normalizeModel(String provider, String rawModel, String userEmail) {
+        String model = canonicalModel(provider, rawModel);
+        if (model == null) {
             return OTHER_MODEL;
         }
-        String model = rawModel.trim().toLowerCase(Locale.ROOT);
-        if (model.startsWith("models/")) {
-            model = model.substring("models/".length());
+        if (model.equals(managedModelTag(provider))) {
+            return model;
         }
-        if (model.isEmpty() || model.length() > 100 || !RAW_MODEL_PATTERN.matcher(model).matches()) {
-            return OTHER_MODEL;
-        }
-        String previous;
-        do {
-            previous = model;
-            model = DATE_SUFFIX.matcher(model).replaceFirst("");
-        } while (!model.equals(previous) && !model.isEmpty());
-        if (model.isEmpty() || !matchesProvider(provider, model)) {
-            return OTHER_MODEL;
-        }
-        if (model.length() > MAX_MODEL_TAG_LENGTH) {
-            model = model.substring(0, MAX_MODEL_TAG_LENGTH);
-        }
+        String userKey = userEmail == null ? null : userEmail.trim().toLowerCase(Locale.ROOT);
         synchronized (admittedModels) {
             if (admittedModels.contains(model)) {
                 return model;
@@ -141,9 +146,52 @@ public class AssistantUsageMetricsService {
             if (admittedModels.size() >= MAX_MODEL_TAG_VALUES) {
                 return OTHER_MODEL;
             }
+            if (userKey != null) {
+                int admitted = admissionsByUser.getOrDefault(userKey, 0);
+                if (admitted >= MAX_NEW_MODEL_TAGS_PER_USER) {
+                    return OTHER_MODEL;
+                }
+                admissionsByUser.put(userKey, admitted + 1);
+            }
             admittedModels.add(model);
             return model;
         }
+    }
+
+    private String managedModelTag(String provider) {
+        if (proxyService == null || !proxyService.isManaged()) {
+            return null;
+        }
+        AssistantProviderProxyService.ProviderConfigView config = proxyService.config();
+        if (!provider.equals(config.provider())) {
+            return null;
+        }
+        return canonicalModel(config.provider(), config.model());
+    }
+
+    private static String canonicalModel(String provider, String rawModel) {
+        if (rawModel == null || provider == null) {
+            return null;
+        }
+        String model = rawModel.trim().toLowerCase(Locale.ROOT);
+        if (model.startsWith("models/")) {
+            model = model.substring("models/".length());
+        }
+        if (model.isEmpty() || model.length() > 100 || !RAW_MODEL_PATTERN.matcher(model).matches()) {
+            return null;
+        }
+        String previous;
+        do {
+            previous = model;
+            model = DATE_SUFFIX.matcher(model).replaceFirst("");
+        } while (!model.equals(previous) && !model.isEmpty());
+        if (model.isEmpty() || !matchesProvider(provider, model)) {
+            return null;
+        }
+        if (model.length() > MAX_MODEL_TAG_LENGTH) {
+            model = model.substring(0, MAX_MODEL_TAG_LENGTH);
+        }
+        return model;
     }
 
     private static boolean matchesProvider(String provider, String model) {

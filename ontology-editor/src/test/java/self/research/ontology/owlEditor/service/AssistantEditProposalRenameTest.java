@@ -72,6 +72,9 @@ class AssistantEditProposalRenameTest {
     @Mock
     private SparqlDatasetService datasetService;
 
+    @Mock
+    private AssistantAuditService auditService;
+
     @TempDir
     Path tempDir;
 
@@ -81,10 +84,12 @@ class AssistantEditProposalRenameTest {
     void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
         LineRangeSpliceWriter spliceWriter = new LineRangeSpliceWriter();
+        AssistantGraphIdentifierLookup lookup = new AssistantGraphIdentifierLookup(datasetService);
         proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager,
                 new AssistantEditSyntaxValidator(storageManager, spliceWriter),
                 new AssistantEditReferenceCoverageValidator(storageManager),
-                new AssistantRenameService(storageManager, new AssistantGraphIdentifierLookup(datasetService)));
+                new AssistantRenameService(storageManager, lookup),
+                new AssistantEditSemanticValidator(storageManager, lookup), auditService);
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 2);
         ReflectionTestUtils.setField(proposalService, "maxRenameLines", 5000);
@@ -219,6 +224,73 @@ class AssistantEditProposalRenameTest {
         assertTrue(outcomes.get(0).isValidationPassed(), outcomes.get(0).getChecks().toString());
     }
 
+    @Test
+    void derivedRenameRunsSemanticChecksAndDoesNotFlagTheReplacementAsMissing() {
+        GroupProposalOutcome outcome = proposeOne(renameGroup("turtle", ":Pizza", ":Pie"));
+
+        CheckResult references = check(outcome, "references_resolve");
+        assertTrue(references.passed(), references.detail());
+        CheckResult declarations = check(outcome, "no_conflicting_declaration");
+        assertTrue(declarations.passed(), declarations.detail());
+        assertTrue(declarations.detail().contains("1 newly declared identifier"), declarations.detail());
+    }
+
+    @Test
+    void renameOntoAnIdentifierAlreadyInTheGraphIsRejectedBeforeAnyEditIsPersisted() {
+        when(datasetService.execSelectCapped(anyString(), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of("x"),
+                        List.of(java.util.Map.of("x", "http://ex.org/pizza#Pie")), false, null));
+
+        GroupProposalOutcome outcome = proposeOne(renameGroup("turtle", ":Pizza", ":Pie"));
+
+        assertFalse(outcome.isValidationPassed());
+        assertTrue(check(outcome, "rename_occurrences_complete").detail().contains("already exists in the graph"));
+        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
+        verify(groupRepository).save(captor.capture());
+        assertTrue(captor.getValue().getEdits().isEmpty());
+    }
+
+    @Test
+    void renameWhoseSourceChangedBetweenDerivationAndLiveCheckCannotPass() throws Exception {
+        Path doc = write("changing.ttl", TURTLE_DOC);
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(doc,
+                write("changed.ttl", TURTLE_DOC.replace(":Margherita rdfs:subClassOf :Pizza ;",
+                        ":Margherita rdfs:subClassOf :Pizza , :PizzaTopping ;")));
+
+        GroupProposalOutcome outcome = proposeOne(renameGroup("turtle", ":Pizza", ":Pie"));
+
+        assertFalse(outcome.isValidationPassed());
+        assertFalse(check(outcome, "original_text_matches_live").passed());
+    }
+
+    @Test
+    void derivedRenameIsAuditedWithTheRenameSummaryAndTheSessionsModel() {
+        proposeOne(renameGroup("turtle", ":Pizza", ":Pie"));
+
+        ArgumentCaptor<AssistantAuditService.AssistantAuditEvent> captor =
+                ArgumentCaptor.forClass(AssistantAuditService.AssistantAuditEvent.class);
+        verify(auditService).record(captor.capture());
+        AssistantAuditService.AssistantAuditEvent event = captor.getValue();
+        assertEquals("pending", event.outcome());
+        assertEquals("openai", event.provider());
+        assertEquals("gpt-test", event.model());
+        assertTrue(event.detail().contains("rename_identifier <http://ex.org/pizza#Pizza> -> <http://ex.org/pizza#Pie>"),
+                event.detail());
+        assertTrue(event.detail().contains("2 occurrences"), event.detail());
+    }
+
+    @Test
+    void refusedRenameIsAuditedAsValidationFailed() {
+        proposeOne(renameGroup("jsonld", ":Pizza", ":Pie"));
+
+        ArgumentCaptor<AssistantAuditService.AssistantAuditEvent> captor =
+                ArgumentCaptor.forClass(AssistantAuditService.AssistantAuditEvent.class);
+        verify(auditService).record(captor.capture());
+        assertEquals("validation_failed", captor.getValue().outcome());
+        assertEquals("VALIDATION_FAILED", captor.getValue().errorCode());
+        assertTrue(captor.getValue().detail().contains("rename_occurrences_complete"));
+    }
+
     private GroupProposalOutcome proposeOne(EditGroupInput group) {
         return proposalService.propose("s1", "u@x.com", List.of(group)).getGroups().get(0);
     }
@@ -243,6 +315,8 @@ class AssistantEditProposalRenameTest {
                 .projectId("proj-1")
                 .userEmail("u@x.com")
                 .pinnedRevision(42L)
+                .provider("openai")
+                .model("gpt-test")
                 .actionType("local-edit")
                 .status(AssistantSessionStatus.ACTIVE)
                 .build();

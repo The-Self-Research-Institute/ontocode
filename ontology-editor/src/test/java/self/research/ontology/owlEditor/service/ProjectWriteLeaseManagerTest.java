@@ -180,6 +180,62 @@ class ProjectWriteLeaseManagerTest {
 
     @Test
     @Timeout(5)
+    void aTransientStoreFailureDuringRenewalDoesNotStopLaterRenewals() throws Exception {
+        ProjectWriteLeaseManager.Lease lease = manager(Duration.ofMillis(50), Duration.ofSeconds(1)).acquire("proj-1");
+        collection.upcomingFailures.add(new DataAccessResourceFailureException("blip"));
+        clock.advanceSeconds(120);
+        Instant expected = START.plusSeconds(120).plus(TTL);
+
+        awaitTrue(() -> expected.equals(collection.get("proj-1").getExpiresAt()));
+
+        assertFalse(lease.isLost());
+        assertEquals(0.0, meters.counter(ProjectWriteLeaseManager.LOST_COUNTER).count());
+        lease.release();
+        assertNull(collection.get("proj-1"));
+    }
+
+    @Test
+    @Timeout(5)
+    void aLeaseThatExpiredButWasNotTakenOverIsStillRenewedByItsOwner() throws Exception {
+        ProjectWriteLeaseManager.Lease lease = manager(Duration.ofMillis(50), Duration.ofSeconds(1)).acquire("proj-1");
+        clock.advanceSeconds(TTL.toSeconds() * 3);
+        Instant expected = START.plusSeconds(TTL.toSeconds() * 3).plus(TTL);
+
+        awaitTrue(() -> expected.equals(collection.get("proj-1").getExpiresAt()));
+
+        assertFalse(lease.isLost());
+        assertEquals(lease.getOwnerToken(), collection.get("proj-1").getOwnerToken());
+        lease.release();
+    }
+
+    @Test
+    @Timeout(5)
+    void anotherNodeCannotTakeOverALeaseThatIsStillValid() throws Exception {
+        ProjectWriteLeaseManager.Lease lease = manager(Duration.ofSeconds(10), Duration.ofSeconds(1)).acquire("proj-1");
+        ProjectWriteLeaseManager other = new ProjectWriteLeaseManager(collection.template, clock,
+                new ProjectWriteLeaseManager.Settings(TTL, Duration.ofSeconds(10), Duration.ofMillis(100),
+                        Duration.ofMillis(10), Duration.ofMillis(40)),
+                null);
+        try {
+            clock.advanceSeconds(TTL.toSeconds() - 1);
+
+            assertThrows(ProjectWriteLeaseUnavailableException.class, () -> other.acquire("proj-1"));
+            assertEquals(lease.getOwnerToken(), collection.get("proj-1").getOwnerToken());
+
+            clock.advanceSeconds(2);
+            ProjectWriteLeaseManager.Lease taken = other.acquire("proj-1");
+            assertEquals(taken.getOwnerToken(), collection.get("proj-1").getOwnerToken());
+            lease.release();
+            assertEquals(taken.getOwnerToken(), collection.get("proj-1").getOwnerToken());
+            taken.release();
+            assertNull(collection.get("proj-1"));
+        } finally {
+            other.close();
+        }
+    }
+
+    @Test
+    @Timeout(5)
     void aTransientStoreFailureDuringAcquireIsRetried() throws Exception {
         collection.upcomingFailures.add(new DataAccessResourceFailureException("connection reset"));
 

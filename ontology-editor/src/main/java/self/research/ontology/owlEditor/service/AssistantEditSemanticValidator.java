@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -29,7 +30,7 @@ public class AssistantEditSemanticValidator {
 
     public static final String REFERENCES_RESOLVE = "references_resolve";
     public static final String NO_CONFLICTING_DECLARATION = "no_conflicting_declaration";
-    public static final String NOT_APPLICABLE = "not applicable for this format";
+    public static final String NOT_APPLICABLE = "Not applicable";
     public static final int MAX_IDENTIFIERS_PER_GROUP = 50;
 
     private final StorageManager storageManager;
@@ -40,7 +41,7 @@ public class AssistantEditSemanticValidator {
         this.graphLookup = graphLookup;
     }
 
-    public record SemanticEdit(String originalText, String newText) {}
+    public record SemanticEdit(long startLine, int lineCount, String originalText, String newText) {}
 
     private static final class Extraction {
         final Set<String> terms = new LinkedHashSet<>();
@@ -57,9 +58,11 @@ public class AssistantEditSemanticValidator {
 
     private record Extracted(Extraction before, Extraction after) {}
 
-    public static List<CheckResult> notApplicable() {
-        return List.of(new CheckResult(REFERENCES_RESOLVE, true, NOT_APPLICABLE),
-                new CheckResult(NO_CONFLICTING_DECLARATION, true, NOT_APPLICABLE));
+    public static List<CheckResult> notApplicable(String targetPath) {
+        String detail = NOT_APPLICABLE + ": " + targetPath + " documents are not scanned for identifiers here (only "
+                + AssistantRenameService.SUPPORTED_FORMATS_TEXT + " are); the import on apply still validates them.";
+        return List.of(new CheckResult(REFERENCES_RESOLVE, true, detail),
+                new CheckResult(NO_CONFLICTING_DECLARATION, true, detail));
     }
 
     public static List<CheckResult> skipped(String reason) {
@@ -70,14 +73,17 @@ public class AssistantEditSemanticValidator {
     public List<CheckResult> check(String projectId, String targetPath, List<SemanticEdit> edits,
                                    Set<String> introducedByOperation) {
         if (!AssistantRenameService.isSupportedFormat(targetPath)) {
-            return notApplicable();
+            return notApplicable(targetPath);
         }
+        List<SemanticEdit> sorted = edits.stream()
+                .sorted(Comparator.comparingLong(SemanticEdit::startLine))
+                .toList();
         Extracted extracted;
         try {
             Path file = storageManager.ensureCodeViewFile(projectId, targetPath);
             extracted = AssistantRenameService.isRdfXml(targetPath)
-                    ? extractRdfXml(file, edits)
-                    : extractTurtle(file, edits);
+                    ? extractRdfXml(file, sorted)
+                    : extractTurtle(file, sorted);
         } catch (Exception e) {
             log.warn("[Assistant] Semantic checks could not read project {} targetPath {}: {}",
                     projectId, targetPath, e.getMessage());
@@ -85,8 +91,9 @@ public class AssistantEditSemanticValidator {
             return List.of(new CheckResult(REFERENCES_RESOLVE, false, detail),
                     new CheckResult(NO_CONFLICTING_DECLARATION, false, detail));
         }
+        Set<String> introduced = introducedByOperation == null ? Set.of() : introducedByOperation;
         List<CheckResult> results = new ArrayList<>();
-        results.add(checkReferences(projectId, extracted, introducedByOperation));
+        results.add(checkReferences(projectId, extracted, introduced));
         results.add(checkDeclarations(projectId, extracted));
         return results;
     }
@@ -154,23 +161,25 @@ public class AssistantEditSemanticValidator {
     }
 
     private CheckResult checkDeclarations(String projectId, Extracted extracted) {
-        Map<String, Set<String>> declared = extracted.after().declared;
-        if (declared.isEmpty()) {
-            return new CheckResult(NO_CONFLICTING_DECLARATION, true, "This group declares no OWL entities.");
+        Map<String, Set<String>> added = addedDeclarations(extracted);
+        if (added.isEmpty()) {
+            return new CheckResult(NO_CONFLICTING_DECLARATION, true, "This group adds no OWL declarations.");
         }
         List<String> conflicts = new ArrayList<>();
-        for (Map.Entry<String, Set<String>> entry : declared.entrySet()) {
-            List<String> kinds = new ArrayList<>(entry.getValue());
+        for (Map.Entry<String, Set<String>> entry : added.entrySet()) {
+            List<String> kinds = new ArrayList<>(extracted.after().declared.get(entry.getKey()));
             for (int i = 0; i < kinds.size(); i++) {
                 for (int j = i + 1; j < kinds.size(); j++) {
-                    if (incompatible(kinds.get(i), kinds.get(j))) {
+                    boolean touchesAdded = entry.getValue().contains(kinds.get(i))
+                            || entry.getValue().contains(kinds.get(j));
+                    if (touchesAdded && incompatible(kinds.get(i), kinds.get(j))) {
                         conflicts.add("<" + entry.getKey() + "> is declared in this group as both "
                                 + shortKind(kinds.get(i)) + " and " + shortKind(kinds.get(j)));
                     }
                 }
             }
         }
-        List<String> iris = new ArrayList<>(declared.keySet());
+        List<String> iris = new ArrayList<>(added.keySet());
         List<String> checked = iris.subList(0, Math.min(iris.size(), MAX_IDENTIFIERS_PER_GROUP));
         int notChecked = iris.size() - checked.size();
         Map<String, Set<String>> graphKinds;
@@ -184,7 +193,7 @@ public class AssistantEditSemanticValidator {
         for (String iri : checked) {
             Set<String> existing = new LinkedHashSet<>(graphKinds.getOrDefault(iri, Set.of()));
             existing.removeAll(removed.getOrDefault(iri, Set.of()));
-            for (String kind : declared.get(iri)) {
+            for (String kind : added.get(iri)) {
                 for (String other : existing) {
                     if (incompatible(kind, other)) {
                         conflicts.add("<" + iri + "> is declared here as " + shortKind(kind)
@@ -195,7 +204,7 @@ public class AssistantEditSemanticValidator {
         }
         String overflow = notChecked > 0
                 ? " " + notChecked + " more declared identifier" + (notChecked == 1 ? " was" : "s were")
-                + " not checked (limit " + MAX_IDENTIFIERS_PER_GROUP + " per group)."
+                + " not checked against the graph (limit " + MAX_IDENTIFIERS_PER_GROUP + " per group)."
                 : "";
         if (!conflicts.isEmpty()) {
             return new CheckResult(NO_CONFLICTING_DECLARATION, false, String.join("; ", conflicts)
@@ -203,8 +212,21 @@ public class AssistantEditSemanticValidator {
                     + "object, datatype and annotation property kinds can't be mixed." + overflow);
         }
         return new CheckResult(NO_CONFLICTING_DECLARATION, true, "None of the " + checked.size()
-                + " declared identifier" + (checked.size() == 1 ? "" : "s")
+                + " newly declared identifier" + (checked.size() == 1 ? "" : "s")
                 + " conflicts with an existing declaration." + overflow);
+    }
+
+    private Map<String, Set<String>> addedDeclarations(Extracted extracted) {
+        Map<String, Set<String>> added = new LinkedHashMap<>();
+        for (Map.Entry<String, Set<String>> entry : extracted.after().declared.entrySet()) {
+            Set<String> previously = extracted.before().declared.getOrDefault(entry.getKey(), Set.of());
+            for (String kind : entry.getValue()) {
+                if (!previously.contains(kind)) {
+                    added.computeIfAbsent(entry.getKey(), k -> new LinkedHashSet<>()).add(kind);
+                }
+            }
+        }
+        return added;
     }
 
     private Map<String, Set<String>> removedDeclarations(Extracted extracted) {
@@ -251,66 +273,38 @@ public class AssistantEditSemanticValidator {
         return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
-    private Extracted extractTurtle(Path file, List<SemanticEdit> edits) throws Exception {
-        Set<String> neededPrefixes = new LinkedHashSet<>();
-        boolean needsBase = false;
-        for (SemanticEdit edit : edits) {
-            for (String text : new String[]{edit.originalText(), edit.newText()}) {
-                if (text == null) {
-                    continue;
-                }
-                TurtleLineScanner probe = new TurtleLineScanner();
-                for (String line : text.split("\n", -1)) {
-                    for (TurtleLineScanner.Token token : probe.scan(line)) {
-                        if (token.isTerm() && token.unresolved()) {
-                            if (token.kind() == TurtleLineScanner.Kind.PNAME) {
-                                neededPrefixes.add(token.prefix());
-                            } else {
-                                needsBase = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Map<String, String> prefixes = new HashMap<>();
-        String base = null;
-        if (!neededPrefixes.isEmpty() || needsBase) {
-            TurtleLineScanner documentScanner = new TurtleLineScanner();
-            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    documentScanner.scan(line);
-                    for (String prefix : neededPrefixes) {
-                        String namespace = documentScanner.prefixes().get(prefix);
-                        if (namespace != null) {
-                            prefixes.putIfAbsent(prefix, namespace);
-                        }
-                    }
-                    if (base == null) {
-                        base = documentScanner.base();
-                    }
-                    if (prefixes.keySet().containsAll(neededPrefixes) && (!needsBase || base != null)) {
-                        break;
-                    }
-                }
-            }
-        }
+    private Extracted extractTurtle(Path file, List<SemanticEdit> sorted) throws Exception {
         Extraction before = new Extraction();
         Extraction after = new Extraction();
-        for (SemanticEdit edit : edits) {
-            scanTurtleText(edit.originalText(), prefixes, base, before);
-            scanTurtleText(edit.newText(), prefixes, base, after);
+        TurtleLineScanner documentScanner = new TurtleLineScanner();
+        TurtleStatementTracker documentTracker = TurtleStatementTracker.positionOnly();
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            long lineNo = 0;
+            boolean endOfFile = false;
+            for (SemanticEdit edit : sorted) {
+                while (!endOfFile && lineNo < edit.startLine()) {
+                    String line = reader.readLine();
+                    if (line == null) {
+                        endOfFile = true;
+                        break;
+                    }
+                    for (TurtleLineScanner.Token token : documentScanner.scan(line)) {
+                        documentTracker.accept(token);
+                    }
+                    lineNo++;
+                }
+                scanTurtleText(edit.originalText(), documentScanner.fork(), documentTracker.fork(), before);
+                scanTurtleText(edit.newText(), documentScanner.fork(), documentTracker.fork(), after);
+            }
         }
         return new Extracted(before, after);
     }
 
-    private void scanTurtleText(String text, Map<String, String> prefixes, String base, Extraction extraction) {
+    private void scanTurtleText(String text, TurtleLineScanner scanner, TurtleStatementTracker tracker,
+                                Extraction extraction) {
         if (text == null || text.isEmpty()) {
             return;
         }
-        TurtleLineScanner scanner = new TurtleLineScanner(prefixes, base);
-        TurtleStatementTracker tracker = new TurtleStatementTracker();
         for (String line : text.split("\n", -1)) {
             for (TurtleLineScanner.Token token : scanner.scan(line)) {
                 if (token.isTerm()) {
@@ -327,33 +321,34 @@ public class AssistantEditSemanticValidator {
         tracker.declaredTypes().forEach((subject, types) -> types.forEach(type -> extraction.declare(subject, type)));
     }
 
-    private Extracted extractRdfXml(Path file, List<SemanticEdit> edits) throws Exception {
-        RdfXmlScanner header = new RdfXmlScanner(new RdfXmlScanner.Listener() {});
-        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            String line;
-            long lineNo = 0;
-            while (!header.rootSeen() && (line = reader.readLine()) != null) {
-                header.feed(lineNo++, line);
-            }
-        }
-        Map<String, String> namespaces = header.rootNamespaces();
-        String base = header.rootBase();
-        Map<String, String> entities = new HashMap<>(header.entities());
+    private Extracted extractRdfXml(Path file, List<SemanticEdit> sorted) throws Exception {
         Extraction before = new Extraction();
         Extraction after = new Extraction();
-        for (SemanticEdit edit : edits) {
-            scanRdfXmlText(edit.originalText(), namespaces, base, entities, before);
-            scanRdfXmlText(edit.newText(), namespaces, base, entities, after);
+        RdfXmlScanner documentScanner = new RdfXmlScanner(new RdfXmlScanner.Listener() {});
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            long lineNo = 0;
+            boolean endOfFile = false;
+            for (SemanticEdit edit : sorted) {
+                while (!endOfFile && lineNo < edit.startLine()) {
+                    String line = reader.readLine();
+                    if (line == null) {
+                        endOfFile = true;
+                        break;
+                    }
+                    documentScanner.feed(lineNo++, line);
+                }
+                scanRdfXmlText(edit.originalText(), documentScanner, before);
+                scanRdfXmlText(edit.newText(), documentScanner, after);
+            }
         }
         return new Extracted(before, after);
     }
 
-    private void scanRdfXmlText(String text, Map<String, String> namespaces, String base, Map<String, String> entities,
-                                Extraction extraction) {
+    private void scanRdfXmlText(String text, RdfXmlScanner documentScanner, Extraction extraction) {
         if (text == null || text.isEmpty()) {
             return;
         }
-        RdfXmlScanner scanner = new RdfXmlScanner(namespaces, base, entities, new RdfXmlScanner.Listener() {
+        RdfXmlScanner scanner = documentScanner.fork(new RdfXmlScanner.Listener() {
             @Override
             public void occurrence(RdfXmlScanner.Occurrence occurrence) {
                 if (!occurrence.resolvable()) {

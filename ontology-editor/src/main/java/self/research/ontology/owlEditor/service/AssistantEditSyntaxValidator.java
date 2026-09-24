@@ -16,6 +16,8 @@ import java.util.Locale;
 @Service
 public class AssistantEditSyntaxValidator {
 
+    private static final int MAX_DETAIL_CHARS = 300;
+
     private final StorageManager storageManager;
     private final LineRangeSpliceWriter spliceWriter;
 
@@ -24,9 +26,16 @@ public class AssistantEditSyntaxValidator {
         this.spliceWriter = spliceWriter;
     }
 
+    public record SyntaxResult(boolean valid, String detail) {}
+
     public boolean isValid(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits) {
+        return check(projectId, targetPath, edits).valid();
+    }
+
+    public SyntaxResult check(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits) {
         if (!isRdf4jParseable(targetPath)) {
-            return true;
+            return new SyntaxResult(true, "Not parsed at propose time for " + targetPath
+                    + "; the OWL API import on apply validates it.");
         }
         Path splicedFile = null;
         try {
@@ -39,11 +48,12 @@ public class AssistantEditSyntaxValidator {
                 parser.setRDFHandler(new AbstractRDFHandler() {});
                 parser.parse(is, "");
             }
-            return true;
+            return new SyntaxResult(true, null);
         } catch (Exception e) {
             log.warn("[Assistant] Syntax check failed for project {} targetPath {}: {}",
                     projectId, targetPath, e.getMessage());
-            return false;
+            return new SyntaxResult(false, "The document would not parse as " + targetPath + " after these edits: "
+                    + truncate(String.valueOf(e.getMessage())));
         } finally {
             if (splicedFile != null) {
                 try {
@@ -57,14 +67,19 @@ public class AssistantEditSyntaxValidator {
     public boolean isRdf4jParseable(String format) {
         String lower = format.toLowerCase(Locale.ROOT);
         return !(lower.equals("owlxml") || lower.equals("manchester") || lower.equals("manchestersyntax")
-                || lower.equals("functional") || lower.equals("functionalsyntax"));
+                || lower.equals("functional") || lower.equals("functionalsyntax") || lower.equals("obo"));
     }
 
     private RDFFormat rdfFormatFor(String format) {
         return switch (format.toLowerCase(Locale.ROOT)) {
             case "turtle", "ttl" -> RDFFormat.TURTLE;
             case "ntriples", "nt" -> RDFFormat.NTRIPLES;
+            case "jsonld" -> RDFFormat.JSONLD;
             default -> RDFFormat.RDFXML;
         };
+    }
+
+    private static String truncate(String message) {
+        return message.length() <= MAX_DETAIL_CHARS ? message : message.substring(0, MAX_DETAIL_CHARS) + "...";
     }
 }

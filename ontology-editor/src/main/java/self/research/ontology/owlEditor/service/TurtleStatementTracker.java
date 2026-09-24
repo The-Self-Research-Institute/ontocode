@@ -13,10 +13,32 @@ public final class TurtleStatementTracker {
 
     private final Set<String> subjects = new LinkedHashSet<>();
     private final Map<String, Set<String>> declaredTypes = new LinkedHashMap<>();
+    private final boolean recording;
     private Stage stage = Stage.SUBJECT;
     private int depth;
     private String subject;
     private String predicate;
+
+    public TurtleStatementTracker() {
+        this(true);
+    }
+
+    private TurtleStatementTracker(boolean recording) {
+        this.recording = recording;
+    }
+
+    public static TurtleStatementTracker positionOnly() {
+        return new TurtleStatementTracker(false);
+    }
+
+    public TurtleStatementTracker fork() {
+        TurtleStatementTracker copy = new TurtleStatementTracker(true);
+        copy.stage = stage;
+        copy.depth = depth;
+        copy.subject = subject;
+        copy.predicate = predicate;
+        return copy;
+    }
 
     public Set<String> subjects() {
         return subjects;
@@ -80,7 +102,7 @@ public final class TurtleStatementTracker {
                     return;
                 }
                 subject = value;
-                if (subject != null) {
+                if (subject != null && recording) {
                     subjects.add(subject);
                 }
                 stage = Stage.PREDICATE;
@@ -90,7 +112,7 @@ public final class TurtleStatementTracker {
                 stage = Stage.OBJECT;
             }
             case OBJECT -> {
-                if (RDF_TYPE.equals(predicate) && subject != null && value != null) {
+                if (recording && RDF_TYPE.equals(predicate) && subject != null && value != null) {
                     declaredTypes.computeIfAbsent(subject, k -> new LinkedHashSet<>()).add(value);
                 }
                 stage = Stage.AFTER_OBJECT;

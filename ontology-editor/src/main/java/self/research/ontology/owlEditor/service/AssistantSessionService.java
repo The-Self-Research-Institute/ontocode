@@ -17,12 +17,33 @@ import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 @Slf4j
 @Service
 public class AssistantSessionService {
 
     public static final String SESSION_CREATE_OPERATION = "session_create";
+    public static final String RATE_LIMITED = "RATE_LIMITED";
+
+    private static final int CREATE_LOCK_STRIPES = 64;
+
+    public record SessionCreateOutcome(AssistantSessionDocument session, Integer retryAfterSeconds) {
+        public boolean created() {
+            return session != null;
+        }
+
+        public boolean isOk() {
+            return created();
+        }
+
+        public String getErrorCode() {
+            return created() ? null : RATE_LIMITED;
+        }
+    }
+
+    private final ReentrantLock[] createLocks = new ReentrantLock[CREATE_LOCK_STRIPES];
 
     private final AssistantSessionRepository sessionRepository;
     private final ProjectMetadataService metadataService;
@@ -56,6 +77,33 @@ public class AssistantSessionService {
         this.metadataService = metadataService;
         this.mongoTemplate = mongoTemplate;
         this.auditService = auditService;
+        for (int i = 0; i < CREATE_LOCK_STRIPES; i++) {
+            createLocks[i] = new ReentrantLock();
+        }
+    }
+
+    public SessionCreateOutcome createSession(String projectId, String userEmail, String documentPath,
+                                              String actionType, String actionContext,
+                                              String provider, String model,
+                                              Supplier<Optional<Integer>> rateAdmission) {
+        ReentrantLock lock = createLocks[Math.floorMod(String.valueOf(userEmail).hashCode(), CREATE_LOCK_STRIPES)];
+        lock.lock();
+        try {
+            Optional<Integer> retryAfter = rateAdmission == null ? Optional.empty() : rateAdmission.get();
+            if (retryAfter.isEmpty()) {
+                retryAfter = activeSessionLimitRetryAfter(userEmail);
+            }
+            if (retryAfter.isPresent()) {
+                recordCreateRejected(userEmail, projectId, provider, model, RATE_LIMITED,
+                        "retryAfterSeconds=" + retryAfter.get());
+                return new SessionCreateOutcome(null, retryAfter.get());
+            }
+            return new SessionCreateOutcome(
+                    createSession(projectId, userEmail, documentPath, actionType, actionContext, provider, model),
+                    null);
+        } finally {
+            lock.unlock();
+        }
     }
 
     public AssistantSessionDocument createSession(String projectId, String userEmail, String documentPath,

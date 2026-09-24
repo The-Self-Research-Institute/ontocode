@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Save, Trash2, Eye, EyeOff, Check, X, Zap, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useContext } from 'react';
+import { Save, Trash2, Eye, EyeOff, Check, X, Zap, RefreshCw, Building2 } from 'lucide-react';
+import { AuthContext } from '../contexts/AuthContexts';
+import { getCachedProviderConfig, getProviderConfig, type ProviderConfig } from '../services/codeAssistantProviderConfig';
+import { getApiBaseUrl } from './codeAssistantPanelHelpers';
 import {
   getStoredProvider,
   setStoredProvider,
@@ -50,6 +53,18 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
   const [saving, setSaving] = useState(false);
 
   const providers = getAvailableProviders();
+  const token = useContext(AuthContext)?.user?.token;
+  const [providerConfig, setProviderConfig] = useState<ProviderConfig | null>(() => getCachedProviderConfig());
+
+  useEffect(() => {
+    let cancelled = false;
+    void getProviderConfig(getApiBaseUrl(), token).then((config) => {
+      if (!cancelled) setProviderConfig(config);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const handleRefreshModels = async () => {
     const activeKey = apiKey.trim();
@@ -81,8 +96,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
   // Fetch the real model list automatically: once on mount if a key is already
   // saved, and again whenever the provider changes while a key is present.
   useEffect(() => {
-    if (apiKey.trim()) handleRefreshModels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (apiKey.trim() && !getCachedProviderConfig()?.managed) handleRefreshModels();
   }, [provider]);
 
   const handleSave = async () => {
@@ -167,6 +181,28 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
   };
 
   const currentInfo = providerInfo[provider];
+
+  if (providerConfig?.managed) {
+    const managedLabel = providers.find((p) => p.id === providerConfig.provider)?.label ?? providerConfig.provider;
+    return (
+      <div className={`space-y-4 p-4 ${compact ? '' : 'sm:p-6 max-w-full sm:max-w-2xl'}`} data-managed-provider>
+        <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-lg p-4">
+          <div className="flex items-start gap-3">
+            <Building2 className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-indigo-900">Managed by your organization</h3>
+              <p className="text-sm text-indigo-700 mt-1">
+                Your organization runs the AI provider for you, so you don&apos;t need an API key and none is stored in this browser.
+              </p>
+              <p className="text-sm text-indigo-900 mt-2">
+                {managedLabel} · {providerConfig.model}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`space-y-6 p-4 ${compact ? '' : 'sm:p-6 max-w-full sm:max-w-2xl'}`}>

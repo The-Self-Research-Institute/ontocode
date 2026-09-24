@@ -403,6 +403,36 @@ describe("runAssistantLoop — dead-end tool errors", () => {
     });
   }
 
+  it("keeps the server's retry-after on a rate-limited tool call so the panel can count down", async () => {
+    stubConversation();
+    vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({
+      turn: { kind: "tool_calls", calls: [sparqlCall("c1")] },
+      advance: vi.fn(),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(429, { ok: false, errorCode: "RATE_LIMITED", message: "slow down", retryAfterSeconds: 7 })),
+    );
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    expect(outcome).toMatchObject({ kind: "stopped", errorCode: "RATE_LIMITED", retryAfterSeconds: 7 });
+  });
+
+  it("leaves retryAfterSeconds off dead ends that have none", async () => {
+    stubConversation();
+    vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({
+      turn: { kind: "tool_calls", calls: [sparqlCall("c1")] },
+      advance: vi.fn(),
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(423, { error: "locked", errorCode: "PROJECT_RECOVERY_LOCKED" })));
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    expect(outcome.kind).toBe("stopped");
+    expect("retryAfterSeconds" in outcome).toBe(false);
+  });
+
   it("stops the loop with the dead-end code when propose_edit hits one", async () => {
     stubConversation();
     vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({
@@ -466,5 +496,36 @@ describe("runAssistantLoop — dead-end tool errors", () => {
 
     expect(outcome).toEqual({ kind: "answer", text: "fixed" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("runAssistantLoop — managed provider", () => {
+  it("starts the conversation in the managed provider's format and routes every turn through the backend", async () => {
+    const start = vi.spyOn(providers, "startAssistantConversation").mockResolvedValue({
+      provider: "openai",
+      systemPrompt: "s",
+      nativeMessages: [],
+    });
+    const next = vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: vi.fn() });
+    const ctx: LoopContext = { ...baseCtx(), providerConfig: { managed: true, provider: "openai", model: "org-model" } };
+
+    await runAssistantLoop(ctx, "system", "hi", vi.fn());
+
+    expect(start).toHaveBeenCalledWith("system", "hi", [], "openai");
+    expect(next.mock.calls[0][4]).toEqual({ apiBaseUrl: "http://localhost:8083", token: "t", sessionId: "s1", model: "org-model" });
+  });
+
+  it("keeps the bring-your-own-key path when the server isn't managing the provider", async () => {
+    const start = vi.spyOn(providers, "startAssistantConversation").mockResolvedValue({
+      provider: "claude",
+      systemPrompt: "s",
+      nativeMessages: [],
+    });
+    const next = vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: vi.fn() });
+
+    await runAssistantLoop({ ...baseCtx(), providerConfig: { managed: false } }, "system", "hi", vi.fn());
+
+    expect(start.mock.calls[0][3]).toBeUndefined();
+    expect(next.mock.calls[0][4]).toBeUndefined();
   });
 });

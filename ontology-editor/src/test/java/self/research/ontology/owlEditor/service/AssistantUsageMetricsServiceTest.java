@@ -176,6 +176,56 @@ class AssistantUsageMetricsServiceTest {
         assertFalse(modelTags.contains(null));
     }
 
+    @Test
+    void oneUserCannotUseUpAllTheModelTagSlots() {
+        for (int i = 0; i < 50; i++) {
+            service.normalizeModel("claude", "claude-junk-" + i, "hostile@example.com");
+        }
+
+        assertEquals("other", service.normalizeModel("claude", "claude-junk-49", "HOSTILE@example.com"));
+        assertEquals("claude-junk-0", service.normalizeModel("claude", "claude-junk-0", "someone@example.com"));
+        assertEquals("claude-opus-4-1", service.normalizeModel("claude", "claude-opus-4-1", "someone@example.com"));
+        long junkTags = java.util.stream.IntStream.range(0, 50)
+                .mapToObj(i -> service.normalizeModel("claude", "claude-junk-" + i, "someone-else@example.com"))
+                .filter(tag -> !tag.equals("other"))
+                .count();
+        assertEquals(2L * AssistantUsageMetricsService.MAX_NEW_MODEL_TAGS_PER_USER, junkTags);
+    }
+
+    @Test
+    void theManagedModelAlwaysGetsItsOwnTagEvenWhenTheSlotsAreFull() {
+        AssistantProviderProxyService proxy = org.mockito.Mockito.mock(AssistantProviderProxyService.class);
+        when(proxy.isManaged()).thenReturn(true);
+        when(proxy.config()).thenReturn(
+                new AssistantProviderProxyService.ProviderConfigView(true, "claude", "claude-sonnet-4-5-20250929"));
+        AssistantUsageMetricsService managed = new AssistantUsageMetricsService(registry, sessionRepository, proxy, 10_000);
+        for (int i = 0; i < 100; i++) {
+            managed.normalizeModel("claude", "claude-custom-" + i, "user" + i + "@example.com");
+        }
+
+        assertEquals("other", managed.normalizeModel("claude", "claude-brand-new", "late@example.com"));
+        assertEquals("claude-sonnet-4-5", managed.normalizeModel("claude", "claude-sonnet-4-5", "late@example.com"));
+        assertEquals("other", managed.normalizeModel("openai", "claude-sonnet-4-5", "late@example.com"));
+
+        assertTrue(managed.record("s1", EMAIL, report("claude", "claude-sonnet-4-5-20250929", 5L, 1L, null, null, null)).isOk());
+        assertEquals(1, registry.get(AssistantUsageMetricsService.LATENCY_TIMER)
+                .tags("provider", "claude", "model", "claude-sonnet-4-5").timer().count());
+    }
+
+    @Test
+    void recordAppliesThePerUserTagCap() {
+        AssistantUsageMetricsService relaxed = new AssistantUsageMetricsService(registry, sessionRepository, 10_000);
+        for (int i = 0; i < 20; i++) {
+            assertTrue(relaxed.record("s1", EMAIL, report("openai", "gpt-junk-" + i, 1L, 1L, null, null, null)).isOk());
+        }
+
+        Set<String> modelTags = registry.find(AssistantUsageMetricsService.LATENCY_TIMER).timers().stream()
+                .map(meter -> meter.getId().getTag("model"))
+                .collect(Collectors.toSet());
+        assertEquals(AssistantUsageMetricsService.MAX_NEW_MODEL_TAGS_PER_USER + 1, modelTags.size());
+        assertTrue(modelTags.contains("other"));
+    }
+
     private double tokens(String provider, String model, String kind) {
         return registry.get(AssistantUsageMetricsService.TOKEN_COUNTER)
                 .tags("provider", provider, "model", model, "kind", kind).counter().count();

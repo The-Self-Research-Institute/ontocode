@@ -21,6 +21,11 @@ vi.mock("../components/CodeAssistantModelSwitcher", () => ({
   CodeAssistantModelSwitcher: () => null,
 }));
 
+vi.mock("../services/codeAssistantProviderConfig", () => ({
+  getProviderConfig: async () => ({ managed: false }),
+  getCachedProviderConfig: () => ({ managed: false }),
+}));
+
 vi.mock("../services/codeAssistantLoop", () => ({
   runAssistantLoop: vi.fn(),
 }));
@@ -216,5 +221,35 @@ describe("CodeAssistantPanel Apply All", () => {
 
     renderPanel({ hasUnsavedCodeViewChanges: false });
     expect(buttons("Apply All")[0].disabled).toBe(false);
+  });
+});
+
+describe("CodeAssistantPanel usage", () => {
+  it("hands the loop an onUsage handler and shows each turn's usage under the answer", async () => {
+    loopMock.mockImplementationOnce(async (_ctx, _system, _text, _onStage, _signal, _history, _onContext, onUsage) => {
+      onUsage?.({ provider: "claude", model: "m", latencyMs: 700, inputTokens: 1000, outputTokens: 20, cacheReadTokens: 800 });
+      onUsage?.({ provider: "claude", model: "m", latencyMs: 400, inputTokens: 1100, outputTokens: 60, cacheWriteTokens: 50 });
+      return { kind: "answer", text: "A is a class." };
+    });
+    renderPanel();
+    await send("What is A?");
+
+    expect(typeof loopMock.mock.calls[0][7]).toBe("function");
+    expect(container.querySelector("[data-usage-total]")?.textContent).toBe(
+      "· 2,100 in · 80 out · 800 cache read · 50 cache write · 1.1 s",
+    );
+    act(() => buttons("Usage")[0].click());
+    const rows = Array.from(container.querySelectorAll("[data-usage-turns] li")).map((li) => li.textContent);
+    expect(rows).toEqual(["Turn 1: 1,000 in · 20 out · 800 cache read · 700 ms", "Turn 2: 1,100 in · 60 out · 50 cache write · 400 ms"]);
+  });
+
+  it("keeps usage on a review entry too", async () => {
+    loopMock.mockImplementationOnce(async (_ctx, _system, _text, _onStage, _signal, _history, _onContext, onUsage) => {
+      onUsage?.({ provider: "openai", model: "m", latencyMs: 1500, inputTokens: 10, outputTokens: 5 });
+      return { kind: "propose", result: { ok: true, groups: [group("g1")] } };
+    });
+    renderPanel();
+    await send("Rename A");
+    expect(container.querySelector("[data-usage-total]")?.textContent).toBe("· 10 in · 5 out · 1.5 s");
   });
 });

@@ -286,7 +286,7 @@ public class AssistantRenameService {
                         rewritten = new StringBuilder(line.length() + 32);
                     }
                     rewritten.append(line, copiedUpTo, token.start());
-                    rewritten.append(renderTurtle(token, replacementIri, scanner.prefixes(), nTriples));
+                    rewritten.append(renderTurtle(token, replacementIri, nTriples));
                     copiedUpTo = token.end();
                     lineOccurrences++;
                 }
@@ -302,10 +302,9 @@ public class AssistantRenameService {
         return scan;
     }
 
-    private String renderTurtle(TurtleLineScanner.Token token, String replacementIri, Map<String, String> prefixes,
-                                boolean nTriples) {
+    private String renderTurtle(TurtleLineScanner.Token token, String replacementIri, boolean nTriples) {
         if (!nTriples && token.kind() == TurtleLineScanner.Kind.PNAME) {
-            String namespace = prefixes.get(token.prefix());
+            String namespace = namespaceOf(token);
             if (namespace != null && replacementIri.startsWith(namespace)) {
                 String local = replacementIri.substring(namespace.length());
                 if (TurtleLineScanner.isSimpleLocalName(local)) {
@@ -314,6 +313,16 @@ public class AssistantRenameService {
             }
         }
         return "<" + replacementIri + ">";
+    }
+
+    private String namespaceOf(TurtleLineScanner.Token token) {
+        String text = token.text();
+        String local = TurtleLineScanner.unescapeLocalName(text.substring(text.indexOf(':') + 1));
+        String iri = token.iri();
+        if (iri == null || !iri.endsWith(local)) {
+            return null;
+        }
+        return iri.substring(0, iri.length() - local.length());
     }
 
     private boolean addEdit(Scan scan, long lineNo, String original, String rewritten, int occurrences, int maxLines) {
@@ -378,6 +387,10 @@ public class AssistantRenameService {
                 lineNo++;
             }
         }
+        if (!scanner.atSafeBoundary()) {
+            scan.problem = "The rdfxml document ends inside an unclosed tag or declaration that starts at line "
+                    + firstBufferedLine + ", so no rename was generated.";
+        }
         return scan;
     }
 
@@ -434,10 +447,14 @@ public class AssistantRenameService {
                 return RdfXmlScanner.escapeAttribute(replacementIri, occurrence.quote());
             }
             case ID -> {
-                String prefix = occurrence.base() == null ? null : occurrence.base() + "#";
-                if (prefix != null && replacementIri.startsWith(prefix)
-                        && RdfXmlScanner.isNcName(replacementIri.substring(prefix.length()))) {
-                    return replacementIri.substring(prefix.length());
+                int hash = replacementIri.indexOf('#');
+                if (occurrence.base() == null || hash < 0) {
+                    return null;
+                }
+                String local = replacementIri.substring(hash + 1);
+                if (RdfXmlScanner.isNcName(local)
+                        && replacementIri.equals(TurtleLineScanner.resolveAgainst(occurrence.base(), "#" + local))) {
+                    return local;
                 }
                 return null;
             }

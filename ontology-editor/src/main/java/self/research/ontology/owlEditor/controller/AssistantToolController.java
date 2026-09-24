@@ -22,6 +22,7 @@ import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @RestController
@@ -31,6 +32,9 @@ import java.util.Map;
 public class AssistantToolController {
 
     private static final String RATE_LIMITED = "RATE_LIMITED";
+    private static final String VALIDATION_FAILED = "VALIDATION_FAILED";
+    private static final int MAX_READ_TARGETS = 10;
+    private static final Set<String> READ_KINDS = Set.of("definitions", "diagnostics", "references");
 
     private final AssistantSparqlToolService sparqlToolService;
     private final AssistantContextToolService contextToolService;
@@ -57,11 +61,28 @@ public class AssistantToolController {
                                           HttpServletRequest httpRequest) {
         return JwtIdentityExtractor.extractEmail(httpRequest)
                 .map(userEmail -> {
+                    String invalid = validate(request);
+                    if (invalid != null) {
+                        return ResponseEntity.badRequest().body(errorBody(VALIDATION_FAILED, invalid, null));
+                    }
                     ContextToolResult result = contextToolService.readContext(
                             sessionId, userEmail, request.targets(), request.kind());
                     return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
                 })
                 .orElseGet(AssistantToolController::unauthorized);
+    }
+
+    private static String validate(ReadContextRequest request) {
+        if (request == null) {
+            return "A request body with targets and kind is required";
+        }
+        if (request.kind() == null || !READ_KINDS.contains(request.kind())) {
+            return "kind must be one of definitions, diagnostics or references";
+        }
+        if (request.targets() != null && request.targets().size() > MAX_READ_TARGETS) {
+            return "At most " + MAX_READ_TARGETS + " targets can be read in one call";
+        }
+        return null;
     }
 
     private static ResponseEntity<Map<String, Object>> respond(String errorCode, Integer retryAfterSeconds, Map<String, Object> body) {
@@ -107,6 +128,7 @@ public class AssistantToolController {
     }
 
     private static ResponseEntity<Map<String, Object>> unauthorized() {
-        return ResponseEntity.status(401).body(Map.of("ok", false, "message", "Missing or invalid Authorization header"));
+        return ResponseEntity.status(401).body(Map.of("ok", false, "errorCode", "UNAUTHORIZED",
+                "message", "Missing or invalid Authorization header"));
     }
 }

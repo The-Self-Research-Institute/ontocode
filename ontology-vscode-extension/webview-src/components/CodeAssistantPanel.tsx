@@ -9,6 +9,8 @@ import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "../hooks/useSubscription";
 import { createAssistantSession, applyEditGroup, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
 import { runAssistantLoop, type LoopOutcome, type ContextEvent } from "../services/codeAssistantLoop";
+import { getCachedProviderConfig, getProviderConfig, type ProviderConfig } from "../services/codeAssistantProviderConfig";
+import type { ProviderUsage } from "../services/codeAssistantProviders";
 import { CodeAssistantDeadEndNotice } from "./CodeAssistantDeadEndNotice";
 import { CodeAssistantRecoveryBanner } from "./CodeAssistantRecoveryBanner";
 import {
@@ -57,7 +59,7 @@ interface CodeAssistantPanelProps {
 
 type ChatEntry =
   | { id: string; role: "user"; text: string; action: CodeAssistantAction }
-  | { id: string; role: "assistant"; kind: "answer"; text: string; contextUsed: ContextEvent[] }
+  | { id: string; role: "assistant"; kind: "answer"; text: string; contextUsed: ContextEvent[]; usage?: ProviderUsage[] }
   | {
       id: string;
       role: "assistant";
@@ -67,6 +69,7 @@ type ChatEntry =
       decisions: Record<string, GroupDecision>;
       errors: Record<string, string>;
       contextUsed: ContextEvent[];
+      usage?: ProviderUsage[];
       applyAllRun?: ApplyAllRunState | null;
       applyAllSummary?: string | null;
     }
@@ -121,6 +124,9 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const { user, logout } = useAuth();
   const { isFree, getUpgradeMessage } = useSubscription();
   const [configured, setConfigured] = useState(hasApiKey());
+  const [providerConfig, setProviderConfig] = useState<ProviderConfig | null>(() => getCachedProviderConfig());
+  const managedProvider = providerConfig?.managed ? providerConfig : null;
+  const ready = managedProvider !== null || configured;
   const [action, setAction] = useState<CodeAssistantAction>("ask");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -146,6 +152,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const recoveryRequestRef = useRef(0);
+  const recoveryProjectRef = useRef<string | undefined>(undefined);
   const projectIdRef = useRef(projectId);
   projectIdRef.current = projectId;
   const tokenRef = useRef(user?.token);
@@ -192,16 +199,20 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         if (projectId) clearStoredChatEntries(projectId);
       },
     },
-    {
-      cmd: "/logout",
-      label: "Log out",
-      description: "Remove your saved API key",
-      disabled: false,
-      run: () => {
-        setStoredApiKey("");
-        setConfigured(false);
-      },
-    },
+    ...(managedProvider
+      ? []
+      : [
+          {
+            cmd: "/logout",
+            label: "Log out",
+            description: "Remove your saved API key",
+            disabled: false,
+            run: () => {
+              setStoredApiKey("");
+              setConfigured(false);
+            },
+          },
+        ]),
   ];
   const commandQuery = input.startsWith("/") && !input.includes(" ") ? input.toLowerCase() : null;
   const commandMatches = commandQuery ? slashCommands.filter((c) => c.cmd.startsWith(commandQuery)) : [];
@@ -214,6 +225,16 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       abortControllerRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getProviderConfig(getApiBaseUrl(), user?.token).then((config) => {
+      if (!cancelled) setProviderConfig(config);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.token]);
 
   useEffect(() => {
     if (!projectId || projectId === lastLoadedProjectIdRef.current) return;
@@ -289,9 +310,21 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   };
 
   useEffect(() => {
-    setRecoveryError(null);
+    if (recoveryProjectRef.current !== projectId) {
+      recoveryProjectRef.current = projectId;
+      recoveryLockedRef.current = false;
+      setRecoveryState(UNLOCKED_RECOVERY_STATE);
+      setRecoveryError(null);
+    }
     void refreshRecovery();
-  }, [projectId]);
+  }, [projectId, user?.token]);
+
+  useEffect(() => {
+    if (!recoveryLocked) return;
+    const recheck = () => void refreshRecovery();
+    window.addEventListener("focus", recheck);
+    return () => window.removeEventListener("focus", recheck);
+  }, [recoveryLocked]);
 
   const runRecoveryAction = async (
     request: (apiBaseUrl: string, token: string | undefined, projectId: string) => Promise<void>,
@@ -355,9 +388,15 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     setAction(prompt.action);
   };
 
-  const appendOutcome = (outcome: LoopOutcome, sessionId: string, contextUsed: ContextEvent[], prompt: PromptToRetry) => {
+  const appendOutcome = (
+    outcome: LoopOutcome,
+    sessionId: string,
+    contextUsed: ContextEvent[],
+    prompt: PromptToRetry,
+    usage: ProviderUsage[],
+  ) => {
     if (outcome.kind === "answer") {
-      commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text, contextUsed }]);
+      commitEntries((prev) => [...prev, { id: nextEntryId(), role: "assistant", kind: "answer", text: outcome.text, contextUsed, usage }]);
       return;
     }
     if (outcome.kind === "propose") {
@@ -367,7 +406,17 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       });
       commitEntries((prev) => [
         ...prev,
-        { id: nextEntryId(), role: "assistant", kind: "review", sessionId, groups: outcome.result.groups, decisions, errors: {}, contextUsed },
+        {
+          id: nextEntryId(),
+          role: "assistant",
+          kind: "review",
+          sessionId,
+          groups: outcome.result.groups,
+          decisions,
+          errors: {},
+          contextUsed,
+          usage,
+        },
       ]);
       return;
     }
@@ -397,24 +446,35 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     try {
       const apiBaseUrl = getApiBaseUrl();
       const token = user?.token;
+      const config = await getProviderConfig(apiBaseUrl, token);
+      if (controller.signal.aborted) return;
+      if (mountedRef.current) setProviderConfig(config);
       const session: AssistantSession = await createAssistantSession(
         apiBaseUrl,
         token,
-        { projectId, documentPath: documentPath ?? "", actionType: turnAction, actionContext: JSON.stringify({}) },
+        {
+          projectId,
+          documentPath: documentPath ?? "",
+          actionType: turnAction,
+          actionContext: JSON.stringify({}),
+          ...(config.managed ? { provider: config.provider, model: config.model } : {}),
+        },
         controller.signal,
       );
       const contextEvents: ContextEvent[] = [];
+      const usageEvents: ProviderUsage[] = [];
       const outcome = await runAssistantLoop(
-        { apiBaseUrl, token, session },
+        { apiBaseUrl, token, session, providerConfig: config },
         buildSystemPrompt(turnAction, documentPath),
         text,
         (event) => setStatusText(describeLoopStage(event)),
         controller.signal,
         history,
         (event) => contextEvents.push(event),
+        (usage) => usageEvents.push(usage),
       );
       if (controller.signal.aborted) return;
-      appendOutcome(outcome, session.sessionId, contextEvents, prompt);
+      appendOutcome(outcome, session.sessionId, contextEvents, prompt, usageEvents);
     } catch (e) {
       if (controller.signal.aborted) return;
       reportFailure(e, "Something went wrong talking to the assistant.", prompt);
@@ -623,7 +683,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         {entries.length === 0 && (
           <div className="space-y-3">
             <p className="text-sm text-gray-500">
-              {configured
+              {ready
                 ? "Ask a question about this document, or request an edit. Answers are grounded in the actual ontology content."
                 : "Pick a model below to add your API key, then ask a question or request an edit."}
             </p>
@@ -679,7 +739,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                         {copiedId === entry.id ? <Check size={12} /> : <Copy size={12} />}
                         {copiedId === entry.id ? "Copied" : "Copy"}
                       </button>
-                      <CodeAssistantContextUsed events={entry.contextUsed} />
+                      <CodeAssistantContextUsed events={entry.contextUsed} usage={entry.usage} />
                     </div>
                   </div>
                 );
@@ -700,7 +760,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                       applyBusy={applyBusy}
                       applyBlockedReason={applyBlock?.message ?? null}
                     />
-                    <CodeAssistantContextUsed events={entry.contextUsed} />
+                    <CodeAssistantContextUsed events={entry.contextUsed} usage={entry.usage} />
                   </div>
                 );
               }
@@ -795,11 +855,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleComposerKeyDown}
                 rows={1}
-                disabled={busy || !projectId || !configured || recoveryLocked}
+                disabled={busy || !projectId || !ready || recoveryLocked}
                 placeholder={
                   recoveryLocked
                     ? "Paused until the recovery notice above is resolved..."
-                    : !configured
+                    : !ready
                     ? "Add an API key using the model picker below..."
                     : action === "local-edit"
                       ? "Describe the change you want..."
@@ -809,14 +869,20 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
               />
               <button
                 onClick={() => void submitMessage()}
-                disabled={busy || !input.trim() || !projectId || !configured || recoveryLocked}
+                disabled={busy || !input.trim() || !projectId || !ready || recoveryLocked}
                 className="p-2.5 text-white bg-purple-600 rounded-lg hover:bg-purple-700 active:scale-90 transition-transform disabled:opacity-50 disabled:active:scale-100 flex-shrink-0"
                 title="Send"
               >
                 <Send size={16} />
               </button>
             </div>
-            <CodeAssistantModelSwitcher onChange={() => setConfigured(hasApiKey())} />
+            {managedProvider ? (
+              <p className="text-xs text-gray-500" data-managed-provider>
+                Managed by your organization · {managedProvider.provider} · {managedProvider.model}
+              </p>
+            ) : (
+              <CodeAssistantModelSwitcher onChange={() => setConfigured(hasApiKey())} />
+            )}
           </div>
     </div>
   );

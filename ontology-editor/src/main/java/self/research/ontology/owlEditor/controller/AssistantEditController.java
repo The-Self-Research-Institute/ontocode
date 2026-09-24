@@ -14,10 +14,12 @@ import self.research.ontology.owlEditor.dto.ProposeEditRequest;
 import self.research.ontology.owlEditor.service.AssistantEditApplyService;
 import self.research.ontology.owlEditor.service.AssistantEditApplyService.ApplyResult;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService;
+import self.research.ontology.owlEditor.service.AssistantEditProposalService.CheckResult;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService.GroupProposalOutcome;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService.ProposeEditResult;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,32 +63,60 @@ public class AssistantEditController {
 
     private static Map<String, Object> toBody(ProposeEditResult result) {
         if (!result.isOk()) {
-            return Map.of("ok", false, "errorCode", result.getErrorCode(), "message", result.getMessage());
+            return errorBody(result.getErrorCode(), result.getMessage());
         }
-        List<Map<String, Object>> groups = result.getGroups().stream().map(AssistantEditController::toBody).toList();
+        List<Map<String, Object>> groups = result.getGroups() == null ? List.of()
+                : result.getGroups().stream().map(AssistantEditController::toBody).toList();
         return Map.of("ok", true, "groups", groups);
     }
 
     private static Map<String, Object> toBody(GroupProposalOutcome outcome) {
-        return Map.of(
-                "clientGroupId", outcome.getClientGroupId(),
-                "serverGroupId", outcome.getServerGroupId(),
-                "validation", Map.of("passed", outcome.isValidationPassed(), "checks", outcome.getChecks()),
-                "diff", outcome.getDiff());
+        List<Map<String, Object>> checks = outcome.getChecks() == null ? List.of()
+                : outcome.getChecks().stream().map(AssistantEditController::toBody).toList();
+        Map<String, Object> validation = new LinkedHashMap<>();
+        validation.put("passed", outcome.isValidationPassed());
+        validation.put("checks", checks);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("clientGroupId", outcome.getClientGroupId());
+        body.put("serverGroupId", outcome.getServerGroupId());
+        body.put("validation", validation);
+        body.put("diff", outcome.getDiff() == null ? List.of() : outcome.getDiff());
+        return body;
+    }
+
+    private static Map<String, Object> toBody(CheckResult check) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("name", check.name());
+        body.put("passed", check.passed());
+        if (check.detail() != null) {
+            body.put("detail", check.detail());
+        }
+        return body;
+    }
+
+    private static Map<String, Object> errorBody(String errorCode, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", false);
+        body.put("errorCode", errorCode);
+        body.put("message", message);
+        return body;
     }
 
     private static Map<String, Object> toBody(ApplyResult result) {
         if (!result.isOk()) {
-            return Map.of("ok", false, "errorCode", result.getErrorCode(), "message", result.getMessage());
+            return errorBody(result.getErrorCode(), result.getMessage());
         }
-        return Map.of(
-                "ok", true,
-                "applied", result.isApplied(),
-                "newRevision", result.getNewRevision(),
-                "remappedPendingGroups", result.getRemappedPendingGroups());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("applied", result.isApplied());
+        body.put("newRevision", result.getNewRevision());
+        body.put("remappedPendingGroups", result.getRemappedPendingGroups() == null
+                ? List.of() : result.getRemappedPendingGroups());
+        return body;
     }
 
     private static ResponseEntity<Map<String, Object>> unauthorized() {
-        return ResponseEntity.status(401).body(Map.of("ok", false, "message", "Missing or invalid Authorization header"));
+        return ResponseEntity.status(401).body(Map.of("ok", false, "errorCode", "UNAUTHORIZED",
+                "message", "Missing or invalid Authorization header"));
     }
 }

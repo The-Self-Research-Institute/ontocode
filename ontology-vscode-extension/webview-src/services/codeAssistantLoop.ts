@@ -6,11 +6,13 @@ import type {
   ToolCallRequest,
   HistoryTurn,
   ProviderUsage,
+  ManagedProviderCall,
 } from "./codeAssistantProviders";
 import { startAssistantConversation, requestNextTurn } from "./codeAssistantProviders";
 
 export type { HistoryTurn };
 import { validateAgainstSchema } from "./codeAssistantValidation";
+import type { ProviderConfig } from "./codeAssistantProviderConfig";
 import {
   readContext,
   runSparql,
@@ -168,12 +170,19 @@ export interface LoopContext {
   apiBaseUrl: string;
   token: string | undefined;
   session: AssistantSession;
+  providerConfig?: ProviderConfig;
+}
+
+function managedCallFor(ctx: LoopContext): ManagedProviderCall | undefined {
+  const config = ctx.providerConfig;
+  if (!config?.managed) return undefined;
+  return { apiBaseUrl: ctx.apiBaseUrl, token: ctx.token, sessionId: ctx.session.sessionId, model: config.model };
 }
 
 export type LoopOutcome =
   | { kind: "answer"; text: string }
   | { kind: "propose"; result: ProposeResult }
-  | { kind: "stopped"; reason: string; errorCode?: AssistantErrorCode };
+  | { kind: "stopped"; reason: string; errorCode?: AssistantErrorCode; retryAfterSeconds?: number };
 
 export interface LoopStageEvent {
   stage: "calling-provider" | "calling-tool" | "tool-result" | "answer" | "propose" | "stopped";
@@ -209,6 +218,7 @@ interface DispatchOutcome {
   proposeResult?: ProposeResult;
   errorCode?: AssistantErrorCode;
   errorMessage?: string;
+  retryAfterSeconds?: number;
   revision?: number;
 }
 
@@ -331,10 +341,20 @@ async function dispatchToolCall(
         isError: true,
         errorCode: e.errorCode,
         errorMessage: e.message,
+        retryAfterSeconds: e.retryAfterSeconds,
       };
     }
     return { result: { message: e instanceof Error ? e.message : "Unknown error calling the tool endpoint." }, isError: true };
   }
+}
+
+function stoppedByDeadEnd(reason: string, outcome: DispatchOutcome): LoopOutcome {
+  return {
+    kind: "stopped",
+    reason,
+    errorCode: outcome.errorCode,
+    ...(outcome.retryAfterSeconds !== undefined ? { retryAfterSeconds: outcome.retryAfterSeconds } : {}),
+  };
 }
 
 function notifyUsage(onUsage: ((usage: ProviderUsage) => void) | undefined, usage: ProviderUsage): void {
@@ -356,7 +376,9 @@ export async function runAssistantLoop(
   onContext?: (event: ContextEvent) => void,
   onUsage?: (usage: ProviderUsage) => void,
 ): Promise<LoopOutcome> {
-  let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage, history);
+  const managedCall = managedCallFor(ctx);
+  const managedProvider = ctx.providerConfig?.managed ? ctx.providerConfig.provider : undefined;
+  let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage, history, managedProvider);
 
   for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
     const step = i + 1;
@@ -368,9 +390,10 @@ export async function runAssistantLoop(
       provenance: buildToolProvenance(ctx.session, call.name, call.args, revision, step),
     });
     onStage({ stage: "calling-provider" });
-    const { turn, advance, usage } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal, (attempt, maxAttempts, status) => {
+    const onRetry = (attempt: number, maxAttempts: number, status: number) => {
       onStage({ stage: "calling-provider", detail: `Provider busy (HTTP ${status}) — retrying ${attempt}/${maxAttempts}...` });
-    });
+    };
+    const { turn, advance, usage } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal, onRetry, managedCall);
     if (usage) {
       notifyUsage(onUsage, usage);
       reportAssistantUsage(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, usage);
@@ -405,7 +428,7 @@ export async function runAssistantLoop(
         const detail = describeToolFailure(outcome.result);
         onStage({ stage: "stopped", detail: `${proposeCall.name} failed` });
         if (isDeadEndErrorCode(outcome.errorCode)) {
-          return { kind: "stopped", reason: detail, errorCode: outcome.errorCode };
+          return stoppedByDeadEnd(detail, outcome);
         }
         return { kind: "stopped", reason: `The proposed edit couldn't be applied: ${detail}`, errorCode: outcome.errorCode };
       }
@@ -431,11 +454,7 @@ export async function runAssistantLoop(
     const deadEnd = outcomes.find((o) => isDeadEndErrorCode(o.errorCode));
     if (deadEnd) {
       onStage({ stage: "stopped", detail: deadEnd.errorCode });
-      return {
-        kind: "stopped",
-        reason: deadEnd.errorMessage ?? describeToolFailure(deadEnd.result),
-        errorCode: deadEnd.errorCode,
-      };
+      return stoppedByDeadEnd(deadEnd.errorMessage ?? describeToolFailure(deadEnd.result), deadEnd);
     }
     const results: ToolResultForModel[] = turn.calls.map((call, idx) =>
       resultFor(call, outcomes[idx].result, outcomes[idx].isError, outcomes[idx].revision),

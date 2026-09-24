@@ -2,6 +2,7 @@ import { MessageSquare, Pencil, Search, type LucideIcon } from "lucide-react";
 import { getGatewayUrl, getRemoteApiBaseUrl } from "../config/deploymentConfig";
 import { isDesktop } from "../utils/desktop";
 import type { HistoryTurn, LoopStageEvent } from "../services/codeAssistantLoop";
+import type { ProviderUsage } from "../services/codeAssistantProviders";
 
 export type CodeAssistantAction = "ask" | "local-edit" | "project-findings";
 
@@ -37,10 +38,14 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
       : `Stay scoped to the current document${documentPath ? ` (${documentPath})` : ""} unless the user's request clearly needs more.`;
   const editable =
     action === "local-edit"
-      ? "The user wants a concrete edit. Use read_context to ground yourself, then call propose_edit with grouped, dependent replacements. Never claim an edit was applied — applying is a separate human-approved step."
-      : "This session cannot propose or apply edits — calling propose_edit will always be rejected. Answer the question directly. If the user is actually asking for a change, tell them to switch to Local edit mode and ask again there; do not attempt propose_edit.";
+      ? [
+          "The user wants a concrete edit. For the exact text and line range of an entity, call read_context with a \"statement\" target (its full IRI or prefixed name), then call propose_edit with grouped, dependent replacements.",
+          "To rename an identifier, call propose_rename instead of editing each occurrence yourself.",
+          "Never claim an edit was applied — applying is a separate human-approved step.",
+        ].join(" ")
+      : "This session cannot propose or apply edits — propose_edit and propose_rename will always be rejected. Answer the question directly. If the user is actually asking for a change, tell them to switch to Local edit mode and ask again there.";
   return [
-    "You are an ontology-editing assistant with three tools: read_context, run_sparql (read-only), and propose_edit.",
+    "You are an ontology-editing assistant with four tools: read_context, run_sparql (read-only), propose_edit and propose_rename.",
     scope,
     editable,
     "Ground every claim in what read_context or run_sparql actually returned. If you don't have enough information, say so instead of guessing.",
@@ -145,4 +150,40 @@ export function toFriendlyErrorMessage(raw: string): string {
     return "Couldn't reach a required service on the server. Try again shortly.";
   }
   return "Something went wrong on the server. Try again in a moment.";
+}
+
+const USAGE_TOKEN_FIELDS = [
+  ["inputTokens", "in"],
+  ["outputTokens", "out"],
+  ["cacheReadTokens", "cache read"],
+  ["cacheWriteTokens", "cache write"],
+] as const;
+
+function formatCount(value: number): string {
+  return Math.round(value).toLocaleString("en-US");
+}
+
+export function formatLatency(ms: number): string {
+  const rounded = Math.round(ms);
+  return rounded < 1000 ? `${rounded} ms` : `${(Math.round(ms / 100) / 10).toFixed(1)} s`;
+}
+
+export function formatUsageLine(usage: Pick<ProviderUsage, "latencyMs" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens">): string {
+  const parts: string[] = USAGE_TOKEN_FIELDS.flatMap(([field, label]) => {
+    const value = usage[field];
+    return typeof value === "number" && Number.isFinite(value) ? [`${formatCount(value)} ${label}`] : [];
+  });
+  if (typeof usage.latencyMs === "number" && Number.isFinite(usage.latencyMs)) parts.push(formatLatency(usage.latencyMs));
+  return parts.join(" · ");
+}
+
+export function totalUsage(usage: ProviderUsage[]): Pick<ProviderUsage, "latencyMs" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens"> {
+  const total: Pick<ProviderUsage, "latencyMs" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens"> = {
+    latencyMs: usage.reduce((sum, u) => sum + (typeof u.latencyMs === "number" && Number.isFinite(u.latencyMs) ? u.latencyMs : 0), 0),
+  };
+  for (const [field] of USAGE_TOKEN_FIELDS) {
+    const values = usage.map((u) => u[field]).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    if (values.length > 0) total[field] = values.reduce((sum, v) => sum + v, 0);
+  }
+  return total;
 }

@@ -106,6 +106,22 @@ public final class RdfXmlScanner {
         stack.push(new Frame(namespaces, initialBase, Role.NODE, null, false));
     }
 
+    public RdfXmlScanner fork(Listener forkListener) {
+        Frame top = stack.peek();
+        RdfXmlScanner copy = new RdfXmlScanner(top.namespaces(), top.base(), entities, forkListener);
+        if (!atSafeBoundary()) {
+            return copy;
+        }
+        copy.stack.clear();
+        copy.stack.addAll(stack);
+        copy.mode = mode;
+        copy.rootSeen = rootSeen;
+        copy.rootNamespaces = rootNamespaces;
+        copy.rootBase = rootBase;
+        copy.unsupportedReason = unsupportedReason;
+        return copy;
+    }
+
     public boolean atSafeBoundary() {
         return mode != Mode.TAG && mode != Mode.DOCTYPE;
     }

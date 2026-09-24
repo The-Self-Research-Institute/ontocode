@@ -68,6 +68,45 @@ class AssistantEditSyntaxValidatorTest {
         assertFalse(validator.isValid("proj-1", "turtle", List.of(new LineRangeSpliceWriter.SpliceEdit(1, 1, "text"))));
     }
 
+    @Test
+    void jsonLdIsParsedAsJsonLdNotAsRdfXml() throws Exception {
+        Path spliced = Files.createTempFile("syntax-jsonld-", ".jsonld");
+        Files.writeString(spliced, "[{\"@id\":\"http://example.org/A\",\"@type\":[\"http://www.w3.org/2002/07/owl#Class\"]}]",
+                StandardCharsets.UTF_8);
+        when(spliceWriter.splice(any(), anyString(), any())).thenReturn(spliced);
+
+        AssistantEditSyntaxValidator.SyntaxResult result =
+                validator.check("proj-1", "jsonld", List.of(new LineRangeSpliceWriter.SpliceEdit(0, 1, "x")));
+
+        assertTrue(result.valid(), result.detail());
+    }
+
+    @Test
+    void failureDetailCarriesTheParserMessage() throws Exception {
+        Path spliced = Files.createTempFile("syntax-invalid-", ".ttl");
+        Files.writeString(spliced, "@prefix : <http://example.org/> .\n:A :b :c @@@ .", StandardCharsets.UTF_8);
+        when(spliceWriter.splice(any(), anyString(), any())).thenReturn(spliced);
+
+        AssistantEditSyntaxValidator.SyntaxResult result =
+                validator.check("proj-1", "turtle", List.of(new LineRangeSpliceWriter.SpliceEdit(1, 1, ":A :b :c @@@ .")));
+
+        assertFalse(result.valid());
+        assertTrue(result.detail().startsWith("The document would not parse as turtle after these edits: "),
+                result.detail());
+        assertTrue(result.detail().contains("[line 2]"), result.detail());
+        assertFalse(Files.exists(spliced));
+    }
+
+    @Test
+    void oboIsLeftToTheImportLikeTheOtherOwlApiFormats() throws Exception {
+        AssistantEditSyntaxValidator.SyntaxResult result =
+                validator.check("proj-1", "obo", List.of(new LineRangeSpliceWriter.SpliceEdit(1, 1, "[Term]")));
+
+        assertTrue(result.valid());
+        assertTrue(result.detail().contains("obo"));
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
+    }
+
     private Path validTurtleFile() throws Exception {
         Path tempFile = Files.createTempFile("syntax-valid-", ".ttl");
         Files.writeString(tempFile,

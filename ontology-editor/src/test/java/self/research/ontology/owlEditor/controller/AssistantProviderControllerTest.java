@@ -122,6 +122,40 @@ class AssistantProviderControllerTest {
         return request;
     }
 
+    private byte[] usageJson(AssistantUsageReport report) {
+        try {
+            return objectMapper.writeValueAsBytes(report);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private MockHttpServletRequest authedUsage(AssistantUsageReport report) {
+        MockHttpServletRequest request = authed(null);
+        request.setContent(usageJson(report));
+        request.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        return request;
+    }
+
+    private void useUpstream(WebClient.Builder builder) {
+        ReflectionTestUtils.invokeMethod(proxyService, "shutdown");
+        ReflectionTestUtils.setField(proxyService, "webClientBuilder", builder);
+        ReflectionTestUtils.invokeMethod(proxyService, "init");
+    }
+
+    private void respondWith(HttpStatus status, String body, String retryAfter) {
+        useUpstream(WebClient.builder().exchangeFunction(request -> {
+            upstreamCalls.add(request);
+            ClientResponse.Builder response = ClientResponse.create(status)
+                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                    .body(body);
+            if (retryAfter != null) {
+                response.header(HttpHeaders.RETRY_AFTER, retryAfter);
+            }
+            return Mono.just(response.build());
+        }));
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> bodyMap(ResponseEntity<?> response) {
         return (Map<String, Object>) response.getBody();
@@ -240,18 +274,17 @@ class AssistantProviderControllerTest {
 
     @Test
     void usageReportRequiresJwt() {
-        ResponseEntity<?> response = controller.reportUsage("sess-1",
-                new AssistantUsageReport("claude", "claude-sonnet-4-5", 100L, 1L, 1L, null, null),
-                new MockHttpServletRequest());
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/x");
+        request.setContent(usageJson(new AssistantUsageReport("claude", "claude-sonnet-4-5", 100L, 1L, 1L, null, null)));
+        ResponseEntity<?> response = controller.reportUsage("sess-1", request);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
     }
 
     @Test
     void usageReportRecordsMetricsAndReturnsNoContent() {
-        ResponseEntity<?> response = controller.reportUsage("sess-1",
-                new AssistantUsageReport("claude", "claude-sonnet-4-5-20250929", 1500L, 1200L, 300L, 800L, 50L),
-                authed(null));
+        ResponseEntity<?> response = controller.reportUsage("sess-1", authedUsage(
+                new AssistantUsageReport("claude", "claude-sonnet-4-5-20250929", 1500L, 1200L, 300L, 800L, 50L)));
 
         assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
         assertEquals(1, meterRegistry.get("assistant.provider.latency")
@@ -262,9 +295,8 @@ class AssistantProviderControllerTest {
 
     @Test
     void usageReportForSomeoneElsesSessionIsRejected() {
-        ResponseEntity<?> response = controller.reportUsage("sess-other",
-                new AssistantUsageReport("claude", "claude-sonnet-4-5", 100L, 1L, 1L, null, null),
-                authed(null));
+        ResponseEntity<?> response = controller.reportUsage("sess-other", authedUsage(
+                new AssistantUsageReport("claude", "claude-sonnet-4-5", 100L, 1L, 1L, null, null)));
 
         assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
         assertEquals("SESSION_NOT_FOUND", bodyMap(response).get("errorCode"));
@@ -273,11 +305,116 @@ class AssistantProviderControllerTest {
 
     @Test
     void usageReportWithOutOfRangeNumbersIsRejected() {
-        ResponseEntity<?> response = controller.reportUsage("sess-1",
-                new AssistantUsageReport("claude", "claude-sonnet-4-5", -1L, 1L, 1L, null, null),
-                authed(null));
+        ResponseEntity<?> response = controller.reportUsage("sess-1", authedUsage(
+                new AssistantUsageReport("claude", "claude-sonnet-4-5", -1L, 1L, 1L, null, null)));
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("VALIDATION_FAILED", bodyMap(response).get("errorCode"));
+    }
+
+    @Test
+    void usageReportAcceptsFractionalLatencyAndUnknownFields() {
+        MockHttpServletRequest request = authed("{\"provider\":\"claude\",\"model\":\"claude-sonnet-4-5\","
+                + "\"latencyMs\":812.6,\"inputTokens\":10,\"futureField\":true}");
+
+        ResponseEntity<?> response = controller.reportUsage("sess-1", request);
+
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+        assertEquals(10.0, meterRegistry.get("assistant.provider.tokens")
+                .tags("provider", "claude", "model", "claude-sonnet-4-5", "kind", "input").counter().count());
+    }
+
+    @Test
+    void usageReportWithMalformedJsonIsAValidationErrorNotAServerError() {
+        for (String body : List.of("{\"provider\":", "[1,2]", "\"text\"", "{\"latencyMs\":\"soon\"}",
+                "{\"latencyMs\":99999999999999999999999}")) {
+            ResponseEntity<?> response = controller.reportUsage("sess-1", authed(body));
+
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), body);
+            assertEquals("VALIDATION_FAILED", bodyMap(response).get("errorCode"), body);
+            assertEquals(false, bodyMap(response).get("ok"), body);
+        }
+        assertTrue(meterRegistry.find("assistant.provider.latency").timers().isEmpty());
+    }
+
+    @Test
+    void usageReportWithoutABodyIsRejected() {
+        ResponseEntity<?> response = controller.reportUsage("sess-1", authed(null));
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("VALIDATION_FAILED", bodyMap(response).get("errorCode"));
+    }
+
+    @Test
+    void oversizedUsageReportIsRejectedWithoutRecording() {
+        String padding = "x".repeat(AssistantProviderController.MAX_USAGE_BODY_BYTES);
+        MockHttpServletRequest declared = authed("{\"provider\":\"claude\",\"model\":\"claude-sonnet-4-5\","
+                + "\"latencyMs\":5,\"pad\":\"" + padding + "\"}");
+        MockHttpServletRequest undeclared = new MockHttpServletRequest("POST", "/x") {
+            @Override
+            public long getContentLengthLong() {
+                return -1;
+            }
+        };
+        undeclared.addHeader("Authorization", declared.getHeader("Authorization"));
+        undeclared.setContent(declared.getContentAsByteArray());
+
+        assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, controller.reportUsage("sess-1", declared).getStatusCode());
+        assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, controller.reportUsage("sess-1", undeclared).getStatusCode());
+        assertTrue(meterRegistry.find("assistant.provider.latency").timers().isEmpty());
+    }
+
+    @Test
+    void upstreamServerErrorsBecomeProviderUnavailable() throws Exception {
+        respondWith(HttpStatus.INTERNAL_SERVER_ERROR,
+                "{\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"secret detail\"}}", null);
+
+        ResponseEntity<?> response = controller.providerCall("sess-1", authed("{\"request\":{\"messages\":[]}}"));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        assertEquals("PROVIDER_UNAVAILABLE", bodyMap(response).get("errorCode"));
+        assertEquals(false, bodyMap(response).get("ok"));
+        assertFalse(objectMapper.writeValueAsString(response.getBody()).contains("secret detail"));
+        assertNull(response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER));
+    }
+
+    @Test
+    void upstreamOverloadedKeepsItsRetryAfterHint() {
+        respondWith(HttpStatus.SERVICE_UNAVAILABLE, "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}", "12");
+
+        ResponseEntity<?> response = controller.providerCall("sess-1", authed("{\"request\":{\"messages\":[]}}"));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        assertEquals("PROVIDER_UNAVAILABLE", bodyMap(response).get("errorCode"));
+        assertEquals("12", response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER));
+    }
+
+    @Test
+    void upstreamClientErrorsAndThrottlingPassThroughWithProviderJson() throws Exception {
+        respondWith(HttpStatus.BAD_REQUEST, "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\"}}", null);
+
+        ResponseEntity<?> bad = controller.providerCall("sess-1", authed("{\"request\":{\"messages\":[]}}"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, bad.getStatusCode());
+        assertEquals("invalid_request_error",
+                objectMapper.readTree((String) bad.getBody()).path("error").path("type").asText());
+
+        respondWith(HttpStatus.TOO_MANY_REQUESTS, "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\"}}", "4");
+
+        ResponseEntity<?> throttled = controller.providerCall("sess-1", authed("{\"request\":{\"messages\":[]}}"));
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, throttled.getStatusCode());
+        assertEquals("4", throttled.getHeaders().getFirst(HttpHeaders.RETRY_AFTER));
+    }
+
+    @Test
+    void upstreamNetworkFailureBecomesProviderUnavailable() {
+        useUpstream(WebClient.builder().exchangeFunction(request ->
+                Mono.error(new java.net.ConnectException("refused"))));
+
+        ResponseEntity<?> response = controller.providerCall("sess-1", authed("{\"request\":{\"messages\":[]}}"));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
+        assertEquals("PROVIDER_UNAVAILABLE", bodyMap(response).get("errorCode"));
     }
 }

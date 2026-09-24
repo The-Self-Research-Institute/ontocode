@@ -11,7 +11,10 @@ import self.research.ontology.owlEditor.document.AssistantApplyOperationDocument
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.AssistantEditGroupStatus;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.EditEntry;
+import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
+import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
+import self.research.ontology.owlEditor.service.AssistantAuditService.AssistantAuditEvent;
 import self.research.ontology.owlEditor.service.AssistantEditApplyService.ApplyResult;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline.ReimportResult;
 
@@ -23,12 +26,14 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -65,6 +70,12 @@ class AssistantEditApplyServiceTest {
     @Mock
     private ProjectRecoveryLockService recoveryLockService;
 
+    @Mock
+    private AssistantAuditService auditService;
+
+    @Mock
+    private AssistantSessionRepository sessionRepository;
+
     private AssistantEditApplyService applyService;
     private Path splicedFile;
     private Path snapshotFile;
@@ -76,7 +87,8 @@ class AssistantEditApplyServiceTest {
         ProjectWriteLockRegistry realLockRegistry = new ProjectWriteLockRegistry();
         applyService = new AssistantEditApplyService(groupRepository, storageManager, spliceWriter,
                 reimportPipeline, remapService, realLockRegistry, syntaxValidator, referenceCoverageValidator, datasetService,
-                operationService, recoveryLockService);
+                operationService, recoveryLockService, auditService, sessionRepository);
+        when(sessionRepository.findById(anyString())).thenReturn(Optional.empty());
         splicedFile = Files.createTempFile("apply-test-spliced-", ".ttl");
         snapshotFile = Files.createTempFile("apply-test-snapshot-", ".owl");
         operation = AssistantApplyOperationDocument.builder().id("op-1").projectId("proj-1").groupId("g1")
@@ -680,5 +692,103 @@ class AssistantEditApplyServiceTest {
         verify(operationService, never()).prepare(any(), anyString());
         verify(spliceWriter, never()).splice(any(), anyString(), any());
         verify(reimportPipeline, never()).reimport(any());
+    }
+
+    private AssistantAuditEvent auditedEvent() {
+        ArgumentCaptor<AssistantAuditEvent> captor = ArgumentCaptor.forClass(AssistantAuditEvent.class);
+        verify(auditService).record(captor.capture());
+        return captor.getValue();
+    }
+
+    @Test
+    void successfulApplyIsAuditedWithTheSessionsProviderAndModel() throws Exception {
+        pendingReadyToApply();
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 10L));
+        when(sessionRepository.findById("s1")).thenReturn(Optional.of(AssistantSessionDocument.builder()
+                .id("s1").userEmail("u@x.com").projectId("proj-1").provider("anthropic").model("claude-x").build()));
+
+        applyService.applyGroup("s1", "g1", "u@x.com");
+
+        AssistantAuditEvent event = auditedEvent();
+        assertEquals("apply", event.operation());
+        assertEquals("ok", event.outcome());
+        assertEquals("u@x.com", event.actor());
+        assertEquals("proj-1", event.projectId());
+        assertEquals("s1", event.sessionId());
+        assertEquals("g1", event.groupId());
+        assertEquals(10L, event.sourceRevision());
+        assertEquals("anthropic", event.provider());
+        assertEquals("claude-x", event.model());
+        assertNull(event.errorCode());
+    }
+
+    @Test
+    void failedApplyIsAuditedWithItsErrorCode() throws Exception {
+        pendingReadyToApply();
+        when(recoveryLockService.isLocked("proj-1")).thenReturn(true);
+
+        applyService.applyGroup("s1", "g1", "u@x.com");
+
+        AssistantAuditEvent event = auditedEvent();
+        assertEquals("failed", event.outcome());
+        assertEquals("PROJECT_RECOVERY_LOCKED", event.errorCode());
+        assertEquals("proj-1", event.projectId());
+        assertNull(event.provider());
+        assertNull(event.model());
+    }
+
+    @Test
+    void recoveryRequiredAfterAFailedRollbackIsAudited() throws Exception {
+        pendingReadyToApply();
+        when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("GraphDB timed out"));
+        when(reimportPipeline.restoreSnapshot(anyString(), any())).thenThrow(new java.io.IOException("still down"));
+
+        applyService.applyGroup("s1", "g1", "u@x.com");
+
+        AssistantAuditEvent event = auditedEvent();
+        assertEquals("failed", event.outcome());
+        assertEquals("RECOVERY_REQUIRED", event.errorCode());
+    }
+
+    @Test
+    void rejectedUnknownProposalIsAuditedWithoutAProjectOrAnotherUsersSessionDetails() {
+        when(groupRepository.findById("g1")).thenReturn(Optional.empty());
+        when(sessionRepository.findById("s1")).thenReturn(Optional.of(AssistantSessionDocument.builder()
+                .id("s1").userEmail("owner@x.com").provider("openai").model("gpt").build()));
+
+        applyService.applyGroup("s1", "g1", "attacker@x.com");
+
+        AssistantAuditEvent event = auditedEvent();
+        assertEquals("failed", event.outcome());
+        assertEquals("VALIDATION_FAILED", event.errorCode());
+        assertNull(event.projectId());
+        assertNull(event.provider());
+        assertNull(event.model());
+    }
+
+    @Test
+    void auditFailureDoesNotChangeTheApplyResult() throws Exception {
+        pendingReadyToApply();
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 10L));
+        doThrow(new IllegalStateException("audit down")).when(auditService).record(any());
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        assertEquals(10L, result.getNewRevision());
+    }
+
+    @Test
+    void serviceBuiltWithoutAuditingStillApplies() throws Exception {
+        AssistantEditApplyService unaudited = new AssistantEditApplyService(groupRepository, storageManager, spliceWriter,
+                reimportPipeline, remapService, new ProjectWriteLockRegistry(), syntaxValidator,
+                referenceCoverageValidator, datasetService, operationService, recoveryLockService);
+        pendingReadyToApply();
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 10L));
+
+        ApplyResult result = unaudited.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        verify(auditService, never()).record(any());
     }
 }

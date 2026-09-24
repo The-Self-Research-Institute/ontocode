@@ -395,6 +395,136 @@ class AssistantRenameServiceTest {
         assertTrue(result.detail().contains("already appears"));
     }
 
+    @Test
+    void prefixRedefinedLaterOnTheSameLineKeepsTheNamespaceTheTokenWasWrittenIn() throws Exception {
+        String content = String.join("\n",
+                "@prefix ex: <http://a.org/> .",
+                "ex:Foo a ex:C . @prefix ex: <http://a.org/sub/> . ex:Other a ex:C .");
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(write("sameline.ttl", content));
+
+        RenameDerivation result = renameService.derive("proj-1",
+                rename("turtle", "<http://a.org/Foo>", "<http://a.org/sub/Renamed>"), 5000);
+
+        assertTrue(result.ok(), result.detail());
+        assertEquals("<http://a.org/sub/Renamed> a ex:C . @prefix ex: <http://a.org/sub/> . ex:Other a ex:C .",
+                result.edits().get(0).newText());
+        assertRenamedGraphIsIsomorphic(content, result, RDFFormat.TURTLE, "http://a.org/Foo", "http://a.org/sub/Renamed");
+    }
+
+    @Test
+    void unicodeEscapedIriAndDatatypePositionAreMatchedExactly() throws Exception {
+        String content = String.join("\n",
+                "@prefix : <http://ex.org/pizza#> .",
+                "<http://ex.org/pizza#Pi\\u007Aza> :p \"1\"^^:Pizza .",
+                ":q :r ( :Pizza :PizzaBase ) .");
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(write("esc.ttl", content));
+
+        RenameDerivation result = renameService.derive("proj-1", rename("turtle", ":Pizza", ":Pie"), 5000);
+
+        assertTrue(result.ok(), result.detail());
+        assertEquals(3, result.occurrences());
+        assertEquals("<http://ex.org/pizza#Pie> :p \"1\"^^:Pie .", result.edits().get(0).newText());
+        assertEquals(":q :r ( :Pie :PizzaBase ) .", result.edits().get(1).newText());
+
+        Model before = Rio.parse(new StringReader(content), "", RDFFormat.TURTLE);
+        Model after = Rio.parse(new StringReader(applyEdits(content, result.edits())), "", RDFFormat.TURTLE);
+        assertEquals(before.size(), after.size());
+        for (Statement st : after) {
+            boolean datatypeLeft = st.getObject().isLiteral()
+                    && ((org.eclipse.rdf4j.model.Literal) st.getObject()).getDatatype().stringValue().equals(NS + "Pizza");
+            assertFalse(datatypeLeft || st.getSubject().stringValue().equals(NS + "Pizza")
+                    || st.getObject().stringValue().equals(NS + "Pizza"), "left behind: " + st);
+        }
+        assertTrue(after.stream().anyMatch(st -> st.getObject().isLiteral()
+                && ((org.eclipse.rdf4j.model.Literal) st.getObject()).getDatatype().stringValue().equals(NS + "Pie")));
+        assertTrue(after.stream().anyMatch(st -> st.getSubject().stringValue().equals(NS + "Pie")));
+    }
+
+    @Test
+    void rdfXmlIdIsRenamedWhenTheBaseAlreadyEndsInAHash() throws Exception {
+        String content = String.join("\n",
+                "<?xml version=\"1.0\"?>",
+                "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"",
+                "     xmlns:owl=\"http://www.w3.org/2002/07/owl#\"",
+                "     xmlns:pizza=\"http://ex.org/pizza#\"",
+                "     xml:base=\"http://ex.org/pizza#\">",
+                "    <owl:NamedIndividual rdf:ID=\"Cheese\"/>",
+                "    <owl:NamedIndividual rdf:about=\"#Tomato\">",
+                "        <pizza:with rdf:resource=\"#Cheese\"/>",
+                "    </owl:NamedIndividual>",
+                "</rdf:RDF>");
+        when(storageManager.ensureCodeViewFile("proj-1", "rdfxml")).thenReturn(write("hashbase.owl", content));
+
+        RenameDerivation result = renameService.derive("proj-1", rename("rdfxml", "pizza:Cheese", "pizza:Gouda"), 5000);
+
+        assertTrue(result.ok(), result.detail());
+        assertEquals("    <owl:NamedIndividual rdf:ID=\"Gouda\"/>", result.edits().get(0).newText());
+        assertEquals("        <pizza:with rdf:resource=\"http://ex.org/pizza#Gouda\"/>", result.edits().get(1).newText());
+        assertRenamedGraphIsIsomorphic(content, result, RDFFormat.RDFXML, NS + "Cheese", NS + "Gouda");
+    }
+
+    @Test
+    void rdfXmlIdCannotBeRenamedOutsideItsBaseAndNothingIsGenerated() throws Exception {
+        when(storageManager.ensureCodeViewFile("proj-1", "rdfxml")).thenReturn(write("doc.owl", RDFXML_DOC));
+
+        RenameDerivation result = renameService.derive("proj-1",
+                rename("rdfxml", "pizza:Cheese", "<http://other.org/food#Gouda>"), 5000);
+
+        assertFalse(result.ok());
+        assertTrue(result.detail().contains("rdf:ID"), result.detail());
+        assertTrue(result.edits().isEmpty());
+    }
+
+    @Test
+    void rdfXmlNestedXmlBaseResolvesRelativeValuesAgainstTheElementBase() throws Exception {
+        String content = String.join("\n",
+                "<?xml version=\"1.0\"?>",
+                "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"",
+                "     xmlns:owl=\"http://www.w3.org/2002/07/owl#\"",
+                "     xml:base=\"http://ex.org/pizza\">",
+                "    <owl:Class rdf:about=\"#Pizza\"/>",
+                "    <owl:Class xml:base=\"http://other.org/food\" rdf:about=\"#Pizza\"/>",
+                "</rdf:RDF>");
+        when(storageManager.ensureCodeViewFile("proj-1", "rdfxml")).thenReturn(write("nested.owl", content));
+
+        RenameDerivation result = renameService.derive("proj-1",
+                rename("rdfxml", "<http://ex.org/pizza#Pizza>", "<http://ex.org/pizza#Pie>"), 5000);
+
+        assertTrue(result.ok(), result.detail());
+        assertEquals(1, result.occurrences());
+        assertEquals(4L, result.edits().get(0).line());
+        assertRenamedGraphIsIsomorphic(content, result, RDFFormat.RDFXML, NS + "Pizza", NS + "Pie");
+    }
+
+    @Test
+    void rdfXmlDocumentEndingInsideATagIsRefused() throws Exception {
+        String content = String.join("\n",
+                "<?xml version=\"1.0\"?>",
+                "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"",
+                "     xmlns:owl=\"http://www.w3.org/2002/07/owl#\">",
+                "    <owl:Class rdf:about=\"http://ex.org/pizza#Pizza\"/>",
+                "    <owl:Class rdf:about=\"http://ex.org/pizza#Pizza\"");
+        when(storageManager.ensureCodeViewFile("proj-1", "rdfxml")).thenReturn(write("cut.owl", content));
+
+        RenameDerivation result = renameService.derive("proj-1",
+                rename("rdfxml", "<http://ex.org/pizza#Pizza>", "<http://ex.org/pizza#Pie>"), 5000);
+
+        assertFalse(result.ok());
+        assertTrue(result.detail().contains("unclosed tag"), result.detail());
+        assertTrue(result.edits().isEmpty());
+    }
+
+    @Test
+    void undeclaredPrefixAnywhereInTheDocumentFailsClosed() throws Exception {
+        String content = "@prefix : <http://ex.org/pizza#> .\n:Pizza :p zz:Other .\n";
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(write("undeclared.ttl", content));
+
+        RenameDerivation result = renameService.derive("proj-1", rename("turtle", ":Pizza", ":Pie"), 5000);
+
+        assertFalse(result.ok());
+        assertTrue(result.detail().contains("undeclared prefix"), result.detail());
+    }
+
     private EditOperation rename(String targetPath, String target, String replacement) {
         return new EditOperation("rename_identifier", targetPath, target, replacement);
     }

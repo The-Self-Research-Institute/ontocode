@@ -1,7 +1,9 @@
 package self.research.ontology.owlEditor.config;
 
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.config.MeterFilter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -171,6 +173,64 @@ class AssistantMetricsAspectTest {
         assertEquals("disk full", thrown.getMessage());
         assertEquals(1, timer("reimport", "exception").count());
         assertNull(timer("reimport", "ok"));
+    }
+
+    @Test
+    void uncheckedExceptionPropagatesAsTheSameInstance() {
+        IllegalStateException failure = new IllegalStateException("lock lost");
+        behaviour.set(invocation -> {
+            throw failure;
+        });
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> invoke(AssistantEditApplyService.class, "applyGroup"));
+
+        assertSame(failure, thrown);
+        assertEquals(1, timer("apply", "exception").count());
+    }
+
+    @Test
+    void errorPropagatesAndIsRecordedAsException() {
+        StackOverflowError failure = new StackOverflowError("deep");
+        behaviour.set(invocation -> {
+            throw failure;
+        });
+
+        StackOverflowError thrown = assertThrows(StackOverflowError.class,
+                () -> invoke(AssistantContextToolService.class, "readContext"));
+
+        assertSame(failure, thrown);
+        assertEquals(1, timer("read_context", "exception").count());
+    }
+
+    @Test
+    void aBrokenMeterRegistryNeverChangesTheResultOrTheException() throws Throwable {
+        registry.config().meterFilter(new MeterFilter() {
+            @Override
+            public Meter.Id map(Meter.Id id) {
+                throw new IllegalStateException("registry broken");
+            }
+        });
+        AssistantEditApplyService.ApplyResult ok = AssistantEditApplyService.ApplyResult.builder().ok(true).build();
+        behaviour.set(invocation -> ok);
+
+        assertSame(ok, invoke(AssistantEditApplyService.class, "applyGroup"));
+
+        IOException failure = new IOException("disk full");
+        behaviour.set(invocation -> {
+            throw failure;
+        });
+        assertSame(failure, assertThrows(IOException.class, () -> invoke(CodeViewReimportPipeline.class, "reimport")));
+    }
+
+    @Test
+    void resultWhoseAccessorsThrowIsReturnedUnchangedAndTaggedError() throws Throwable {
+        AssistantEditApplyService.ApplyResult odd = Mockito.mock(AssistantEditApplyService.ApplyResult.class);
+        Mockito.when(odd.isOk()).thenThrow(new IllegalStateException("broken getter"));
+        behaviour.set(invocation -> odd);
+
+        assertSame(odd, invoke(AssistantEditApplyService.class, "applyGroup"));
+        assertEquals(1, timer("apply", "error").count());
     }
 
     @Test

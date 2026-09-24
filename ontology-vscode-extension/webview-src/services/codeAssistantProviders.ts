@@ -9,6 +9,7 @@ import {
 } from "./LlmInsightsService";
 import { estimateTokensFromChars, requestBudgetFor, type RequestBudget } from "./codeAssistantBudget";
 import { compactHistory, compactOlderToolResults } from "./codeAssistantCompaction";
+import { toAssistantApiError } from "./codeAssistantSession";
 
 export interface JsonSchema {
   type: string;
@@ -400,11 +401,15 @@ function appendGeminiToolResults(conversation: ConversationState, nativeAssistan
   };
 }
 
+function providerErrorDetail(data: unknown): string | null {
+  const error = data && typeof data === "object" ? (data as { error?: unknown }).error : undefined;
+  const message = error && typeof error === "object" ? (error as { message?: unknown }).message : undefined;
+  return typeof message === "string" && message.trim() ? message.trim() : null;
+}
+
 async function extractProviderErrorMessage(res: Response): Promise<string | null> {
   try {
-    const data = await res.json();
-    const message = data?.error?.message;
-    return typeof message === "string" && message.trim() ? message.trim() : null;
+    return providerErrorDetail(await res.json());
   } catch {
     return null;
   }
@@ -421,16 +426,56 @@ function summarizeQuotaMessage(detail: string): string {
   return retryMatch ? `${sentence} Try again in about ${Math.ceil(Number(retryMatch[1]))}s.` : sentence;
 }
 
-async function mapHttpError(provider: LlmProvider, res: Response): Promise<LlmRequestError> {
-  const status = res.status;
+function providerHttpError(provider: LlmProvider, status: number, detail: string | null): LlmRequestError {
   if (status === 401 || status === 403) return new LlmRequestError(`Invalid or unauthorized API key for ${provider}.`);
   if (status === 404) return new LlmRequestError(`Model not found or unavailable for ${provider}.`);
   if (status === 429) {
-    const detail = await extractProviderErrorMessage(res);
     return new LlmRequestError(detail ? `Rate limit reached: ${summarizeQuotaMessage(detail)}` : "Rate limit reached. Try again shortly.");
   }
   if (status === 503) return new LlmRequestError(`${provider} is temporarily overloaded. Try again shortly.`);
   return new LlmRequestError(`${provider} API error (HTTP ${status}).`);
+}
+
+async function mapHttpError(provider: LlmProvider, res: Response): Promise<LlmRequestError> {
+  const detail = res.status === 429 ? await extractProviderErrorMessage(res) : null;
+  return providerHttpError(provider, res.status, detail);
+}
+
+const BACKEND_ONLY_STATUSES = new Set([401, 403, 423]);
+
+async function mapManagedHttpError(provider: LlmProvider, res: Response, path: string): Promise<Error> {
+  const data: unknown = await res.json().catch(() => null);
+  const errorCode = data && typeof data === "object" ? (data as { errorCode?: unknown }).errorCode : undefined;
+  if (typeof errorCode === "string" || BACKEND_ONLY_STATUSES.has(res.status)) return toAssistantApiError(res, data, path);
+  return providerHttpError(provider, res.status, providerErrorDetail(data));
+}
+
+export interface ManagedProviderCall {
+  apiBaseUrl: string;
+  token: string | undefined;
+  sessionId: string;
+  model: string;
+}
+
+export function managedProviderCallPath(sessionId: string): string {
+  return `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/provider-call`;
+}
+
+interface ProviderTarget {
+  url: string;
+  headers: Record<string, string>;
+  payload: string;
+  path?: string;
+}
+
+function managedTarget(managed: ManagedProviderCall, body: Record<string, unknown>): ProviderTarget {
+  const path = managedProviderCallPath(managed.sessionId);
+  return {
+    url: `${managed.apiBaseUrl}${path}`,
+    headers: { "Content-Type": "application/json", ...(managed.token ? { Authorization: `Bearer ${managed.token}` } : {}) },
+    payload: JSON.stringify({ request: body }),
+    path,
+  };
 }
 
 const RETRYABLE_STATUSES = new Set([503]);
@@ -497,9 +542,9 @@ export async function startAssistantConversation(
   systemPrompt: string,
   userMessage: string,
   history: HistoryTurn[] = [],
+  provider?: LlmProvider,
 ): Promise<ConversationState> {
-  const provider = getStoredProvider();
-  return startConversation(provider, systemPrompt, history, userMessage);
+  return startConversation(provider ?? getStoredProvider(), systemPrompt, history, userMessage);
 }
 
 export async function requestNextTurn(
@@ -507,26 +552,36 @@ export async function requestNextTurn(
   tools: ToolDefinition[],
   signal?: AbortSignal,
   onRetry?: (attempt: number, maxAttempts: number, status: number) => void,
+  managed?: ManagedProviderCall,
 ): Promise<NextTurn> {
-  const key = getStoredApiKey();
-  if (!key) throw new LlmConfigError("No API key configured. Configure an AI provider to use the assistant.");
-  const model = getStoredModel();
+  let key = "";
+  if (!managed) {
+    key = getStoredApiKey();
+    if (!key) throw new LlmConfigError("No API key configured. Configure an AI provider to use the assistant.");
+  }
+  const model = managed ? managed.model : getStoredModel();
 
   const { conversation, body } = fitConversationToBudget(inputConversation, model, tools);
-  const { url, headers } = providerEndpoint(conversation.provider, model, key);
+  const target: ProviderTarget = managed
+    ? managedTarget(managed, body)
+    : { ...providerEndpoint(conversation.provider, model, key), payload: JSON.stringify(body) };
 
   let res: Response;
   let attempt = 0;
   let startedAt = nowMs();
   while (true) {
     startedAt = nowMs();
-    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
+    res = await fetch(target.url, { method: "POST", headers: target.headers, body: target.payload, signal });
     if (res.ok || !RETRYABLE_STATUSES.has(res.status) || attempt >= MAX_TRANSIENT_RETRIES) break;
     attempt += 1;
     onRetry?.(attempt, MAX_TRANSIENT_RETRIES, res.status);
     await delay(RETRY_BASE_DELAY_MS * attempt, signal);
   }
-  if (!res.ok) throw await mapHttpError(conversation.provider, res);
+  if (!res.ok) {
+    throw target.path !== undefined
+      ? await mapManagedHttpError(conversation.provider, res, target.path)
+      : await mapHttpError(conversation.provider, res);
+  }
 
   const raw = await res.json().catch(() => {
     throw new ProviderProtocolError(`${conversation.provider} returned a response that could not be parsed as JSON.`);

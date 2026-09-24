@@ -81,9 +81,10 @@ public class AssistantEditReferenceCoverageValidator {
                 }
             }
         } catch (Exception e) {
-            log.warn("[Assistant] complete_reference_coverage scan skipped for project {} targetPath {}: {}",
+            log.warn("[Assistant] complete_reference_coverage scan failed for project {} targetPath {}: {}",
                     projectId, targetPath, e.getMessage());
-            return new CoverageResult(true, null);
+            return new CoverageResult(false, "Could not scan the rest of the document for remaining references to "
+                    + String.join(", ", removedTokens) + " (" + e.getMessage() + ").");
         }
 
         if (missed.isEmpty()) {

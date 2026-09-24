@@ -253,6 +253,92 @@ class AssistantSessionServiceTest {
         assertEquals(Optional.of(300), service.activeSessionLimitRetryAfter("user@example.com"));
     }
 
+    @Test
+    void createWithinLimitsCreatesWhenBothLimitsAdmit() {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(3L);
+        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(0L);
+
+        AssistantSessionService.SessionCreateOutcome outcome = service.createSession(
+                "proj-1", "user@example.com", null, "ask", null, "claude", "m", Optional::empty);
+
+        assertTrue(outcome.created());
+        assertTrue(outcome.isOk());
+        assertEquals(null, outcome.getErrorCode());
+        assertEquals("claude", outcome.session().getProvider());
+        assertEquals(null, outcome.retryAfterSeconds());
+    }
+
+    @Test
+    void createWithinLimitsSkipsTheActiveCountWhenThePerMinuteLimitRejects() {
+        AssistantSessionService.SessionCreateOutcome outcome = service.createSession(
+                "proj-1", "user@example.com", null, "ask", null, "claude", "m", () -> Optional.of(12));
+
+        assertFalse(outcome.created());
+        assertFalse(outcome.isOk());
+        assertEquals("RATE_LIMITED", outcome.getErrorCode());
+        assertEquals(12, outcome.retryAfterSeconds());
+        org.mockito.Mockito.verify(mongoTemplate, org.mockito.Mockito.never())
+                .count(any(Query.class), eq(AssistantSessionDocument.class));
+        org.mockito.Mockito.verify(sessionRepository, org.mockito.Mockito.never()).save(any());
+        org.mockito.ArgumentCaptor<AssistantAuditService.AssistantAuditEvent> event =
+                org.mockito.ArgumentCaptor.forClass(AssistantAuditService.AssistantAuditEvent.class);
+        org.mockito.Mockito.verify(auditService).record(event.capture());
+        assertEquals("rejected", event.getValue().outcome());
+        assertEquals("RATE_LIMITED", event.getValue().errorCode());
+        assertEquals("retryAfterSeconds=12", event.getValue().detail());
+    }
+
+    @Test
+    void createWithinLimitsRejectsAtTheActiveCap() {
+        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(20L);
+        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(null);
+
+        AssistantSessionService.SessionCreateOutcome outcome = service.createSession(
+                "proj-1", "user@example.com", null, "ask", null, null, null, Optional::empty);
+
+        assertFalse(outcome.created());
+        assertEquals(300, outcome.retryAfterSeconds());
+        org.mockito.Mockito.verify(sessionRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void concurrentCreatesForOneUserNeverExceedTheActiveCap() throws Exception {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(1L);
+        java.util.concurrent.atomic.AtomicLong live = new java.util.concurrent.atomic.AtomicLong();
+        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenAnswer(inv -> {
+            long value = live.get();
+            Thread.sleep(2);
+            return value;
+        });
+        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(null);
+        org.mockito.Mockito.doAnswer(inv -> {
+            live.incrementAndGet();
+            return inv.getArgument(0);
+        }).when(sessionRepository).save(any());
+        int callers = 60;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(16);
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<java.util.concurrent.Future<Boolean>> results = new java.util.ArrayList<>();
+        for (int i = 0; i < callers; i++) {
+            results.add(pool.submit(() -> {
+                start.await();
+                return service.createSession("proj-1", "user@example.com", null, "ask", null,
+                        null, null, Optional::empty).created();
+            }));
+        }
+        start.countDown();
+        int created = 0;
+        for (java.util.concurrent.Future<Boolean> result : results) {
+            if (result.get(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                created++;
+            }
+        }
+        pool.shutdownNow();
+
+        assertEquals(20, created);
+        assertEquals(20L, live.get());
+    }
+
     private AssistantSessionDocument.AssistantSessionDocumentBuilder baseSession() {
         return AssistantSessionDocument.builder()
                 .id("session-1")

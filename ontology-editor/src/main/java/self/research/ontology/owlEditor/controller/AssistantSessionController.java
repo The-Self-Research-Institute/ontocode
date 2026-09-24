@@ -20,7 +20,6 @@ import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -47,11 +46,12 @@ public class AssistantSessionController {
         String userEmail = JwtIdentityExtractor.extractEmail(httpRequest).orElse(null);
         if (userEmail == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(java.util.Map.of("ok", false, "message", "Missing or invalid Authorization header"));
+                    .body(Map.of("ok", false, "errorCode", "UNAUTHORIZED",
+                            "message", "Missing or invalid Authorization header"));
         }
         if (request.getProjectId() == null || request.getProjectId().isBlank()) {
             return ResponseEntity.badRequest()
-                    .body(java.util.Map.of("ok", false, "message", "projectId is required"));
+                    .body(Map.of("ok", false, "errorCode", "VALIDATION_FAILED", "message", "projectId is required"));
         }
         String provider = normalize(request.getProvider());
         String model = normalize(request.getModel());
@@ -62,17 +62,14 @@ public class AssistantSessionController {
                             + MAX_MODEL_LENGTH));
         }
 
-        Optional<Integer> retryAfter = sessionService.activeSessionLimitRetryAfter(userEmail)
-                .or(() -> admissionLimiter.tryAdmitSessionCreate(userEmail));
-        if (retryAfter.isPresent()) {
-            sessionService.recordCreateRejected(userEmail, request.getProjectId(), provider, model,
-                    "RATE_LIMITED", "retryAfterSeconds=" + retryAfter.get());
-            return rateLimited(retryAfter.get());
-        }
-
-        AssistantSessionDocument session = sessionService.createSession(
+        AssistantSessionService.SessionCreateOutcome outcome = sessionService.createSession(
                 request.getProjectId(), userEmail, request.getDocumentPath(),
-                request.getActionType(), request.getActionContext(), provider, model);
+                request.getActionType(), request.getActionContext(), provider, model,
+                () -> admissionLimiter.tryAdmitSessionCreate(userEmail));
+        if (!outcome.created()) {
+            return rateLimited(outcome.retryAfterSeconds());
+        }
+        AssistantSessionDocument session = outcome.session();
 
         AssistantSessionResponse response = AssistantSessionResponse.builder()
                 .sessionId(session.getId())
