@@ -107,6 +107,65 @@ describe("runAssistantLoop — bounded dispatch per turn", () => {
   });
 });
 
+describe("runAssistantLoop — usage reporting", () => {
+  const usage = { provider: "claude" as const, model: "claude-sonnet-4-5", latencyMs: 812, inputTokens: 100, outputTokens: 12, cacheReadTokens: 50 };
+
+  it("calls onUsage after every provider call and posts the same numbers to the backend", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [sparqlCall("c1")] }, advance: advanceSpy, usage })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: advanceSpy, usage: { ...usage, latencyMs: 90 } });
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith("/usage")
+        ? { ok: true, status: 204, headers: new Headers(), json: async () => null }
+        : jsonResponse(200, { ok: true, result: { rows: [], truncated: false, rowCount: 0 }, provenance: { revision: 1 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const onUsage = vi.fn();
+
+    await runAssistantLoop(baseCtx(), "system", "hi", vi.fn(), undefined, [], undefined, onUsage);
+
+    expect(onUsage.mock.calls.map((c) => c[0].latencyMs)).toEqual([812, 90]);
+    const usageCalls = fetchMock.mock.calls.filter((c) => String(c[0]).endsWith("/usage")) as unknown as Array<[string, RequestInit]>;
+    expect(usageCalls).toHaveLength(2);
+    expect(usageCalls[0][0]).toBe("http://localhost:8083/api/v1/code-assistant/sessions/s1/usage");
+    expect(JSON.parse(String(usageCalls[0][1].body))).toEqual({
+      provider: "claude",
+      model: "claude-sonnet-4-5",
+      latencyMs: 812,
+      inputTokens: 100,
+      outputTokens: 12,
+      cacheReadTokens: 50,
+    });
+    expect((usageCalls[0][1].headers as Record<string, string>).Authorization).toBe("Bearer t");
+  });
+
+  it("never lets a failing usage post or callback break the loop", async () => {
+    stubConversation();
+    vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: vi.fn(), usage });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network down")));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "hi", vi.fn(), undefined, [], undefined, () => {
+      throw new Error("callback blew up");
+    });
+
+    expect(outcome).toEqual({ kind: "answer", text: "done" });
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("does not wait for the usage post to finish", async () => {
+    stubConversation();
+    vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: vi.fn(), usage });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    expect(outcome).toEqual({ kind: "answer", text: "done" });
+  });
+});
+
 describe("propose_rename and read_context tool surface", () => {
   const renameArgs = { targetPath: "turtle", targetIdentifier: "ex:Piza", replacementIdentifier: "ex:Pizza" };
   const proposeResult = {

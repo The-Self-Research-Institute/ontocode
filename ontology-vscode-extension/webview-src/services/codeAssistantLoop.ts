@@ -17,6 +17,7 @@ import {
   proposeEditGroups,
   AssistantApiError,
   isDeadEndErrorCode,
+  reportAssistantUsage,
   type AssistantErrorCode,
   type AssistantSession,
   type ProposedEditGroupInput,
@@ -336,6 +337,15 @@ async function dispatchToolCall(
   }
 }
 
+function notifyUsage(onUsage: ((usage: ProviderUsage) => void) | undefined, usage: ProviderUsage): void {
+  if (!onUsage) return;
+  try {
+    onUsage(usage);
+  } catch (e) {
+    console.warn("Code assistant usage callback failed", e);
+  }
+}
+
 export async function runAssistantLoop(
   ctx: LoopContext,
   systemPrompt: string,
@@ -358,9 +368,13 @@ export async function runAssistantLoop(
       provenance: buildToolProvenance(ctx.session, call.name, call.args, revision, step),
     });
     onStage({ stage: "calling-provider" });
-    const { turn, advance } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal, (attempt, maxAttempts, status) => {
+    const { turn, advance, usage } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal, (attempt, maxAttempts, status) => {
       onStage({ stage: "calling-provider", detail: `Provider busy (HTTP ${status}) — retrying ${attempt}/${maxAttempts}...` });
     });
+    if (usage) {
+      notifyUsage(onUsage, usage);
+      reportAssistantUsage(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, usage);
+    }
 
     if (turn.kind === "answer") {
       onStage({ stage: "answer" });

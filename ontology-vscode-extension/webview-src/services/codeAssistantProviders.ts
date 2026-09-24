@@ -86,6 +86,42 @@ export interface ProviderUsage {
 
 export class ProviderProtocolError extends LlmRequestError {}
 
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+type UsageCounts = Pick<ProviderUsage, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens">;
+
+export function parseProviderUsage(provider: LlmProvider, raw: unknown): UsageCounts {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  let counts: UsageCounts;
+  if (provider === "claude") {
+    const u = (r.usage ?? {}) as Record<string, unknown>;
+    counts = {
+      inputTokens: tokenCount(u.input_tokens),
+      outputTokens: tokenCount(u.output_tokens),
+      cacheReadTokens: tokenCount(u.cache_read_input_tokens),
+      cacheWriteTokens: tokenCount(u.cache_creation_input_tokens),
+    };
+  } else if (provider === "openai") {
+    const u = (r.usage ?? {}) as Record<string, unknown>;
+    const details = (u.prompt_tokens_details ?? {}) as Record<string, unknown>;
+    counts = {
+      inputTokens: tokenCount(u.prompt_tokens),
+      outputTokens: tokenCount(u.completion_tokens),
+      cacheReadTokens: tokenCount(details.cached_tokens),
+    };
+  } else {
+    const u = (r.usageMetadata ?? {}) as Record<string, unknown>;
+    counts = {
+      inputTokens: tokenCount(u.promptTokenCount),
+      outputTokens: tokenCount(u.candidatesTokenCount),
+      cacheReadTokens: tokenCount(u.cachedContentTokenCount),
+    };
+  }
+  return Object.fromEntries(Object.entries(counts).filter(([, v]) => v !== undefined)) as UsageCounts;
+}
+
 function newToolCallId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 }
@@ -471,7 +507,7 @@ export async function requestNextTurn(
   tools: ToolDefinition[],
   signal?: AbortSignal,
   onRetry?: (attempt: number, maxAttempts: number, status: number) => void,
-): Promise<{ turn: AssistantTurn; advance: (results: ToolResultForModel[]) => ConversationState }> {
+): Promise<NextTurn> {
   const key = getStoredApiKey();
   if (!key) throw new LlmConfigError("No API key configured. Configure an AI provider to use the assistant.");
   const model = getStoredModel();
@@ -481,7 +517,9 @@ export async function requestNextTurn(
 
   let res: Response;
   let attempt = 0;
+  let startedAt = nowMs();
   while (true) {
+    startedAt = nowMs();
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
     if (res.ok || !RETRYABLE_STATUSES.has(res.status) || attempt >= MAX_TRANSIENT_RETRIES) break;
     attempt += 1;
@@ -494,14 +532,33 @@ export async function requestNextTurn(
     throw new ProviderProtocolError(`${conversation.provider} returned a response that could not be parsed as JSON.`);
   });
 
+  return parseTurn(conversation, raw, {
+    provider: conversation.provider,
+    model,
+    latencyMs: Math.max(0, Math.round(nowMs() - startedAt)),
+    ...parseProviderUsage(conversation.provider, raw),
+  });
+}
+
+export interface NextTurn {
+  turn: AssistantTurn;
+  advance: (results: ToolResultForModel[]) => ConversationState;
+  usage?: ProviderUsage;
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+function parseTurn(conversation: ConversationState, raw: unknown, usage: ProviderUsage): NextTurn {
   if (conversation.provider === "openai") {
-    const { turn, nativeAssistantMessage } = parseOpenAiResponse(raw);
-    return { turn, advance: (results) => appendOpenAiToolResults(conversation, nativeAssistantMessage, results) };
+    const { turn, nativeAssistantMessage } = parseOpenAiResponse(raw as OpenAiResponse);
+    return { turn, usage, advance: (results) => appendOpenAiToolResults(conversation, nativeAssistantMessage, results) };
   }
   if (conversation.provider === "claude") {
-    const { turn, nativeAssistantContent } = parseClaudeResponse(raw);
-    return { turn, advance: (results) => appendClaudeToolResults(conversation, nativeAssistantContent, results) };
+    const { turn, nativeAssistantContent } = parseClaudeResponse(raw as ClaudeResponse);
+    return { turn, usage, advance: (results) => appendClaudeToolResults(conversation, nativeAssistantContent, results) };
   }
-  const { turn, nativeAssistantParts } = parseGeminiResponse(raw);
-  return { turn, advance: (results) => appendGeminiToolResults(conversation, nativeAssistantParts, results) };
+  const { turn, nativeAssistantParts } = parseGeminiResponse(raw as GeminiResponse);
+  return { turn, usage, advance: (results) => appendGeminiToolResults(conversation, nativeAssistantParts, results) };
 }

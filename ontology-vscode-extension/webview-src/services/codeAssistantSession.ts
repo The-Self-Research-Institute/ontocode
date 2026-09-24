@@ -395,6 +395,39 @@ export async function proposeEditGroups(
   );
 }
 
+export interface AssistantUsageReport {
+  provider: string;
+  model: string;
+  latencyMs: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
+export function reportAssistantUsage(
+  apiBaseUrl: string,
+  token: string | undefined,
+  sessionId: string,
+  usage: AssistantUsageReport,
+): void {
+  try {
+    const body: AssistantUsageReport = { provider: usage.provider, model: usage.model, latencyMs: usage.latencyMs };
+    for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
+      if (typeof usage[key] === "number") body[key] = usage[key];
+    }
+    const pending = fetch(`${apiBaseUrl}/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/usage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+      keepalive: true,
+    });
+    Promise.resolve(pending).catch(() => undefined);
+  } catch {
+    return;
+  }
+}
+
 export async function applyEditGroup(
   apiBaseUrl: string,
   token: string | undefined,

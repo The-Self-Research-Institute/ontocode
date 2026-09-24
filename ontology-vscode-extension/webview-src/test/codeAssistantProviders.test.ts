@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { startAssistantConversation, requestNextTurn, ProviderProtocolError, type ToolDefinition } from "../services/codeAssistantProviders";
+import {
+  startAssistantConversation,
+  requestNextTurn,
+  parseProviderUsage,
+  ProviderProtocolError,
+  type ToolDefinition,
+} from "../services/codeAssistantProviders";
 import * as llmInsights from "../services/LlmInsightsService";
 
 const TOOL: ToolDefinition = {
@@ -247,6 +253,69 @@ describe("requestNextTurn — whole-request size guard", () => {
     const { turn } = await requestNextTurn(conversation, [TOOL]);
 
     expect(turn).toEqual({ kind: "answer", text: "fine" });
+  });
+});
+
+describe("requestNextTurn — usage", () => {
+  it("parses Claude usage including cache reads and writes", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("claude");
+    mockFetchOnce(200, {
+      content: [{ type: "text", text: "ok" }],
+      usage: { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 900, cache_creation_input_tokens: 45 },
+    });
+
+    const { usage } = await requestNextTurn(await startAssistantConversation("s", "hi"), [TOOL]);
+
+    expect(usage).toMatchObject({
+      provider: "claude",
+      model: "test-model",
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheReadTokens: 900,
+      cacheWriteTokens: 45,
+    });
+    expect(usage!.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("parses OpenAI usage with cached prompt tokens", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    mockFetchOnce(200, {
+      choices: [{ message: { content: "ok" } }],
+      usage: { prompt_tokens: 500, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 256 } },
+    });
+
+    const { usage } = await requestNextTurn(await startAssistantConversation("s", "hi"), [TOOL]);
+
+    expect(usage).toMatchObject({ provider: "openai", inputTokens: 500, outputTokens: 20, cacheReadTokens: 256 });
+    expect(usage).not.toHaveProperty("cacheWriteTokens");
+  });
+
+  it("parses Gemini usageMetadata", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("gemini");
+    mockFetchOnce(200, {
+      candidates: [{ content: { parts: [{ text: "ok" }] } }],
+      usageMetadata: { promptTokenCount: 77, candidatesTokenCount: 8, cachedContentTokenCount: 40 },
+    });
+
+    const { usage } = await requestNextTurn(await startAssistantConversation("s", "hi"), [TOOL]);
+
+    expect(usage).toMatchObject({ provider: "gemini", inputTokens: 77, outputTokens: 8, cacheReadTokens: 40 });
+  });
+
+  it("still reports latency when the provider sends no usage block", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    mockFetchOnce(200, { choices: [{ message: { content: "ok" } }] });
+
+    const { usage } = await requestNextTurn(await startAssistantConversation("s", "hi"), [TOOL]);
+
+    expect(Object.keys(usage!).sort()).toEqual(["latencyMs", "model", "provider"]);
+  });
+
+  it("ignores junk values in the usage block", () => {
+    expect(parseProviderUsage("claude", { usage: { input_tokens: "12", output_tokens: -1, cache_read_input_tokens: 5 } })).toEqual({
+      cacheReadTokens: 5,
+    });
+    expect(parseProviderUsage("gemini", null)).toEqual({});
   });
 });
 
