@@ -36,7 +36,7 @@ class AssistantSparqlToolServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        toolService = new AssistantSparqlToolService(sessionService, datasetService);
+        toolService = new AssistantSparqlToolService(sessionService, datasetService, new ProjectWriteLockRegistry());
         ReflectionTestUtils.setField(toolService, "maxRows", 200);
         ReflectionTestUtils.setField(toolService, "maxBytes", 200000L);
         ReflectionTestUtils.setField(toolService, "timeoutSeconds", 15);

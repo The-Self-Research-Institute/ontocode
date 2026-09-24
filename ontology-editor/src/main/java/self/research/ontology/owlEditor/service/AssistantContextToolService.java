@@ -24,12 +24,14 @@ public class AssistantContextToolService {
     private final AssistantSessionService sessionService;
     private final SparqlDatasetService datasetService;
     private final StorageManager storageManager;
+    private final ProjectWriteLockRegistry lockRegistry;
 
     public AssistantContextToolService(AssistantSessionService sessionService, SparqlDatasetService datasetService,
-                                        StorageManager storageManager) {
+                                        StorageManager storageManager, ProjectWriteLockRegistry lockRegistry) {
         this.sessionService = sessionService;
         this.datasetService = datasetService;
         this.storageManager = storageManager;
+        this.lockRegistry = lockRegistry;
     }
 
     public ContextToolResult readContext(String sessionId, String userEmail, List<Target> targets, String kind) {
@@ -51,12 +53,39 @@ public class AssistantContextToolService {
                     .message("Retrieval budget exhausted for this session").build();
         }
 
+        TargetResolution resolution;
+        try {
+            resolution = lockRegistry.runShared(session.getProjectId(),
+                    () -> resolveTargets(session.getProjectId(), dedupeTargets(targets), kind));
+        } catch (Exception e) {
+            log.warn("[Assistant] read_context failed for session {}: {}", sessionId, e.getMessage());
+            return ContextToolResult.builder().ok(false).errorCode("QUERY_ERROR")
+                    .message(e.getMessage() != null ? e.getMessage() : "read_context failed").build();
+        }
+
+        int estimatedTokens = AssistantTokenEstimator.estimate(concatenatedText(resolution.items()));
+        if (!sessionService.tryConsumeTokenBudget(sessionId, estimatedTokens)) {
+            return ContextToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
+                    .message("Retrieval token budget exhausted for this session").build();
+        }
+
+        return ContextToolResult.builder()
+                .ok(true)
+                .items(resolution.items())
+                .coverage(resolution.anyPartial() ? "partial" : "complete")
+                .revision(session.getPinnedRevision())
+                .build();
+    }
+
+    private record TargetResolution(List<Item> items, boolean anyPartial) {}
+
+    private TargetResolution resolveTargets(String projectId, List<Target> targets, String kind) {
         List<Item> items = new ArrayList<>();
         boolean anyPartial = false;
-        for (Target target : dedupeTargets(targets)) {
+        for (Target target : targets) {
             try {
                 if ("range".equals(target.type())) {
-                    items.add(resolveRange(session.getProjectId(), target.value()));
+                    items.add(resolveRange(projectId, target.value()));
                 } else if ("identifier".equals(target.type())) {
                     if ("diagnostics".equals(kind)) {
                         anyPartial = true;
@@ -65,26 +94,14 @@ public class AssistantContextToolService {
                                 target.value());
                         continue;
                     }
-                    items.add(resolveIdentifier(session.getProjectId(), target.value(), kind));
+                    items.add(resolveIdentifier(projectId, target.value(), kind));
                 }
             } catch (Exception e) {
                 log.warn("[Assistant] read_context target {} failed: {}", target.value(), e.getMessage());
                 anyPartial = true;
             }
         }
-
-        int estimatedTokens = AssistantTokenEstimator.estimate(concatenatedText(items));
-        if (!sessionService.tryConsumeTokenBudget(sessionId, estimatedTokens)) {
-            return ContextToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
-                    .message("Retrieval token budget exhausted for this session").build();
-        }
-
-        return ContextToolResult.builder()
-                .ok(true)
-                .items(items)
-                .coverage(anyPartial ? "partial" : "complete")
-                .revision(session.getPinnedRevision())
-                .build();
+        return new TargetResolution(items, anyPartial);
     }
 
     private List<Target> dedupeTargets(List<Target> targets) {

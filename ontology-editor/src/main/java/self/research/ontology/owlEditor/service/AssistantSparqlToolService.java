@@ -24,6 +24,7 @@ public class AssistantSparqlToolService {
 
     private final AssistantSessionService sessionService;
     private final SparqlDatasetService datasetService;
+    private final ProjectWriteLockRegistry lockRegistry;
 
     @Value("${assistant.sparql.max-rows:200}")
     private int maxRows;
@@ -34,9 +35,11 @@ public class AssistantSparqlToolService {
     @Value("${assistant.sparql.timeout-seconds:15}")
     private int timeoutSeconds;
 
-    public AssistantSparqlToolService(AssistantSessionService sessionService, SparqlDatasetService datasetService) {
+    public AssistantSparqlToolService(AssistantSessionService sessionService, SparqlDatasetService datasetService,
+                                       ProjectWriteLockRegistry lockRegistry) {
         this.sessionService = sessionService;
         this.datasetService = datasetService;
+        this.lockRegistry = lockRegistry;
     }
 
     public SparqlToolResult runSparql(String sessionId, String userEmail, String query) {
@@ -65,8 +68,8 @@ public class AssistantSparqlToolService {
         }
 
         try {
-            SparqlDatasetService.CappedSparqlResult capped = datasetService.execSelectCapped(
-                    session.getProjectId(), query, timeoutSeconds, maxRows, maxBytes);
+            SparqlDatasetService.CappedSparqlResult capped = lockRegistry.runShared(session.getProjectId(),
+                    () -> datasetService.execSelectCapped(session.getProjectId(), query, timeoutSeconds, maxRows, maxBytes));
             if (capped.capExceeded() != null) {
                 return SparqlToolResult.builder().ok(false).errorCode(capped.capExceeded())
                         .message("Query matched more rows/bytes than the assistant's cap allows ("

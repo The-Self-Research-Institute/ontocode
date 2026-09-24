@@ -52,6 +52,9 @@ class AssistantEditApplyServiceTest {
     private AssistantEditSyntaxValidator syntaxValidator;
 
     @Mock
+    private AssistantEditReferenceCoverageValidator referenceCoverageValidator;
+
+    @Mock
     private SparqlDatasetService datasetService;
 
     private AssistantEditApplyService applyService;
@@ -62,12 +65,14 @@ class AssistantEditApplyServiceTest {
         MockitoAnnotations.openMocks(this);
         ProjectWriteLockRegistry realLockRegistry = new ProjectWriteLockRegistry();
         applyService = new AssistantEditApplyService(groupRepository, storageManager, spliceWriter,
-                reimportPipeline, remapService, realLockRegistry, syntaxValidator, datasetService);
+                reimportPipeline, remapService, realLockRegistry, syntaxValidator, referenceCoverageValidator, datasetService);
         splicedFile = Files.createTempFile("apply-test-spliced-", ".ttl");
         when(storageManager.extensionFor(anyString())).thenReturn("ttl");
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(splicedFile);
         when(remapService.remap(any(), any())).thenReturn(List.of());
         when(syntaxValidator.isValid(anyString(), anyString(), any())).thenReturn(true);
+        when(referenceCoverageValidator.check(anyString(), anyString(), any()))
+                .thenReturn(new AssistantEditReferenceCoverageValidator.CoverageResult(true, null));
     }
 
     private AssistantEditGroupDocument group(AssistantEditGroupStatus status, EditEntry... edits) {
@@ -280,7 +285,7 @@ class AssistantEditApplyServiceTest {
     }
 
     @Test
-    void unexpectedReimportFailureReturnsApplyFailedNotACrash() throws Exception {
+    void unexpectedReimportFailureReturnsRecoveryRequiredNotACrash() throws Exception {
         AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
                 edit(1, 1, "old", "new"));
         when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
@@ -290,11 +295,11 @@ class AssistantEditApplyServiceTest {
         ApplyResult result = applyService.applyGroup("g1", "u@x.com");
 
         assertFalse(result.isOk());
-        assertEquals("APPLY_FAILED", result.getErrorCode());
+        assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
     }
 
     @Test
-    void reimportFailureWithGraphLeftEmptyWarnsAgainstBlindRetry() throws Exception {
+    void reimportFailureWithGraphLeftEmptyRequiresRecoveryNotRetry() throws Exception {
         AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
                 edit(1, 1, "old", "new"));
         when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
@@ -306,13 +311,13 @@ class AssistantEditApplyServiceTest {
         ApplyResult result = applyService.applyGroup("g1", "u@x.com");
 
         assertFalse(result.isOk());
-        assertEquals("APPLY_FAILED", result.getErrorCode());
-        assertTrue(result.getMessage().contains("appears empty"));
-        assertTrue(result.getMessage().contains("Do not assume retrying is safe"));
+        assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
+        assertTrue(result.getMessage().contains("has not been verified"));
+        assertTrue(result.getMessage().contains("paused"));
     }
 
     @Test
-    void reimportFailureWithGraphStillPopulatedSaysRetryIsSafe() throws Exception {
+    void reimportFailureWithGraphStillPopulatedStillRequiresRecoveryNotRetry() throws Exception {
         AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
                 edit(1, 1, "old", "new"));
         when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
@@ -324,8 +329,9 @@ class AssistantEditApplyServiceTest {
         ApplyResult result = applyService.applyGroup("g1", "u@x.com");
 
         assertFalse(result.isOk());
-        assertEquals("APPLY_FAILED", result.getErrorCode());
-        assertTrue(result.getMessage().contains("still has content"));
-        assertTrue(result.getMessage().contains("retrying should be safe"));
+        assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
+        assertTrue(result.getMessage().contains("has not been verified"));
+        assertTrue(result.getMessage().contains("paused"));
+        assertFalse(result.getMessage().toLowerCase().contains("safe"));
     }
 }

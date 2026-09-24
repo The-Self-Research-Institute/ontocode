@@ -50,13 +50,17 @@ class AssistantEditProposalServiceTest {
 
     private AssistantEditSyntaxValidator syntaxValidator;
 
+    private AssistantEditReferenceCoverageValidator referenceCoverageValidator;
+
     private AssistantEditProposalService proposalService;
 
     @BeforeEach
     void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
         syntaxValidator = new AssistantEditSyntaxValidator(storageManager, spliceWriter);
-        proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager, syntaxValidator);
+        referenceCoverageValidator = new AssistantEditReferenceCoverageValidator(storageManager);
+        proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager,
+                syntaxValidator, referenceCoverageValidator);
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 20);
         ReflectionTestUtils.setField(proposalService, "maxGroupsPerRequest", 10);
@@ -417,6 +421,26 @@ class AssistantEditProposalServiceTest {
     void editThatDoesNotRemoveAnyIdentifierSkipsCoverageScanEntirely() throws Exception {
         mockLiveContent("turtle", 1, 1, ":A rdfs:comment \"old text\" .");
         EditInput edit = new EditInput("turtle", new EditRange(1, 1), ":A rdfs:comment \"old text\" .", ":A rdfs:comment \"new text\" .");
+        EditGroupInput group = new EditGroupInput("c1", List.of(edit));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(outcome.isValidationPassed());
+        assertTrue(checkNamed(outcome, "complete_reference_coverage").get().passed());
+    }
+
+    @Test
+    void movingOneEntityToADifferentRelationLeavesUnrelatedEntitiesUnflagged() throws Exception {
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 0, 1))
+                .thenReturn(new StorageManager.CodeViewPage("ex:Alice ex:memberOf ex:TeamA .", 0, 1, 10, 100));
+        Path fullDocument = Files.createTempFile("proposal-fulldoc-", ".ttl");
+        Files.writeString(fullDocument,
+                "ex:Alice ex:memberOf ex:TeamA .\n"
+                        + "ex:Bob ex:memberOf ex:TeamA .\n",
+                StandardCharsets.UTF_8);
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(fullDocument);
+        EditInput edit = new EditInput("turtle", new EditRange(0, 1), "ex:Alice ex:memberOf ex:TeamA .", "ex:Alice ex:memberOf ex:TeamB .");
         EditGroupInput group = new EditGroupInput("c1", List.of(edit));
 
         ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));

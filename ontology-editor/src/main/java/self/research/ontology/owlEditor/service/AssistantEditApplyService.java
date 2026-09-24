@@ -30,6 +30,7 @@ public class AssistantEditApplyService {
     private final AssistantEditGroupRemapService remapService;
     private final ProjectWriteLockRegistry lockRegistry;
     private final AssistantEditSyntaxValidator syntaxValidator;
+    private final AssistantEditReferenceCoverageValidator referenceCoverageValidator;
     private final SparqlDatasetService datasetService;
 
     public AssistantEditApplyService(AssistantEditGroupRepository groupRepository,
@@ -39,6 +40,7 @@ public class AssistantEditApplyService {
                                       AssistantEditGroupRemapService remapService,
                                       ProjectWriteLockRegistry lockRegistry,
                                       AssistantEditSyntaxValidator syntaxValidator,
+                                      AssistantEditReferenceCoverageValidator referenceCoverageValidator,
                                       SparqlDatasetService datasetService) {
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
@@ -47,6 +49,7 @@ public class AssistantEditApplyService {
         this.remapService = remapService;
         this.lockRegistry = lockRegistry;
         this.syntaxValidator = syntaxValidator;
+        this.referenceCoverageValidator = referenceCoverageValidator;
         this.datasetService = datasetService;
     }
 
@@ -93,7 +96,10 @@ public class AssistantEditApplyService {
             boolean liveMismatch = hasLiveMismatch(group);
             boolean stillSyntaxValid = liveMismatch
                     || syntaxValidator.isValid(group.getProjectId(), group.getTargetPath(), spliceEdits);
-            if (liveMismatch || !stillSyntaxValid) {
+            boolean stillCoversReferences = liveMismatch || !stillSyntaxValid
+                    || referenceCoverageValidator.check(group.getProjectId(), group.getTargetPath(),
+                            toCoverageEdits(group)).covered();
+            if (liveMismatch || !stillSyntaxValid || !stillCoversReferences) {
                 group.setStatus(AssistantEditGroupStatus.CONFLICT);
                 group.setUpdatedAt(Instant.now());
                 groupRepository.save(group);
@@ -151,20 +157,21 @@ public class AssistantEditApplyService {
 
     private ApplyResult handleReimportFailure(AssistantEditGroupDocument group, Exception reimportEx) {
         String baseMessage = reimportEx.getMessage() != null ? reimportEx.getMessage() : "Apply failed";
-        boolean graphLooksIntact = probeGraphNonEmpty(group.getProjectId());
-        if (!graphLooksIntact) {
+        boolean graphNonEmpty = probeGraphNonEmpty(group.getProjectId());
+        if (!graphNonEmpty) {
             log.error("[Assistant] CRITICAL: reimport failed for project {} and the graph now looks empty - "
                     + "this can happen when a large reimport is interrupted mid-transaction (GraphDB commits in "
                     + "batches for big documents, so a failure partway through can leave the graph cleared but "
-                    + "not fully reloaded). This project's data may need manual recovery from ontology history "
-                    + "or a backup. Original error: {}", group.getProjectId(), baseMessage, reimportEx);
-            return errorResult("APPLY_FAILED", baseMessage
-                    + " - the project's graph now appears empty. Do not assume retrying is safe; check with a human before continuing.");
+                    + "not fully reloaded). Original error: {}", group.getProjectId(), baseMessage, reimportEx);
+        } else {
+            log.error("[Assistant] Reimport failed for project {} - the graph still has some content, but a "
+                    + "reimport interrupted mid-transaction can leave a graph non-empty and still wrong (the same "
+                    + "intermediate-commit behavior that can empty it can also leave it partially reloaded). "
+                    + "Non-empty does not mean intact. Original error: {}", group.getProjectId(), baseMessage, reimportEx);
         }
-        log.warn("[Assistant] Reimport failed for project {} but the graph still has content - "
-                + "likely failed before completing any destructive write, retrying should be safe. Error: {}",
-                group.getProjectId(), baseMessage);
-        return errorResult("APPLY_FAILED", baseMessage + " - the project's graph still has content; retrying should be safe.");
+        return errorResult("RECOVERY_REQUIRED", "Apply failed: " + baseMessage + ". The consistency of the "
+                + "source, graph, and history has not been verified. Further changes to this project are "
+                + "paused until its state is checked by a human.");
     }
 
     private boolean probeGraphNonEmpty(String projectId) {
@@ -182,6 +189,13 @@ public class AssistantEditApplyService {
     private List<LineRangeSpliceWriter.SpliceEdit> toSpliceEdits(AssistantEditGroupDocument group) {
         return group.getEdits().stream()
                 .map(e -> new LineRangeSpliceWriter.SpliceEdit(e.getStartLine(), e.getLineCount(), e.getNewText()))
+                .toList();
+    }
+
+    private List<AssistantEditReferenceCoverageValidator.CoverageEdit> toCoverageEdits(AssistantEditGroupDocument group) {
+        return group.getEdits().stream()
+                .map(e -> new AssistantEditReferenceCoverageValidator.CoverageEdit(
+                        e.getStartLine(), e.getLineCount(), e.getOriginalText(), e.getNewText()))
                 .toList();
     }
 

@@ -40,7 +40,8 @@ class AssistantContextToolServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        toolService = new AssistantContextToolService(sessionService, datasetService, storageManager);
+        toolService = new AssistantContextToolService(sessionService, datasetService, storageManager,
+                new ProjectWriteLockRegistry());
         when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
         when(sessionService.isRevisionStale(any())).thenReturn(false);
     }
