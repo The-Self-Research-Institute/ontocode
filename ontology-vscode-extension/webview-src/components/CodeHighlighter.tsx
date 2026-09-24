@@ -69,6 +69,7 @@ interface CodeHighlighterProps {
   /** Called when a gated export action is clicked on a non-paid plan. */
   onExportProAction?: () => void;
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
+  highlightedLineNumbers?: Map<number, { startCol: number; endCol: number } | "full">;
 }
 
 /** Imperative handle so callers outside the editor (e.g. a Problems panel) can jump to a line. */
@@ -109,6 +110,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   canExport = true,
   onExportProAction,
   onUnsavedChangesChange,
+  highlightedLineNumbers,
 }, forwardedRef) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -976,6 +978,26 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
             })
             .join("");
         }
+
+        const changedRange = highlightedLineNumbers?.get(lineNumber);
+        if (changedRange && changedRange !== "full") {
+          const changedText = line.slice(changedRange.startCol, changedRange.endCol);
+          if (changedText) {
+            const changedRegex = new RegExp(escapeRegex(changedText));
+            const parts = processedLine.split(/(<[^>]+>)/g);
+            let replaced = false;
+            processedLine = parts
+              .map((part) => {
+                if (part.startsWith("<") && part.endsWith(">")) return part;
+                if (replaced) return part;
+                return part.replace(changedRegex, (match) => {
+                  replaced = true;
+                  return `<mark style="background-color:rgba(147,51,234,0.35);color:inherit;padding:0 1px;border-radius:2px">${match}</mark>`;
+                });
+              })
+              .join("");
+          }
+        }
       }
 
       // If collapsed, append fold summary to the line content
@@ -1001,6 +1023,8 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       if (hasDOI && !citationRemovalMode) {
         lineStyle = "background-color:#1a3a2a"; // Dark green tint for DOI lines
       }
+
+      const isChangedLine = highlightedLineNumbers?.has(lineNumber) ?? false;
 
       // Enhanced line number visibility - brighter colors and larger font
       const isErrorLine = errorLineNumbers.has(lineNumber);
@@ -1032,11 +1056,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
         : `<span style="width:16px;min-width:16px;flex-shrink:0;display:inline-block"></span>`;
 
       const errorLineStyle = isErrorLine ? "background-color:rgba(239,68,68,0.12);border-left:2px solid #f87171;" : "";
-      const combinedLineStyle = [lineStyle, errorLineStyle].filter(Boolean).join(";");
+      const changedLineStyle = isChangedLine ? "background-color:rgba(147,51,234,0.14);border-left:2px solid #9333ea;" : "";
+      const combinedLineStyle = [lineStyle, errorLineStyle, changedLineStyle].filter(Boolean).join(";");
       const lineNumberDisplay = isErrorLine ? `⚠${lineNumber}` : `${lineNumber}`;
 
       numberedLines.push(
-        `<div class="code-line${isCitationLine ? " citation-line" : ""}${hasDOI ? " doi-line" : ""}${isErrorLine ? " error-line" : ""}" data-line="${index}" data-line-idx="${index}" data-is-citation="${isCitationLine}" data-has-doi="${hasDOI}" data-doi="${hasDOI ? doi : ""}" style="${combinedLineStyle};display:flex;align-items:center;min-height:20px;line-height:20px;padding:0;margin:0${citationModeHoverStyle}">` +
+        `<div class="code-line${isCitationLine ? " citation-line" : ""}${hasDOI ? " doi-line" : ""}${isErrorLine ? " error-line" : ""}${isChangedLine ? " changed-line" : ""}" data-line="${index}" data-line-idx="${index}" data-is-citation="${isCitationLine}" data-has-doi="${hasDOI}" data-doi="${hasDOI ? doi : ""}" style="${combinedLineStyle};display:flex;align-items:center;min-height:20px;line-height:20px;padding:0;margin:0${citationModeHoverStyle};transition:background-color 1.5s ease-out">` +
           `<span style="color:${lineNumberColor};font-weight:${lineNumberWeight};font-size:${lineNumberSize};user-select:none;width:55px;min-width:55px;text-align:right;padding-right:4px;flex-shrink:0;cursor:${citationInsertionMode || citationRemovalMode ? "pointer" : "default"};opacity:0.9" class="line-number" data-line-idx="${index}" title="${isErrorLine ? "Syntax error on this line — click to navigate" : lineNumberTitle}">${lineNumberDisplay}</span>` +
           foldIndicatorHtml +
           `<span style="color:#d4d4d4;white-space:${wordWrap ? "pre-wrap" : "pre"};overflow-wrap:${wordWrap ? "anywhere" : "normal"};word-break:${wordWrap ? "break-word" : "normal"};flex:1;min-width:0;user-select:text;${citationModeCursor}" class="line-content" data-line-idx="${index}">${processedLine}</span>` +
@@ -1059,6 +1084,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     collapsedRanges,
     errorLineNumbers,
     skipHighlighting,
+    highlightedLineNumbers,
   ]);
 
   const loadMore = () => {

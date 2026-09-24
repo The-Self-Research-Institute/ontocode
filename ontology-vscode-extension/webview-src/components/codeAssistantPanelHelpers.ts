@@ -38,7 +38,7 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
   const editable =
     action === "local-edit"
       ? "The user wants a concrete edit. Use read_context to ground yourself, then call propose_edit with grouped, dependent replacements. Never claim an edit was applied — applying is a separate human-approved step."
-      : "Answer the question directly. Only call propose_edit if the user explicitly asked for a change.";
+      : "This session cannot propose or apply edits — calling propose_edit will always be rejected. Answer the question directly. If the user is actually asking for a change, tell them to switch to Local edit mode and ask again there; do not attempt propose_edit.";
   return [
     "You are an ontology-editing assistant with three tools: read_context, run_sparql (read-only), and propose_edit.",
     scope,
@@ -53,6 +53,8 @@ export interface HistoryEntryLike {
   text?: string;
 }
 
+export const MAX_HISTORY_TURNS = 30;
+
 export function buildConversationHistory(entries: HistoryEntryLike[]): HistoryTurn[] {
   const turns: HistoryTurn[] = [];
   entries.forEach((entry, index) => {
@@ -64,7 +66,40 @@ export function buildConversationHistory(entries: HistoryEntryLike[]): HistoryTu
     }
     if (entry.kind === "answer") turns.push({ role: "assistant", text: entry.text ?? "" });
   });
-  return turns;
+  return turns.length > MAX_HISTORY_TURNS ? turns.slice(turns.length - MAX_HISTORY_TURNS) : turns;
+}
+
+const CHAT_STORAGE_PREFIX = "ontocode.askAi.chat.";
+const MAX_STORED_ENTRIES = 120;
+
+export function chatHistoryStorageKey(projectId: string): string {
+  return `${CHAT_STORAGE_PREFIX}${projectId}`;
+}
+
+export function loadStoredChatEntries<T>(projectId: string): T[] | null {
+  try {
+    const raw = window.localStorage.getItem(chatHistoryStorageKey(projectId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveStoredChatEntries(projectId: string, entries: unknown[]): void {
+  try {
+    const capped = entries.length > MAX_STORED_ENTRIES ? entries.slice(entries.length - MAX_STORED_ENTRIES) : entries;
+    window.localStorage.setItem(chatHistoryStorageKey(projectId), JSON.stringify(capped));
+  } catch {
+  }
+}
+
+export function clearStoredChatEntries(projectId: string): void {
+  try {
+    window.localStorage.removeItem(chatHistoryStorageKey(projectId));
+  } catch {
+  }
 }
 
 export function describeLoopStage(event: LoopStageEvent): string {

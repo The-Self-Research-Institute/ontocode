@@ -1,5 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
-import { buildConversationHistory, toFriendlyErrorMessage } from "../components/codeAssistantPanelHelpers";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  buildConversationHistory,
+  toFriendlyErrorMessage,
+  MAX_HISTORY_TURNS,
+  loadStoredChatEntries,
+  saveStoredChatEntries,
+  clearStoredChatEntries,
+} from "../components/codeAssistantPanelHelpers";
 
 describe("toFriendlyErrorMessage", () => {
   it("leaves a short, already-friendly message untouched", () => {
@@ -36,14 +43,29 @@ describe("toFriendlyErrorMessage", () => {
 });
 
 describe("buildConversationHistory", () => {
-  it("keeps every answered turn in order without trimming", () => {
-    const entries = Array.from({ length: 40 }, (_, i) =>
+  it("keeps every answered turn in order when under the cap", () => {
+    const entries = Array.from({ length: 10 }, (_, i) =>
       i % 2 === 0 ? { role: "user" as const, text: `q${i}` } : { role: "assistant" as const, kind: "answer", text: `a${i}` },
     );
     const history = buildConversationHistory(entries);
-    expect(history).toHaveLength(40);
+    expect(history).toHaveLength(10);
     expect(history[0]).toEqual({ role: "user", text: "q0" });
-    expect(history[39]).toEqual({ role: "assistant", text: "a39" });
+    expect(history[9]).toEqual({ role: "assistant", text: "a9" });
+  });
+
+  it("caps to the most recent turns once a persisted thread grows past the limit", () => {
+    const entries = Array.from({ length: MAX_HISTORY_TURNS + 10 }, (_, i) =>
+      i % 2 === 0
+        ? { role: "user" as const, text: `q${i}` }
+        : { role: "assistant" as const, kind: "answer", text: `a${i}` },
+    );
+    const history = buildConversationHistory(entries);
+    expect(history).toHaveLength(MAX_HISTORY_TURNS);
+    expect(history[0]).toEqual({ role: "user", text: "q10" });
+    expect(history[history.length - 1]).toEqual({
+      role: "assistant",
+      text: `a${MAX_HISTORY_TURNS + 9}`,
+    });
   });
 
   it("drops a prompt that only produced an error so a retry is not sent twice", () => {
@@ -60,5 +82,42 @@ describe("buildConversationHistory", () => {
       { role: "assistant", text: "answer" },
       { role: "user", text: "proposal" },
     ]);
+  });
+});
+
+describe("chat history storage", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("returns null when nothing is stored yet", () => {
+    expect(loadStoredChatEntries("proj-1")).toBeNull();
+  });
+
+  it("round-trips entries through save and load", () => {
+    const entries = [{ id: "ca-entry-1", role: "user", text: "hi" }];
+    saveStoredChatEntries("proj-1", entries);
+    expect(loadStoredChatEntries("proj-1")).toEqual(entries);
+  });
+
+  it("keeps different projects' threads separate", () => {
+    saveStoredChatEntries("proj-1", [{ id: "a" }]);
+    saveStoredChatEntries("proj-2", [{ id: "b" }]);
+    expect(loadStoredChatEntries("proj-1")).toEqual([{ id: "a" }]);
+    expect(loadStoredChatEntries("proj-2")).toEqual([{ id: "b" }]);
+  });
+
+  it("caps stored entries to the most recent ones", () => {
+    const entries = Array.from({ length: 150 }, (_, i) => ({ id: `ca-entry-${i}` }));
+    saveStoredChatEntries("proj-1", entries);
+    const stored = loadStoredChatEntries<{ id: string }>("proj-1");
+    expect(stored?.length).toBeLessThan(150);
+    expect(stored?.[stored.length - 1]).toEqual({ id: "ca-entry-149" });
+  });
+
+  it("removes the stored thread on clear", () => {
+    saveStoredChatEntries("proj-1", [{ id: "a" }]);
+    clearStoredChatEntries("proj-1");
+    expect(loadStoredChatEntries("proj-1")).toBeNull();
   });
 });

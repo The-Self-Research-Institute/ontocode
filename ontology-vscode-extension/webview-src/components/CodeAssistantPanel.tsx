@@ -27,6 +27,9 @@ import {
   describeLoopStage,
   resolveApplyBlock,
   toFriendlyErrorMessage,
+  loadStoredChatEntries,
+  saveStoredChatEntries,
+  clearStoredChatEntries,
   type CodeAssistantAction,
 } from "./codeAssistantPanelHelpers";
 import {
@@ -49,6 +52,7 @@ interface CodeAssistantPanelProps {
   hasUnsavedCodeViewChanges?: boolean;
   onClose?: () => void;
   onProjectRestored?: () => void;
+  onApplySuccess?: (changedTexts: string[]) => void;
 }
 
 type ChatEntry =
@@ -83,10 +87,22 @@ interface PromptToRetry {
 
 type ReviewEntry = Extract<ChatEntry, { kind: "review" }>;
 
-let entryCounter = 0;
 function nextEntryId(): string {
-  entryCounter += 1;
-  return `ca-entry-${entryCounter}`;
+  return `ca-entry-${crypto.randomUUID()}`;
+}
+
+function sanitizeEntryForStorage(entry: ChatEntry): ChatEntry {
+  if (entry.role !== "assistant" || entry.kind !== "review") return entry;
+  const decisions = entry.decisions;
+  const hasStuckApplying = Object.values(decisions).some((d) => d === "applying");
+  if (!entry.applyAllRun && !hasStuckApplying) return entry;
+  return {
+    ...entry,
+    applyAllRun: null,
+    decisions: hasStuckApplying
+      ? Object.fromEntries(Object.entries(decisions).map(([id, d]) => [id, d === "applying" ? "pending" : d]))
+      : decisions,
+  };
 }
 
 function actionLabel(action: CodeAssistantAction): string {
@@ -100,6 +116,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   hasUnsavedCodeViewChanges = false,
   onClose,
   onProjectRestored,
+  onApplySuccess,
 }) => {
   const { user, logout } = useAuth();
   const { isFree, getUpgradeMessage } = useSubscription();
@@ -108,7 +125,10 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusText] = useState("");
-  const [entries, setEntries] = useState<ChatEntry[]>([]);
+  const [entries, setEntries] = useState<ChatEntry[]>(() =>
+    (projectId ? (loadStoredChatEntries<ChatEntry>(projectId) ?? []) : []).map(sanitizeEntryForStorage),
+  );
+  const lastLoadedProjectIdRef = useRef<string | undefined>(projectId);
   const [commandIndex, setCommandIndex] = useState(0);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -162,7 +182,16 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       run: () => setAction("local-edit"),
     },
     { cmd: "/find", label: "Project findings", description: "Ask a question grounded in the whole project", disabled: false, run: () => setAction("project-findings") },
-    { cmd: "/clear", label: "Clear chat", description: "Start a new conversation", disabled: applyBusy, run: () => commitEntries(() => []) },
+    {
+      cmd: "/clear",
+      label: "Clear chat",
+      description: "Start a new conversation",
+      disabled: applyBusy,
+      run: () => {
+        commitEntries(() => []);
+        if (projectId) clearStoredChatEntries(projectId);
+      },
+    },
     {
       cmd: "/logout",
       label: "Log out",
@@ -185,6 +214,19 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       abortControllerRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (!projectId || projectId === lastLoadedProjectIdRef.current) return;
+    lastLoadedProjectIdRef.current = projectId;
+    const loaded = (loadStoredChatEntries<ChatEntry>(projectId) ?? []).map(sanitizeEntryForStorage);
+    commitEntries(() => loaded);
+  }, [projectId]);
+
+  useEffect(() => {
+    const pid = projectIdRef.current;
+    if (!pid) return;
+    saveStoredChatEntries(pid, entries.map(sanitizeEntryForStorage));
+  }, [entries]);
 
   useEffect(() => {
     const el = composerRef.current;
@@ -391,6 +433,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   };
 
   const applyGroupOnce = async (entryId: string, sessionId: string, serverGroupId: string): Promise<ApplyOneResult> => {
+    const appliedGroup = findReviewEntry(entryId)?.groups.find((g) => g.serverGroupId === serverGroupId);
     updateReviewEntry(entryId, (e) => {
       const errors = { ...e.errors };
       delete errors[serverGroupId];
@@ -402,6 +445,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         ...e,
         decisions: applyRemapResult(e.decisions, serverGroupId, result.remappedPendingGroups ?? []),
       }));
+      onApplySuccess?.(appliedGroup?.diff.map((d) => d.after) ?? []);
       return { ok: true };
     } catch (err) {
       const signal = errorSignalFrom(err, "Apply failed unexpectedly.");
@@ -499,7 +543,6 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       setCopiedId(entryId);
       setTimeout(() => setCopiedId((current) => (current === entryId ? null : current)), 1500);
     } catch {
-      /* clipboard unavailable or denied */
     }
   };
 

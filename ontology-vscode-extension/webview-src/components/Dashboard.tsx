@@ -2496,6 +2496,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
+  const [highlightedLineNumbers, setHighlightedLineNumbers] = useState<Map<number, { startCol: number; endCol: number } | "full"> | undefined>(undefined);
+  const pendingHighlightTextsRef = useRef<string[] | null>(null);
+  const highlightClearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isDownloadingCodeView, setIsDownloadingCodeView] = useState(false);
   // Tracks the in-flight Code View download's requestId so the real
   // "downloadOntologyComplete"/"downloadOntologyFailed" host reply can clear
@@ -12870,6 +12873,42 @@ const updateItemInState = useCallback(
     [projectId, codeViewFormat, codeViewContent],
   );
 
+  useEffect(() => {
+    const texts = pendingHighlightTextsRef.current;
+    if (!texts || texts.length === 0) return;
+    pendingHighlightTextsRef.current = null;
+    const lines = codeViewContent.split("\n");
+    const matched = new Map<number, { startCol: number; endCol: number } | "full">();
+    for (const text of texts) {
+      const textLines = text.split("\n");
+      const firstLine = textLines[0]?.trim();
+      if (!firstLine) continue;
+      const lineIdx = lines.findIndex((l) => l.includes(firstLine));
+      if (lineIdx === -1) continue;
+      const startCol = lines[lineIdx].indexOf(firstLine);
+      matched.set(lineIdx + 1, startCol >= 0 ? { startCol, endCol: startCol + firstLine.length } : "full");
+      for (let i = 1; i < textLines.length; i++) matched.set(lineIdx + 1 + i, "full");
+    }
+    if (matched.size === 0) return;
+    setHighlightedLineNumbers(matched);
+    if (highlightClearTimeoutRef.current) clearTimeout(highlightClearTimeoutRef.current);
+    highlightClearTimeoutRef.current = setTimeout(() => setHighlightedLineNumbers(undefined), 4000);
+  }, [codeViewContent]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightClearTimeoutRef.current) clearTimeout(highlightClearTimeoutRef.current);
+    };
+  }, []);
+
+  const handleAskAiApplySuccess = useCallback(
+    (changedTexts: string[]) => {
+      pendingHighlightTextsRef.current = changedTexts;
+      fetchCodeViewContent(codeViewFormat, true, true);
+    },
+    [fetchCodeViewContent, codeViewFormat],
+  );
+
   // Navigate to another window of a large document in paged Code View mode.
   const loadCodeViewPage = useCallback(
     async (startLine: number) => {
@@ -15688,6 +15727,7 @@ const updateItemInState = useCallback(
                         canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
                         onExportProAction={handleExportProAction}
                         onUnsavedChangesChange={setCodeViewHasUnsavedEdits}
+                        highlightedLineNumbers={highlightedLineNumbers}
                       />
                     )}
                   </div>
@@ -15722,6 +15762,7 @@ const updateItemInState = useCallback(
                     documentPath={activeFileName || undefined}
                     hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
                     onClose={() => setShowCodeAssistant(false)}
+                    onApplySuccess={handleAskAiApplySuccess}
                   />
                 </div>
               </>

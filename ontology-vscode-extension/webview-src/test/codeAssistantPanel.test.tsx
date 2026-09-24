@@ -106,6 +106,7 @@ beforeEach(() => {
   logout.mockReset();
   sessionMock.mockResolvedValue(session);
   Element.prototype.scrollIntoView = () => {};
+  window.localStorage.clear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
