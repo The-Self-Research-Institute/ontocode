@@ -10,6 +10,15 @@ import { useSubscription } from "../hooks/useSubscription";
 import { createAssistantSession, applyEditGroup, type AssistantSession, type ProposedEditGroupResult } from "../services/codeAssistantSession";
 import { runAssistantLoop, type LoopOutcome, type ContextEvent } from "../services/codeAssistantLoop";
 import { CodeAssistantDeadEndNotice } from "./CodeAssistantDeadEndNotice";
+import { CodeAssistantRecoveryBanner } from "./CodeAssistantRecoveryBanner";
+import {
+  clearRecoveryLock,
+  fetchRecoveryState,
+  RecoveryApiError,
+  restorePreviousVersion,
+  UNLOCKED_RECOVERY_STATE,
+  type RecoveryState,
+} from "../services/codeAssistantRecovery";
 import {
   ACTIONS,
   getApiBaseUrl,
@@ -39,6 +48,7 @@ interface CodeAssistantPanelProps {
   documentPath?: string;
   hasUnsavedCodeViewChanges?: boolean;
   onClose?: () => void;
+  onProjectRestored?: () => void;
 }
 
 type ChatEntry =
@@ -89,6 +99,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   documentPath,
   hasUnsavedCodeViewChanges = false,
   onClose,
+  onProjectRestored,
 }) => {
   const { user, logout } = useAuth();
   const { isFree, getUpgradeMessage } = useSubscription();
@@ -111,7 +122,18 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const applyBusyRef = useRef(false);
   const [applyBusy, setApplyBusy] = useState(false);
   const mountedRef = useRef(true);
-  const applyBlock = resolveApplyBlock({ hasUnsavedCodeViewChanges, recoveryLocked: false });
+  const [recoveryState, setRecoveryState] = useState<RecoveryState>(UNLOCKED_RECOVERY_STATE);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const recoveryRequestRef = useRef(0);
+  const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
+  const tokenRef = useRef(user?.token);
+  tokenRef.current = user?.token;
+  const recoveryLocked = recoveryState.locked;
+  const recoveryLockedRef = useRef(recoveryLocked);
+  recoveryLockedRef.current = recoveryLocked;
+  const applyBlock = resolveApplyBlock({ hasUnsavedCodeViewChanges, recoveryLocked });
   const applyBlockRef = useRef(applyBlock);
   applyBlockRef.current = applyBlock;
 
@@ -202,6 +224,59 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
     );
   };
 
+  const refreshRecovery = async (): Promise<void> => {
+    const pid = projectIdRef.current;
+    const requestId = ++recoveryRequestRef.current;
+    if (!pid) {
+      setRecoveryState(UNLOCKED_RECOVERY_STATE);
+      return;
+    }
+    try {
+      const next = await fetchRecoveryState(getApiBaseUrl(), tokenRef.current, pid);
+      if (requestId === recoveryRequestRef.current && mountedRef.current) setRecoveryState(next);
+    } catch (e) {
+      if (requestId !== recoveryRequestRef.current || !mountedRef.current) return;
+      if (e instanceof RecoveryApiError && e.status === 404) setRecoveryState(UNLOCKED_RECOVERY_STATE);
+    }
+  };
+
+  const noteRecoveryProblem = () => {
+    recoveryLockedRef.current = true;
+    setRecoveryState((prev) => (prev.locked ? prev : { ...prev, locked: true }));
+    void refreshRecovery();
+  };
+
+  useEffect(() => {
+    setRecoveryError(null);
+    void refreshRecovery();
+  }, [projectId]);
+
+  const runRecoveryAction = async (
+    request: (apiBaseUrl: string, token: string | undefined, projectId: string) => Promise<void>,
+    failurePrefix: string,
+    onSuccess?: () => void,
+  ) => {
+    const pid = projectIdRef.current;
+    if (!pid) return;
+    setRecoveryBusy(true);
+    setRecoveryError(null);
+    try {
+      await request(getApiBaseUrl(), tokenRef.current, pid);
+      onSuccess?.();
+    } catch (e) {
+      const message = e instanceof Error ? toFriendlyErrorMessage(e.message) : "unexpected error";
+      if (mountedRef.current) setRecoveryError(`${failurePrefix}: ${message}`);
+    } finally {
+      await refreshRecovery();
+      if (mountedRef.current) setRecoveryBusy(false);
+    }
+  };
+
+  const restoreProject = () =>
+    runRecoveryAction(restorePreviousVersion, "Couldn't restore the previous version", () => onProjectRestored?.());
+
+  const unlockProject = () => runRecoveryAction(clearRecoveryLock, "Couldn't unlock the project");
+
   const setBusyNow = (value: boolean) => {
     busyRef.current = value;
     setBusy(value);
@@ -218,6 +293,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
       appendError(toFriendlyErrorMessage(signal.message));
       return;
     }
+    if (deadEnd.action.kind === "recovery") noteRecoveryProblem();
     const seconds = deadEnd.action.kind === "retry-after" ? deadEnd.action.seconds : null;
     const startedAt = Date.now();
     setNow(startedAt);
@@ -263,7 +339,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
   const submitMessage = async (override?: PromptToRetry) => {
     const text = (override?.text ?? input).trim();
     const turnAction = override?.action ?? action;
-    if (!text || busyRef.current) return;
+    if (!text || busyRef.current || recoveryLockedRef.current) return;
     if (!projectId) {
       appendError("No project is open. Open a project, then try again.");
       return;
@@ -339,11 +415,15 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         decisions: { ...e.decisions, [serverGroupId]: failure.decision },
         errors: { ...e.errors, [serverGroupId]: failure.message },
       }));
+      if (failure.checkRecovery) noteRecoveryProblem();
       return { ok: false, failure };
     }
   };
 
-  const currentApplyBlock = (): string | null => applyBlockRef.current?.shortReason ?? null;
+  const currentApplyBlock = (): string | null => {
+    if (recoveryLockedRef.current) return "the project is locked for recovery";
+    return applyBlockRef.current?.shortReason ?? null;
+  };
 
   const applyGroup = async (entryId: string, sessionId: string, serverGroupId: string) => {
     if (applyBusyRef.current || currentApplyBlock()) return;
@@ -487,6 +567,15 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
         )}
       </div>
 
+      {recoveryLocked && (
+        <CodeAssistantRecoveryBanner
+          state={recoveryState}
+          busy={recoveryBusy}
+          error={recoveryError}
+          onRestore={() => void restoreProject()}
+          onClear={() => void unlockProject()}
+        />
+      )}
       <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {entries.length === 0 && (
           <div className="space-y-3">
@@ -663,9 +752,11 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleComposerKeyDown}
                 rows={1}
-                disabled={busy || !projectId || !configured}
+                disabled={busy || !projectId || !configured || recoveryLocked}
                 placeholder={
-                  !configured
+                  recoveryLocked
+                    ? "Paused until the recovery notice above is resolved..."
+                    : !configured
                     ? "Add an API key using the model picker below..."
                     : action === "local-edit"
                       ? "Describe the change you want..."
@@ -675,7 +766,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = ({
               />
               <button
                 onClick={() => void submitMessage()}
-                disabled={busy || !input.trim() || !projectId || !configured}
+                disabled={busy || !input.trim() || !projectId || !configured || recoveryLocked}
                 className="p-2.5 text-white bg-purple-600 rounded-lg hover:bg-purple-700 active:scale-90 transition-transform disabled:opacity-50 disabled:active:scale-100 flex-shrink-0"
                 title="Send"
               >
