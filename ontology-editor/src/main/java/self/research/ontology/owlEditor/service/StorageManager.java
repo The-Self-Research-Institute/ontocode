@@ -422,22 +422,45 @@ public class StorageManager {
         bumpPublicGraphVersion(projectId);
     }
 
-    // Per-project version counter for the code-view save-conflict guard (see
-    // saveCodeViewAndSync in ProjectLoadController). In-memory only — like
-    // codeViewLineCounts above, it resets on JVM restart, which just resets the
-    // "generation" rather than creating a false positive or negative.
     private final ConcurrentHashMap<String, Long> publicGraphVersions = new ConcurrentHashMap<>();
     private final AtomicLong graphVersionCounter = new AtomicLong();
+    private volatile PublicGraphVersionStore publicGraphVersionStore;
 
-    private void bumpPublicGraphVersion(String projectId) {
-        publicGraphVersions.put(projectId, graphVersionCounter.incrementAndGet());
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPublicGraphVersionStore(PublicGraphVersionStore publicGraphVersionStore) {
+        this.publicGraphVersionStore = publicGraphVersionStore;
     }
 
-    /** Opaque version marker for the project's public-graph ontology content, handed to the
-     * client with /content and /content-page and checked back on code-view-save to detect
-     * an edit made elsewhere while Code View was open. 0 if never mutated this JVM run. */
+    private void bumpPublicGraphVersion(String projectId) {
+        PublicGraphVersionStore store = publicGraphVersionStore;
+        if (store == null) {
+            publicGraphVersions.merge(projectId, graphVersionCounter.incrementAndGet(), Math::max);
+            return;
+        }
+        try {
+            publicGraphVersions.merge(projectId, store.increment(projectId), Math::max);
+        } catch (RuntimeException e) {
+            log.error("Could not persist public graph version bump for project {}; advancing it in memory only: {}",
+                    projectId, e.getMessage());
+            publicGraphVersions.merge(projectId, 1L, Long::sum);
+        }
+    }
+
     public long getPublicGraphVersion(String projectId) {
-        return publicGraphVersions.getOrDefault(projectId, 0L);
+        Long cached = publicGraphVersions.get(projectId);
+        if (cached != null) {
+            return cached;
+        }
+        PublicGraphVersionStore store = publicGraphVersionStore;
+        if (store == null) {
+            return 0L;
+        }
+        try {
+            return publicGraphVersions.merge(projectId, store.read(projectId), Math::max);
+        } catch (RuntimeException e) {
+            log.warn("Could not read persisted public graph version for project {}: {}", projectId, e.getMessage());
+            return 0L;
+        }
     }
 
     /**
