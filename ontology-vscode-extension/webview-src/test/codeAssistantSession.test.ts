@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as llmInsights from "../services/LlmInsightsService";
 import {
   createAssistantSession,
   runSparql,
@@ -77,6 +78,142 @@ describe("codeAssistantSession error envelope handling", () => {
 
     const headers = fetchSpy.mock.calls[0][1].headers;
     expect(headers.Authorization).toBeUndefined();
+  });
+});
+
+describe("codeAssistantSession idempotency and session metadata", () => {
+  const sessionInput = { projectId: "p", documentPath: "d", actionType: "ask" as const, actionContext: "{}" };
+  const sessionBody = {
+    sessionId: "s1",
+    snapshot: { projectId: "p", documentPath: "d", revision: 1, actionType: "ask" },
+    budget: { retrievalCallsRemaining: 8, maxRetrievalCalls: 8 },
+    expiresAt: "2026-01-01T00:00:00Z",
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function response(status: number, body: unknown) {
+    return { ok: status >= 200 && status < 300, status, headers: new Headers(), json: async () => body };
+  }
+
+  it("sends an Idempotency-Key and the stored provider and model when creating a session", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    vi.spyOn(llmInsights, "getStoredModel").mockReturnValue("gpt-4o-mini");
+    const fetchSpy = vi.fn().mockResolvedValue(response(200, sessionBody));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await createAssistantSession("http://api", "token", sessionInput);
+
+    const init = fetchSpy.mock.calls[0][1];
+    expect(init.headers["Idempotency-Key"]).toMatch(/.{16,}/);
+    expect(JSON.parse(init.body)).toMatchObject({ provider: "openai", model: "gpt-4o-mini", projectId: "p" });
+  });
+
+  it("uses an explicitly given provider and model over the stored ones", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    const fetchSpy = vi.fn().mockResolvedValue(response(200, sessionBody));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await createAssistantSession("http://api", "token", { ...sessionInput, provider: "claude", model: "claude-sonnet-4-5" });
+
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toMatchObject({ provider: "claude", model: "claude-sonnet-4-5" });
+  });
+
+  it("generates a fresh key for each logical call", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(response(200, { ok: true, groups: [] }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await proposeEditGroups("http://api", "token", "s1", []);
+    await proposeEditGroups("http://api", "token", "s1", []);
+
+    const first = fetchSpy.mock.calls[0][1].headers["Idempotency-Key"];
+    const second = fetchSpy.mock.calls[1][1].headers["Idempotency-Key"];
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    expect(first).not.toBe(second);
+  });
+
+  it("reuses the same key and body when retrying a call after a network failure and a 503", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchSpy = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockResolvedValueOnce(response(503, null))
+        .mockResolvedValueOnce(response(200, { ok: true, groups: [] }));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const pending = proposeEditGroups("http://api", "token", "s1", []);
+      await vi.runAllTimersAsync();
+      await expect(pending).resolves.toEqual({ ok: true, groups: [] });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      const keys = fetchSpy.mock.calls.map((c) => c[1].headers["Idempotency-Key"]);
+      expect(new Set(keys).size).toBe(1);
+      const bodies = fetchSpy.mock.calls.map((c) => c[1].body);
+      expect(new Set(bodies).size).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits and retries with the same key while the first request is still in flight", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchSpy = vi
+        .fn()
+        .mockResolvedValueOnce(response(409, { ok: false, errorCode: "IDEMPOTENCY_KEY_REUSED", message: "in flight" }))
+        .mockResolvedValueOnce(response(200, sessionBody));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const pending = createAssistantSession("http://api", "token", sessionInput, undefined, { idempotencyKey: "fixed-key" });
+      await vi.runAllTimersAsync();
+      const session = await pending;
+
+      expect(session.sessionId).toBe("s1");
+      expect(fetchSpy.mock.calls.map((c) => c[1].headers["Idempotency-Key"])).toEqual(["fixed-key", "fixed-key"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry a key reused with a different body", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(response(422, { ok: false, errorCode: "IDEMPOTENCY_KEY_REUSED", message: "different body" }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const err = await captureError(proposeEditGroups("http://api", "token", "s1", [], undefined, { idempotencyKey: "k" }));
+
+    expect(err.errorCode).toBe("IDEMPOTENCY_KEY_REUSED");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after a bounded number of retries", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchSpy = vi.fn().mockResolvedValue(response(503, null));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const pending = proposeEditGroups("http://api", "token", "s1", []);
+      const assertion = expect(pending).rejects.toBeInstanceOf(AssistantApiError);
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never retries or sends a key on the read tools", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(response(503, null));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await captureError(runSparql("http://api", "token", "s1", SPARQL));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][1].headers["Idempotency-Key"]).toBeUndefined();
   });
 });
 
