@@ -12,14 +12,18 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.dto.AssistantUsageReport;
 import self.research.ontology.owlEditor.service.AssistantProviderProxyService;
 import self.research.ontology.owlEditor.service.AssistantProviderProxyService.ProviderCallResult;
 import self.research.ontology.owlEditor.service.AssistantProviderProxyService.ProviderConfigView;
 import self.research.ontology.owlEditor.service.AssistantProviderRateLimiter;
 import self.research.ontology.owlEditor.service.AssistantSessionService;
+import self.research.ontology.owlEditor.service.AssistantUsageMetricsService;
+import self.research.ontology.owlEditor.service.AssistantUsageMetricsService.UsageOutcome;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.io.ByteArrayOutputStream;
@@ -40,13 +44,16 @@ public class AssistantProviderController {
 
     private final AssistantProviderProxyService proxyService;
     private final AssistantSessionService sessionService;
+    private final AssistantUsageMetricsService usageMetricsService;
     private final ObjectMapper objectMapper;
 
     public AssistantProviderController(AssistantProviderProxyService proxyService,
                                        AssistantSessionService sessionService,
+                                       AssistantUsageMetricsService usageMetricsService,
                                        ObjectMapper objectMapper) {
         this.proxyService = proxyService;
         this.sessionService = sessionService;
+        this.usageMetricsService = usageMetricsService;
         this.objectMapper = objectMapper;
     }
 
@@ -114,6 +121,24 @@ public class AssistantProviderController {
             builder.header(HttpHeaders.RETRY_AFTER, String.valueOf(result.retryAfterSeconds()));
         }
         return builder.body(result.body());
+    }
+
+    @PostMapping("/sessions/{sessionId}/usage")
+    public ResponseEntity<?> reportUsage(@PathVariable String sessionId,
+                                         @RequestBody(required = false) AssistantUsageReport report,
+                                         HttpServletRequest httpRequest) {
+        Optional<String> email = JwtIdentityExtractor.extractEmail(httpRequest);
+        if (email.isEmpty()) {
+            return error(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Missing or invalid Authorization header");
+        }
+        UsageOutcome outcome = usageMetricsService.record(sessionId, email.get(), report);
+        if (outcome.isOk()) {
+            return ResponseEntity.noContent().build();
+        }
+        if (outcome.status() == 429 && outcome.retryAfterSeconds() != null) {
+            return rateLimited(outcome.retryAfterSeconds(), outcome.message());
+        }
+        return error(HttpStatus.valueOf(outcome.status()), outcome.errorCode(), outcome.message());
     }
 
     static byte[] readBounded(InputStream in, int limit) throws IOException {

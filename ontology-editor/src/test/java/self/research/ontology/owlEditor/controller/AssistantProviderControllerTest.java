@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,8 +20,11 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument.AssistantSessionStatus;
+import self.research.ontology.owlEditor.dto.AssistantUsageReport;
+import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import self.research.ontology.owlEditor.service.AssistantProviderProxyService;
 import self.research.ontology.owlEditor.service.AssistantSessionService;
+import self.research.ontology.owlEditor.service.AssistantUsageMetricsService;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +50,11 @@ class AssistantProviderControllerTest {
     @Mock
     private AssistantSessionService sessionService;
 
+    @Mock
+    private AssistantSessionRepository sessionRepository;
+
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final List<ClientRequest> upstreamCalls = new ArrayList<>();
     private AssistantProviderProxyService proxyService;
@@ -56,6 +65,8 @@ class AssistantProviderControllerTest {
         MockitoAnnotations.openMocks(this);
         when(sessionService.getActiveSession(anyString(), anyString())).thenReturn(Optional.empty());
         when(sessionService.getActiveSession("sess-1", EMAIL)).thenReturn(Optional.of(activeSession()));
+        when(sessionRepository.findByIdAndUserEmail(anyString(), anyString())).thenReturn(Optional.empty());
+        when(sessionRepository.findByIdAndUserEmail("sess-1", EMAIL)).thenReturn(Optional.of(activeSession()));
         configure("claude", "claude-sonnet-4-5", "server-key", 10);
     }
 
@@ -84,7 +95,9 @@ class AssistantProviderControllerTest {
         ReflectionTestUtils.setField(proxyService, "requestsPerMinute", perMinute);
         ReflectionTestUtils.setField(proxyService, "maxConcurrentCalls", 2);
         ReflectionTestUtils.invokeMethod(proxyService, "init");
-        controller = new AssistantProviderController(proxyService, sessionService, objectMapper);
+        AssistantUsageMetricsService usageService =
+                new AssistantUsageMetricsService(meterRegistry, sessionRepository, 100);
+        controller = new AssistantProviderController(proxyService, sessionService, usageService, objectMapper);
     }
 
     private static AssistantSessionDocument activeSession() {
@@ -223,5 +236,48 @@ class AssistantProviderControllerTest {
 
         assertArrayEquals(data, AssistantProviderController.readBounded(new ByteArrayInputStream(data), 10));
         assertNull(AssistantProviderController.readBounded(new ByteArrayInputStream(data), 9));
+    }
+
+    @Test
+    void usageReportRequiresJwt() {
+        ResponseEntity<?> response = controller.reportUsage("sess-1",
+                new AssistantUsageReport("claude", "claude-sonnet-4-5", 100L, 1L, 1L, null, null),
+                new MockHttpServletRequest());
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void usageReportRecordsMetricsAndReturnsNoContent() {
+        ResponseEntity<?> response = controller.reportUsage("sess-1",
+                new AssistantUsageReport("claude", "claude-sonnet-4-5-20250929", 1500L, 1200L, 300L, 800L, 50L),
+                authed(null));
+
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+        assertEquals(1, meterRegistry.get("assistant.provider.latency")
+                .tags("provider", "claude", "model", "claude-sonnet-4-5").timer().count());
+        assertEquals(1200.0, meterRegistry.get("assistant.provider.tokens")
+                .tags("provider", "claude", "model", "claude-sonnet-4-5", "kind", "input").counter().count());
+    }
+
+    @Test
+    void usageReportForSomeoneElsesSessionIsRejected() {
+        ResponseEntity<?> response = controller.reportUsage("sess-other",
+                new AssistantUsageReport("claude", "claude-sonnet-4-5", 100L, 1L, 1L, null, null),
+                authed(null));
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        assertEquals("SESSION_NOT_FOUND", bodyMap(response).get("errorCode"));
+        assertTrue(meterRegistry.find("assistant.provider.latency").timers().isEmpty());
+    }
+
+    @Test
+    void usageReportWithOutOfRangeNumbersIsRejected() {
+        ResponseEntity<?> response = controller.reportUsage("sess-1",
+                new AssistantUsageReport("claude", "claude-sonnet-4-5", -1L, 1L, 1L, null, null),
+                authed(null));
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("VALIDATION_FAILED", bodyMap(response).get("errorCode"));
     }
 }
