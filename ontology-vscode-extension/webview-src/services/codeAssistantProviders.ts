@@ -7,6 +7,7 @@ import {
   LlmProvider,
   LlmRequestError,
 } from "./LlmInsightsService";
+import { estimateTokensFromChars, requestBudgetFor, type RequestBudget } from "./codeAssistantBudget";
 
 export interface JsonSchema {
   type: string;
@@ -378,6 +379,28 @@ const MAX_TRANSIENT_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 1000;
 const MAX_REQUEST_CHARS = 1_200_000;
 
+interface RequestSize {
+  chars: number;
+  estimatedTokens: number;
+}
+
+function measureRequest(body: unknown): RequestSize {
+  const chars = JSON.stringify(body).length;
+  return { chars, estimatedTokens: estimateTokensFromChars(chars) };
+}
+
+function fitsRequestBudget(size: RequestSize, budget: RequestBudget): boolean {
+  return size.chars <= MAX_REQUEST_CHARS && size.estimatedTokens <= budget.inputLimit;
+}
+
+function requestTooLargeError(provider: LlmProvider, model: string, size: RequestSize, budget: RequestBudget): ProviderProtocolError {
+  return new ProviderProtocolError(
+    `This conversation has grown too large to send to ${provider} (${model}): about ${size.estimatedTokens} tokens estimated, ` +
+      `but the model's ${budget.contextWindow}-token context leaves room for about ${budget.inputLimit} after reserving ` +
+      `${budget.outputReserve} for the response. Start a new request for a fresh, smaller context.`,
+  );
+}
+
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, ms);
@@ -412,12 +435,10 @@ export async function requestNextTurn(
   const model = getStoredModel();
 
   const body = buildRequestBody(conversation, model, tools);
-  const estimatedChars = JSON.stringify(body).length;
-  if (estimatedChars > MAX_REQUEST_CHARS) {
-    throw new ProviderProtocolError(
-      `This conversation has grown too large to send to ${conversation.provider} ` +
-        `(~${Math.round(estimatedChars / 4)} tokens estimated). Start a new request for a fresh, smaller context.`,
-    );
+  const budget = requestBudgetFor(conversation.provider, model, getStoredMaxResponseTokens());
+  const size = measureRequest(body);
+  if (!fitsRequestBudget(size, budget)) {
+    throw requestTooLargeError(conversation.provider, model, size, budget);
   }
   const { url, headers } = providerEndpoint(conversation.provider, model, key);
 

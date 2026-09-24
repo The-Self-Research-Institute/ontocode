@@ -199,6 +199,46 @@ describe("requestNextTurn — whole-request size guard", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a request that is under the character guard but over an unknown model's 128k window", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    vi.spyOn(llmInsights, "getStoredMaxResponseTokens").mockReturnValue(8192);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "y".repeat(460_000));
+
+    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/128000-token context/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the same request through for a model with a larger window", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    vi.spyOn(llmInsights, "getStoredModel").mockReturnValue("gpt-4.1-mini");
+    vi.spyOn(llmInsights, "getStoredMaxResponseTokens").mockReturnValue(8192);
+    mockFetchOnce(200, { choices: [{ message: { content: "fits" } }] });
+
+    const conversation = await startAssistantConversation("system prompt", "y".repeat(460_000));
+    const { turn } = await requestNextTurn(conversation, [TOOL]);
+
+    expect(turn).toEqual({ kind: "answer", text: "fits" });
+  });
+
+  it("counts the response-token reserve against the window", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("claude");
+    vi.spyOn(llmInsights, "getStoredModel").mockReturnValue("claude-sonnet-4-5");
+    const conversation = await startAssistantConversation("system prompt", "z".repeat(600_000));
+
+    vi.spyOn(llmInsights, "getStoredMaxResponseTokens").mockReturnValue(8192);
+    mockFetchOnce(200, { content: [{ type: "text", text: "ok" }] });
+    await expect(requestNextTurn(conversation, [TOOL])).resolves.toMatchObject({ turn: { kind: "answer", text: "ok" } });
+
+    vi.spyOn(llmInsights, "getStoredMaxResponseTokens").mockReturnValue(40_000);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/reserving 40000/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("sends a normal-sized conversation through without tripping the guard", async () => {
     vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
     mockFetchOnce(200, { choices: [{ message: { content: "fine" } }] });
