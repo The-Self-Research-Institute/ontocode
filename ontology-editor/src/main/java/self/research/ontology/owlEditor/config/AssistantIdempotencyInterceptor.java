@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -34,6 +35,7 @@ public class AssistantIdempotencyInterceptor implements HandlerInterceptor {
     private final Duration staleInFlightAfter;
     private final Clock clock;
 
+    @Autowired
     public AssistantIdempotencyInterceptor(
             AssistantIdempotencyStore store,
             @Value("${assistant.idempotency.stale-in-flight-seconds:300}") long staleInFlightSeconds) {
