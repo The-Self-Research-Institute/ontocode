@@ -53,24 +53,29 @@ public class AssistantEditApplyService {
         this.datasetService = datasetService;
     }
 
-    public ApplyResult applyGroup(String serverGroupId, String userEmail) {
+    public ApplyResult applyGroup(String sessionId, String serverGroupId, String userEmail) {
         Optional<AssistantEditGroupDocument> initial = groupRepository.findById(serverGroupId);
-        if (initial.isEmpty() || !initial.get().getUserEmail().equals(userEmail)) {
+        if (initial.isEmpty() || !belongsTo(initial.get(), sessionId, userEmail)) {
             return errorResult("VALIDATION_FAILED", "Unknown or unauthorized proposal");
         }
         String projectId = initial.get().getProjectId();
 
         try {
-            return lockRegistry.runExclusive(projectId, () -> applyLocked(serverGroupId, userEmail));
+            return lockRegistry.runExclusive(projectId, () -> applyLocked(sessionId, serverGroupId, userEmail));
         } catch (Exception e) {
             log.error("[Assistant] Unexpected failure applying group {}: {}", serverGroupId, e.getMessage(), e);
             return errorResult("APPLY_FAILED", e.getMessage() != null ? e.getMessage() : "Apply failed");
         }
     }
 
-    private ApplyResult applyLocked(String serverGroupId, String userEmail) throws IOException {
+    private static boolean belongsTo(AssistantEditGroupDocument group, String sessionId, String userEmail) {
+        return userEmail != null && userEmail.equals(group.getUserEmail())
+                && sessionId != null && sessionId.equals(group.getSessionId());
+    }
+
+    private ApplyResult applyLocked(String sessionId, String serverGroupId, String userEmail) throws IOException {
         AssistantEditGroupDocument group = groupRepository.findById(serverGroupId).orElse(null);
-        if (group == null || !group.getUserEmail().equals(userEmail)) {
+        if (group == null || !belongsTo(group, sessionId, userEmail)) {
             return errorResult("VALIDATION_FAILED", "Unknown or unauthorized proposal");
         }
 

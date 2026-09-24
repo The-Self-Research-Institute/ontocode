@@ -84,7 +84,7 @@ class AssistantEditControllerTest {
 
     @Test
     void applyReturnsOkEnvelopeOnSuccess() {
-        when(applyService.applyGroup(anyString(), anyString())).thenReturn(
+        when(applyService.applyGroup(anyString(), anyString(), anyString())).thenReturn(
                 ApplyResult.builder().ok(true).applied(true).newRevision(5L).remappedPendingGroups(List.of()).build());
 
         ResponseEntity<?> response = controller.apply("s1", "g1", requestWithBearerToken());
@@ -98,7 +98,7 @@ class AssistantEditControllerTest {
 
     @Test
     void applyReturnsErrorEnvelopeOnFailure() {
-        when(applyService.applyGroup(anyString(), anyString())).thenReturn(
+        when(applyService.applyGroup(anyString(), anyString(), anyString())).thenReturn(
                 ApplyResult.builder().ok(false).errorCode("STALE_GROUP").message("stale").build());
 
         ResponseEntity<?> response = controller.apply("s1", "g1", requestWithBearerToken());

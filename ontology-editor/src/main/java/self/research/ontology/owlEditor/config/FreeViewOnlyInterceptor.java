@@ -8,7 +8,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 
@@ -50,11 +52,14 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
     private final WorkspaceOwnershipService workspaceOwnershipService;
     private final AssistantSessionRepository assistantSessionRepository;
+    private final AssistantEditGroupRepository assistantEditGroupRepository;
 
     public FreeViewOnlyInterceptor(WorkspaceOwnershipService workspaceOwnershipService,
-                                    AssistantSessionRepository assistantSessionRepository) {
+                                    AssistantSessionRepository assistantSessionRepository,
+                                    AssistantEditGroupRepository assistantEditGroupRepository) {
         this.workspaceOwnershipService = workspaceOwnershipService;
         this.assistantSessionRepository = assistantSessionRepository;
+        this.assistantEditGroupRepository = assistantEditGroupRepository;
     }
 
     @Override
@@ -151,17 +156,15 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     }
 
     private java.util.Optional<String> resolveCodeAssistantProjectId(String path) {
-        String sessionId = null;
+        if (PATH.match(APPLY_PATTERN, path)) {
+            Map<String, String> vars = PATH.extractUriTemplateVariables(APPLY_PATTERN, path);
+            return assistantEditGroupRepository.findById(vars.get("serverGroupId"))
+                    .map(AssistantEditGroupDocument::getProjectId);
+        }
         if (PATH.match(PROPOSE_PATTERN, path)) {
             Map<String, String> vars = PATH.extractUriTemplateVariables(PROPOSE_PATTERN, path);
-            sessionId = vars.get("sessionId");
-        } else if (PATH.match(APPLY_PATTERN, path)) {
-            Map<String, String> vars = PATH.extractUriTemplateVariables(APPLY_PATTERN, path);
-            sessionId = vars.get("sessionId");
+            return assistantSessionRepository.findById(vars.get("sessionId")).map(AssistantSessionDocument::getProjectId);
         }
-        if (sessionId == null) {
-            return java.util.Optional.empty();
-        }
-        return assistantSessionRepository.findById(sessionId).map(AssistantSessionDocument::getProjectId);
+        return java.util.Optional.empty();
     }
 }

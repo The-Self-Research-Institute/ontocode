@@ -6,7 +6,9 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 
@@ -28,17 +30,26 @@ class FreeViewOnlyInterceptorTest {
     @Mock
     private AssistantSessionRepository assistantSessionRepository;
 
+    @Mock
+    private AssistantEditGroupRepository assistantEditGroupRepository;
+
     private FreeViewOnlyInterceptor interceptor;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        interceptor = new FreeViewOnlyInterceptor(workspaceOwnershipService, assistantSessionRepository);
+        interceptor = new FreeViewOnlyInterceptor(workspaceOwnershipService, assistantSessionRepository,
+                assistantEditGroupRepository);
         when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.empty());
         when(workspaceOwnershipService.isViewerInProject(anyString(), anyString())).thenReturn(false);
         when(workspaceOwnershipService.isDraftEditorInProject(anyString(), anyString())).thenReturn(false);
         when(workspaceOwnershipService.isFreePlanUserOwner(anyString(), anyString(), any())).thenReturn(false);
         when(assistantSessionRepository.findById(anyString())).thenReturn(Optional.empty());
+        when(assistantEditGroupRepository.findById(anyString())).thenReturn(Optional.empty());
+    }
+
+    private AssistantEditGroupDocument groupFor(String sessionId, String projectId) {
+        return AssistantEditGroupDocument.builder().id("g1").sessionId(sessionId).projectId(projectId).build();
     }
 
     private MockHttpServletRequest postRequest(String path, String plan) {
@@ -136,7 +147,7 @@ class FreeViewOnlyInterceptorTest {
 
     @Test
     void viewerOnResolvedProjectBlockedFromApply() throws Exception {
-        when(assistantSessionRepository.findById("s1")).thenReturn(Optional.of(sessionFor("proj-77")));
+        when(assistantEditGroupRepository.findById("g1")).thenReturn(Optional.of(groupFor("s1", "proj-77")));
         when(workspaceOwnershipService.isViewerInProject("u1", "proj-77")).thenReturn(true);
         MockHttpServletRequest request = postRequest("/api/v1/code-assistant/sessions/s1/groups/g1/apply", "PRO");
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -164,7 +175,7 @@ class FreeViewOnlyInterceptorTest {
 
     @Test
     void draftEditorOnResolvedProjectBlockedFromApply() throws Exception {
-        when(assistantSessionRepository.findById("s1")).thenReturn(Optional.of(sessionFor("proj-77")));
+        when(assistantEditGroupRepository.findById("g1")).thenReturn(Optional.of(groupFor("s1", "proj-77")));
         when(workspaceOwnershipService.isDraftEditorInProject("u1", "proj-77")).thenReturn(true);
         MockHttpServletRequest request = postRequest("/api/v1/code-assistant/sessions/s1/groups/g1/apply", "PRO");
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -178,6 +189,7 @@ class FreeViewOnlyInterceptorTest {
     @Test
     void normalEditorOnResolvedProjectAllowedOnProposeAndApply() throws Exception {
         when(assistantSessionRepository.findById("s1")).thenReturn(Optional.of(sessionFor("proj-77")));
+        when(assistantEditGroupRepository.findById("g1")).thenReturn(Optional.of(groupFor("s1", "proj-77")));
 
         MockHttpServletRequest proposeRequest = postRequest("/api/v1/code-assistant/sessions/s1/propose", "PRO");
         assertTrue(interceptor.preHandle(proposeRequest, new MockHttpServletResponse(), new Object()));
@@ -209,5 +221,32 @@ class FreeViewOnlyInterceptorTest {
 
         MockHttpServletRequest sessionCreate = postRequest("/api/v1/code-assistant/sessions", "PRO");
         assertTrue(interceptor.preHandle(sessionCreate, new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void applyRoleCheckUsesTheGroupsProjectNotTheUrlSessionsProject() throws Exception {
+        when(assistantSessionRepository.findById("s-editor")).thenReturn(Optional.of(sessionFor("proj-editor")));
+        when(assistantEditGroupRepository.findById("g1")).thenReturn(Optional.of(groupFor("s-viewer", "proj-demoted")));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-demoted")).thenReturn(true);
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-editor")).thenReturn(false);
+        MockHttpServletRequest request = postRequest("/api/v1/code-assistant/sessions/s-editor/groups/g1/apply", "PRO");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        boolean allowed = interceptor.preHandle(request, response, new Object());
+
+        assertFalse(allowed);
+        assertEquals(403, response.getStatus());
+        assertTrue(response.getContentAsString().contains("viewOnly"));
+    }
+
+    @Test
+    void applyForUnknownGroupFallsThroughWithoutConsultingTheUrlSession() throws Exception {
+        when(assistantSessionRepository.findById("s1")).thenReturn(Optional.of(sessionFor("proj-77")));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-77")).thenReturn(true);
+        MockHttpServletRequest request = postRequest("/api/v1/code-assistant/sessions/s1/groups/missing/apply", "PRO");
+
+        boolean allowed = interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
+
+        assertTrue(allowed);
     }
 }

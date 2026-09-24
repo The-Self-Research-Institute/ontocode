@@ -53,7 +53,7 @@ public class AssistantEditController {
                                     HttpServletRequest httpRequest) {
         return JwtIdentityExtractor.extractEmail(httpRequest)
                 .map(userEmail -> {
-                    ApplyResult result = applyService.applyGroup(serverGroupId, userEmail);
+                    ApplyResult result = applyService.applyGroup(sessionId, serverGroupId, userEmail);
                     return ResponseEntity.ok(toBody(result));
                 })
                 .orElseGet(AssistantEditController::unauthorized);

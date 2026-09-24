@@ -77,7 +77,7 @@ class AssistantEditApplyServiceTest {
 
     private AssistantEditGroupDocument group(AssistantEditGroupStatus status, EditEntry... edits) {
         return AssistantEditGroupDocument.builder()
-                .id("g1").projectId("proj-1").userEmail("u@x.com").targetPath("turtle")
+                .id("g1").sessionId("s1").projectId("proj-1").userEmail("u@x.com").targetPath("turtle")
                 .status(status).edits(List.of(edits)).publicGraphVersionAtPropose(5L).build();
     }
 
@@ -90,7 +90,7 @@ class AssistantEditApplyServiceTest {
     void unknownGroupReturnsValidationFailed() {
         when(groupRepository.findById("g1")).thenReturn(Optional.empty());
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("VALIDATION_FAILED", result.getErrorCode());
@@ -100,7 +100,7 @@ class AssistantEditApplyServiceTest {
     void wrongUserReturnsValidationFailedNotAuthorizationLeak() {
         when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.PENDING)));
 
-        ApplyResult result = applyService.applyGroup("g1", "attacker@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "attacker@x.com");
 
         assertFalse(result.isOk());
         assertEquals("VALIDATION_FAILED", result.getErrorCode());
@@ -112,7 +112,7 @@ class AssistantEditApplyServiceTest {
         applied.setAppliedRevision(42L);
         when(groupRepository.findById("g1")).thenReturn(Optional.of(applied));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertTrue(result.isOk());
         assertTrue(result.isApplied());
@@ -124,7 +124,7 @@ class AssistantEditApplyServiceTest {
     void discardedGroupReturnsValidationFailed() {
         when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.DISCARDED)));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("VALIDATION_FAILED", result.getErrorCode());
@@ -136,7 +136,7 @@ class AssistantEditApplyServiceTest {
         stale.setStaleReason("overlaps committed group g0");
         when(groupRepository.findById("g1")).thenReturn(Optional.of(stale));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("STALE_GROUP", result.getErrorCode());
@@ -147,7 +147,7 @@ class AssistantEditApplyServiceTest {
     void conflictGroupReturnsConflictErrorCode() {
         when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.CONFLICT)));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("CONFLICT", result.getErrorCode());
@@ -163,7 +163,7 @@ class AssistantEditApplyServiceTest {
         when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
                 .thenReturn(List.of());
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertTrue(result.isOk());
         assertEquals(10L, result.getNewRevision());
@@ -182,7 +182,7 @@ class AssistantEditApplyServiceTest {
         when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
                 .thenReturn(List.of());
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertTrue(result.isOk());
         assertEquals(11L, result.getNewRevision());
@@ -197,7 +197,7 @@ class AssistantEditApplyServiceTest {
         when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
                 .thenReturn(new StorageManager.CodeViewPage("something else entirely", 1, 1, 10, 100));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("CONFLICT", result.getErrorCode());
@@ -224,7 +224,7 @@ class AssistantEditApplyServiceTest {
                 .thenReturn(List.of(touchedSibling, untouchedSibling));
         when(remapService.remap(eq(pending), any())).thenReturn(List.of(touchedSibling));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertTrue(result.isOk());
         assertEquals(2, result.getRemappedPendingGroups().size());
@@ -245,7 +245,7 @@ class AssistantEditApplyServiceTest {
                 .thenReturn(new StorageManager.CodeViewPage("old", 1, 1, 10, 100));
         when(syntaxValidator.isValid(eq("proj-1"), eq("turtle"), any())).thenReturn(false);
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("CONFLICT", result.getErrorCode());
@@ -261,7 +261,7 @@ class AssistantEditApplyServiceTest {
         when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
                 .thenReturn(new StorageManager.CodeViewPage("something else entirely", 1, 1, 10, 100));
 
-        applyService.applyGroup("g1", "u@x.com");
+        applyService.applyGroup("s1", "g1", "u@x.com");
 
         verify(syntaxValidator, never()).isValid(anyString(), anyString(), any());
     }
@@ -276,7 +276,7 @@ class AssistantEditApplyServiceTest {
         when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
                 .thenReturn(List.of());
 
-        applyService.applyGroup("g1", "u@x.com");
+        applyService.applyGroup("s1", "g1", "u@x.com");
 
         ArgumentCaptor<CodeViewReimportPipeline.ReimportRequest> captor =
                 ArgumentCaptor.forClass(CodeViewReimportPipeline.ReimportRequest.class);
@@ -292,7 +292,7 @@ class AssistantEditApplyServiceTest {
         when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
         when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("GraphDB unreachable"));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
@@ -308,7 +308,7 @@ class AssistantEditApplyServiceTest {
         when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
                 .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of(), List.of(), false, null));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
@@ -326,7 +326,7 @@ class AssistantEditApplyServiceTest {
         when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
                 .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of("s"), List.of(Map.of("s", "x")), false, null));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
@@ -343,7 +343,7 @@ class AssistantEditApplyServiceTest {
         when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
         when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("connection reset mid-stream"));
 
-        applyService.applyGroup("g1", "u@x.com");
+        applyService.applyGroup("s1", "g1", "u@x.com");
 
         ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
         verify(groupRepository).save(captor.capture());
@@ -354,11 +354,36 @@ class AssistantEditApplyServiceTest {
     void recoveryRequiredGroupIsNeverReappliedOnRetry() throws Exception {
         when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.RECOVERY_REQUIRED)));
 
-        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
         assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
         verify(reimportPipeline, never()).reimport(any());
         verify(spliceWriter, never()).splice(any(), anyString(), any());
+    }
+
+    @Test
+    void groupFromAnotherSessionIsRejectedLikeAnUnknownProposalAndNeverReimported() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+
+        ApplyResult result = applyService.applyGroup("s-other", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+        assertEquals("Unknown or unauthorized proposal", result.getMessage());
+        verify(reimportPipeline, never()).reimport(any());
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
+    }
+
+    @Test
+    void missingSessionIdIsRejected() throws Exception {
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"))));
+
+        ApplyResult result = applyService.applyGroup(null, "g1", "u@x.com");
+
+        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
     }
 }
