@@ -48,6 +48,9 @@ class AssistantEditProposalServiceTest {
     @Mock
     private LineRangeSpliceWriter spliceWriter;
 
+    @Mock
+    private SparqlDatasetService datasetService;
+
     private AssistantEditSyntaxValidator syntaxValidator;
 
     private AssistantEditReferenceCoverageValidator referenceCoverageValidator;
@@ -60,7 +63,8 @@ class AssistantEditProposalServiceTest {
         syntaxValidator = new AssistantEditSyntaxValidator(storageManager, spliceWriter);
         referenceCoverageValidator = new AssistantEditReferenceCoverageValidator(storageManager);
         proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager,
-                syntaxValidator, referenceCoverageValidator);
+                syntaxValidator, referenceCoverageValidator,
+                new AssistantRenameService(storageManager, new AssistantGraphIdentifierLookup(datasetService)));
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 20);
         ReflectionTestUtils.setField(proposalService, "maxGroupsPerRequest", 10);

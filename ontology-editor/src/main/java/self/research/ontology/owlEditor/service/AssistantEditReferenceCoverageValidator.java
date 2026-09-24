@@ -56,17 +56,22 @@ public class AssistantEditReferenceCoverageValidator {
 
         List<String> missed = new ArrayList<>();
         Set<String> unresolved = new LinkedHashSet<>(removedTokens);
+        TurtleLineScanner scanner = AssistantRenameService.isTurtleFamily(targetPath) ? new TurtleLineScanner() : null;
         try {
             Path sourceFile = storageManager.ensureCodeViewFile(projectId, targetPath);
             try (BufferedReader reader = Files.newBufferedReader(sourceFile)) {
                 String line;
                 long lineNo = 0;
                 while (!unresolved.isEmpty() && (line = reader.readLine()) != null) {
+                    Set<String> lineTokens = scanner != null ? termTexts(scanner.scan(line)) : null;
                     if (!withinAnyRange(lineNo, editedRanges)) {
+                        if (lineTokens == null) {
+                            lineTokens = extractTokens(line);
+                        }
                         Iterator<String> it = unresolved.iterator();
                         while (it.hasNext()) {
                             String token = it.next();
-                            if (line.contains(token)) {
+                            if (lineTokens.contains(token)) {
                                 missed.add(token + " still appears at line " + lineNo);
                                 it.remove();
                             }
@@ -114,6 +119,16 @@ public class AssistantEditReferenceCoverageValidator {
             tokens.add(matcher.group());
         }
         return tokens;
+    }
+
+    private Set<String> termTexts(List<TurtleLineScanner.Token> tokens) {
+        Set<String> texts = new HashSet<>();
+        for (TurtleLineScanner.Token token : tokens) {
+            if (token.isTerm()) {
+                texts.add(token.text());
+            }
+        }
+        return texts;
     }
 
     private boolean withinAnyRange(long lineNo, List<long[]> ranges) {
