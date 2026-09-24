@@ -34,12 +34,15 @@ class AssistantSessionServiceTest {
     @Mock
     private MongoTemplate mongoTemplate;
 
+    @Mock
+    private AssistantAuditService auditService;
+
     private AssistantSessionService service;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        service = new AssistantSessionService(sessionRepository, metadataService, mongoTemplate);
+        service = new AssistantSessionService(sessionRepository, metadataService, mongoTemplate, auditService);
         ReflectionTestUtils.setField(service, "defaultRetrievalAttempts", 5);
         ReflectionTestUtils.setField(service, "defaultTokenBudget", 8000);
         ReflectionTestUtils.setField(service, "deadlineSeconds", 300L);
@@ -65,6 +68,67 @@ class AssistantSessionServiceTest {
         assertEquals(5, session.getRetrievalAttemptsRemaining());
         assertEquals(8000, session.getTokenBudgetRemaining());
         assertTrue(session.getExpiresAt().isAfter(Instant.now()));
+    }
+
+    @Test
+    void createSessionStoresProviderAndModelAndAuditsTheCreation() {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(7L);
+
+        AssistantSessionDocument session = service.createSession(
+                "proj-1", "user@example.com", "/doc.owl", "ask", "ctx", "openai", "gpt-5");
+
+        assertEquals("openai", session.getProvider());
+        assertEquals("gpt-5", session.getModel());
+        org.mockito.ArgumentCaptor<AssistantSessionDocument> saved =
+                org.mockito.ArgumentCaptor.forClass(AssistantSessionDocument.class);
+        org.mockito.Mockito.verify(sessionRepository).save(saved.capture());
+        assertEquals("openai", saved.getValue().getProvider());
+        assertEquals("gpt-5", saved.getValue().getModel());
+
+        org.mockito.ArgumentCaptor<AssistantAuditService.AssistantAuditEvent> event =
+                org.mockito.ArgumentCaptor.forClass(AssistantAuditService.AssistantAuditEvent.class);
+        org.mockito.Mockito.verify(auditService).record(event.capture());
+        assertEquals("user@example.com", event.getValue().actor());
+        assertEquals("proj-1", event.getValue().projectId());
+        assertEquals("session-1", event.getValue().sessionId());
+        assertEquals("session_create", event.getValue().operation());
+        assertEquals(7L, event.getValue().sourceRevision());
+        assertEquals("openai", event.getValue().provider());
+        assertEquals("gpt-5", event.getValue().model());
+        assertEquals("ok", event.getValue().outcome());
+    }
+
+    @Test
+    void legacyCreateSessionLeavesProviderAndModelEmpty() {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(7L);
+
+        AssistantSessionDocument session = service.createSession("proj-1", "user@example.com", null, "ask", null);
+
+        assertEquals(null, session.getProvider());
+        assertEquals(null, session.getModel());
+    }
+
+    @Test
+    void auditFailureNeverFailsSessionCreation() {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(7L);
+        org.mockito.Mockito.doThrow(new RuntimeException("mongo down")).when(auditService).record(any());
+
+        AssistantSessionDocument session = service.createSession(
+                "proj-1", "user@example.com", null, "ask", null, "claude", "m");
+
+        assertEquals("session-1", session.getId());
+    }
+
+    @Test
+    void rejectedCreatesAreAuditedWithTheErrorCode() {
+        service.recordCreateRejected("user@example.com", "proj-1", "claude", "m", "RATE_LIMITED", "retryAfterSeconds=3");
+
+        org.mockito.ArgumentCaptor<AssistantAuditService.AssistantAuditEvent> event =
+                org.mockito.ArgumentCaptor.forClass(AssistantAuditService.AssistantAuditEvent.class);
+        org.mockito.Mockito.verify(auditService).record(event.capture());
+        assertEquals("rejected", event.getValue().outcome());
+        assertEquals("RATE_LIMITED", event.getValue().errorCode());
+        assertEquals(null, event.getValue().sessionId());
     }
 
     @Test

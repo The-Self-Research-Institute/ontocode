@@ -70,7 +70,8 @@ class AssistantSessionControllerTest {
         request.setActionType("ask");
         request.setActionContext("why is this inconsistent?");
 
-        when(sessionService.createSession("proj-1", "user@example.com", "/doc.owl", "ask", "why is this inconsistent?"))
+        when(sessionService.createSession("proj-1", "user@example.com", "/doc.owl", "ask", "why is this inconsistent?",
+                null, null))
                 .thenReturn(AssistantSessionDocument.builder()
                         .id("session-1")
                         .projectId("proj-1")
@@ -109,13 +110,48 @@ class AssistantSessionControllerTest {
         assertEquals("RATE_LIMITED", body.get("errorCode"));
         assertEquals(37, body.get("retryAfterSeconds"));
         verify(sessionService, never()).createSession(any(), any(), any(), any(), any());
+        verify(sessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any());
+        verify(sessionService).recordCreateRejected("user@example.com", "proj-1", null, null,
+                "RATE_LIMITED", "retryAfterSeconds=37");
+    }
+
+    @Test
+    void providerAndModelArePassedThroughTrimmed() {
+        AssistantSessionCreateRequest request = new AssistantSessionCreateRequest();
+        request.setProjectId("proj-1");
+        request.setProvider(" claude ");
+        request.setModel("claude-sonnet-4-5");
+        when(sessionService.createSession("proj-1", "user@example.com", null, null, null,
+                "claude", "claude-sonnet-4-5"))
+                .thenReturn(AssistantSessionDocument.builder().id("s").projectId("proj-1").pinnedRevision(1L)
+                        .provider("claude").model("claude-sonnet-4-5")
+                        .retrievalAttemptsRemaining(5).expiresAt(Instant.now().plusSeconds(300)).build());
+
+        ResponseEntity<?> response = controller.createSession(request, requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        verify(sessionService).createSession("proj-1", "user@example.com", null, null, null,
+                "claude", "claude-sonnet-4-5");
+    }
+
+    @Test
+    void blankProviderIsTreatedAsAbsentAndOverlongModelIsRejected() {
+        AssistantSessionCreateRequest request = new AssistantSessionCreateRequest();
+        request.setProjectId("proj-1");
+        request.setProvider("   ");
+        request.setModel("m".repeat(129));
+
+        ResponseEntity<?> response = controller.createSession(request, requestWithBearerToken());
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        verify(sessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
     void createsBeyondThePerMinuteRateAreRejectedWith429() {
         AssistantSessionCreateRequest request = new AssistantSessionCreateRequest();
         request.setProjectId("proj-1");
-        when(sessionService.createSession(anyString(), anyString(), any(), any(), any()))
+        when(sessionService.createSession(anyString(), anyString(), any(), any(), any(), any(), any()))
                 .thenReturn(AssistantSessionDocument.builder().id("s").projectId("proj-1").pinnedRevision(1L)
                         .retrievalAttemptsRemaining(5).expiresAt(Instant.now().plusSeconds(300)).build());
 
@@ -126,7 +162,7 @@ class AssistantSessionControllerTest {
         assertEquals(HttpStatus.TOO_MANY_REQUESTS, third.getStatusCode());
         int retryAfter = Integer.parseInt(third.getHeaders().getFirst("Retry-After"));
         assertTrue(retryAfter >= 1 && retryAfter <= 60);
-        verify(sessionService, times(2)).createSession(anyString(), anyString(), any(), any(), any());
+        verify(sessionService, times(2)).createSession(anyString(), anyString(), any(), any(), any(), any(), any());
     }
 
     private MockHttpServletRequest requestWithBearerToken() {

@@ -29,6 +29,9 @@ import java.util.Optional;
         methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class AssistantSessionController {
 
+    private static final int MAX_PROVIDER_LENGTH = 32;
+    private static final int MAX_MODEL_LENGTH = 128;
+
     private final AssistantSessionService sessionService;
     private final AssistantAdmissionLimiter admissionLimiter;
 
@@ -50,16 +53,26 @@ public class AssistantSessionController {
             return ResponseEntity.badRequest()
                     .body(java.util.Map.of("ok", false, "message", "projectId is required"));
         }
+        String provider = normalize(request.getProvider());
+        String model = normalize(request.getModel());
+        if ((provider != null && provider.length() > MAX_PROVIDER_LENGTH)
+                || (model != null && model.length() > MAX_MODEL_LENGTH)) {
+            return ResponseEntity.badRequest().body(Map.of("ok", false, "errorCode", "VALIDATION_FAILED",
+                    "message", "provider must be at most " + MAX_PROVIDER_LENGTH + " characters and model at most "
+                            + MAX_MODEL_LENGTH));
+        }
 
         Optional<Integer> retryAfter = sessionService.activeSessionLimitRetryAfter(userEmail)
                 .or(() -> admissionLimiter.tryAdmitSessionCreate(userEmail));
         if (retryAfter.isPresent()) {
+            sessionService.recordCreateRejected(userEmail, request.getProjectId(), provider, model,
+                    "RATE_LIMITED", "retryAfterSeconds=" + retryAfter.get());
             return rateLimited(retryAfter.get());
         }
 
         AssistantSessionDocument session = sessionService.createSession(
                 request.getProjectId(), userEmail, request.getDocumentPath(),
-                request.getActionType(), request.getActionContext());
+                request.getActionType(), request.getActionContext(), provider, model);
 
         AssistantSessionResponse response = AssistantSessionResponse.builder()
                 .sessionId(session.getId())
@@ -77,6 +90,14 @@ public class AssistantSessionController {
                 .build();
 
         return ResponseEntity.ok(response);
+    }
+
+    private static String normalize(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private static ResponseEntity<Map<String, Object>> rateLimited(int retryAfterSeconds) {

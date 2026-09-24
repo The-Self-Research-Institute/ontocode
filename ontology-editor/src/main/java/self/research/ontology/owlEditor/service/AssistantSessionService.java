@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
@@ -21,9 +22,12 @@ import java.util.Optional;
 @Service
 public class AssistantSessionService {
 
+    public static final String SESSION_CREATE_OPERATION = "session_create";
+
     private final AssistantSessionRepository sessionRepository;
     private final ProjectMetadataService metadataService;
     private final MongoTemplate mongoTemplate;
+    private final AssistantAuditService auditService;
 
     @Value("${assistant.session.retrieval-attempts-default:5}")
     private int defaultRetrievalAttempts;
@@ -40,13 +44,28 @@ public class AssistantSessionService {
     public AssistantSessionService(AssistantSessionRepository sessionRepository,
                                     ProjectMetadataService metadataService,
                                     MongoTemplate mongoTemplate) {
+        this(sessionRepository, metadataService, mongoTemplate, null);
+    }
+
+    @Autowired
+    public AssistantSessionService(AssistantSessionRepository sessionRepository,
+                                    ProjectMetadataService metadataService,
+                                    MongoTemplate mongoTemplate,
+                                    AssistantAuditService auditService) {
         this.sessionRepository = sessionRepository;
         this.metadataService = metadataService;
         this.mongoTemplate = mongoTemplate;
+        this.auditService = auditService;
     }
 
     public AssistantSessionDocument createSession(String projectId, String userEmail, String documentPath,
                                                    String actionType, String actionContext) {
+        return createSession(projectId, userEmail, documentPath, actionType, actionContext, null, null);
+    }
+
+    public AssistantSessionDocument createSession(String projectId, String userEmail, String documentPath,
+                                                   String actionType, String actionContext,
+                                                   String provider, String model) {
         long pinnedRevision = metadataService.getMutationVersion(projectId);
         Instant now = Instant.now();
         AssistantSessionDocument session = AssistantSessionDocument.builder()
@@ -55,6 +74,8 @@ public class AssistantSessionService {
                 .documentPath(documentPath)
                 .actionType(actionType)
                 .actionContext(actionContext)
+                .provider(provider)
+                .model(model)
                 .pinnedRevision(pinnedRevision)
                 .status(AssistantSessionStatus.ACTIVE)
                 .retrievalAttemptsRemaining(defaultRetrievalAttempts)
@@ -66,7 +87,26 @@ public class AssistantSessionService {
         AssistantSessionDocument saved = sessionRepository.save(session);
         log.info("[Assistant] Session {} created for project {} pinned at revision {}",
                 saved.getId(), projectId, pinnedRevision);
+        audit(new AssistantAuditService.AssistantAuditEvent(userEmail, projectId, saved.getId(), null,
+                SESSION_CREATE_OPERATION, pinnedRevision, provider, model, "ok", null, actionType));
         return saved;
+    }
+
+    public void recordCreateRejected(String userEmail, String projectId, String provider, String model,
+                                     String errorCode, String detail) {
+        audit(new AssistantAuditService.AssistantAuditEvent(userEmail, projectId, null, null,
+                SESSION_CREATE_OPERATION, null, provider, model, "rejected", errorCode, detail));
+    }
+
+    private void audit(AssistantAuditService.AssistantAuditEvent event) {
+        if (auditService == null) {
+            return;
+        }
+        try {
+            auditService.record(event);
+        } catch (Exception e) {
+            log.warn("[Assistant] Could not audit {}: {}", event.operation(), e.getMessage());
+        }
     }
 
     public Optional<Integer> activeSessionLimitRetryAfter(String userEmail) {
