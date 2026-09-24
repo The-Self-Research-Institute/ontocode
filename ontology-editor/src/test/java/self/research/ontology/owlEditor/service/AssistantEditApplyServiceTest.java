@@ -46,6 +46,9 @@ class AssistantEditApplyServiceTest {
     @Mock
     private AssistantEditGroupRemapService remapService;
 
+    @Mock
+    private AssistantEditSyntaxValidator syntaxValidator;
+
     private AssistantEditApplyService applyService;
     private Path splicedFile;
 
@@ -54,11 +57,12 @@ class AssistantEditApplyServiceTest {
         MockitoAnnotations.openMocks(this);
         ProjectWriteLockRegistry realLockRegistry = new ProjectWriteLockRegistry();
         applyService = new AssistantEditApplyService(groupRepository, storageManager, spliceWriter,
-                reimportPipeline, remapService, realLockRegistry);
+                reimportPipeline, remapService, realLockRegistry, syntaxValidator);
         splicedFile = Files.createTempFile("apply-test-spliced-", ".ttl");
         when(storageManager.extensionFor(anyString())).thenReturn("ttl");
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(splicedFile);
         when(remapService.remap(any(), any())).thenReturn(List.of());
+        when(syntaxValidator.isValid(anyString(), anyString(), any())).thenReturn(true);
     }
 
     private AssistantEditGroupDocument group(AssistantEditGroupStatus status, EditEntry... edits) {
@@ -219,6 +223,55 @@ class AssistantEditApplyServiceTest {
         assertTrue(result.getRemappedPendingGroups().stream()
                 .anyMatch(r -> r.serverGroupId().equals("sib-2") && !r.remapped()));
         verify(groupRepository).saveAll(List.of(touchedSibling));
+    }
+
+    @Test
+    void pendingWithChangedVersionAndMatchingTextButBrokenSyntaxMarksConflict() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(99L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("old", 1, 1, 10, 100));
+        when(syntaxValidator.isValid(eq("proj-1"), eq("turtle"), any())).thenReturn(false);
+
+        ApplyResult result = applyService.applyGroup("g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void liveMismatchSkipsRedundantSyntaxRecheck() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(99L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("something else entirely", 1, 1, 10, 100));
+
+        applyService.applyGroup("g1", "u@x.com");
+
+        verify(syntaxValidator, never()).isValid(anyString(), anyString(), any());
+    }
+
+    @Test
+    void applyRequestsReimportWithSanitizationSkipped() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 10L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
+                .thenReturn(List.of());
+
+        applyService.applyGroup("g1", "u@x.com");
+
+        ArgumentCaptor<CodeViewReimportPipeline.ReimportRequest> captor =
+                ArgumentCaptor.forClass(CodeViewReimportPipeline.ReimportRequest.class);
+        verify(reimportPipeline).reimport(captor.capture());
+        assertTrue(captor.getValue().skipSanitization());
     }
 
     @Test

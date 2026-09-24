@@ -1980,7 +1980,7 @@ public class ProjectLoadController {
 
                 CodeViewReimportPipeline.ReimportResult result = codeViewReimportPipeline.reimport(
                         new CodeViewReimportPipeline.ReimportRequest(
-                                projectId, format, contentFile, draft, userId, username, targetGraphOverride, oldContentFile));
+                                projectId, format, contentFile, draft, userId, username, targetGraphOverride, oldContentFile, false));
 
                 return ResponseEntity.ok(Map.of(
                         "success", true,

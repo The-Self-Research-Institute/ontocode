@@ -95,7 +95,14 @@ function toOpenAiTool(tool: ToolDefinition) {
   return { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } };
 }
 
-function toClaudeTool(tool: ToolDefinition) {
+interface ClaudeTool {
+  name: string;
+  description: string;
+  input_schema: JsonSchema;
+  cache_control?: { type: "ephemeral" };
+}
+
+function toClaudeTool(tool: ToolDefinition): ClaudeTool {
   return { name: tool.name, description: tool.description, input_schema: tool.parameters };
 }
 
@@ -359,6 +366,7 @@ async function mapHttpError(provider: LlmProvider, res: Response): Promise<LlmRe
 const RETRYABLE_STATUSES = new Set([503]);
 const MAX_TRANSIENT_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 1000;
+const MAX_REQUEST_CHARS = 1_200_000;
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -394,6 +402,13 @@ export async function requestNextTurn(
   const model = getStoredModel();
 
   const body = buildRequestBody(conversation, model, tools);
+  const estimatedChars = JSON.stringify(body).length;
+  if (estimatedChars > MAX_REQUEST_CHARS) {
+    throw new ProviderProtocolError(
+      `This conversation has grown too large to send to ${conversation.provider} ` +
+        `(~${Math.round(estimatedChars / 4)} tokens estimated). Start a new request for a fresh, smaller context.`,
+    );
+  }
   const { url, headers } = providerEndpoint(conversation.provider, model, key);
 
   let res: Response;

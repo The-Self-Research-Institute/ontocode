@@ -47,6 +47,12 @@ public class AssistantSparqlToolService {
         }
         AssistantSessionDocument session = sessionOpt.get();
 
+        if (sessionService.isRevisionStale(session)) {
+            return SparqlToolResult.builder().ok(false).errorCode("REVISION_STALE")
+                    .message("The project has changed since this session's snapshot was pinned. "
+                            + "Start a new request to get a fresh snapshot before reading further.").build();
+        }
+
         if (query == null || !SELECT_ONLY.matcher(query).find()) {
             return SparqlToolResult.builder().ok(false).errorCode("NOT_SELECT_ONLY")
                     .message("Only SELECT queries are allowed").build();

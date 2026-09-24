@@ -29,19 +29,22 @@ public class AssistantEditApplyService {
     private final CodeViewReimportPipeline reimportPipeline;
     private final AssistantEditGroupRemapService remapService;
     private final ProjectWriteLockRegistry lockRegistry;
+    private final AssistantEditSyntaxValidator syntaxValidator;
 
     public AssistantEditApplyService(AssistantEditGroupRepository groupRepository,
                                       StorageManager storageManager,
                                       LineRangeSpliceWriter spliceWriter,
                                       CodeViewReimportPipeline reimportPipeline,
                                       AssistantEditGroupRemapService remapService,
-                                      ProjectWriteLockRegistry lockRegistry) {
+                                      ProjectWriteLockRegistry lockRegistry,
+                                      AssistantEditSyntaxValidator syntaxValidator) {
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
         this.spliceWriter = spliceWriter;
         this.reimportPipeline = reimportPipeline;
         this.remapService = remapService;
         this.lockRegistry = lockRegistry;
+        this.syntaxValidator = syntaxValidator;
     }
 
     public ApplyResult applyGroup(String serverGroupId, String userEmail) {
@@ -79,21 +82,25 @@ public class AssistantEditApplyService {
                 break;
         }
 
+        List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = toSpliceEdits(group);
+
         boolean versionUnchanged = storageManager.getPublicGraphVersion(group.getProjectId())
                 == group.getPublicGraphVersionAtPropose();
-        if (!versionUnchanged && hasLiveMismatch(group)) {
-            group.setStatus(AssistantEditGroupStatus.CONFLICT);
-            group.setUpdatedAt(Instant.now());
-            groupRepository.save(group);
-            return errorResult("CONFLICT", "Document changed since this group was checked");
+        if (!versionUnchanged) {
+            boolean liveMismatch = hasLiveMismatch(group);
+            boolean stillSyntaxValid = liveMismatch
+                    || syntaxValidator.isValid(group.getProjectId(), group.getTargetPath(), spliceEdits);
+            if (liveMismatch || !stillSyntaxValid) {
+                group.setStatus(AssistantEditGroupStatus.CONFLICT);
+                group.setUpdatedAt(Instant.now());
+                groupRepository.save(group);
+                return errorResult("CONFLICT", "Document changed since this group was checked");
+            }
         }
 
         Path sourceFile = storageManager.ensureCodeViewFile(group.getProjectId(), group.getTargetPath());
         Path oldSnapshotFile = captureOldSnapshotForDiff(group.getProjectId());
 
-        List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = group.getEdits().stream()
-                .map(e -> new LineRangeSpliceWriter.SpliceEdit(e.getStartLine(), e.getLineCount(), e.getNewText()))
-                .toList();
         String extension = storageManager.extensionFor(group.getTargetPath());
         Path splicedFile = spliceWriter.splice(sourceFile, extension, spliceEdits);
 
@@ -101,7 +108,7 @@ public class AssistantEditApplyService {
             CodeViewReimportPipeline.ReimportResult reimportResult = reimportPipeline.reimport(
                     new CodeViewReimportPipeline.ReimportRequest(
                             group.getProjectId(), group.getTargetPath(), splicedFile, false,
-                            userEmail, userEmail, null, oldSnapshotFile));
+                            userEmail, userEmail, null, oldSnapshotFile, true));
 
             group.setStatus(AssistantEditGroupStatus.APPLIED);
             group.setAppliedRevision(reimportResult.sourceVersion());
@@ -132,6 +139,12 @@ public class AssistantEditApplyService {
         } finally {
             Files.deleteIfExists(splicedFile);
         }
+    }
+
+    private List<LineRangeSpliceWriter.SpliceEdit> toSpliceEdits(AssistantEditGroupDocument group) {
+        return group.getEdits().stream()
+                .map(e -> new LineRangeSpliceWriter.SpliceEdit(e.getStartLine(), e.getLineCount(), e.getNewText()))
+                .toList();
     }
 
     private boolean hasLiveMismatch(AssistantEditGroupDocument group) throws IOException {

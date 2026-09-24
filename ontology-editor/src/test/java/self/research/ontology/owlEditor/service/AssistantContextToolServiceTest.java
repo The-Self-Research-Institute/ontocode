@@ -17,6 +17,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -41,6 +42,20 @@ class AssistantContextToolServiceTest {
         MockitoAnnotations.openMocks(this);
         toolService = new AssistantContextToolService(sessionService, datasetService, storageManager);
         when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
+        when(sessionService.isRevisionStale(any())).thenReturn(false);
+    }
+
+    @Test
+    void returnsRevisionStaleWhenProjectHasMovedOnAndNeverSpendsBudget() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.isRevisionStale(any())).thenReturn(true);
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "definitions");
+
+        assertFalse(result.isOk());
+        assertEquals("REVISION_STALE", result.getErrorCode());
+        org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never()).tryConsumeRetrievalAttempt(anyString());
     }
 
     @Test

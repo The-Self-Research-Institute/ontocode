@@ -68,7 +68,7 @@ class CodeViewReimportPipelineTest {
         Path contentFile = fileWith("ttl", ":A a owl:Class .");
 
         ReimportResult result = pipeline.reimport(new ReimportRequest(
-                "proj-1", "turtle", contentFile, false, "u1", "User", null, null));
+                "proj-1", "turtle", contentFile, false, "u1", "User", null, null, false));
 
         assertEquals(RDFFormat.TURTLE, result.rdfFormat());
         assertEquals(9L, result.sourceVersion());
@@ -93,7 +93,7 @@ class CodeViewReimportPipelineTest {
             mocked.when(() -> OWLFormatConverter.convertToRDFXML(any(Path.class))).thenReturn(convertedFile);
 
             ReimportResult result = pipeline.reimport(new ReimportRequest(
-                    "proj-1", "functional", contentFile, false, "u1", "User", null, null));
+                    "proj-1", "functional", contentFile, false, "u1", "User", null, null, false));
 
             assertEquals(RDFFormat.RDFXML, result.rdfFormat());
             verify(storageManager).storeCodeViewCache(eq("proj-1"), eq(rawContent), eq("functional"));
@@ -119,7 +119,7 @@ class CodeViewReimportPipelineTest {
             mocked.when(() -> OWLFormatConverter.convertToRDFXML(any(Path.class))).thenReturn(retryConverted);
 
             ReimportResult result = pipeline.reimport(new ReimportRequest(
-                    "proj-1", "rdfxml", contentFile, false, "u1", "User", null, null));
+                    "proj-1", "rdfxml", contentFile, false, "u1", "User", null, null, false));
 
             assertEquals(RDFFormat.RDFXML, result.rdfFormat());
             verify(datasetService, times(2)).bulkLoadChunked(anyString(), any(InputStream.class),
@@ -137,9 +137,33 @@ class CodeViewReimportPipelineTest {
 
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () ->
                 pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
-                        false, "u1", "User", null, null)));
+                        false, "u1", "User", null, null, false)));
 
         verify(storageManager, never()).clearCodeViewCache(anyString());
+    }
+
+    @Test
+    void skipSanitizationTrueNeverCallsOwlApiReserialization() throws Exception {
+        Path contentFile = fileWith("ttl", ":A a owl:Class .");
+
+        try (MockedStatic<OWLFormatConverter> mocked = mockStatic(OWLFormatConverter.class)) {
+            pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
+                    false, "u1", "User", null, null, true));
+
+            mocked.verify(() -> OWLFormatConverter.sanitizeFileOnDisk(any(Path.class)), never());
+        }
+    }
+
+    @Test
+    void skipSanitizationFalseCallsOwlApiReserializationAsBefore() throws Exception {
+        Path contentFile = fileWith("ttl", ":A a owl:Class .");
+
+        try (MockedStatic<OWLFormatConverter> mocked = mockStatic(OWLFormatConverter.class)) {
+            pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
+                    false, "u1", "User", null, null, false));
+
+            mocked.verify(() -> OWLFormatConverter.sanitizeFileOnDisk(any(Path.class)));
+        }
     }
 
     @Test
@@ -148,7 +172,7 @@ class CodeViewReimportPipelineTest {
         Path contentFile = fileWith("ttl", ":A a owl:Class .");
 
         pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
-                true, "u1", "User", "urn:draft:graph:u1", null));
+                true, "u1", "User", "urn:draft:graph:u1", null, false));
 
         verify(datasetService).bulkLoadChunked(eq("proj-1"), any(InputStream.class), eq(RDFFormat.TURTLE),
                 anyLong(), any(ImportOptions.class), isNull(), eq("urn:draft:graph:u1"));
@@ -164,7 +188,7 @@ class CodeViewReimportPipelineTest {
                 StandardCharsets.UTF_8);
 
         pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
-                false, "u1", "User", null, oldFile));
+                false, "u1", "User", null, oldFile, false));
 
         verify(metadataService).incrementMutationVersion("proj-1");
     }

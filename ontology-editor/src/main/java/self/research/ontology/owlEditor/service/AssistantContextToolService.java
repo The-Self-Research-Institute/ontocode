@@ -40,6 +40,12 @@ public class AssistantContextToolService {
         }
         AssistantSessionDocument session = sessionOpt.get();
 
+        if (sessionService.isRevisionStale(session)) {
+            return ContextToolResult.builder().ok(false).errorCode("REVISION_STALE")
+                    .message("The project has changed since this session's snapshot was pinned. "
+                            + "Start a new request to get a fresh snapshot before reading further.").build();
+        }
+
         if (!sessionService.tryConsumeRetrievalAttempt(sessionId)) {
             return ContextToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
                     .message("Retrieval budget exhausted for this session").build();

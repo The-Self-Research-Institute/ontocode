@@ -16,6 +16,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -40,6 +41,20 @@ class AssistantSparqlToolServiceTest {
         ReflectionTestUtils.setField(toolService, "maxBytes", 200000L);
         ReflectionTestUtils.setField(toolService, "timeoutSeconds", 15);
         when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
+        when(sessionService.isRevisionStale(any())).thenReturn(false);
+    }
+
+    @Test
+    void returnsRevisionStaleWhenProjectHasMovedOnAndNeverSpendsBudget() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.isRevisionStale(any())).thenReturn(true);
+
+        AssistantSparqlToolService.SparqlToolResult result =
+                toolService.runSparql("s1", "u@x.com", "SELECT * WHERE { ?s ?p ?o }");
+
+        assertFalse(result.isOk());
+        assertEquals("REVISION_STALE", result.getErrorCode());
+        org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never()).tryConsumeRetrievalAttempt(anyString());
     }
 
     @Test

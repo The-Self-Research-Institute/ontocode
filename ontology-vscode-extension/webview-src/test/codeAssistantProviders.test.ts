@@ -182,6 +182,34 @@ describe("requestNextTurn — Gemini", () => {
   });
 });
 
+describe("requestNextTurn — whole-request size guard", () => {
+  it("fails closed before ever calling fetch when the built request is too large to send", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const hugeHistory = Array.from({ length: 20 }, (_, i) => ({
+      role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+      text: "x".repeat(100_000),
+    }));
+    const conversation = await startAssistantConversation("system prompt", "hi", hugeHistory);
+
+    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(ProviderProtocolError);
+    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/too large/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends a normal-sized conversation through without tripping the guard", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    mockFetchOnce(200, { choices: [{ message: { content: "fine" } }] });
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    const { turn } = await requestNextTurn(conversation, [TOOL]);
+
+    expect(turn).toEqual({ kind: "answer", text: "fine" });
+  });
+});
+
 describe("requestNextTurn — HTTP error mapping", () => {
   it("maps 401 to an unauthorized message", async () => {
     vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");

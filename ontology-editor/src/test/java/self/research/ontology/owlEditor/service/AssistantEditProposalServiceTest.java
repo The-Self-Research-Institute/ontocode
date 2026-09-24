@@ -48,12 +48,15 @@ class AssistantEditProposalServiceTest {
     @Mock
     private LineRangeSpliceWriter spliceWriter;
 
+    private AssistantEditSyntaxValidator syntaxValidator;
+
     private AssistantEditProposalService proposalService;
 
     @BeforeEach
     void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
-        proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager, spliceWriter);
+        syntaxValidator = new AssistantEditSyntaxValidator(storageManager, spliceWriter);
+        proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager, syntaxValidator);
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 20);
         ReflectionTestUtils.setField(proposalService, "maxGroupsPerRequest", 10);

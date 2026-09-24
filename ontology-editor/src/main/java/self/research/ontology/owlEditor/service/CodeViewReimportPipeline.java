@@ -78,7 +78,7 @@ public class CodeViewReimportPipeline {
 
     public record ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
                                    String userId, String username, String targetGraphOverride,
-                                   Path oldContentFileForDiff) {}
+                                   Path oldContentFileForDiff, boolean skipSanitization) {}
 
     public record ReimportResult(String format, RDFFormat rdfFormat, long sourceVersion) {}
 
@@ -106,11 +106,16 @@ public class CodeViewReimportPipeline {
             } else {
                 pristineCopy = Files.createTempFile("codeview-pristine-", "." + storageManager.extensionFor(format));
                 Files.copy(req.contentFile(), pristineCopy, StandardCopyOption.REPLACE_EXISTING);
-                try {
-                    OWLFormatConverter.sanitizeFileOnDisk(req.contentFile());
-                    log.info("[CODE-VIEW-SAVE] Sanitization completed for format: {}", format);
-                } catch (Exception sanitizeEx) {
-                    log.warn("[CODE-VIEW-SAVE] Sanitization failed (continuing with original): {}", sanitizeEx.getMessage());
+                if (req.skipSanitization()) {
+                    log.info("[CODE-VIEW-SAVE] Skipping sanitization/OWL-API reserialization for format {} "
+                            + "(caller already validated the content and needs line-position stability)", format);
+                } else {
+                    try {
+                        OWLFormatConverter.sanitizeFileOnDisk(req.contentFile());
+                        log.info("[CODE-VIEW-SAVE] Sanitization completed for format: {}", format);
+                    } catch (Exception sanitizeEx) {
+                        log.warn("[CODE-VIEW-SAVE] Sanitization failed (continuing with original): {}", sanitizeEx.getMessage());
+                    }
                 }
                 importSourceFile = req.contentFile();
                 retrySourceFile = pristineCopy;

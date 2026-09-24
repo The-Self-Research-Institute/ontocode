@@ -104,6 +104,7 @@ export const PROPOSE_EDIT_TOOL: ToolDefinition = {
 export const ASSISTANT_TOOLS: ToolDefinition[] = [READ_CONTEXT_TOOL, RUN_SPARQL_TOOL, PROPOSE_EDIT_TOOL];
 
 const MAX_LOOP_ITERATIONS = 12;
+const MAX_CALLS_PER_TURN = 8;
 
 export interface LoopContext {
   apiBaseUrl: string;
@@ -249,6 +250,18 @@ export async function runAssistantLoop(
       }
       onStage({ stage: "propose" });
       return { kind: "propose", result: outcome.proposeResult };
+    }
+
+    if (turn.calls.length > MAX_CALLS_PER_TURN) {
+      onStage({ stage: "stopped", detail: `too many tool calls in one turn (${turn.calls.length})` });
+      const results: ToolResultForModel[] = turn.calls.map((c) => ({
+        toolCallId: c.toolCallId,
+        name: c.name,
+        result: { error: `Too many tool calls in one turn (${turn.calls.length}). Call at most ${MAX_CALLS_PER_TURN} tools per turn.` },
+        isError: true,
+      }));
+      conversation = advance(results);
+      continue;
     }
 
     onStage({ stage: "calling-tool", detail: turn.calls.map((c) => c.name).join(", ") });

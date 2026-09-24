@@ -5,9 +5,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.rdf4j.rio.RDFFormat;
-import org.eclipse.rdf4j.rio.Rio;
-import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument;
@@ -18,14 +15,10 @@ import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditGroupInput;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditInput;
 import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -36,7 +29,7 @@ public class AssistantEditProposalService {
     private final AssistantSessionService sessionService;
     private final AssistantEditGroupRepository groupRepository;
     private final StorageManager storageManager;
-    private final LineRangeSpliceWriter spliceWriter;
+    private final AssistantEditSyntaxValidator syntaxValidator;
 
     @Value("${assistant.propose.max-edit-bytes:200000}")
     private int maxEditBytes;
@@ -53,11 +46,11 @@ public class AssistantEditProposalService {
     public AssistantEditProposalService(AssistantSessionService sessionService,
                                          AssistantEditGroupRepository groupRepository,
                                          StorageManager storageManager,
-                                         LineRangeSpliceWriter spliceWriter) {
+                                         AssistantEditSyntaxValidator syntaxValidator) {
         this.sessionService = sessionService;
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
-        this.spliceWriter = spliceWriter;
+        this.syntaxValidator = syntaxValidator;
     }
 
     public ProposeEditResult propose(String sessionId, String userEmail, List<EditGroupInput> groups) {
@@ -120,7 +113,7 @@ public class AssistantEditProposalService {
 
         boolean structurallySound = hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
         boolean syntaxValid = !structurallySound
-                || checkSyntaxValid(session.getProjectId(), targetPath, sortedEdits);
+                || syntaxValidator.isValid(session.getProjectId(), targetPath, toSpliceEdits(sortedEdits));
         checks.add(new CheckResult("syntax_valid", syntaxValid));
 
         boolean passed = checks.stream().allMatch(CheckResult::passed);
@@ -211,54 +204,13 @@ public class AssistantEditProposalService {
                 .build();
     }
 
-    private boolean checkSyntaxValid(String projectId, String targetPath, List<EditInput> sortedEdits) {
-        if (!isRdf4jParseable(targetPath)) {
-            return true;
-        }
-        Path splicedFile = null;
-        try {
-            Path sourceFile = storageManager.ensureCodeViewFile(projectId, targetPath);
-            String extension = storageManager.extensionFor(targetPath);
-            List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = sortedEdits.stream()
-                    .map(e -> new LineRangeSpliceWriter.SpliceEdit(
-                            e.range() != null ? e.range().startLine() : 0,
-                            e.range() != null ? e.range().lineCount() : 0,
-                            e.newText()))
-                    .toList();
-            splicedFile = spliceWriter.splice(sourceFile, extension, spliceEdits);
-            RDFFormat format = rdfFormatFor(targetPath);
-            try (InputStream is = Files.newInputStream(splicedFile)) {
-                var parser = Rio.createParser(format);
-                parser.setRDFHandler(new AbstractRDFHandler() {});
-                parser.parse(is, "");
-            }
-            return true;
-        } catch (Exception e) {
-            log.warn("[Assistant] Syntax check failed for project {} targetPath {}: {}",
-                    projectId, targetPath, e.getMessage());
-            return false;
-        } finally {
-            if (splicedFile != null) {
-                try {
-                    Files.deleteIfExists(splicedFile);
-                } catch (Exception ignored) {
-                }
-            }
-        }
-    }
-
-    private boolean isRdf4jParseable(String format) {
-        String lower = format.toLowerCase(Locale.ROOT);
-        return !(lower.equals("owlxml") || lower.equals("manchester") || lower.equals("manchestersyntax")
-                || lower.equals("functional") || lower.equals("functionalsyntax"));
-    }
-
-    private RDFFormat rdfFormatFor(String format) {
-        return switch (format.toLowerCase(Locale.ROOT)) {
-            case "turtle", "ttl" -> RDFFormat.TURTLE;
-            case "ntriples", "nt" -> RDFFormat.NTRIPLES;
-            default -> RDFFormat.RDFXML;
-        };
+    private List<LineRangeSpliceWriter.SpliceEdit> toSpliceEdits(List<EditInput> sortedEdits) {
+        return sortedEdits.stream()
+                .map(e -> new LineRangeSpliceWriter.SpliceEdit(
+                        e.range() != null ? e.range().startLine() : 0,
+                        e.range() != null ? e.range().lineCount() : 0,
+                        e.newText()))
+                .toList();
     }
 
     private int countLines(String text) {
