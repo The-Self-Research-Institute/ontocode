@@ -732,7 +732,7 @@ const localName = (iri: string): string => {
       await ontologyMutationService.createClass(
         projectId,
         newClassIri,
-        inlineClassName.trim(),
+        '',
         parentIri,
         'anonymous',
         'Anonymous'
