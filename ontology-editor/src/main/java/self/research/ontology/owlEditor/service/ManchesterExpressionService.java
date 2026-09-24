@@ -284,6 +284,12 @@ private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, bool
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
     }
 
+    public OWLOntology loadFreshOntology(String projectId) throws Exception {
+        Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
+    }
+
     // Matches a bare http(s)/urn IRI that isn't already wrapped in <...> — same rule already
     // applied for SPARQL class expressions in OntologyMutationService.buildClassExpressionSparql.
     // Manchester syntax requires either a resolvable short name or an angle-bracketed full IRI;

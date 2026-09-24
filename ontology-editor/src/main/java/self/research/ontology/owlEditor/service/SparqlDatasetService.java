@@ -59,6 +59,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.LinkedHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -112,6 +113,9 @@ public class SparqlDatasetService {
     // MongoDB persistent top-level class cache — evicted on import/mutation.
     @Autowired(required = false)
     private TopLevelClassCacheService topLevelCacheService;
+
+    @Autowired(required = false)
+    private ProjectMetadataService projectMetadataService;
 
     // Hierarchy snapshot + per-class detail caches (MongoDB) — like the top-level
     // cache, they mirror the public graph and must drop on every public write.
@@ -301,6 +305,36 @@ public class SparqlDatasetService {
                 log.error("Failed to connect to Fuseki at {}", fusekiQueryEndpoint, e);
                 log.error("Start Fuseki: docker compose up fuseki");
                 throw new RuntimeException("Fuseki connection failed: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces,
+                                            RepositoryConnection conn) {
+        if (capturedNamespaces.isEmpty()) {
+            log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
+            return;
+        }
+        if (projectMetadataService != null) {
+            try {
+                Map<String, Object> meta = new HashMap<>(
+                        projectMetadataService.readMeta(projectId).orElseGet(HashMap::new));
+                meta.put("prefixes", capturedNamespaces);
+                projectMetadataService.writeMeta(projectId, meta);
+                log.info("[NAMESPACES] Persisted {} prefix mappings to MongoDB for project {}: {}",
+                        capturedNamespaces.size(), projectId, capturedNamespaces.keySet());
+            } catch (Exception metaEx) {
+                log.warn("[NAMESPACES] Failed to persist prefixes to MongoDB for project {}: {}",
+                        projectId, metaEx.getMessage());
+            }
+        } else {
+            log.warn("[NAMESPACES] projectMetadataService unavailable — prefixes not persisted for project {}", projectId);
+        }
+        for (Map.Entry<String, String> ns : capturedNamespaces.entrySet()) {
+            try {
+                conn.setNamespace(ns.getKey(), ns.getValue());
+            } catch (Exception ignore) {
+                
             }
         }
     }
@@ -1636,6 +1670,7 @@ public class SparqlDatasetService {
                     parser.getParserConfig().addNonFatalError(BasicParserSettings.VERIFY_LANGUAGE_TAGS);
                     AtomicLong totalTriples = new AtomicLong(0);
                     List<Statement> batch = new ArrayList<>(batchSize);
+                    final Map<String, String> capturedNamespaces = new LinkedHashMap<>();
 
                     String targetGraphUri = graphUri;
                     IRI targetGraphIri = graphIri;
@@ -1672,6 +1707,9 @@ public class SparqlDatasetService {
                         public void handleNamespace(String prefix, String uri) {
                             // Optimized: Skip namespace handling - causes overhead for large imports
                             // GraphDB infers namespaces from data anyway
+                            if (prefix != null && !prefix.isBlank() && uri != null && !uri.isBlank()) {
+                                capturedNamespaces.putIfAbsent(prefix, uri);
+                            }
                         }
 
                         @Override
@@ -1750,6 +1788,16 @@ public class SparqlDatasetService {
                     long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
                     log.info("[TIMING] RDF parsing completed in {} ms ({} triples parsed)", elapsedMillis(parseStart), totalTriples.get());
+                    persistCapturedNamespaces(projectId, capturedNamespaces, conn);
+                    if (!capturedNamespaces.isEmpty()) {
+                        for (Map.Entry<String, String> ns : capturedNamespaces.entrySet()) {
+                            conn.setNamespace(ns.getKey(), ns.getValue());
+                        }
+                        log.info("[NAMESPACES] Registered {} prefix mappings from parsed file for project {}: {}",
+                                capturedNamespaces.size(), projectId, capturedNamespaces.keySet());
+                    } else {
+                        log.warn("[NAMESPACES] No prefix declarations found in parsed file for project {}", projectId);
+                    }
 
                     // Upload remaining triples
                     if (partitionByNamespace) {
@@ -1991,6 +2039,26 @@ public class SparqlDatasetService {
             }
 
             invalidateContextCaches(projectId);
+
+            try (RepositoryConnection nsConn = binding.repository().getConnection();
+                 InputStream nsStream = Files.newInputStream(sourceFile)) {
+                RDFParser nsParser = Rio.createParser(rdfFormat);
+                nsParser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
+                final Map<String, String> capturedNamespaces = new LinkedHashMap<>();
+                nsParser.setRDFHandler(new AbstractRDFHandler() {
+                    @Override
+                    public void handleNamespace(String prefix, String uri) {
+                        if (prefix != null && !prefix.isBlank() && uri != null && !uri.isBlank()) {
+                            capturedNamespaces.putIfAbsent(prefix, uri);
+                        }
+                    }
+                });
+                nsParser.parse(nsStream, "");
+                persistCapturedNamespaces(projectId, capturedNamespaces, nsConn);
+            } catch (Exception nsEx) {
+                log.warn("[NAMESPACES] Failed to extract/register namespaces after DirectUpload for project {}: {}",
+                        projectId, nsEx.getMessage());
+            }
 
             log.info("═══════════════════════════════════════════════════════════");
             log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
