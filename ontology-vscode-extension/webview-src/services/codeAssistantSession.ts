@@ -31,7 +31,14 @@ export type AssistantErrorCode =
   | "VALIDATION_FAILED"
   | "APPLY_FAILED"
   | "REVISION_STALE"
-  | "RECOVERY_REQUIRED";
+  | "RECOVERY_REQUIRED"
+  | "SESSION_NOT_FOUND"
+  | "PROJECT_RECOVERY_LOCKED"
+  | "RATE_LIMITED"
+  | "IDEMPOTENCY_KEY_REUSED"
+  | "PROVIDER_UNAVAILABLE"
+  | "UNAUTHORIZED"
+  | "FORBIDDEN";
 
 export class AssistantApiError extends Error {
   constructor(message: string, readonly errorCode?: AssistantErrorCode, readonly budget?: AssistantBudget) {

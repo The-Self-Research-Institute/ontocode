@@ -24,6 +24,8 @@ public class AssistantSessionDocument {
     private String documentPath;
     private String actionType;
     private String actionContext;
+    private String provider;
+    private String model;
 
     private Long pinnedRevision;
 

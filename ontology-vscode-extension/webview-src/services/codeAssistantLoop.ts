@@ -1,4 +1,4 @@
-import type { ToolDefinition, ConversationState, ToolResultForModel, HistoryTurn } from "./codeAssistantProviders";
+import type { ToolDefinition, ConversationState, ToolResultForModel, HistoryTurn, ProviderUsage } from "./codeAssistantProviders";
 import { startAssistantConversation, requestNextTurn } from "./codeAssistantProviders";
 
 export type { HistoryTurn };
@@ -8,6 +8,7 @@ import {
   runSparql,
   proposeEditGroups,
   AssistantApiError,
+  type AssistantErrorCode,
   type AssistantSession,
   type ProposedEditGroupInput,
   type ProposeResult,
@@ -115,7 +116,7 @@ export interface LoopContext {
 export type LoopOutcome =
   | { kind: "answer"; text: string }
   | { kind: "propose"; result: ProposeResult }
-  | { kind: "stopped"; reason: string };
+  | { kind: "stopped"; reason: string; errorCode?: AssistantErrorCode };
 
 export interface LoopStageEvent {
   stage: "calling-provider" | "calling-tool" | "tool-result" | "answer" | "propose" | "stopped";
@@ -212,6 +213,7 @@ export async function runAssistantLoop(
   signal?: AbortSignal,
   history: HistoryTurn[] = [],
   onContext?: (event: ContextEvent) => void,
+  onUsage?: (usage: ProviderUsage) => void,
 ): Promise<LoopOutcome> {
   let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage, history);
 

@@ -51,6 +51,16 @@ export interface HistoryTurn {
   text: string;
 }
 
+export interface ProviderUsage {
+  provider: LlmProvider;
+  model: string;
+  latencyMs: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
 export class ProviderProtocolError extends LlmRequestError {}
 
 function newToolCallId(prefix: string): string {
