@@ -7,6 +7,7 @@ import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.Edit
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -62,5 +63,38 @@ public class AssistantEditGroupRemapService {
     private boolean isBefore(EditEntry committedEdit, EditEntry siblingEdit) {
         long committedEnd = committedEdit.getStartLine() + committedEdit.getLineCount();
         return committedEnd <= siblingEdit.getStartLine();
+    }
+
+    public record AppliedRange(String format, long startLine, int lineCount) {}
+
+    public List<AssistantEditGroupDocument> stampVerifiedPositions(List<AssistantEditGroupDocument> siblings,
+                                                                   List<AssistantEditGroupDocument> alreadyTouched,
+                                                                   long version) {
+        List<AssistantEditGroupDocument> touched = new ArrayList<>(alreadyTouched);
+        for (AssistantEditGroupDocument sibling : siblings) {
+            if (sibling.getStatus() == AssistantEditGroupStatus.PENDING) {
+                sibling.setPositionsVerifiedAtVersion(version);
+                if (!touched.contains(sibling)) {
+                    touched.add(sibling);
+                }
+            }
+        }
+        return touched;
+    }
+
+    public static List<AppliedRange> appliedRanges(AssistantEditGroupDocument group) {
+        List<EditEntry> edits = group.getEdits().stream()
+                .sorted(Comparator.comparingLong(EditEntry::getStartLine))
+                .toList();
+        List<AppliedRange> ranges = new ArrayList<>();
+        long shift = 0;
+        for (EditEntry edit : edits) {
+            int writtenLines = edit.getLineCount() + edit.getLineDelta();
+            if (writtenLines > 0) {
+                ranges.add(new AppliedRange(group.getTargetPath(), edit.getStartLine() + shift, writtenLines));
+            }
+            shift += edit.getLineDelta();
+        }
+        return ranges;
     }
 }

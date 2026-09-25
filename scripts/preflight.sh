@@ -15,6 +15,7 @@
 #   4. Runs scripts/check-file-size.py against every changed file (not just
 #      staged — this is the full pre-merge gate, pre-commit is the fast
 #      staged-only version).
+#   5. Runs scripts/comment_policy.py on lines changed since the merge-base.
 #
 # A missing tool, a missing test suite, or a missing coverage report is a
 # FAIL here, not a skip — see section 14 ("missing tools or
@@ -101,6 +102,19 @@ if command -v python3 >/dev/null 2>&1; then
     fi
 else
     record "FAIL  file-size gate — python3 not on PATH"
+    overall_status=1
+fi
+
+section "Comment policy (section 4, changed lines only)"
+if command -v python3 >/dev/null 2>&1; then
+    if python3 scripts/comment_policy.py "$base_ref"; then
+        record "PASS  comment policy"
+    else
+        record "FAIL  comment policy (run: python3 scripts/comment_policy.py $base_ref --strip)"
+        overall_status=1
+    fi
+else
+    record "FAIL  comment policy — python3 not on PATH"
     overall_status=1
 fi
 

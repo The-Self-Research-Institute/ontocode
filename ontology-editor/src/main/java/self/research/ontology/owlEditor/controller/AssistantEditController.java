@@ -112,6 +112,7 @@ public class AssistantEditController {
         body.put("newRevision", result.getNewRevision());
         body.put("remappedPendingGroups", result.getRemappedPendingGroups() == null
                 ? List.of() : result.getRemappedPendingGroups());
+        body.put("appliedRanges", result.getAppliedRanges() == null ? List.of() : result.getAppliedRanges());
         return body;
     }
 

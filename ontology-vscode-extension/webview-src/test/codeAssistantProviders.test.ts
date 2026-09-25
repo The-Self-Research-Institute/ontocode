@@ -111,6 +111,22 @@ describe("requestNextTurn — Claude", () => {
     }
   });
 
+  it("keeps the text Claude writes alongside its tool calls", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("claude");
+    mockFetchOnce(200, {
+      content: [
+        { type: "text", text: "Dog has no label, so I'll add one." },
+        { type: "tool_use", id: "toolu_1", name: "propose_edit", input: { groups: [] } },
+      ],
+    });
+
+    const conversation = await startAssistantConversation("system prompt", "label Dog");
+    const { turn } = await requestNextTurn(conversation, [TOOL]);
+
+    expect(turn.kind).toBe("tool_calls");
+    if (turn.kind === "tool_calls") expect(turn.text).toBe("Dog has no label, so I'll add one.");
+  });
+
   it("fails closed on max_tokens stop_reason", async () => {
     vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("claude");
     mockFetchOnce(200, { content: [{ type: "text", text: "partial" }], stop_reason: "max_tokens" });

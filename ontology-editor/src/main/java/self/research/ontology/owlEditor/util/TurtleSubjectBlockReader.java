@@ -19,19 +19,34 @@ public final class TurtleSubjectBlockReader {
     private final SourceIdentifier target;
     private final SubjectBlocks.Collector collector;
     private final Map<String, String> prefixes = new HashMap<>();
+    private final TurtleIndexState index;
     private State state = State.NORMAL;
     private boolean inStatement;
     private boolean endAfterIri;
+    private boolean inDirective;
     private int depth;
+    private long currentLine;
 
-    private TurtleSubjectBlockReader(SourceIdentifier target, SubjectBlocks.Limits limits) {
+    private TurtleSubjectBlockReader(SourceIdentifier target, SubjectBlocks.Limits limits, boolean indexing) {
         this.target = target;
         this.collector = new SubjectBlocks.Collector(limits);
+        this.index = indexing ? new TurtleIndexState() : null;
+    }
+
+    public static SubjectRangeIndex index(BufferedReader reader) throws IOException {
+        TurtleSubjectBlockReader scanner = new TurtleSubjectBlockReader(new SourceIdentifier(""),
+                new SubjectBlocks.Limits(1, 1, 1), true);
+        String line;
+        long lineNo = 0;
+        while ((line = reader.readLine()) != null) {
+            scanner.processLine(line, lineNo++);
+        }
+        return scanner.index.finish(scanner.prefixes, !scanner.inStatement);
     }
 
     public static SubjectBlocks read(BufferedReader reader, String identifier, SubjectBlocks.Limits limits)
             throws IOException {
-        TurtleSubjectBlockReader scanner = new TurtleSubjectBlockReader(new SourceIdentifier(identifier), limits);
+        TurtleSubjectBlockReader scanner = new TurtleSubjectBlockReader(new SourceIdentifier(identifier), limits, false);
         String line;
         long lineNo = 0;
         while (!scanner.collector.full() && (line = reader.readLine()) != null) {
@@ -41,7 +56,11 @@ public final class TurtleSubjectBlockReader {
     }
 
     private void processLine(String line, long lineNo) {
+        currentLine = lineNo;
         collector.appendLine(line);
+        if (index != null && inDirective) {
+            index.directiveLine(line, lineNo);
+        }
         int n = line.length();
         int i = 0;
         while (i < n && !collector.full()) {
@@ -138,7 +157,14 @@ public final class TurtleSubjectBlockReader {
                 prefixes.put(matcher.group(1), matcher.group(2));
             }
             endAfterIri = !token.startsWith("@");
+            inDirective = true;
+            if (index != null) {
+                index.directiveLine(line, lineNo);
+            }
             return;
+        }
+        if (index != null) {
+            index.open(subjectKey(token), lineNo);
         }
         if (!target.isBlank() && target.matchesToken(token, prefixes)) {
             collector.start(lineNo, List.of(line));
@@ -163,9 +189,27 @@ public final class TurtleSubjectBlockReader {
     }
 
     private void endStatement() {
+        if (index != null && !inDirective) {
+            index.close(currentLine);
+        }
         inStatement = false;
         endAfterIri = false;
+        inDirective = false;
         depth = 0;
         collector.close();
+    }
+
+    private String subjectKey(String token) {
+        if (token.isEmpty() || token.startsWith("[") || token.startsWith("(")) {
+            return "[]";
+        }
+        if (token.startsWith("_:")) {
+            return token;
+        }
+        if (token.startsWith("<") && token.endsWith(">")) {
+            String iri = token.substring(1, token.length() - 1);
+            return iri.contains(":") ? iri : null;
+        }
+        return SourceIdentifier.expandPrefixed(token, prefixes);
     }
 }

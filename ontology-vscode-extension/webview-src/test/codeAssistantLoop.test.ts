@@ -107,6 +107,40 @@ describe("runAssistantLoop — bounded dispatch per turn", () => {
   });
 });
 
+describe("runAssistantLoop — step limit", () => {
+  it("stops cleanly after the last allowed step and reports it", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn").mockResolvedValue({
+      turn: { kind: "tool_calls", calls: [sparqlCall("c")] },
+      advance: advanceSpy,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, rows: [], rowCount: 0, revision: 1 })));
+    const onStage = vi.fn();
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "hi", onStage);
+
+    expect(outcome.kind).toBe("stopped");
+    expect(onStage).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "stopped", step: 12, maxSteps: 12 }));
+  });
+
+  it("numbers every stage with the current step", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [sparqlCall("c1")] }, advance: advanceSpy })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: advanceSpy });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, rows: [], rowCount: 0, revision: 1 })));
+    const onStage = vi.fn();
+
+    await runAssistantLoop(baseCtx(), "system", "hi", onStage);
+
+    const steps = onStage.mock.calls.map(([event]) => event.step);
+    expect(steps[0]).toBe(1);
+    expect(steps[steps.length - 1]).toBe(2);
+  });
+});
+
 describe("runAssistantLoop — usage reporting", () => {
   const usage = { provider: "claude" as const, model: "claude-sonnet-4-5", latencyMs: 812, inputTokens: 100, outputTokens: 12, cacheReadTokens: 50 };
 

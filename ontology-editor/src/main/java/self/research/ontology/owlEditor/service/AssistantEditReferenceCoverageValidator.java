@@ -7,6 +7,7 @@ import java.io.BufferedReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
@@ -52,7 +53,9 @@ public class AssistantEditReferenceCoverageValidator {
 
         List<long[]> editedRanges = edits.stream()
                 .map(e -> new long[]{e.startLine(), e.startLine() + e.lineCount()})
+                .sorted(Comparator.comparingLong(range -> range[0]))
                 .toList();
+        int rangeCursor = 0;
 
         List<String> missed = new ArrayList<>();
         Set<String> unresolved = new LinkedHashSet<>(removedTokens);
@@ -64,7 +67,12 @@ public class AssistantEditReferenceCoverageValidator {
                 long lineNo = 0;
                 while (!unresolved.isEmpty() && (line = reader.readLine()) != null) {
                     Set<String> lineTokens = scanner != null ? termTexts(scanner.scan(line)) : null;
-                    if (!withinAnyRange(lineNo, editedRanges)) {
+                    while (rangeCursor < editedRanges.size() && editedRanges.get(rangeCursor)[1] <= lineNo) {
+                        rangeCursor++;
+                    }
+                    boolean insideEditedRange = rangeCursor < editedRanges.size()
+                            && lineNo >= editedRanges.get(rangeCursor)[0];
+                    if (!insideEditedRange) {
                         if (lineTokens == null) {
                             lineTokens = extractTokens(line);
                         }
@@ -130,14 +138,5 @@ public class AssistantEditReferenceCoverageValidator {
             }
         }
         return texts;
-    }
-
-    private boolean withinAnyRange(long lineNo, List<long[]> ranges) {
-        for (long[] range : ranges) {
-            if (lineNo >= range[0] && lineNo < range[1]) {
-                return true;
-            }
-        }
-        return false;
     }
 }

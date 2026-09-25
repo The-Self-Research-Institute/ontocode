@@ -97,6 +97,9 @@ public class AssistantProviderProxyService {
     @Value("${assistant.provider.max-concurrent-calls:16}")
     private int maxConcurrentCalls;
 
+    @Value("${assistant.provider.base-url:}")
+    private String baseUrlOverride;
+
     private WebClient webClient;
     private ConnectionProvider connectionProvider;
     private AssistantProviderRateLimiter rateLimiter;
@@ -126,6 +129,11 @@ public class AssistantProviderProxyService {
         concurrencyLimit = new Semaphore(Math.max(1, maxConcurrentCalls));
         if (isManaged()) {
             log.info("[Assistant] Managed provider mode enabled for provider {} model {}", normalizedProvider(), model);
+        }
+        if (baseUrlOverride != null && !baseUrlOverride.isBlank()) {
+            log.warn("[Assistant] assistant.provider.base-url is set to {} - managed provider calls, including the "
+                    + "server-held key, go there instead of the real provider. Use this only for testing.",
+                    baseUrlOverride.trim());
         }
     }
 
@@ -213,12 +221,25 @@ public class AssistantProviderProxyService {
         return new ProviderCallResult(status, body, null, null, retryAfter);
     }
 
-    private UpstreamResponse send(String activeProvider, String activeModel, byte[] payload) {
-        URI uri = switch (activeProvider) {
+    URI upstreamUri(String activeProvider, String activeModel) {
+        String base = baseUrlOverride == null ? "" : baseUrlOverride.trim();
+        if (!base.isEmpty()) {
+            String root = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+            return switch (activeProvider) {
+                case CLAUDE -> URI.create(root + "/v1/messages");
+                case OPENAI -> URI.create(root + "/v1/chat/completions");
+                default -> URI.create(root + "/v1beta/models/" + activeModel + ":generateContent");
+            };
+        }
+        return switch (activeProvider) {
             case CLAUDE -> URI.create(CLAUDE_URL);
             case OPENAI -> URI.create(OPENAI_URL);
             default -> URI.create(GEMINI_URL_PREFIX + activeModel + ":generateContent");
         };
+    }
+
+    private UpstreamResponse send(String activeProvider, String activeModel, byte[] payload) {
+        URI uri = upstreamUri(activeProvider, activeModel);
         String key = apiKey.trim();
         return webClient.post()
                 .uri(uri)

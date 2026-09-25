@@ -7,6 +7,8 @@ import {
   loadStoredChatEntries,
   saveStoredChatEntries,
   clearStoredChatEntries,
+  compactEntryForStorage,
+  describeLoopStage,
 } from "../components/codeAssistantPanelHelpers";
 
 describe("toFriendlyErrorMessage", () => {
@@ -83,6 +85,54 @@ describe("buildConversationHistory", () => {
       { role: "assistant", text: "answer" },
       { role: "user", text: "proposal" },
     ]);
+  });
+});
+
+describe("review summaries in history", () => {
+  it("tells the model what it proposed and what the user did with each group", () => {
+    const history = buildConversationHistory([
+      { role: "user", text: "label Dog and Cat" },
+      {
+        role: "assistant",
+        kind: "review",
+        groups: [
+          { serverGroupId: "g1", diff: [{ targetPath: "turtle", before: "ex:Dog a owl:Class .", after: "ex:Dog a owl:Class ; rdfs:label \"Dog\" .", startLine: 4 }] },
+          { serverGroupId: "g2", diff: [{ targetPath: "turtle", before: "ex:Cat a owl:Class .", after: "ex:Cat a owl:Class ; rdfs:label \"Cat\" ." }] },
+        ],
+        decisions: { g1: "applied", g2: "skipped" },
+      },
+      { role: "user", text: "now do Rabbit" },
+    ]);
+    expect(history[1].role).toBe("assistant");
+    expect(history[1].text).toContain("I proposed 2 change groups for review.");
+    expect(history[1].text).toContain("group 1 (turtle line 5");
+    expect(history[1].text).toContain("is applied");
+    expect(history[1].text).toContain("group 2 (turtle");
+    expect(history[1].text).toContain("is skipped");
+  });
+});
+
+describe("compactEntryForStorage", () => {
+  it("trims large tool results but keeps the rest of the entry", () => {
+    const entry = { id: "e1", role: "assistant", kind: "answer", text: "ok", contextUsed: [{ tool: "read_context", result: "x".repeat(5000) }] };
+    const compact = compactEntryForStorage(entry);
+    expect(compact.text).toBe("ok");
+    expect(String(compact.contextUsed[0].result).length).toBeLessThan(500);
+    expect(String(compact.contextUsed[0].result)).toContain("trimmed when saved");
+  });
+
+  it("leaves entries without tool results untouched", () => {
+    const entry = { id: "u1", role: "user", text: "hi" };
+    expect(compactEntryForStorage(entry)).toBe(entry);
+  });
+});
+
+describe("describeLoopStage", () => {
+  it("prefixes the step count when the loop reports it", () => {
+    expect(describeLoopStage({ stage: "calling-tool", detail: "read_context", step: 3, maxSteps: 12 })).toBe(
+      "Step 3 of 12 · Running read_context...",
+    );
+    expect(describeLoopStage({ stage: "calling-provider" })).toBe("Thinking...");
   });
 });
 

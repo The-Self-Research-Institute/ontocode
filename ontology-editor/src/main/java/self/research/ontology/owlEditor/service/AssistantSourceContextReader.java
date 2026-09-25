@@ -6,7 +6,9 @@ import self.research.ontology.owlEditor.service.AssistantContextToolService.Targ
 import self.research.ontology.owlEditor.util.IdentifierMentionLines;
 import self.research.ontology.owlEditor.util.RdfSourceDiagnostics;
 import self.research.ontology.owlEditor.util.RdfXmlSubjectBlockReader;
+import self.research.ontology.owlEditor.util.SourceIdentifier;
 import self.research.ontology.owlEditor.util.SubjectBlocks;
+import self.research.ontology.owlEditor.util.SubjectRangeIndex;
 import self.research.ontology.owlEditor.util.TurtleSubjectBlockReader;
 
 import java.io.BufferedReader;
@@ -91,11 +93,13 @@ class AssistantSourceContextReader {
                     + "source, not " + format + ". Ask for turtle:" + target.value() + " instead.")), true);
         }
         Path file = storageManager.ensureCodeViewFile(projectId, format);
-        SubjectBlocks blocks;
-        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            blocks = turtleLike
-                    ? TurtleSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS)
-                    : RdfXmlSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS);
+        SubjectBlocks blocks = indexedStatements(projectId, format, file, target.value());
+        if (blocks == null) {
+            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                blocks = turtleLike
+                        ? TurtleSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS)
+                        : RdfXmlSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS);
+            }
         }
         List<Item> items = new ArrayList<>();
         boolean partial = blocks.moreBlocks();
@@ -118,6 +122,32 @@ class AssistantSourceContextReader {
                     + " as its subject."));
         }
         return new SourceRead(items, partial);
+    }
+
+    private SubjectBlocks indexedStatements(String projectId, String format, Path file, String identifier)
+            throws IOException {
+        SubjectRangeIndex index = CodeViewSubjectIndex.forFile(file, format).orElse(null);
+        if (index == null || !index.complete()) {
+            return null;
+        }
+        String subject = new SourceIdentifier(identifier).resolve(index.prefixes());
+        List<SubjectRangeIndex.Block> matches = index.blocksFor(subject);
+        if (matches.isEmpty()) {
+            return null;
+        }
+        List<SubjectBlocks.Block> blocks = new ArrayList<>();
+        for (SubjectRangeIndex.Block match : matches.subList(0, Math.min(matches.size(), STATEMENT_LIMITS.maxBlocks()))) {
+            int lines = (int) Math.min(match.endLine() - match.startLine() + 1, STATEMENT_LIMITS.maxLinesPerBlock());
+            StorageManager.CodeViewPage page = storageManager.readCodeViewPage(projectId, format, match.startLine(), lines);
+            String text = page.content();
+            boolean truncated = match.endLine() - match.startLine() + 1 > lines;
+            if (text.length() > STATEMENT_LIMITS.maxCharsPerBlock()) {
+                text = text.substring(0, STATEMENT_LIMITS.maxCharsPerBlock());
+                truncated = true;
+            }
+            blocks.add(new SubjectBlocks.Block(match.startLine(), page.lineCount(), text, truncated));
+        }
+        return new SubjectBlocks(blocks, matches.size() > STATEMENT_LIMITS.maxBlocks());
     }
 
     SourceRead diagnostics(String projectId, List<Target> targets) throws IOException {

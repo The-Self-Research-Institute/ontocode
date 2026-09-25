@@ -176,13 +176,96 @@ this ever needs to be pinned down more precisely.
 No threshold breaches on any metric; see the `thresholds` block in the script for the
 exact gates this run cleared.
 
-## Extending this for future tool endpoints
+## Assistant load suite
 
-`read_context` and `run_sparql` will land next and will call `AssistantSessionService.tryConsumeRetrievalAttempt(sessionId)` internally. Once they have HTTP routes:
+All scripts share `lib/assistant-k6.js` (unsigned JWTs, upload and wait, sessions, propose, apply, tools). They target the dev profile, where `ontocode.editor.require-jwt=false` accepts unsigned tokens; the docker profile rejects them. Pass a fresh `-e RUN_ID=$(date +%s)` per run so identities and project ids never collide with earlier runs.
 
-1. Add a `createSession()`-style function per endpoint in this file (or a new `k6-code-assistant-<tool>.js` next to it), reusing `buildUnsignedJwt`.
-2. Have the setup/first iteration create one session, then hammer the tool endpoint with concurrent VUs using that same `sessionId`, to black-box-verify the retrieval-budget guard over real HTTP (the unit test in `AssistantSessionServiceTest.java` already proves the guard's concurrency contract at the Java level — see below — this would be the HTTP-level companion once the routes exist).
-3. Add a `checks` assertion that a session's budget only ever reaches exactly 0 concurrent successes equal to its starting `retrievalAttemptsRemaining`, never more.
+Generate fixtures first:
+
+```
+node generate-fixtures.js --only dense1,dense10,rename-10,rename-100,rename-1000,rename-5000,rename-5001
+```
+
+| Script | What it proves | Key options |
+|---|---|---|
+| `k6-code-assistant-sessions.js` | Session-create throughput with one identity per iteration | `TARGET_VUS`, `SUSTAIN_DURATION` |
+| `k6-code-assistant-limits.js` | One identity gets exactly 20 sessions, then 429 with a matching `Retry-After` | `MAX_ACTIVE`, `BURST` |
+| `k6-code-assistant-group-apply.js` | Disjoint, overlapping and cross-project applies stay correct | `DISJOINT_GROUP_COUNT`, `PARALLEL_PROJECT_COUNT` |
+| `k6-code-assistant-apply-chain.js` | Insert-only groups applied one after another all succeed (Apply All) | `CHAIN_GROUPS`, `TARGET_FORMAT` |
+| `k6-code-assistant-mixed.js` | Readers (`read_context` range and statement, `run_sparql`) keep working while a writer applies on the same project | `FIXTURE`, `READERS`, `WRITES`, `DURATION`, `READ_P95_MS` |
+| `k6-code-assistant-rename.js` | Server-derived rename at 10 to 5,000 lines, and refusal above the limit | `RENAME_FIXTURE`, `TARGET_FORMAT` |
+| `k6-code-assistant-idempotency.js` | Replay of identical retries, 422 on a reused key, no duplicate sessions under concurrent retries | none |
+| `k6-code-assistant-provider-proxy.js` | Managed-mode proxy overhead and the 30 calls/min limit, against `mock-llm-provider.py` | `TARGET_VUS`, `DURATION`, `PROXY_P95_MS` |
+| `k6-code-assistant-two-node.js` | Overlapping applies sent to two editor nodes: exactly one wins | `SECOND_NODE_URL`, `OVERLAPPING_GROUPS` |
+
+### File-size scaling
+
+Run the mixed and rename scripts once per fixture size and keep the results together:
+
+```
+k6 run -e RUN_ID=$(date +%s) -e FIXTURE=fixtures/dense-1mb.owl k6-code-assistant-mixed.js
+k6 run -e RUN_ID=$(date +%s) -e FIXTURE=fixtures/dense-10mb.owl k6-code-assistant-mixed.js
+k6 run -e RUN_ID=$(date +%s) -e FIXTURE=fixtures/large-50mb.owl -e DURATION=5m k6-code-assistant-mixed.js
+k6 run -e RUN_ID=$(date +%s) -e FIXTURE=fixtures/xlarge-100mb.owl -e DURATION=5m k6-code-assistant-mixed.js
+```
+
+The 50 MB and 100 MB runs cross `ontocode.fuseki.shared-graph.max-file-mb` (50), so they also exercise the per-project Fuseki dataset path. Run each size once with an empty code-view cache (cold) and once again straight after (warm).
+
+### Managed provider mode
+
+Start the mock, then start ontology-editor with managed mode pointed at it:
+
+```
+python mock-llm-provider.py
+```
+
+```
+ASSISTANT_PROVIDER=claude ASSISTANT_PROVIDER_MODEL=claude-sonnet-5 ASSISTANT_PROVIDER_API_KEY=test mvn spring-boot:run -Dspring-boot.run.arguments=--assistant.provider.base-url=http://localhost:9099
+```
+
+`MOCK_DELAY_MS` sets the simulated provider latency (default 300).
+
+### Two nodes
+
+Start a second ontology-editor on port 8093 against the same Mongo, Fuseki and data directory, and set `ontocode.assistant.lock.mode=mongo` on both nodes. Then run `k6-code-assistant-two-node.js` with `SECOND_NODE_URL=http://localhost:8093`. With `lock.mode=local` the same run is expected to fail, which is the point of the lease.
+
+### Soak
+
+Run the mixed script for 30 to 60 minutes (`-e DURATION=45m -e WRITES=200 -e WRITE_PAUSE_SECONDS=10`) and watch heap, GC, open files and the `assistant.lock.wait` / `assistant.lock.hold` timers on `/actuator/metrics`. The per-project lock and lease maps in `ProjectWriteLockRegistry` never shrink, so a soak across many projects is where growth would show.
+
+### What to record
+
+Record these for each run, next to the revision tested. Targets are set from the first baseline run; until then every threshold in the scripts is a placeholder.
+
+| Operation | Metrics |
+|---|---|
+| Session create | p50 / p95 / p99, 429 rate (expected only in the limits script) |
+| `read_context` range and statement | p50 / p95 per fixture size |
+| `run_sparql` | p95, timeout rate |
+| Propose | p95 per fixture size; rename propose at 1,000 and 5,000 lines |
+| Apply | p95 for 1 edit and for 20 edits; rename apply at 1,000 and 5,000 lines |
+| Apply All | total and per group |
+| Lock | `assistant.lock.wait` p95 / max, `assistant.lock.hold` p95 / max |
+| Graph reload | `graphImport` from the `[PERF] reimport` log line, p95 |
+| JVM | peak heap, GC pauses |
+| Errors | unexpected error rate |
+
+## Apply patch benchmark (no infrastructure needed)
+
+`AssistantPatchBenchmark` generates Turtle files of 1, 10, 50 and 100 MB, changes one label in the middle and times the old apply path (full parse, full reload, two-model history diff, streamed statement read) against the new one (subject index, indexed read, triple patch plan and apply). It runs against an in-memory RDF4J store, not Fuseki, and only when named:
+
+```
+mvn -pl ontology-editor test -Dtest=AssistantPatchBenchmark -Dbench.sizes=1,10,50,100
+```
+
+Results on 2026-09-25 (4 GB heap, ms, -1 = out of memory):
+
+| MB | Triples | Full parse | Full reload | History diff | Index build | Streamed read | Indexed read | Patch plan | Patch apply |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 36,165 | 576 | 223 | 783 | 80 | 26 | 2 | 68 | 32 |
+| 10 | 349,896 | 1,949 | 899 | 5,788 | 225 | 126 | 14 | 363 | 33 |
+| 50 | 1,705,584 | 8,870 | 4,490 | 31,533 | 860 | 553 | 75 | 2,028 | 41 |
+| 100 | 3,388,482 | 18,225 | 9,498 | -1 | 1,319 | 1,243 | 148 | 3,426 | 54 |
 
 ## Concurrency unit test (no infrastructure needed)
 

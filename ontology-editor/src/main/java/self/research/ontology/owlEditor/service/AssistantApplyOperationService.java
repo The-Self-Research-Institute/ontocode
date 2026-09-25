@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
@@ -25,7 +24,8 @@ import java.util.UUID;
 @Service
 public class AssistantApplyOperationService {
 
-    static final String SNAPSHOT_EXTENSION = ".owl";
+    static final String SNAPSHOT_EXTENSION = ".nt";
+    static final String LEGACY_SNAPSHOT_EXTENSION = ".owl";
     private static final Set<ApplyOperationStatus> IN_FLIGHT =
             EnumSet.of(ApplyOperationStatus.PREPARED, ApplyOperationStatus.GRAPH_IMPORTING);
     private static final Set<ApplyOperationStatus> POSSIBLY_UNRESOLVED =
@@ -53,11 +53,15 @@ public class AssistantApplyOperationService {
         String operationId = UUID.randomUUID().toString();
         Files.createDirectories(snapshotDir);
         Path snapshot = snapshotDir.resolve(operationId + SNAPSHOT_EXTENSION);
-        Path exported = storageManager.exportOntology(group.getProjectId(), "rdfxml");
-        if (exported == null || !Files.exists(exported)) {
+        try {
+            storageManager.writeRestoreSnapshot(group.getProjectId(), snapshot);
+        } catch (IOException | RuntimeException e) {
+            Files.deleteIfExists(snapshot);
+            throw e;
+        }
+        if (!Files.isRegularFile(snapshot)) {
             throw new IOException("The pre-apply export produced no file");
         }
-        Files.copy(exported, snapshot, StandardCopyOption.REPLACE_EXISTING);
         Instant now = Instant.now();
         AssistantApplyOperationDocument operation = AssistantApplyOperationDocument.builder()
                 .id(operationId)
@@ -77,6 +81,21 @@ public class AssistantApplyOperationService {
             Files.deleteIfExists(snapshot);
             throw e;
         }
+    }
+
+    public AssistantApplyOperationDocument preparePatch(AssistantEditGroupDocument group, String actor) {
+        Instant now = Instant.now();
+        return repository.save(AssistantApplyOperationDocument.builder()
+                .id(UUID.randomUUID().toString())
+                .projectId(group.getProjectId())
+                .groupId(group.getId())
+                .sessionId(group.getSessionId())
+                .actor(actor)
+                .targetPath(group.getTargetPath())
+                .status(ApplyOperationStatus.PREPARED)
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
     }
 
     public void markImporting(AssistantApplyOperationDocument operation) {
@@ -177,10 +196,18 @@ public class AssistantApplyOperationService {
             return 0;
         }
         int removed = 0;
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(snapshotDir, "*" + SNAPSHOT_EXTENSION)) {
+        for (String extension : List.of(SNAPSHOT_EXTENSION, LEGACY_SNAPSHOT_EXTENSION)) {
+            removed += sweepOrphanSnapshots(operationIdsToKeep, extension);
+        }
+        return removed;
+    }
+
+    private int sweepOrphanSnapshots(Set<String> operationIdsToKeep, String extension) {
+        int removed = 0;
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(snapshotDir, "*" + extension)) {
             for (Path file : files) {
                 String name = file.getFileName().toString();
-                String operationId = name.substring(0, name.length() - SNAPSHOT_EXTENSION.length());
+                String operationId = name.substring(0, name.length() - extension.length());
                 if (!operationIdsToKeep.contains(operationId)) {
                     Files.deleteIfExists(file);
                     removed++;

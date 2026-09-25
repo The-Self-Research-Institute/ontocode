@@ -25,6 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,8 +48,11 @@ class AssistantApplyOperationServiceTest {
         storageManager = mock(StorageManager.class);
         service = new AssistantApplyOperationService(repository, storageManager, dataDir.toString());
         exportFile = dataDir.resolve("ontology.original.owl");
-        Files.writeString(exportFile, "<rdf:RDF>pre-apply</rdf:RDF>", StandardCharsets.UTF_8);
-        when(storageManager.exportOntology("proj-1", "rdfxml")).thenReturn(exportFile);
+        Files.writeString(exportFile, "untouched", StandardCharsets.UTF_8);
+        doAnswer(invocation -> {
+            Files.writeString(invocation.getArgument(1), "<urn:a> <urn:b> <urn:c> .\n", StandardCharsets.UTF_8);
+            return null;
+        }).when(storageManager).writeRestoreSnapshot(eq("proj-1"), any(Path.class));
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -66,9 +72,9 @@ class AssistantApplyOperationServiceTest {
         assertEquals("u@x.com", operation.getActor());
         Path snapshot = Path.of(operation.getSnapshotPath());
         assertTrue(snapshot.startsWith(service.snapshotDir()));
-        assertEquals("<rdf:RDF>pre-apply</rdf:RDF>", Files.readString(snapshot));
-        Files.writeString(exportFile, "overwritten by a later export");
-        assertEquals("<rdf:RDF>pre-apply</rdf:RDF>", Files.readString(snapshot));
+        assertTrue(snapshot.getFileName().toString().endsWith(".nt"));
+        assertEquals("<urn:a> <urn:b> <urn:c> .\n", Files.readString(snapshot));
+        assertEquals("untouched", Files.readString(exportFile));
         assertTrue(operation.isUnresolved());
     }
 
@@ -84,10 +90,14 @@ class AssistantApplyOperationServiceTest {
     }
 
     @Test
-    void prepareFailsWhenTheExportProducedNothing() throws Exception {
-        when(storageManager.exportOntology("proj-1", "rdfxml")).thenReturn(dataDir.resolve("missing.owl"));
+    void prepareFailsAndLeavesNoSnapshotWhenTheExportFails() throws Exception {
+        doThrow(new RuntimeException("export failed")).when(storageManager)
+                .writeRestoreSnapshot(eq("proj-1"), any(Path.class));
 
-        assertThrows(IOException.class, () -> service.prepare(group(), "u@x.com"));
+        assertThrows(RuntimeException.class, () -> service.prepare(group(), "u@x.com"));
+        try (var files = Files.list(service.snapshotDir())) {
+            assertEquals(0, files.count());
+        }
     }
 
     @Test
@@ -177,13 +187,17 @@ class AssistantApplyOperationServiceTest {
         Files.createDirectories(service.snapshotDir());
         Path keep = Files.writeString(service.snapshotDir().resolve("op-keep.owl"), "x");
         Path orphan = Files.writeString(service.snapshotDir().resolve("op-orphan.owl"), "x");
+        Path keepNt = Files.writeString(service.snapshotDir().resolve("op-keep.nt"), "x");
+        Path orphanNt = Files.writeString(service.snapshotDir().resolve("op-orphan-nt.nt"), "x");
         Path unrelated = Files.writeString(service.snapshotDir().resolve("notes.txt"), "x");
 
         int removed = service.sweepOrphanSnapshots(Set.of("op-keep"));
 
-        assertEquals(1, removed);
+        assertEquals(2, removed);
         assertTrue(Files.exists(keep));
         assertFalse(Files.exists(orphan));
+        assertTrue(Files.exists(keepNt));
+        assertFalse(Files.exists(orphanNt));
         assertTrue(Files.exists(unrelated));
     }
 

@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.AssistantApplyOperationDocument;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument;
@@ -14,6 +15,7 @@ import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.Edit
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
+import self.research.ontology.owlEditor.util.PerfPhases;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -43,6 +45,11 @@ public class AssistantEditApplyService {
     private final ProjectRecoveryLockService recoveryLockService;
     private final AssistantAuditService auditService;
     private final AssistantSessionRepository sessionRepository;
+    private final CodeViewRangeMatcher rangeMatcher;
+    private final AssistantGraphWriter graphWriter;
+
+    @Value("${assistant.apply.triple-patch.enabled:true}")
+    private boolean triplePatchEnabled;
 
     public AssistantEditApplyService(AssistantEditGroupRepository groupRepository,
                                       StorageManager storageManager,
@@ -54,10 +61,11 @@ public class AssistantEditApplyService {
                                       AssistantEditReferenceCoverageValidator referenceCoverageValidator,
                                       SparqlDatasetService datasetService,
                                       AssistantApplyOperationService operationService,
-                                      ProjectRecoveryLockService recoveryLockService) {
+                                      ProjectRecoveryLockService recoveryLockService,
+                                      CodeViewRangeMatcher rangeMatcher) {
         this(groupRepository, storageManager, spliceWriter, reimportPipeline, remapService, lockRegistry,
                 syntaxValidator, referenceCoverageValidator, datasetService, operationService, recoveryLockService,
-                null, null);
+                null, null, rangeMatcher);
     }
 
     @Autowired
@@ -73,7 +81,8 @@ public class AssistantEditApplyService {
                                       AssistantApplyOperationService operationService,
                                       ProjectRecoveryLockService recoveryLockService,
                                       AssistantAuditService auditService,
-                                      AssistantSessionRepository sessionRepository) {
+                                      AssistantSessionRepository sessionRepository,
+                                      CodeViewRangeMatcher rangeMatcher) {
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
         this.spliceWriter = spliceWriter;
@@ -87,6 +96,10 @@ public class AssistantEditApplyService {
         this.recoveryLockService = recoveryLockService;
         this.auditService = auditService;
         this.sessionRepository = sessionRepository;
+        this.rangeMatcher = rangeMatcher;
+        this.graphWriter = new AssistantGraphWriter(operationService, reimportPipeline, datasetService,
+                new AssistantApplyFailureHandler(groupRepository, operationService, reimportPipeline, recoveryLockService,
+                        datasetService));
     }
 
     public ApplyResult applyGroup(String sessionId, String serverGroupId, String userEmail) {
@@ -98,14 +111,29 @@ public class AssistantEditApplyService {
         }
         String projectId = initial.get().getProjectId();
 
+        PerfPhases perf = new PerfPhases();
+        long lockRequestedAt = System.nanoTime();
+        long[] lockAcquiredAt = {0L};
         ApplyResult result;
         try {
-            result = lockRegistry.runExclusive(projectId, () -> applyLocked(sessionId, serverGroupId, userEmail));
+            result = lockRegistry.runExclusive(projectId, () -> {
+                lockAcquiredAt[0] = System.nanoTime();
+                perf.add("lockWait", (lockAcquiredAt[0] - lockRequestedAt) / 1_000_000);
+                try {
+                    return applyLocked(sessionId, serverGroupId, userEmail, perf);
+                } finally {
+                    perf.add("lockHeld", (System.nanoTime() - lockAcquiredAt[0]) / 1_000_000);
+                }
+            });
         } catch (Exception e) {
             log.error("[Assistant] Unexpected failure applying group {}: {}", serverGroupId, e.getMessage(), e);
             result = errorResult("APPLY_FAILED", e.getMessage() != null ? e.getMessage() : "Apply failed");
         }
         audit(userEmail, projectId, sessionId, serverGroupId, result);
+        perf.mark("audit");
+        log.info("[Assistant] [PERF] apply project={} group={} edits={} outcome={} {}", projectId, serverGroupId,
+                initial.get().getEdits() == null ? 0 : initial.get().getEdits().size(),
+                result.isOk() ? "ok" : result.getErrorCode(), perf.summary());
         return result;
     }
 
@@ -133,7 +161,8 @@ public class AssistantEditApplyService {
                 && sessionId != null && sessionId.equals(group.getSessionId());
     }
 
-    private ApplyResult applyLocked(String sessionId, String serverGroupId, String userEmail) throws IOException {
+    private ApplyResult applyLocked(String sessionId, String serverGroupId, String userEmail, PerfPhases perf)
+            throws IOException {
         AssistantEditGroupDocument group = groupRepository.findById(serverGroupId).orElse(null);
         if (group == null || !belongsTo(group, sessionId, userEmail)) {
             return errorResult("VALIDATION_FAILED", "Unknown or unauthorized proposal");
@@ -170,46 +199,27 @@ public class AssistantEditApplyService {
         }
 
         List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = toSpliceEdits(group);
+        perf.mark("preChecks");
 
         String conflictMessage = findConflict(group, spliceEdits);
+        perf.mark("conflictCheck");
         if (conflictMessage != null) {
             markConflict(group, conflictMessage);
             return errorResult("CONFLICT", conflictMessage);
         }
 
         Path sourceFile = storageManager.ensureCodeViewFile(group.getProjectId(), group.getTargetPath());
-        AssistantApplyOperationDocument operation;
-        try {
-            operation = operationService.prepare(group, userEmail);
-        } catch (Exception snapshotEx) {
-            log.error("[Assistant] Could not capture a pre-apply snapshot for project {}; not applying group {}: {}",
-                    group.getProjectId(), group.getId(), snapshotEx.getMessage(), snapshotEx);
-            return errorResult("APPLY_FAILED", "Couldn't save a copy of the project to roll back to, so the change "
-                    + "wasn't applied. Nothing was modified; try again.");
-        }
-
-        Path splicedFile;
-        try {
-            String extension = storageManager.extensionFor(group.getTargetPath());
-            splicedFile = spliceWriter.splice(sourceFile, extension, spliceEdits);
-            operationService.markImporting(operation);
-        } catch (IOException | RuntimeException beforeImportEx) {
-            operationService.markAbandoned(operation, messageOf(beforeImportEx));
-            throw beforeImportEx;
-        }
+        perf.mark("ensureSource");
+        Path splicedFile = spliceWriter.splice(sourceFile, storageManager.extensionFor(group.getTargetPath()), spliceEdits);
+        perf.mark("splice");
 
         try {
-            CodeViewReimportPipeline.ReimportResult reimportResult;
-            try {
-                reimportResult = reimportPipeline.reimport(
-                        new CodeViewReimportPipeline.ReimportRequest(
-                                group.getProjectId(), group.getTargetPath(), splicedFile, false,
-                                userEmail, userEmail, null, operationService.snapshotOf(operation), true));
-            } catch (Exception reimportEx) {
-                return handleReimportFailure(group, operation, reimportEx);
+            AssistantGraphWriter.Outcome outcome = graphWriter.write(group, sourceFile, splicedFile, userEmail,
+                    triplePatchEnabled, perf);
+            if (outcome.failure() != null) {
+                return outcome.failure();
             }
-
-            operationService.markCommitted(operation);
+            AssistantGraphWriter.Written reimportResult = outcome.written();
 
             group.setStatus(AssistantEditGroupStatus.APPLIED);
             group.setAppliedRevision(reimportResult.sourceVersion());
@@ -220,85 +230,31 @@ public class AssistantEditApplyService {
             List<AssistantEditGroupDocument> siblings = new ArrayList<>(groupRepository.findByProjectIdAndTargetPathAndStatus(
                     group.getProjectId(), group.getTargetPath(), AssistantEditGroupStatus.PENDING));
             siblings.removeIf(sibling -> sibling.getId().equals(group.getId()));
-            List<AssistantEditGroupDocument> touched = remapService.remap(group, siblings);
+            List<AssistantEditGroupDocument> shiftedOrStale = remapService.remap(group, siblings);
+            List<AssistantEditGroupDocument> touched = reimportResult.cacheMatchesSubmittedContent()
+                    ? remapService.stampVerifiedPositions(siblings, shiftedOrStale, reimportResult.sourceVersion())
+                    : shiftedOrStale;
             if (!touched.isEmpty()) {
                 groupRepository.saveAll(touched);
             }
+            perf.mark("commitAndRemap");
 
             List<RemappedGroupInfo> remappedInfo = new ArrayList<>();
             for (AssistantEditGroupDocument sibling : siblings) {
-                remappedInfo.add(new RemappedGroupInfo(sibling.getId(), touched.contains(sibling)));
+                boolean stale = sibling.getStatus() == AssistantEditGroupStatus.STALE;
+                remappedInfo.add(new RemappedGroupInfo(sibling.getId(), shiftedOrStale.contains(sibling), stale));
             }
 
-            log.info("[Assistant] Applied group {} for project {}, revision {}, {} sibling group(s) touched",
-                    group.getId(), group.getProjectId(), reimportResult.sourceVersion(), touched.size());
+            log.info("[Assistant] Applied group {} for project {}, revision {}, {} sibling group(s) shifted or stale",
+                    group.getId(), group.getProjectId(), reimportResult.sourceVersion(), shiftedOrStale.size());
 
             return ApplyResult.builder().ok(true).applied(true)
                     .newRevision(reimportResult.sourceVersion())
                     .remappedPendingGroups(remappedInfo)
+                    .appliedRanges(AssistantEditGroupRemapService.appliedRanges(group))
                     .build();
         } finally {
             Files.deleteIfExists(splicedFile);
-        }
-    }
-
-    private ApplyResult handleReimportFailure(AssistantEditGroupDocument group, AssistantApplyOperationDocument operation,
-                                              Exception reimportEx) {
-        String baseMessage = messageOf(reimportEx);
-        log.error("[Assistant] Reimport failed for project {} while applying group {}; trying to roll back to the "
-                + "pre-apply snapshot. Original error: {}", group.getProjectId(), group.getId(), baseMessage, reimportEx);
-
-        String restoreFailure = tryRestore(group.getProjectId(), operation);
-        if (restoreFailure == null) {
-            operationService.markRolledBack(operation, baseMessage, "AUTOMATIC_ROLLBACK");
-            String message = "Apply failed and was rolled back: " + baseMessage + ". The project is back to how it "
-                    + "was before this change, and this proposal was not applied.";
-            markConflict(group, message);
-            return errorResult("CONFLICT", message);
-        }
-
-        boolean graphNonEmpty = probeGraphNonEmpty(group.getProjectId());
-        if (!graphNonEmpty) {
-            log.error("[Assistant] CRITICAL: reimport failed for project {}, the rollback failed too ({}), and the "
-                    + "graph now looks empty - GraphDB commits in batches for big documents, so a failure partway "
-                    + "through can leave the graph cleared but not fully reloaded.", group.getProjectId(), restoreFailure);
-        } else {
-            log.error("[Assistant] Reimport failed for project {} and the rollback failed too ({}). The graph still has "
-                    + "some content, but a reload interrupted mid-transaction can leave a graph non-empty and still "
-                    + "wrong. Non-empty does not mean intact.", group.getProjectId(), restoreFailure);
-        }
-        operationService.markFailedAwaitingRecovery(operation, baseMessage + " (rollback failed: " + restoreFailure + ")");
-        group.setStatus(AssistantEditGroupStatus.RECOVERY_REQUIRED);
-        group.setUpdatedAt(Instant.now());
-        groupRepository.save(group);
-        lockProject(group.getProjectId(), operation, "An assistant apply failed and the automatic rollback didn't "
-                + "complete: " + baseMessage);
-        return errorResult("RECOVERY_REQUIRED", "Apply failed: " + baseMessage + ". The automatic rollback didn't "
-                + "complete either, so the project's source, graph, and history may now be inconsistent and haven't "
-                + "been verified. This proposal won't be applied again, and the project is locked for changes until "
-                + "it is restored or the lock is cleared.");
-    }
-
-    private String tryRestore(String projectId, AssistantApplyOperationDocument operation) {
-        if (!operationService.snapshotExists(operation)) {
-            return "the pre-apply snapshot is missing";
-        }
-        try {
-            reimportPipeline.restoreSnapshot(projectId, operationService.snapshotOf(operation));
-            return null;
-        } catch (Exception restoreEx) {
-            log.error("[Assistant] Rollback of project {} to snapshot {} failed: {}",
-                    projectId, operation.getId(), restoreEx.getMessage(), restoreEx);
-            return messageOf(restoreEx);
-        }
-    }
-
-    private void lockProject(String projectId, AssistantApplyOperationDocument operation, String reason) {
-        try {
-            recoveryLockService.lock(projectId, reason, operation.getId(), operationService.snapshotExists(operation));
-        } catch (Exception lockEx) {
-            log.error("[Assistant] CRITICAL: could not record the recovery lock for project {} (operation {}): {}",
-                    projectId, operation.getId(), lockEx.getMessage(), lockEx);
         }
     }
 
@@ -307,22 +263,6 @@ public class AssistantEditApplyService {
         group.setStaleReason(message);
         group.setUpdatedAt(Instant.now());
         groupRepository.save(group);
-    }
-
-    private static String messageOf(Exception e) {
-        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-    }
-
-    private boolean probeGraphNonEmpty(String projectId) {
-        try {
-            SparqlDatasetService.CappedSparqlResult probe =
-                    datasetService.execSelectCapped(projectId, "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1", 5, 1, 1_000);
-            return !probe.rows().isEmpty();
-        } catch (Exception probeEx) {
-            log.warn("[Assistant] Post-failure graph integrity probe itself failed for project {} - "
-                    + "cannot confirm whether the graph is intact: {}", projectId, probeEx.getMessage());
-            return true;
-        }
     }
 
     private List<LineRangeSpliceWriter.SpliceEdit> toSpliceEdits(AssistantEditGroupDocument group) {
@@ -341,9 +281,11 @@ public class AssistantEditApplyService {
     private String findConflict(AssistantEditGroupDocument group,
                                 List<LineRangeSpliceWriter.SpliceEdit> spliceEdits) throws IOException {
         Long versionAtPropose = group.getPublicGraphVersionAtPropose();
-        boolean versionUnchanged = versionAtPropose != null
-                && storageManager.getPublicGraphVersion(group.getProjectId()) == versionAtPropose;
-        if (!versionUnchanged && group.getEdits().stream().anyMatch(e -> e.getLineCount() == 0)) {
+        long currentVersion = storageManager.getPublicGraphVersion(group.getProjectId());
+        boolean versionUnchanged = versionAtPropose != null && currentVersion == versionAtPropose;
+        Long verifiedAt = group.getPositionsVerifiedAtVersion();
+        boolean positionsTrusted = versionUnchanged || (verifiedAt != null && currentVersion == verifiedAt);
+        if (!positionsTrusted && group.getEdits().stream().anyMatch(e -> e.getLineCount() == 0)) {
             return "Document changed since this group was checked, and the position of its inserted lines "
                     + "can't be re-verified";
         }
@@ -364,24 +306,18 @@ public class AssistantEditApplyService {
         return null;
     }
 
-    private boolean hasLiveMismatch(AssistantEditGroupDocument group) throws IOException {
-        for (EditEntry edit : group.getEdits()) {
-            if (edit.getLineCount() == 0) {
-                continue;
-            }
-            StorageManager.CodeViewPage page = storageManager.readCodeViewPage(
-                    group.getProjectId(), group.getTargetPath(), edit.getStartLine(), edit.getLineCount());
-            if (page == null || !page.content().equals(edit.getOriginalText())) {
-                return true;
-            }
-        }
-        return false;
+    private boolean hasLiveMismatch(AssistantEditGroupDocument group) {
+        List<CodeViewRangeMatcher.ExpectedRange> expected = group.getEdits().stream()
+                .map(e -> new CodeViewRangeMatcher.ExpectedRange(e.getStartLine(), e.getLineCount(), e.getOriginalText()))
+                .toList();
+        return !rangeMatcher.allMatch(group.getProjectId(), group.getTargetPath(), expected);
     }
 
     private ApplyResult idempotentReplay(AssistantEditGroupDocument group) {
         return ApplyResult.builder().ok(true).applied(true)
                 .newRevision(group.getAppliedRevision())
                 .remappedPendingGroups(List.of())
+                .appliedRanges(List.of())
                 .build();
     }
 
@@ -389,7 +325,8 @@ public class AssistantEditApplyService {
         return ApplyResult.builder().ok(false).errorCode(errorCode).message(message).build();
     }
 
-    public record RemappedGroupInfo(String serverGroupId, boolean remapped) {}
+    public record RemappedGroupInfo(String serverGroupId, boolean remapped, boolean stale) {}
+
 
     @Data
     @Builder
@@ -400,6 +337,7 @@ public class AssistantEditApplyService {
         private boolean applied;
         private Long newRevision;
         private List<RemappedGroupInfo> remappedPendingGroups;
+        private List<AssistantEditGroupRemapService.AppliedRange> appliedRanges;
         private String errorCode;
         private String message;
     }

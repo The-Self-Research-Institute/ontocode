@@ -56,6 +56,29 @@ export interface HistoryEntryLike {
   role: "user" | "assistant";
   kind?: string;
   text?: string;
+  groups?: Array<{ serverGroupId: string; diff: Array<{ targetPath: string; before: string; after: string; startLine?: number | null }> }>;
+  decisions?: Record<string, string>;
+}
+
+const SUMMARY_SNIPPET_CHARS = 120;
+
+function firstLine(text: string): string {
+  const line = text.split("\n").find((l) => l.trim().length > 0) ?? "";
+  return line.length > SUMMARY_SNIPPET_CHARS ? `${line.slice(0, SUMMARY_SNIPPET_CHARS)}...` : line;
+}
+
+export function summarizeReviewForHistory(entry: HistoryEntryLike): string {
+  const groups = entry.groups ?? [];
+  const parts = groups.map((group, index) => {
+    const decision = entry.decisions?.[group.serverGroupId] ?? "pending";
+    const edit = group.diff[0];
+    const where = edit
+      ? `${edit.targetPath}${typeof edit.startLine === "number" ? ` line ${edit.startLine + 1}` : ""}`
+      : "no edits";
+    const change = edit ? `: "${firstLine(edit.before)}" -> "${firstLine(edit.after)}"` : "";
+    return `group ${index + 1} (${where}${change}) is ${decision}`;
+  });
+  return `I proposed ${groups.length} change group${groups.length === 1 ? "" : "s"} for review. ${parts.join("; ")}.`;
 }
 
 export const MAX_HISTORY_TURNS = 30;
@@ -70,6 +93,9 @@ export function buildConversationHistory(entries: HistoryEntryLike[]): HistoryTu
       return;
     }
     if (entry.kind === "answer") turns.push({ role: "assistant", text: entry.text ?? "" });
+    if (entry.kind === "review" && (entry.groups?.length ?? 0) > 0) {
+      turns.push({ role: "assistant", text: summarizeReviewForHistory(entry) });
+    }
   });
   return turns.length > MAX_HISTORY_TURNS ? turns.slice(turns.length - MAX_HISTORY_TURNS) : turns;
 }
@@ -107,12 +133,32 @@ export function clearStoredChatEntries(projectId: string): void {
   }
 }
 
-export function describeLoopStage(event: LoopStageEvent): string {
+function describeStage(event: LoopStageEvent): string {
   if (event.stage === "calling-provider") return event.detail || "Thinking...";
   if (event.stage === "calling-tool") return `Running ${event.detail}...`;
   if (event.stage === "tool-result") return `Got a result from ${event.detail}`;
   if (event.stage === "propose") return "Preparing changes for review...";
   return "";
+}
+
+export function describeLoopStage(event: LoopStageEvent): string {
+  const text = describeStage(event);
+  if (!text || !event.step || !event.maxSteps) return text;
+  return `Step ${event.step} of ${event.maxSteps} · ${text}`;
+}
+
+const STORED_RESULT_CHARS = 400;
+
+export function compactEntryForStorage<T>(entry: T): T {
+  const record = entry as unknown as { contextUsed?: Array<Record<string, unknown>> };
+  if (!Array.isArray(record.contextUsed)) return entry;
+  const contextUsed = record.contextUsed.map((event) => {
+    const serialized = typeof event.result === "string" ? event.result : JSON.stringify(event.result ?? null);
+    return serialized.length > STORED_RESULT_CHARS
+      ? { ...event, result: `${serialized.slice(0, STORED_RESULT_CHARS)}... (trimmed when saved)` }
+      : event;
+  });
+  return { ...(entry as object), contextUsed } as T;
 }
 
 export const UNSAVED_CODE_VIEW_MESSAGE =

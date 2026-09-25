@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
+import self.research.ontology.owlEditor.util.PerfPhases;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -75,10 +76,13 @@ public class AssistantContextToolService {
                     .message("Retrieval budget exhausted for this session").build();
         }
 
+        PerfPhases perf = new PerfPhases();
+        long lockRequestedAt = System.nanoTime();
         Optional<TargetResolution> readResult;
         try {
             readResult = lockRegistry.runShared(session.getProjectId(), () -> {
-                TargetResolution read = resolveTargets(session.getProjectId(), dedupeTargets(targets), kind);
+                perf.add("lockWait", (System.nanoTime() - lockRequestedAt) / 1_000_000);
+                TargetResolution read = resolveTargets(session.getProjectId(), dedupeTargets(targets), kind, perf);
                 return sessionService.isRevisionStale(session) ? Optional.empty() : Optional.of(read);
             });
         } catch (Exception e) {
@@ -90,6 +94,9 @@ public class AssistantContextToolService {
             return revisionStale();
         }
         TargetResolution resolution = readResult.get();
+        log.info("[Assistant] [PERF] read_context project={} session={} kind={} targets={} items={} partial={} {}",
+                session.getProjectId(), sessionId, kind, targets == null ? 0 : targets.size(),
+                resolution.items().size(), resolution.anyPartial(), perf.summary());
 
         int estimatedTokens = AssistantTokenEstimator.estimate(concatenatedText(resolution.items()));
         if (!sessionService.tryConsumeTokenBudget(sessionId, estimatedTokens)) {
@@ -121,7 +128,7 @@ public class AssistantContextToolService {
                         + "Start a new request to get a fresh snapshot before reading further.").build();
     }
 
-    private TargetResolution resolveTargets(String projectId, List<Target> targets, String kind) {
+    private TargetResolution resolveTargets(String projectId, List<Target> targets, String kind, PerfPhases perf) {
         List<Item> items = new ArrayList<>();
         boolean anyPartial = false;
         List<Target> diagnosticTargets = new ArrayList<>();
@@ -133,6 +140,7 @@ public class AssistantContextToolService {
                         + "identifier or statement and a non-empty value.").build());
                 continue;
             }
+            long targetStart = System.nanoTime();
             try {
                 if (TYPE_STATEMENT.equals(target.type())) {
                     AssistantSourceContextReader.SourceRead read = sourceReader.statements(projectId, target.value());
@@ -149,12 +157,17 @@ public class AssistantContextToolService {
                 log.warn("[Assistant] read_context target {} failed: {}", target.value(), e.getMessage());
                 anyPartial = true;
             }
+            if (!"diagnostics".equals(kind) || TYPE_STATEMENT.equals(target.type())) {
+                perf.add(target.type(), (System.nanoTime() - targetStart) / 1_000_000);
+            }
         }
         if ("diagnostics".equals(kind) && (!diagnosticTargets.isEmpty() || targets.isEmpty())) {
+            long diagnosticsStart = System.nanoTime();
             try {
                 AssistantSourceContextReader.SourceRead read = sourceReader.diagnostics(projectId, diagnosticTargets);
                 items.addAll(read.items());
                 anyPartial |= read.partial();
+                perf.add("diagnostics", (System.nanoTime() - diagnosticsStart) / 1_000_000);
             } catch (Exception e) {
                 log.warn("[Assistant] read_context diagnostics failed for project {}: {}", projectId, e.getMessage());
                 anyPartial = true;

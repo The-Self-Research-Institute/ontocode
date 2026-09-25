@@ -1,12 +1,10 @@
 package self.research.ontology.owlEditor.service;
 
+import self.research.ontology.owlEditor.util.PerfPhases;
+import self.research.ontology.owlEditor.util.RdfFiles;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Model;
-import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.impl.LinkedHashModel;
-import org.eclipse.rdf4j.model.vocabulary.RDF;
-import org.eclipse.rdf4j.model.vocabulary.RDFS;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFParser;
 import org.eclipse.rdf4j.rio.Rio;
@@ -25,25 +23,16 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Locale;
-import java.util.Set;
-import java.util.UUID;
 
 @Slf4j
 @Service
 public class CodeViewReimportPipeline {
 
-    private static final String DESKTOP_USER_ID = "desktop-user-local";
-    private static final int BULK_DIFF_THRESHOLD = 60;
-
     private final StorageManager storageManager;
     private final SparqlDatasetService datasetService;
     private final ProjectMetadataService metadataService;
-    private final OntologyHistoryService historyService;
-    private final DraftTrackingService draftTrackingService;
+    private final CodeViewHistoryRecorder historyRecorder;
 
     @Autowired(required = false)
     @Nullable
@@ -72,15 +61,19 @@ public class CodeViewReimportPipeline {
         this.storageManager = storageManager;
         this.datasetService = datasetService;
         this.metadataService = metadataService;
-        this.historyService = historyService;
-        this.draftTrackingService = draftTrackingService;
+        this.historyRecorder = new CodeViewHistoryRecorder(historyService, draftTrackingService);
     }
 
     public record ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
                                    String userId, String username, String targetGraphOverride,
                                    Path oldContentFileForDiff, boolean skipSanitization) {}
 
-    public record ReimportResult(String format, RDFFormat rdfFormat, long sourceVersion) {}
+    public record ReimportResult(String format, RDFFormat rdfFormat, long sourceVersion,
+                                 boolean cacheMatchesSubmittedContent) {
+        public ReimportResult(String format, RDFFormat rdfFormat, long sourceVersion) {
+            this(format, rdfFormat, sourceVersion, false);
+        }
+    }
 
     public ReimportResult reimport(ReimportRequest req) throws IOException {
         String format = req.format();
@@ -95,6 +88,8 @@ public class CodeViewReimportPipeline {
         Path retrySourceFile;
         Path pristineCopy = null;
         Path generatedFile = null;
+        PerfPhases perf = new PerfPhases();
+        boolean completed = false, reserializedOnRetry = false;
 
         try {
             if (isOwlApiFormat) {
@@ -126,6 +121,7 @@ public class CodeViewReimportPipeline {
                 };
             }
 
+            perf.mark("prepareSource");
             log.info("[CODE-VIEW-SAVE] Reimporting {} bytes into GraphDB as {} (draft={}, targetGraph={})",
                     Files.size(importSourceFile), rdfFormat, req.draft(), req.targetGraphOverride());
             try {
@@ -140,6 +136,7 @@ public class CodeViewReimportPipeline {
                     }
                     importSourceFile = retryConverted;
                     generatedFile = retryConverted;
+                    reserializedOnRetry = true;
                     streamIntoGraphDb(req.projectId(), importSourceFile, RDFFormat.RDFXML, req.targetGraphOverride());
                     log.info("[CODE-VIEW-SAVE] OWL API re-serialization retry succeeded ({} bytes)", Files.size(importSourceFile));
                 } else {
@@ -148,42 +145,39 @@ public class CodeViewReimportPipeline {
             }
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
-            if (ontologyMutationService != null) {
-                try {
-                    ontologyMutationService.invalidateReasonerCaches(req.projectId());
-                } catch (Exception cacheEx) {
-                    log.warn("[CODE-VIEW-SAVE] Failed busting reasoner caches for project {} (non-fatal): {}",
-                            req.projectId(), cacheEx.getMessage());
-                }
-            }
+            invalidateReasonerCaches(req.projectId());
 
+            perf.mark("graphImport");
             if (req.oldContentFileForDiff() != null) {
                 try {
-                    String effectiveUserId = (req.userId() != null && !req.userId().isBlank()) ? req.userId() : "anonymous";
-                    if (desktopMode) {
-                        effectiveUserId = DESKTOP_USER_ID;
-                    }
-                    String effectiveUsername = (req.username() != null && !req.username().isBlank()) ? req.username() : "System";
-
-                    Model oldModel = parseToModel(req.oldContentFileForDiff(), RDFFormat.RDFXML);
+                    Model oldModel = parseToModel(req.oldContentFileForDiff(), RdfFiles.snapshotFormat(req.oldContentFileForDiff()));
                     Model newModel = parseToModel(importSourceFile, rdfFormat);
-                    recordOntologyDiff(req.projectId(), effectiveUserId, effectiveUsername, oldModel, newModel, req.draft());
+                    historyRecorder.record(req.projectId(), CodeViewHistoryRecorder.effectiveUserId(req.userId(), desktopMode),
+                            CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft());
                 } catch (Exception diffEx) {
                     log.warn("[CODE-VIEW-SAVE] Failed to record change history diff (save itself succeeded): {}", diffEx.getMessage());
                 }
             }
 
+            perf.mark("historyDiff");
             invalidateAfterGraphReplaced(req.projectId());
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
+            perf.mark("invalidate");
 
             String cachedContent = isOwlApiFormat
                     ? Files.readString(req.contentFile(), StandardCharsets.UTF_8)
                     : Files.readString(importSourceFile, StandardCharsets.UTF_8);
             storageManager.storeCodeViewCache(req.projectId(), cachedContent, format);
             log.info("[CODE-VIEW-SAVE] Current format cache restored");
+            perf.mark("cacheWrite");
 
-            return new ReimportResult(format, rdfFormat, storageManager.getPublicGraphVersion(req.projectId()));
+            completed = true;
+            boolean cacheMatches = !reserializedOnRetry && (isOwlApiFormat || req.skipSanitization());
+            return new ReimportResult(format, rdfFormat, storageManager.getPublicGraphVersion(req.projectId()),
+                    cacheMatches);
         } finally {
+            log.info("[CODE-VIEW-SAVE] [PERF] reimport project={} format={} bytes={} outcome={} {}", req.projectId(),
+                    format, RdfFiles.sizeOrUnknown(req.contentFile()), completed ? "ok" : "failed", perf.summary());
             if (generatedFile != null) {
                 Files.deleteIfExists(generatedFile);
             }
@@ -193,24 +187,47 @@ public class CodeViewReimportPipeline {
         }
     }
 
-    public long restoreSnapshot(String projectId, Path rdfXmlSnapshot) throws IOException {
-        if (rdfXmlSnapshot == null || !Files.isRegularFile(rdfXmlSnapshot)) {
+    public long restoreSnapshot(String projectId, Path snapshot) throws IOException {
+        if (snapshot == null || !Files.isRegularFile(snapshot)) {
             throw new IOException("The pre-apply snapshot is missing, so the project can't be restored from it");
         }
         log.warn("[CODE-VIEW-SAVE] Restoring project {} from pre-apply snapshot {} ({} bytes)",
-                projectId, rdfXmlSnapshot.getFileName(), Files.size(rdfXmlSnapshot));
-        streamIntoGraphDb(projectId, rdfXmlSnapshot, RDFFormat.RDFXML, null);
-        if (ontologyMutationService != null) {
-            try {
-                ontologyMutationService.invalidateReasonerCaches(projectId);
-            } catch (Exception cacheEx) {
-                log.warn("[CODE-VIEW-SAVE] Failed busting reasoner caches for project {} after restore (non-fatal): {}",
-                        projectId, cacheEx.getMessage());
-            }
-        }
+                projectId, snapshot.getFileName(), Files.size(snapshot));
+        streamIntoGraphDb(projectId, snapshot, RdfFiles.snapshotFormat(snapshot), null);
+        invalidateReasonerCaches(projectId);
         invalidateAfterGraphReplaced(projectId);
         log.info("[CODE-VIEW-SAVE] Project {} restored from its pre-apply snapshot", projectId);
         return storageManager.getPublicGraphVersion(projectId);
+    }
+
+    public long finishPatch(String projectId, String format, Path patchedFile, String userId, String username,
+                            Model removed, Model added) throws IOException {
+        invalidateReasonerCaches(projectId);
+        try {
+            historyRecorder.record(projectId, CodeViewHistoryRecorder.effectiveUserId(userId, desktopMode),
+                    CodeViewHistoryRecorder.effectiveUsername(username), removed, added, false);
+        } catch (Exception diffEx) {
+            log.warn("[CODE-VIEW-SAVE] Failed to record change history for a patched apply: {}", diffEx.getMessage());
+        }
+        invalidateAfterGraphReplaced(projectId);
+        storageManager.storeCodeViewCacheFile(projectId, format, patchedFile);
+        return storageManager.getPublicGraphVersion(projectId);
+    }
+
+    public void discardCodeViewCache(String projectId) {
+        storageManager.clearCodeViewCache(projectId);
+    }
+
+    private void invalidateReasonerCaches(String projectId) {
+        if (ontologyMutationService == null) {
+            return;
+        }
+        try {
+            ontologyMutationService.invalidateReasonerCaches(projectId);
+        } catch (Exception cacheEx) {
+            log.warn("[CODE-VIEW-SAVE] Failed busting reasoner caches for project {} (non-fatal): {}",
+                    projectId, cacheEx.getMessage());
+        }
     }
 
     private void invalidateAfterGraphReplaced(String projectId) {
@@ -255,140 +272,6 @@ public class CodeViewReimportPipeline {
             parser.parse(is, "");
         }
         return model;
-    }
-
-    private boolean isNamedTriple(Statement st) {
-        return st.getSubject() instanceof IRI
-                && !(st.getObject() instanceof org.eclipse.rdf4j.model.BNode);
-    }
-
-    private String extractLocalName(String iri) {
-        int idx = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
-        return idx >= 0 && idx < iri.length() - 1 ? iri.substring(idx + 1) : iri;
-    }
-
-    private String findLabel(Model model, org.eclipse.rdf4j.model.Resource subject) {
-        return model.filter(subject, RDFS.LABEL, null).stream()
-                .findFirst()
-                .map(st -> st.getObject().stringValue())
-                .orElseGet(() -> extractLocalName(subject.stringValue()));
-    }
-
-    private void recordNamedStatementChange(String projectId, String userId, String username,
-                                             Statement st, boolean isAddition, Model context,
-                                             List<OntologyMutationService.MutationOp> draftOps) {
-        String subjectIri = st.getSubject().stringValue();
-        IRI predicate = st.getPredicate();
-        String label = findLabel(context, st.getSubject());
-
-        if (predicate.equals(RDF.TYPE) && st.getObject() instanceof IRI typeIri) {
-            String opType = switch (typeIri.stringValue()) {
-                case "http://www.w3.org/2002/07/owl#Class" -> isAddition ? "createClass" : "deleteClass";
-                case "http://www.w3.org/2002/07/owl#ObjectProperty" -> isAddition ? "createObjectProperty" : "deleteObjectProperty";
-                case "http://www.w3.org/2002/07/owl#DatatypeProperty" -> isAddition ? "createDataProperty" : "deleteDataProperty";
-                case "http://www.w3.org/2002/07/owl#AnnotationProperty" -> isAddition ? "createAnnotationProperty" : "deleteAnnotationProperty";
-                case "http://www.w3.org/2000/01/rdf-schema#Datatype" -> isAddition ? "createDatatype" : "deleteDatatype";
-                case "http://www.w3.org/2002/07/owl#NamedIndividual" -> isAddition ? "createIndividual" : "deleteIndividual";
-                default -> null;
-            };
-            if (opType != null) {
-                historyService.recordEdit(projectId, userId, username, opType,
-                        subjectIri, label, null, null,
-                        opType + " operation via Code View", null);
-                if (draftOps != null) {
-                    draftOps.add(OntologyMutationService.MutationOp.forTypeAssertion(opType, subjectIri, label));
-                }
-            }
-            return;
-        }
-
-        if (predicate.equals(RDFS.SUBCLASSOF) && st.getObject() instanceof IRI parentIri) {
-            String opType = isAddition ? "addSubClassOf" : "removeSubClassOf";
-            historyService.recordEdit(projectId, userId, username,
-                    opType, subjectIri, label,
-                    isAddition ? null : parentIri.stringValue(),
-                    isAddition ? parentIri.stringValue() : null,
-                    "subClassOf changed via Code View", null);
-            if (draftOps != null) {
-                draftOps.add(OntologyMutationService.MutationOp
-                        .forSubClassOfChange(opType, subjectIri, label, parentIri.stringValue(), isAddition));
-            }
-            return;
-        }
-
-        if (predicate.equals(RDFS.LABEL) || predicate.equals(RDFS.COMMENT)) {
-            String opType = isAddition ? "addAnnotation" : "removeAnnotation";
-            historyService.recordEdit(projectId, userId, username,
-                    opType, subjectIri, label, null, st.getObject().stringValue(),
-                    "Annotation changed via Code View", predicate.stringValue());
-            if (draftOps != null) {
-                draftOps.add(OntologyMutationService.MutationOp
-                        .forPropertyAssertion(opType, subjectIri, label, predicate.stringValue(), st.getObject().stringValue()));
-            }
-            return;
-        }
-
-        String opType = isAddition ? "addStatement" : "removeStatement";
-        historyService.recordEdit(projectId, userId, username,
-                opType, subjectIri, label,
-                isAddition ? null : st.getObject().stringValue(),
-                isAddition ? st.getObject().stringValue() : null,
-                "Property assertion changed via Code View (" + predicate.stringValue() + ")",
-                predicate.stringValue());
-        if (draftOps != null) {
-            draftOps.add(OntologyMutationService.MutationOp
-                    .forPropertyAssertion(opType, subjectIri, label, predicate.stringValue(), st.getObject().stringValue()));
-        }
-    }
-
-    private void recordOntologyDiff(String projectId, String userId, String username,
-                                     Model oldModel, Model newModel, boolean draft) {
-        Set<Statement> added = new LinkedHashSet<>(newModel);
-        added.removeAll(oldModel);
-        Set<Statement> removed = new LinkedHashSet<>(oldModel);
-        removed.removeAll(newModel);
-
-        int namedChangeCount = 0;
-        for (Statement st : added) {
-            if (isNamedTriple(st)) namedChangeCount++;
-        }
-        for (Statement st : removed) {
-            if (isNamedTriple(st)) namedChangeCount++;
-        }
-
-        if (namedChangeCount > BULK_DIFF_THRESHOLD) {
-            historyService.recordEdit(projectId, userId, username,
-                    "bulkPopulation", null, null, null, null,
-                    "Code View save added/changed " + namedChangeCount
-                            + " statements — logged as a single bulk entry rather than one per statement",
-                    null);
-            log.info("[CODE-VIEW-SAVE] Skipped per-triple change logging for bulk save ({} named changes)", namedChangeCount);
-            return;
-        }
-
-        List<OntologyMutationService.MutationOp> draftOps = draft ? new ArrayList<>() : null;
-
-        int structuralChanges = 0;
-        for (Statement st : added) {
-            if (!isNamedTriple(st)) { structuralChanges++; continue; }
-            recordNamedStatementChange(projectId, userId, username, st, true, newModel, draftOps);
-        }
-        for (Statement st : removed) {
-            if (!isNamedTriple(st)) { structuralChanges++; continue; }
-            recordNamedStatementChange(projectId, userId, username, st, false, oldModel, draftOps);
-        }
-        if (structuralChanges > 0) {
-            historyService.recordEdit(projectId, userId, username,
-                    "codeViewStructuralEdit", null, null, null, null,
-                    "Code View save modified " + structuralChanges
-                            + " structural axiom(s) (restrictions, unions, SWRL rules, disjoint-class lists, etc.)",
-                    null);
-        }
-
-        if (draft && draftOps != null && !draftOps.isEmpty()) {
-            String sessionId = UUID.randomUUID().toString();
-            draftTrackingService.recordDrafts(projectId, userId, username, draftOps, sessionId);
-        }
     }
 
     private boolean isXmlStructuralError(Throwable ex) {

@@ -89,7 +89,7 @@ class AssistantEditProposalRenameTest {
                 new AssistantEditSyntaxValidator(storageManager, spliceWriter),
                 new AssistantEditReferenceCoverageValidator(storageManager),
                 new AssistantRenameService(storageManager, lookup),
-                new AssistantEditSemanticValidator(storageManager, lookup), auditService);
+                new AssistantEditSemanticValidator(storageManager, lookup), auditService, new ProjectWriteLockRegistry());
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 2);
         ReflectionTestUtils.setField(proposalService, "maxRenameLines", 5000);

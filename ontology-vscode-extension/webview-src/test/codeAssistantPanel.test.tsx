@@ -253,3 +253,158 @@ describe("CodeAssistantPanel usage", () => {
     expect(container.querySelector("[data-usage-total]")?.textContent).toBe("· 10 in · 5 out · 1.5 s");
   });
 });
+
+describe("CodeAssistantPanel request identity", () => {
+  it("drops an answer that arrives after switching project and notes the cancellation in the old chat", async () => {
+    let resolveLoop: (value: { kind: "answer"; text: string }) => void = () => {};
+    loopMock.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveLoop = resolve;
+      }),
+    );
+    renderPanel({ projectId: "proj-1" });
+    await send("What is A?");
+
+    renderPanel({ projectId: "proj-2" });
+    await flush();
+    resolveLoop({ kind: "answer", text: "A is a class." });
+    await flush();
+
+    expect(container.textContent).not.toContain("A is a class.");
+    expect(container.textContent).not.toContain("What is A?");
+    const stored = window.localStorage.getItem("ontocode.askAi.chat.proj-1") ?? "";
+    expect(stored).toContain("What is A?");
+    expect(stored).toContain("Cancelled because you switched to another project");
+    expect(stored).not.toContain("A is a class.");
+  });
+
+  it("does not refresh Code View for a proposal that belongs to another project", async () => {
+    const onApplySuccess = vi.fn();
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1")] } });
+    applyMock.mockResolvedValueOnce({ ok: true, applied: true, newRevision: 4, remappedPendingGroups: [] });
+    renderPanel({ projectId: "proj-1", onApplySuccess });
+    await send("Rename A");
+    renderPanel({ projectId: "proj-2", onApplySuccess });
+    await flush();
+    const stored = window.localStorage.getItem("ontocode.askAi.chat.proj-1") ?? "[]";
+    window.localStorage.setItem("ontocode.askAi.chat.proj-3", stored);
+
+    renderPanel({ projectId: "proj-3", onApplySuccess });
+    await flush();
+    act(() => buttons("Apply")[0].click());
+    await flush();
+
+    expect(applyMock).toHaveBeenCalledTimes(1);
+    expect(onApplySuccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("CodeAssistantPanel Code View refresh", () => {
+  it("refreshes Code View once after Apply All with every applied change", async () => {
+    const onApplySuccess = vi.fn();
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1"), group("g2")] } });
+    applyMock
+      .mockResolvedValueOnce({ ok: true, applied: true, newRevision: 4, remappedPendingGroups: [], appliedRanges: [{ format: "turtle", startLine: 3, lineCount: 1 }] })
+      .mockResolvedValueOnce({ ok: true, applied: true, newRevision: 5, remappedPendingGroups: [] });
+    renderPanel({ onApplySuccess });
+    await send("Label things");
+
+    act(() => buttons("Apply All")[0].click());
+    await flush();
+
+    expect(applyMock).toHaveBeenCalledTimes(2);
+    expect(onApplySuccess).toHaveBeenCalledTimes(1);
+    expect(onApplySuccess).toHaveBeenCalledWith(["new g1", "new g2"], [{ format: "turtle", startLine: 3, lineCount: 1 }]);
+  });
+
+  it("does not refresh Code View when Apply All applies nothing", async () => {
+    const onApplySuccess = vi.fn();
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1"), group("g2")] } });
+    applyMock.mockRejectedValueOnce(new AssistantApiError("Document changed", "CONFLICT"));
+    renderPanel({ onApplySuccess });
+    await send("Label things");
+
+    act(() => buttons("Apply All")[0].click());
+    await flush();
+
+    expect(onApplySuccess).not.toHaveBeenCalled();
+  });
+
+  it("marks a sibling stale as soon as the apply result says so", async () => {
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1"), group("g2")] } });
+    applyMock.mockResolvedValueOnce({
+      ok: true,
+      applied: true,
+      newRevision: 4,
+      remappedPendingGroups: [{ serverGroupId: "g2", remapped: true, stale: true }],
+    });
+    renderPanel();
+    await send("Label things");
+
+    act(() => buttons("Apply")[0].click());
+    await flush();
+
+    expect(buttons("Apply").filter((b) => b.textContent?.trim() === "Apply")).toHaveLength(0);
+    expect(container.textContent?.toLowerCase()).toContain("stale");
+  });
+});
+
+describe("CodeAssistantPanel editor selection", () => {
+  it("sends the selected lines with the question and records them as action context", async () => {
+    const onClearEditorSelection = vi.fn();
+    loopMock.mockResolvedValueOnce({ kind: "answer", text: "It is a class." });
+    renderPanel({
+      editorSelection: { startLine: 4, endLine: 5, text: "ex:Dog a owl:Class ;\n  rdfs:label \"Dog\" .", format: "turtle", pageStartLine: 1000 },
+      onClearEditorSelection,
+    });
+    expect(container.textContent).toContain("Using your selection: lines 1005–1006");
+
+    await send("Why is this wrong?");
+
+    const sentText = loopMock.mock.calls[0][2] as string;
+    expect(sentText.startsWith("Why is this wrong?")).toBe(true);
+    expect(sentText).toContain('zero-based range "turtle:1004-2"');
+    expect(sentText).toContain("ex:Dog a owl:Class ;");
+    expect(JSON.parse(sessionMock.mock.calls[0][2].actionContext)).toEqual({
+      selection: { format: "turtle", startLine: 1004, endLine: 1005 },
+    });
+    expect(onClearEditorSelection).toHaveBeenCalled();
+    expect(container.textContent).toContain("Why is this wrong?");
+    expect(container.textContent).not.toContain("zero-based range");
+  });
+});
+
+describe("CodeAssistantPanel failed checks", () => {
+  it("lists why a group failed validation", async () => {
+    loopMock.mockResolvedValueOnce({
+      kind: "propose",
+      result: {
+        ok: true,
+        groups: [{
+          clientGroupId: "c1",
+          serverGroupId: "g1",
+          validation: { passed: false, checks: [{ name: "references_resolve", passed: false, detail: "ex:Hamster is not defined" }] },
+          diff: [{ targetPath: "turtle", before: "", after: "ex:Thumper a ex:Hamster .", startLine: 9, lineCount: 0 }],
+        }],
+      },
+    });
+    renderPanel();
+    await send("Make Thumper a Hamster");
+
+    expect(container.textContent).toContain("Referenced names exist in the ontology: ex:Hamster is not defined");
+    expect(container.textContent).toContain("turtle · insert at line 10");
+  });
+});
+
+describe("CodeAssistantPanel proposal explanation", () => {
+  it("shows what the model said alongside its proposal", async () => {
+    loopMock.mockResolvedValueOnce({
+      kind: "propose",
+      result: { ok: true, groups: [group("g1")] },
+      explanation: "Dog has no label, so this adds one in English.",
+    });
+    renderPanel();
+    await send("Label Dog");
+    expect(container.textContent).toContain("Dog has no label, so this adds one in English.");
+  });
+});

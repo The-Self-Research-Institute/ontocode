@@ -10,6 +10,7 @@ import self.research.ontology.owlEditor.model.ImportOptions;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline.ReimportRequest;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline.ReimportResult;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
+import self.research.ontology.owlEditor.util.RdfFiles;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -17,6 +18,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -164,6 +167,48 @@ class CodeViewReimportPipelineTest {
 
             mocked.verify(() -> OWLFormatConverter.sanitizeFileOnDisk(any(Path.class)));
         }
+    }
+
+    @Test
+    void unsanitizedImportReportsThatTheCacheMatchesTheSubmittedFile() throws Exception {
+        Path contentFile = fileWith("ttl", ":A a owl:Class .");
+
+        try (MockedStatic<OWLFormatConverter> ignored = mockStatic(OWLFormatConverter.class)) {
+            CodeViewReimportPipeline.ReimportResult result = pipeline.reimport(new ReimportRequest("proj-1", "turtle",
+                    contentFile, false, "u1", "User", null, null, true));
+
+            assertTrue(result.cacheMatchesSubmittedContent());
+        }
+    }
+
+    @Test
+    void sanitizedImportDoesNotClaimTheCacheMatchesTheSubmittedFile() throws Exception {
+        Path contentFile = fileWith("ttl", ":A a owl:Class .");
+
+        try (MockedStatic<OWLFormatConverter> ignored = mockStatic(OWLFormatConverter.class)) {
+            CodeViewReimportPipeline.ReimportResult result = pipeline.reimport(new ReimportRequest("proj-1", "turtle",
+                    contentFile, false, "u1", "User", null, null, false));
+
+            assertFalse(result.cacheMatchesSubmittedContent());
+        }
+    }
+
+    @Test
+    void snapshotsAreRestoredInTheFormatTheirExtensionNames() {
+        assertEquals(RDFFormat.NTRIPLES, RdfFiles.snapshotFormat(Path.of("op-1.nt")));
+        assertEquals(RDFFormat.NTRIPLES, RdfFiles.snapshotFormat(Path.of("OP-1.NT")));
+        assertEquals(RDFFormat.RDFXML, RdfFiles.snapshotFormat(Path.of("op-1.owl")));
+    }
+
+    @Test
+    void restoringAnNTriplesSnapshotLoadsItAsNTriples() throws Exception {
+        Path snapshot = Files.createTempFile("restore-", ".nt");
+        Files.writeString(snapshot, "<urn:a> <urn:b> <urn:c> .\n", StandardCharsets.UTF_8);
+
+        pipeline.restoreSnapshot("proj-1", snapshot);
+
+        verify(datasetService).bulkLoadChunked(eq("proj-1"), any(InputStream.class), eq(RDFFormat.NTRIPLES),
+                anyLong(), any(ImportOptions.class), isNull(), isNull());
     }
 
     @Test

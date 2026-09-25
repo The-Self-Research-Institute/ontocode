@@ -11,11 +11,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.config.EditorApiAuthInterceptor;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.dto.AssistantSessionCreateRequest;
 import self.research.ontology.owlEditor.dto.AssistantSessionResponse;
 import self.research.ontology.owlEditor.service.AssistantAdmissionLimiter;
 import self.research.ontology.owlEditor.service.AssistantSessionService;
+import self.research.ontology.owlEditor.service.ProjectAccessService;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.LinkedHashMap;
@@ -33,11 +35,14 @@ public class AssistantSessionController {
 
     private final AssistantSessionService sessionService;
     private final AssistantAdmissionLimiter admissionLimiter;
+    private final ProjectAccessService projectAccessService;
 
     public AssistantSessionController(AssistantSessionService sessionService,
-                                      AssistantAdmissionLimiter admissionLimiter) {
+                                      AssistantAdmissionLimiter admissionLimiter,
+                                      ProjectAccessService projectAccessService) {
         this.sessionService = sessionService;
         this.admissionLimiter = admissionLimiter;
+        this.projectAccessService = projectAccessService;
     }
 
     @PostMapping
@@ -52,6 +57,11 @@ public class AssistantSessionController {
         if (request.getProjectId() == null || request.getProjectId().isBlank()) {
             return ResponseEntity.badRequest()
                     .body(Map.of("ok", false, "errorCode", "VALIDATION_FAILED", "message", "projectId is required"));
+        }
+        if (lacksProjectAccess(httpRequest, request.getProjectId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("ok", false, "errorCode", "FORBIDDEN",
+                            "message", "You do not have access to this project"));
         }
         String provider = normalize(request.getProvider());
         String model = normalize(request.getModel());
@@ -87,6 +97,11 @@ public class AssistantSessionController {
                 .build();
 
         return ResponseEntity.ok(response);
+    }
+
+    private boolean lacksProjectAccess(HttpServletRequest httpRequest, String projectId) {
+        Object verifiedEmail = httpRequest.getAttribute(EditorApiAuthInterceptor.VERIFIED_EMAIL_ATTRIBUTE);
+        return verifiedEmail != null && !projectAccessService.hasProjectAccess(projectId, verifiedEmail.toString());
     }
 
     private static String normalize(String value) {

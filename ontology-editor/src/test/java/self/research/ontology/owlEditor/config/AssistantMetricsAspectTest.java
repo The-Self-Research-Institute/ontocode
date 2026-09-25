@@ -152,7 +152,10 @@ class AssistantMetricsAspectTest {
 
     @Test
     void resultsWithoutOkFlagCountAsOk() throws Throwable {
-        behaviour.set(invocation -> AssistantSessionDocument.builder().id("s").build());
+        AssistantSessionDocument created = AssistantSessionDocument.builder().id("s").build();
+        behaviour.set(invocation -> invocation.getMethod().getReturnType() == AssistantSessionService.SessionCreateOutcome.class
+                ? new AssistantSessionService.SessionCreateOutcome(created, null)
+                : created);
         invoke(AssistantSessionService.class, "createSession");
 
         behaviour.set(invocation -> new CodeViewReimportPipeline.ReimportResult("turtle", null, 3L));

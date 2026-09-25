@@ -9,21 +9,18 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.HandlerMapping;
-import self.research.ontology.owlEditor.document.ProjectDocument;
-import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
+import self.research.ontology.owlEditor.service.ProjectAccessService;
 
 import javax.crypto.SecretKey;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 @Component
 public class EditorApiAuthInterceptor implements HandlerInterceptor {
@@ -38,12 +35,16 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             "/api/v1/issues/report"
     );
 
-    private final ProjectRepository projectRepository;
-    private final MongoTemplate mongoTemplate;
+    private static final String ASSISTANT_SESSION_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/**";
+    public static final String VERIFIED_EMAIL_ATTRIBUTE = "jwtEmail";
 
-    public EditorApiAuthInterceptor(ProjectRepository projectRepository, MongoTemplate mongoTemplate) {
-        this.projectRepository = projectRepository;
-        this.mongoTemplate = mongoTemplate;
+    private final ProjectAccessService projectAccessService;
+    private final AssistantSessionRepository assistantSessionRepository;
+
+    public EditorApiAuthInterceptor(ProjectAccessService projectAccessService,
+                                    AssistantSessionRepository assistantSessionRepository) {
+        this.projectAccessService = projectAccessService;
+        this.assistantSessionRepository = assistantSessionRepository;
     }
 
     @Value("${jwt.secret:}")
@@ -108,10 +109,13 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
                 throw new IllegalArgumentException("missing subject");
             }
             String jwtEmail = claims.getSubject();
-            request.setAttribute("jwtEmail", jwtEmail);
+            request.setAttribute(VERIFIED_EMAIL_ATTRIBUTE, jwtEmail);
 
             String projectId = pathVariable(request, "projectId");
-            if (projectId != null && !hasProjectAccess(projectId, jwtEmail)) {
+            if (projectId == null) {
+                projectId = assistantSessionProjectId(path);
+            }
+            if (projectId != null && !projectAccessService.hasProjectAccess(projectId, jwtEmail)) {
                 log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json");
@@ -129,17 +133,15 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         }
     }
 
-    private boolean hasProjectAccess(String projectId, String email) {
-        Optional<ProjectDocument> direct = projectRepository.findById(projectId);
-        if (direct.isPresent() && direct.get().isAccessibleBy(email)) {
-            return true;
+    private String assistantSessionProjectId(String path) {
+        if (!PATH.match(ASSISTANT_SESSION_PATTERN, path)) {
+            return null;
         }
-        int compositeSep = projectId.indexOf("--");
-        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
-        Query query = new Query(Criteria.where("projectId").is(parentProjectId).orOperator(
-                Criteria.where("ownerEmail").is(email),
-                Criteria.where("members").elemMatch(Criteria.where("email").is(email))));
-        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
+        String sessionId = PATH.extractUriTemplateVariables(ASSISTANT_SESSION_PATTERN, path).get("sessionId");
+        return assistantSessionRepository.findById(sessionId)
+                .map(AssistantSessionDocument::getProjectId)
+                .filter(id -> !id.isBlank())
+                .orElse(null);
     }
 
     @SuppressWarnings("unchecked")

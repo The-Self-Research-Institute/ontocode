@@ -115,6 +115,7 @@ public class AssistantRecoveryService {
             operationService.markClearedByUser(operation);
         }
         recoveryLockService.release(projectId, actor, "CLEARED");
+        reimportPipeline.discardCodeViewCache(projectId);
         log.info("[Recovery] Recovery lock of project {} cleared by {} ({} unresolved operation(s) closed)",
                 projectId, actor, unresolved.size());
         audit(actor, projectId, CLEAR_OPERATION, null, null, "ok", null,

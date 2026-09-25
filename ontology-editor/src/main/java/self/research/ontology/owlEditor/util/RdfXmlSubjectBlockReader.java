@@ -35,15 +35,29 @@ public final class RdfXmlSubjectBlockReader {
     private int blockDepth = -1;
     private int doctypeBrackets;
     private long markupStartLine;
+    private long currentLine;
+    private final RdfXmlIndexState index;
 
-    private RdfXmlSubjectBlockReader(SourceIdentifier target, SubjectBlocks.Limits limits) {
+    private RdfXmlSubjectBlockReader(SourceIdentifier target, SubjectBlocks.Limits limits, boolean indexing) {
         this.target = target;
         this.collector = new SubjectBlocks.Collector(limits);
+        this.index = indexing ? new RdfXmlIndexState() : null;
+    }
+
+    public static SubjectRangeIndex index(BufferedReader reader) throws IOException {
+        RdfXmlSubjectBlockReader scanner = new RdfXmlSubjectBlockReader(new SourceIdentifier(""),
+                new SubjectBlocks.Limits(1, 1, 1), true);
+        String line;
+        long lineNo = 0;
+        while ((line = reader.readLine()) != null) {
+            scanner.processLine(line, lineNo++);
+        }
+        return scanner.index.finish(scanner.namespaces, scanner.depth == 0 && scanner.state == State.TEXT);
     }
 
     public static SubjectBlocks read(BufferedReader reader, String identifier, SubjectBlocks.Limits limits)
             throws IOException {
-        RdfXmlSubjectBlockReader scanner = new RdfXmlSubjectBlockReader(new SourceIdentifier(identifier), limits);
+        RdfXmlSubjectBlockReader scanner = new RdfXmlSubjectBlockReader(new SourceIdentifier(identifier), limits, false);
         String line;
         long lineNo = 0;
         while (!scanner.collector.full() && (line = reader.readLine()) != null) {
@@ -53,6 +67,7 @@ public final class RdfXmlSubjectBlockReader {
     }
 
     private void processLine(String line, long lineNo) {
+        currentLine = lineNo;
         collector.appendLine(line);
         if (state == State.TAG || state == State.TAG_DOUBLE || state == State.TAG_SINGLE) {
             if (pendingLines.size() < MAX_PENDING_LINES) {
@@ -116,6 +131,7 @@ public final class RdfXmlSubjectBlockReader {
         if (line.startsWith("<!DOCTYPE", i)) {
             state = State.DOCTYPE;
             doctypeBrackets = 0;
+            markupStartLine = lineNo;
             return i;
         }
         state = State.TAG;
@@ -146,6 +162,9 @@ public final class RdfXmlSubjectBlockReader {
             while (matcher.find()) {
                 entities.put(matcher.group(1), matcher.group(2) != null ? matcher.group(2) : matcher.group(3));
             }
+            if (index != null) {
+                index.header(markup.toString(), markupStartLine, currentLine);
+            }
             state = State.TEXT;
         }
         return i + 1;
@@ -164,10 +183,17 @@ public final class RdfXmlSubjectBlockReader {
             if (blockDepth >= 0 && depth == blockDepth) {
                 closeBlock();
             }
+            if (index != null && depth == 1) {
+                index.closeBlock(lineNo);
+            } else if (index != null && depth == 0) {
+                index.footer(tag, lineNo);
+            }
             return;
         }
         boolean selfClosing = tag.endsWith("/>");
         String about = null;
+        String rdfId = null;
+        String nodeId = null;
         Matcher matcher = ATTRIBUTE.matcher(tag);
         while (matcher.find()) {
             String name = matcher.group(1);
@@ -182,7 +208,14 @@ public final class RdfXmlSubjectBlockReader {
                 base = value;
             } else if (name.endsWith(":about") && rdfPrefixes.contains(name.substring(0, name.length() - 6))) {
                 about = value;
+            } else if (name.endsWith(":ID") && rdfPrefixes.contains(name.substring(0, name.length() - 3))) {
+                rdfId = value;
+            } else if (name.endsWith(":nodeID") && rdfPrefixes.contains(name.substring(0, name.length() - 7))) {
+                nodeId = value;
             }
+        }
+        if (index != null) {
+            indexTag(tag, selfClosing, about, rdfId, nodeId, lineNo);
         }
         if (about != null && blockDepth < 0 && !target.isBlank() && matches(about)) {
             collector.start(markupStartLine, pendingLines);
@@ -196,6 +229,20 @@ public final class RdfXmlSubjectBlockReader {
             }
         } else {
             depth++;
+        }
+    }
+
+    private void indexTag(String tag, boolean selfClosing, String about, String rdfId, String nodeId, long lineNo) {
+        if (depth == 0) {
+            index.header(tag, markupStartLine, lineNo);
+            return;
+        }
+        if (depth != 1) {
+            return;
+        }
+        index.openBlock(RdfXmlIndexState.subjectOf(base, about, rdfId, nodeId), markupStartLine);
+        if (selfClosing) {
+            index.closeBlock(lineNo);
         }
     }
 

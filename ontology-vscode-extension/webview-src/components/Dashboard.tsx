@@ -110,18 +110,7 @@ import { CollaborativeCursors } from "./CollaborativeCursor";
 import ShareDialog from "./ShareDialog";
 import MergeWizard from "./MergeWizard";
 import { ReportIssueModal } from "./ReportIssueModal";
-import { CodeAssistantPanel } from "./CodeAssistantPanel";
-import { CodeAssistantRecoveryBanner } from "./CodeAssistantRecoveryBanner";
-import {
-  clearRecoveryLock,
-  fetchRecoveryState,
-  RecoveryApiError,
-  restorePreviousVersion,
-  UNLOCKED_RECOVERY_STATE,
-  type RecoveryState,
-} from "../services/codeAssistantRecovery";
-import { getApiBaseUrl as getCodeAssistantApiBaseUrl } from "./codeAssistantPanelHelpers";
-import { AskAiIcon } from "./AskAiIcon";
+import { useProjectRecovery } from "../hooks/useCodeAssistantRecovery";
 import { UserGuideModal } from "./UserGuideModal";
 import { OpenSourceLicensesModal } from "./OpenSourceLicensesModal";
 import ThemeSettings from "./ThemeSettings";
@@ -157,6 +146,18 @@ import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
 import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
+import { useAskAiCodeViewSync } from "./dashboard-parts/hooks/useAskAiCodeViewSync";
+import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
+import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
+import { useCodeViewDownload } from "./dashboard-parts/hooks/useCodeViewDownload";
+import {
+  CODE_VIEW_PAGE_LINES,
+  CODE_VIEW_STREAMING_FORMATS,
+  getCodeViewEditableCeiling,
+  requestCodeViewPage,
+  toCodeViewPage,
+  type CodeViewPageWindow,
+} from "./dashboard-parts/codeViewPaging";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
 import { buildEntityIri } from "../utils/entityIri";
 import { PluginMarketplace } from "./PluginMarketplace";
@@ -2461,39 +2462,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     "CodeView",
   ]);
   const [showCodeAssistant, setShowCodeAssistant] = useState(false);
-  const [codeAssistantWidth, setCodeAssistantWidth] = useState(420);
-  const codeAssistantWidthRef = useRef(420);
-  const codeAssistantPanelRef = useRef<HTMLDivElement | null>(null);
-  const isDraggingCodeAssistantRef = useRef(false);
-  const handleCodeAssistantDragStart = (e: React.MouseEvent) => {
-    e.preventDefault();
-    isDraggingCodeAssistantRef.current = true;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  };
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDraggingCodeAssistantRef.current) return;
-      const newWidth = Math.min(800, Math.max(280, window.innerWidth - e.clientX));
-      codeAssistantWidthRef.current = newWidth;
-      if (codeAssistantPanelRef.current) {
-        codeAssistantPanelRef.current.style.width = `${newWidth}px`;
-      }
-    };
-    const handleMouseUp = () => {
-      if (!isDraggingCodeAssistantRef.current) return;
-      isDraggingCodeAssistantRef.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      setCodeAssistantWidth(codeAssistantWidthRef.current);
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, []);
+  const codeAssistantResize = useResizablePanelWidth(420, 280, 800);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [hasPluginUpdates, setHasPluginUpdates] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
@@ -2507,42 +2476,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
   const [highlightedLineNumbers, setHighlightedLineNumbers] = useState<Map<number, { startCol: number; endCol: number } | "full"> | undefined>(undefined);
-  const pendingHighlightTextsRef = useRef<string[] | null>(null);
+  const [codeViewRefreshing, setCodeViewRefreshing] = useState(false);
   const highlightClearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [recoveryState, setRecoveryState] = useState<RecoveryState>(UNLOCKED_RECOVERY_STATE);
-  const [recoveryBusy, setRecoveryBusy] = useState(false);
-  const [recoveryError, setRecoveryError] = useState<string | null>(null);
-  const recoveryRequestRef = useRef(0);
-  const [isDownloadingCodeView, setIsDownloadingCodeView] = useState(false);
-  // Tracks the in-flight Code View download's requestId so the real
-  // "downloadOntologyComplete"/"downloadOntologyFailed" host reply can clear
-  // the spinner (previously this used a fixed 3s cooldown that cleared the
-  // spinner regardless of whether the download had actually finished).
-  const codeViewDownloadRequestIdRef = useRef(0);
-  const pendingCodeViewDownloadRef = useRef<{ requestId: number; filename: string } | null>(null);
-  const codeViewDownloadSafetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const handleCodeViewDownloadMessage = (event: MessageEvent) => {
-      const message = event.data;
-      if (!message || (message.type !== "downloadOntologyComplete" && message.type !== "downloadOntologyFailed")) return;
-      const pending = pendingCodeViewDownloadRef.current;
-      if (!pending || message.requestId !== pending.requestId) return;
-      if (codeViewDownloadSafetyTimeoutRef.current) {
-        clearTimeout(codeViewDownloadSafetyTimeoutRef.current);
-        codeViewDownloadSafetyTimeoutRef.current = null;
-      }
-      pendingCodeViewDownloadRef.current = null;
-      setIsDownloadingCodeView(false);
-      if (message.type === "downloadOntologyComplete") {
-        notificationService.success("Export Complete", `${pending.filename} downloaded`);
-      } else if (!message.cancelled) {
-        notificationService.error("Export Failed", message.error || `Could not export ${pending.filename}`);
-      }
-    };
-    window.addEventListener("message", handleCodeViewDownloadMessage);
-    return () => window.removeEventListener("message", handleCodeViewDownloadMessage);
-  }, []);
+  const [recoveryVersion, setRecoveryVersion] = useState(0);
   // Large-file guard: CodeHighlighter materializes per-line gutter elements and
   // scans the whole document for fold ranges, so past this size the webview
   // freezes. Above the cap we show a read-only preview of the head of the file
@@ -2552,29 +2488,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Paged read-only mode for large ontologies: the backend serves 10k-line
   // windows from disk, so neither side ever holds the whole 200MB document.
   // null = normal full-content editing mode.
-  const [codeViewPage, setCodeViewPage] = useState<{
-    startLine: number;
-    lineCount: number;
-    totalLines: number;
-    totalBytes: number;
-  } | null>(null);
-  const CODE_VIEW_PAGE_LINES = 10_000;
-  // Editable-size ceiling, tiered by format. Turtle/RDF-XML/N-Triples/JSON-LD export
-  // and reimport without ever requiring a full in-memory OWLAPI model (StorageManager's
-  // streamed/buffered export path), so raising their ceiling is safe once the
-  // CodeHighlighter gutter-freeze fix lands. OWL/XML, Manchester, and Functional
-  // Syntax always require a full OWLAPI parse+reserialize to save regardless of file
-  // size (OWLFormatConverter.convertToRDFXML — fixed 30s timeout, StackOverflow-retry
-  // risk) — raising their ceiling buys nothing and only increases exposure to that
-  // existing backend risk, so they keep the original conservative threshold.
-  const CODE_VIEW_STREAMING_FORMATS = new Set(["turtle", "rdfxml", "ntriples", "jsonld"]);
-  const CODE_VIEW_OWLAPI_CEILING_BYTES = 10 * 1024 * 1024;
-  // Starting point for the raised ceiling — tune after the manual large-file
-  // responsiveness pass (see the Code View large-file plan's Verification section).
-  const CODE_VIEW_STREAMING_CEILING_BYTES = 60 * 1024 * 1024;
-  const getCodeViewEditableCeiling = (
-    fmt: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld",
-  ) => (CODE_VIEW_STREAMING_FORMATS.has(fmt) ? CODE_VIEW_STREAMING_CEILING_BYTES : CODE_VIEW_OWLAPI_CEILING_BYTES);
+  const [codeViewPage, setCodeViewPage] = useState<CodeViewPageWindow | null>(null);
 
   // In-flight export (web/desktop browser bridge only — VS Code exports run in
   // the extension host behind a native cancellable progress notification).
@@ -2597,6 +2511,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, []);
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
   const [codeViewHasUnsavedEdits, setCodeViewHasUnsavedEdits] = useState(false);
+  const codeViewHasUnsavedEditsRef = useRef(false);
+  codeViewHasUnsavedEditsRef.current = codeViewHasUnsavedEdits;
   const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
   // Opaque version handed back by /content and /content-page, checked back on save so a
   // mutation made elsewhere (another tab, Class Hierarchy edit) while Code View was open
@@ -8991,11 +8907,6 @@ const updateItemInState = useCallback(
     };
   }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
-  // Shared by the handleRefresh* callbacks below. On desktop, a mutation can leave the OWLAPI
-  // in-memory model briefly evicted/re-warming — a plain GET right after create/delete can land
-  // on that transient "warming" response (data: []), which would otherwise wipe the whole list.
-  // Retry instead of trusting it. Returns null if the list is still warming after retries, so
-  // callers can log their own entity-specific warning and keep the current list.
   const fetchEntityListWithWarmup = useCallback(
     async (endpoint: string, listField: string): Promise<any[] | null> => {
       if (!projectId) return null;
@@ -9011,12 +8922,6 @@ const updateItemInState = useCallback(
     [projectId],
   );
 
-  // Returns the freshly-fetched list so callers can verify a specific just-applied change
-  // actually shows up (see handleCreateAnnotationProperty / handleAnnotationSuperpropertyConfirm)
-  // instead of trusting a single fetch — desktop's OWLAPI cache has a version-check/evict/rewarm
-  // cycle (OwlApiMutationCoordinator.ensureFreshForRead) that can race with two back-to-back
-  // mutations (create-then-link is two separate requests), so a read moments later can
-  // land mid-rewarm and see the entity without its just-added relationship.
   const handleRefreshAnnotationProperties = useCallback(async (): Promise<AnnotationProperty[]> => {
     if (!projectId) return [];
     const rawProperties = await fetchEntityListWithWarmup(
@@ -9260,7 +9165,7 @@ const updateItemInState = useCallback(
     handleRefreshIndividuals,
     handleRefreshAnnotationProperties,
     handleRefreshDatatypes,
-  ]); // Removed fetchData, showNotification to prevent infinite loop
+  ]);
 
   // Handle file share notifications
   useEffect(() => {
@@ -12736,8 +12641,10 @@ const updateItemInState = useCallback(
       format: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld",
       forceRefresh: boolean = false,
       forceReload: boolean = false,
+      keepEditorMounted: boolean = false,
     ) => {
       if (!projectId) return;
+      const setBusy = keepEditorMounted && codeViewContent ? setCodeViewRefreshing : setCodeViewLoading;
 
       // Clear any previous syntax error / lint warnings when loading new content
       setCodeViewSyntaxError(null);
@@ -12760,7 +12667,7 @@ const updateItemInState = useCallback(
         }
       }
 
-      setCodeViewLoading(true);
+      setBusy(true);
       try {
         // Desktop is OWLAPI-first with lazy Fuseki sync — Code View's /content endpoint always
         // exports from Fuseki (it has no OWLAPI-aware read path), so without this it can show
@@ -12775,33 +12682,12 @@ const updateItemInState = useCallback(
         // JSON string. Small files fall through to the normal full-content fetch below
         // (now a server-side cache hit, since the probe generated the cache file).
         // Older backends without /content-page fall through too.
-        // /content-page (and the on-disk cache it populates as a side effect) aren't
-        // draft-aware yet — skip the probe entirely in draft mode so it can't refresh that
-        // shared cache with public content while a private draft is being viewed, and go
-        // straight to /content, which does correctly export fresh from the draft graph.
         if (!isDraftScopeActive()) {
           try {
-            const probe = await apiClient.get<{
-              success: boolean;
-              content: string;
-              startLine: number;
-              lineCount: number;
-              totalLines: number;
-              totalBytes: number;
-              sourceVersion?: number;
-            }>(`/api/ontology/${projectId}/content-page`, {
-              format,
-              startLine: "0",
-              lineCount: String(CODE_VIEW_PAGE_LINES),
-            });
+            const probe = await requestCodeViewPage(projectId, format, 0);
             if (probe?.success && Number(probe.totalBytes) > getCodeViewEditableCeiling(format)) {
               setCodeViewContent(probe.content ?? "");
-              setCodeViewPage({
-                startLine: 0,
-                lineCount: Number(probe.lineCount) || 0,
-                totalLines: Number(probe.totalLines) || 0,
-                totalBytes: Number(probe.totalBytes) || 0,
-              });
+              setCodeViewPage(toCodeViewPage(probe, 0));
               setCodeViewTruncation(null);
               setCodeViewFormat(format);
               setCodeViewSourceVersion(probe.sourceVersion != null ? Number(probe.sourceVersion) : null);
@@ -12881,33 +12767,11 @@ const updateItemInState = useCallback(
         );
         setCodeViewFormat(format);
       } finally {
-        setCodeViewLoading(false);
+        setBusy(false);
       }
     },
     [projectId, codeViewFormat, codeViewContent],
   );
-
-  useEffect(() => {
-    const texts = pendingHighlightTextsRef.current;
-    if (!texts || texts.length === 0) return;
-    pendingHighlightTextsRef.current = null;
-    const lines = codeViewContent.split("\n");
-    const matched = new Map<number, { startCol: number; endCol: number } | "full">();
-    for (const text of texts) {
-      const textLines = text.split("\n");
-      const firstLine = textLines[0]?.trim();
-      if (!firstLine) continue;
-      const lineIdx = lines.findIndex((l) => l.includes(firstLine));
-      if (lineIdx === -1) continue;
-      const startCol = lines[lineIdx].indexOf(firstLine);
-      matched.set(lineIdx + 1, startCol >= 0 ? { startCol, endCol: startCol + firstLine.length } : "full");
-      for (let i = 1; i < textLines.length; i++) matched.set(lineIdx + 1 + i, "full");
-    }
-    if (matched.size === 0) return;
-    setHighlightedLineNumbers(matched);
-    if (highlightClearTimeoutRef.current) clearTimeout(highlightClearTimeoutRef.current);
-    highlightClearTimeoutRef.current = setTimeout(() => setHighlightedLineNumbers(undefined), 4000);
-  }, [codeViewContent]);
 
   useEffect(() => {
     return () => {
@@ -12915,92 +12779,24 @@ const updateItemInState = useCallback(
     };
   }, []);
 
-  const handleAskAiApplySuccess = useCallback(
-    (changedTexts: string[]) => {
-      pendingHighlightTextsRef.current = changedTexts;
-      fetchCodeViewContent(codeViewFormat, true, true);
-    },
-    [fetchCodeViewContent, codeViewFormat],
-  );
 
-  const refreshRecoveryState = useCallback(async () => {
-    const requestId = ++recoveryRequestRef.current;
-    if (!projectId) {
-      setRecoveryState(UNLOCKED_RECOVERY_STATE);
-      return;
-    }
-    try {
-      const next = await fetchRecoveryState(getCodeAssistantApiBaseUrl(), user?.token, projectId);
-      if (requestId === recoveryRequestRef.current) setRecoveryState(next);
-    } catch (e) {
-      if (requestId !== recoveryRequestRef.current) return;
-      if (e instanceof RecoveryApiError && e.status === 404) setRecoveryState(UNLOCKED_RECOVERY_STATE);
-    }
-  }, [projectId, user?.token]);
-
-  useEffect(() => {
-    setRecoveryState(UNLOCKED_RECOVERY_STATE);
-    setRecoveryError(null);
-    void refreshRecoveryState();
-  }, [projectId, user?.token, refreshRecoveryState]);
-
-  useEffect(() => {
-    if (!recoveryState.locked) return;
-    const recheck = () => void refreshRecoveryState();
-    window.addEventListener("focus", recheck);
-    return () => window.removeEventListener("focus", recheck);
-  }, [recoveryState.locked, refreshRecoveryState]);
-
-  const runDashboardRecoveryAction = async (
-    request: (apiBaseUrl: string, token: string | undefined, projectId: string) => Promise<void>,
-    failurePrefix: string,
-  ) => {
-    if (!projectId) return;
-    setRecoveryBusy(true);
-    setRecoveryError(null);
-    try {
-      await request(getCodeAssistantApiBaseUrl(), user?.token, projectId);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "unexpected error";
-      setRecoveryError(`${failurePrefix}: ${message}`);
-    } finally {
-      await refreshRecoveryState();
-      setRecoveryBusy(false);
-    }
-  };
-
-  const restoreProjectFromRecovery = () =>
-    runDashboardRecoveryAction(restorePreviousVersion, "Couldn't restore the previous version");
-  const unlockProjectFromRecovery = () => runDashboardRecoveryAction(clearRecoveryLock, "Couldn't unlock the project");
+  const recovery = useProjectRecovery(projectId || undefined, user?.token, {
+    onRecoveryChanged: () => setRecoveryVersion((v) => v + 1),
+    onProjectRestored: () => void fetchCodeViewContent(codeViewFormat, false, true),
+  });
 
   // Navigate to another window of a large document in paged Code View mode.
   const loadCodeViewPage = useCallback(
-    async (startLine: number) => {
+    async (startLine: number, keepEditorMounted: boolean = false) => {
       if (!projectId || !codeViewPage) return;
       const clamped = Math.max(0, Math.min(startLine, Math.max(0, codeViewPage.totalLines - 1)));
-      setCodeViewLoading(true);
+      const setBusy = keepEditorMounted ? setCodeViewRefreshing : setCodeViewLoading;
+      setBusy(true);
       try {
-        const res = await apiClient.get<{
-          success: boolean;
-          content: string;
-          startLine: number;
-          lineCount: number;
-          totalLines: number;
-          totalBytes: number;
-          error?: string;
-        }>(`/api/ontology/${projectId}/content-page`, {
-          format: codeViewFormat,
-          startLine: String(clamped),
-          lineCount: String(CODE_VIEW_PAGE_LINES),
-        });
+        const res = await requestCodeViewPage(projectId, codeViewFormat, clamped);
         if (res?.success) {
           setCodeViewContent(res.content ?? "");
-          setCodeViewPage({
-            startLine: clamped,
-            lineCount: Number(res.lineCount) || 0,
-            totalLines: Number(res.totalLines) || 0,
-            totalBytes: Number(res.totalBytes) || 0,
-          });
+          setCodeViewPage(toCodeViewPage(res, clamped));
         } else {
           notificationService.error("Load Failed", res?.error || "Could not load this section of the file.");
         }
@@ -13008,47 +12804,31 @@ const updateItemInState = useCallback(
         console.error("[Dashboard] Failed to load code view page:", error);
         notificationService.error("Load Failed", error?.message || "Could not load this section of the file.");
       } finally {
-        setCodeViewLoading(false);
+        setBusy(false);
       }
     },
     [projectId, codeViewFormat, codeViewPage],
   );
 
-  // Download the complete serialized file for the current Code View format —
-  // the editing path for documents too large to edit in the browser.
-  //
-  // No visual "in progress" feedback existed here before, so a double-click fired
-  // this twice — on desktop each call opens its own native Save dialog, and the
-  // first one gets orphaned/dismissed when the second grabs focus, leaving only
-  // the second click's file actually saved. Guard against re-entrant calls.
-  const downloadFullCodeViewFile = useCallback(() => {
-    if (!projectId || isDownloadingCodeView) return;
-    const extByFormat: Record<string, string> = {
-      rdfxml: "owl", turtle: "ttl", ntriples: "nt", owlxml: "owlxml",
-      manchester: "omn", functional: "ofn", jsonld: "jsonld",
-    };
-    const ext = extByFormat[codeViewFormat] || "owl";
-    const filename = `${projectId}.${ext}`;
-    const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(projectId)}?format=${codeViewFormat}`;
-    if (window.vscode) {
-      codeViewDownloadRequestIdRef.current += 1;
-      const requestId = codeViewDownloadRequestIdRef.current;
-      pendingCodeViewDownloadRef.current = { requestId, filename };
-      setIsDownloadingCodeView(true);
-      window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId, format: codeViewFormat, requestId });
-      notificationService.info("Exporting…", `${filename} — this can take a few minutes for large ontologies`);
-      if (codeViewDownloadSafetyTimeoutRef.current) clearTimeout(codeViewDownloadSafetyTimeoutRef.current);
-      codeViewDownloadSafetyTimeoutRef.current = setTimeout(() => {
-        if (pendingCodeViewDownloadRef.current?.requestId === requestId) {
-          pendingCodeViewDownloadRef.current = null;
-          setIsDownloadingCodeView(false);
-          notificationService.error("Export Timed Out", `${filename} export did not finish in time. Please try again.`);
-        }
-      }, 60 * 60 * 1000);
-    } else {
-      window.open(url, "_blank");
-    }
-  }, [projectId, codeViewFormat, isDownloadingCodeView]);
+  const {
+    handleAskAiApplySuccess,
+    handleShowInCodeView,
+    selection: codeViewSelection,
+    setSelection: setCodeViewSelection,
+  } = useAskAiCodeViewSync({
+    codeViewContent,
+    codeViewFormat,
+    codeViewPage,
+    busy: codeViewLoading || codeViewRefreshing,
+    hasUnsavedEditsRef: codeViewHasUnsavedEditsRef,
+    highlighterRef: codeHighlighterRef,
+    highlightClearTimeoutRef,
+    setHighlightedLineNumbers,
+    fetchCodeViewContent,
+    loadCodeViewPage,
+  });
+
+  const { isDownloading: isDownloadingCodeView, download: downloadFullCodeViewFile } = useCodeViewDownload(projectId, codeViewFormat);
 
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
@@ -13131,7 +12911,7 @@ const updateItemInState = useCallback(
         return;
       }
 
-      if (recoveryState.locked) {
+      if (recovery.recoveryLocked) {
         notificationService.error(
           "Save Disabled",
           "This project is locked for recovery. Restore the previous version or confirm it looks right before saving.",
@@ -13301,7 +13081,7 @@ const updateItemInState = useCallback(
       isViewOnlyMember,
       codeViewTruncation,
       codeViewPage,
-      recoveryState.locked,
+      recovery.recoveryLocked,
       setShowProPromptType,
       refreshClassHierarchy,
       refreshProperties,
@@ -15631,17 +15411,7 @@ const updateItemInState = useCallback(
                   >
                     {codeViewLoading ? "Refreshing..." : "Refresh"}
                   </button>
-                  <button
-                    onClick={() => setShowCodeAssistant((v) => !v)}
-                    className={`px-3 py-1 text-sm rounded-md flex items-center gap-1 ${showCodeAssistant
-                        ? "bg-purple-600 text-white hover:bg-purple-700"
-                        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                      }`}
-                    title="Ask the AI assistant about this document"
-                  >
-                    <AskAiIcon size={16} />
-                    Ask AI
-                  </button>
+                  <CodeViewAskAiToggle open={showCodeAssistant} onToggle={() => setShowCodeAssistant((v) => !v)} />
                   {/* <button
                     onClick={() => {
                       if (window.confirm('This will reload fresh from GraphDB and lose any citation line positions. Continue?')) {
@@ -15778,15 +15548,7 @@ const updateItemInState = useCallback(
                         </div>
                       </div>
                     )}
-                    {recoveryState.locked && (
-                      <CodeAssistantRecoveryBanner
-                        state={recoveryState}
-                        busy={recoveryBusy}
-                        error={recoveryError}
-                        onRestore={restoreProjectFromRecovery}
-                        onClear={unlockProjectFromRecovery}
-                      />
-                    )}
+                    <CodeViewAskAiStatus recovery={recovery} refreshing={codeViewRefreshing} />
                     {codeViewLoading ? (
                       <div className="flex items-center justify-center h-64">
                         <div className="text-gray-500">Loading ontology content...</div>
@@ -15810,6 +15572,7 @@ const updateItemInState = useCallback(
                         onExportProAction={handleExportProAction}
                         onUnsavedChangesChange={setCodeViewHasUnsavedEdits}
                         highlightedLineNumbers={highlightedLineNumbers}
+                        onSelectionChange={setCodeViewSelection}
                       />
                     )}
                   </div>
@@ -15827,27 +15590,25 @@ const updateItemInState = useCallback(
               </div>
             </div>
             {showCodeAssistant && (
-              <>
-                <div
-                  onMouseDown={handleCodeAssistantDragStart}
-                  className="w-1 flex-shrink-0 cursor-col-resize bg-gray-200 hover:bg-purple-400 active:bg-purple-500"
-                  title="Drag to resize"
-                />
-                <div
-                  ref={codeAssistantPanelRef}
-                  style={{ width: codeAssistantWidth }}
-                  className="flex-shrink-0 border-l border-gray-200 overflow-hidden"
-                >
-                  <CodeAssistantPanel
-                    projectName={projectId || undefined}
-                    projectId={projectId || undefined}
-                    documentPath={activeFileName || undefined}
-                    hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
-                    onClose={() => setShowCodeAssistant(false)}
-                    onApplySuccess={handleAskAiApplySuccess}
-                  />
-                </div>
-              </>
+              <CodeViewAskAiSidebar
+                resize={codeAssistantResize}
+                projectName={projectId || undefined}
+                projectId={projectId || undefined}
+                documentPath={activeFileName || undefined}
+                hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
+                onClose={() => setShowCodeAssistant(false)}
+                onApplySuccess={handleAskAiApplySuccess}
+                onShowInCodeView={handleShowInCodeView}
+                recoveryVersion={recoveryVersion}
+                onRecoveryChanged={() => void recovery.refreshRecovery()}
+                onProjectRestored={() => void fetchCodeViewContent(codeViewFormat, false, true)}
+                editorSelection={
+                  codeViewSelection
+                    ? { ...codeViewSelection, format: codeViewFormat, pageStartLine: codeViewPage?.startLine ?? 0 }
+                    : null
+                }
+                onClearEditorSelection={() => setCodeViewSelection(null)}
+              />
             )}
           </div>
         );

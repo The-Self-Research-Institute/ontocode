@@ -4,7 +4,8 @@ import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8083';
-const EMAIL = __ENV.ASSISTANT_EMAIL || 'k6-loadtest@example.com';
+const RUN_ID = __ENV.RUN_ID || 'default';
+const EMAIL = __ENV.ASSISTANT_EMAIL || `k6-groupapply-${RUN_ID}@loadtest.example.test`;
 const PLAN = __ENV.ASSISTANT_PLAN || 'PRO';
 const PROJECT_PREFIX = __ENV.PROJECT_PREFIX || 'k6-groupapply';
 const TARGET_FORMAT = __ENV.TARGET_FORMAT || 'turtle';
@@ -158,7 +159,7 @@ function createAssistantSession(projectId) {
   const payload = JSON.stringify({
     projectId,
     documentPath: `/${projectId}.ttl`,
-    actionType: 'ask',
+    actionType: 'local-edit',
     actionContext: 'k6 group-apply load test setup',
   });
   const res = http.post(`${BASE_URL}/api/v1/code-assistant/sessions`, payload, {

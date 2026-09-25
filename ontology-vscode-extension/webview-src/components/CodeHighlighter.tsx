@@ -1,5 +1,8 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback, useImperativeHandle } from "react";
 import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from '../utils/doi';
+import type { EditorSelectionContext } from "./codeSelection";
+import { useCodeSelectionReporting, useUnsavedChangesReporting } from "./useCodeSelectionReporting";
+import { escapeRegex, markChangedRange, parseErrorLines, type ChangedLineRange } from "./codeHighlighterMarks";
 import {
   Search,
   X,
@@ -16,27 +19,6 @@ import {
   AlertTriangle,
   ArrowRight,
 } from "lucide-react";
-
-/** Extract all line numbers mentioned in a parser error string (1-based). */
-function parseErrorLines(errorStr: string): number[] {
-  if (!errorStr) return [];
-  const found = new Set<number>();
-  const patterns = [
-    /\bline[:\s]+(\d+)/gi,
-    /at line (\d+)/gi,
-    /\[(\d+),\s*\d+\]/g,
-    /line (\d+),/gi,
-    /\brow[:\s]+(\d+)/gi,
-  ];
-  for (const re of patterns) {
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(errorStr)) !== null) {
-      const n = parseInt(m[1], 10);
-      if (n > 0) found.add(n);
-    }
-  }
-  return Array.from(found);
-}
 
 // Declare vscode API
 declare global {
@@ -69,7 +51,8 @@ interface CodeHighlighterProps {
   /** Called when a gated export action is clicked on a non-paid plan. */
   onExportProAction?: () => void;
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
-  highlightedLineNumbers?: Map<number, { startCol: number; endCol: number } | "full">;
+  highlightedLineNumbers?: Map<number, ChangedLineRange>;
+  onSelectionChange?: (selection: EditorSelectionContext | null) => void;
 }
 
 /** Imperative handle so callers outside the editor (e.g. a Problems panel) can jump to a line. */
@@ -111,6 +94,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   onExportProAction,
   onUnsavedChangesChange,
   highlightedLineNumbers,
+  onSelectionChange,
 }, forwardedRef) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -126,12 +110,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   const [wordWrap, setWordWrap] = useState(false);
   const [editedContent, setEditedContent] = useState<Map<number, string>>(new Map());
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const onUnsavedChangesChangeRef = useRef(onUnsavedChangesChange);
-  onUnsavedChangesChangeRef.current = onUnsavedChangesChange;
-  useEffect(() => {
-    onUnsavedChangesChangeRef.current?.(hasUnsavedChanges);
-  }, [hasUnsavedChanges]);
-  useEffect(() => () => onUnsavedChangesChangeRef.current?.(false), []);
+  useUnsavedChangesReporting(hasUnsavedChanges, onUnsavedChangesChange);
   const [showAddDoiDialog, setShowAddDoiDialog] = useState(false);
   const [doiInputValue, setDoiInputValue] = useState("");
   const [doiInputError, setDoiInputError] = useState<string | null>(null);
@@ -186,6 +165,8 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   useImperativeHandle(forwardedRef, () => ({
     goToLine: navigateToLine,
   }), [navigateToLine]);
+
+  useCodeSelectionReporting(editorRef, textareaRef, onSelectionChange);
 
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const searchCancelRef = useRef<boolean>(false);
@@ -979,25 +960,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
             .join("");
         }
 
-        const changedRange = highlightedLineNumbers?.get(lineNumber);
-        if (changedRange && changedRange !== "full") {
-          const changedText = line.slice(changedRange.startCol, changedRange.endCol);
-          if (changedText) {
-            const changedRegex = new RegExp(escapeRegex(changedText));
-            const parts = processedLine.split(/(<[^>]+>)/g);
-            let replaced = false;
-            processedLine = parts
-              .map((part) => {
-                if (part.startsWith("<") && part.endsWith(">")) return part;
-                if (replaced) return part;
-                return part.replace(changedRegex, (match) => {
-                  replaced = true;
-                  return `<mark style="background-color:rgba(147,51,234,0.35);color:inherit;padding:0 1px;border-radius:2px">${match}</mark>`;
-                });
-              })
-              .join("");
-          }
-        }
+        processedLine = markChangedRange(processedLine, line, highlightedLineNumbers?.get(lineNumber));
       }
 
       // If collapsed, append fold summary to the line content
@@ -2392,6 +2355,3 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (char) => htmlEscapeMap[char]);
 }
 
-function escapeRegex(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}

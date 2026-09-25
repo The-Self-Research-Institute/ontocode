@@ -2,6 +2,8 @@ import React from "react";
 import { Loader2, CheckCircle, AlertCircle, ShieldAlert } from "lucide-react";
 import type { ProposedEditGroupResult } from "../services/codeAssistantSession";
 import type { GroupDecision } from "../services/codeAssistantApplyQueue";
+import { CodeAssistantDiffEntry } from "./CodeAssistantDiffEntry";
+import { CodeAssistantFailedChecks } from "./CodeAssistantFailedChecks";
 
 export type { GroupDecision };
 
@@ -24,6 +26,7 @@ interface CodeAssistantReviewGroupsProps {
   applyAllSummary?: string | null;
   applyBlockedReason?: string | null;
   applyBusy?: boolean;
+  onShowInCodeView?: (format: string, startLine: number) => void;
 }
 
 export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps> = ({
@@ -38,6 +41,7 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
   applyAllSummary,
   applyBlockedReason,
   applyBusy = false,
+  onShowInCodeView,
 }) => {
   const pendingCount = groups.filter((g) => (decisions[g.serverGroupId] ?? "pending") === "pending" && g.validation.passed).length;
   const isApplyingAny = groups.some((g) => decisions[g.serverGroupId] === "applying");
@@ -61,8 +65,8 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
       </div>
       {running && applyAllRun && (
         <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-md text-xs text-green-900">
-          <Loader2 size={14} className="animate-spin" />
-          <span>
+          <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+          <span role="status" aria-live="polite">
             Applying {applyAllRun.position} of {applyAllRun.total}
             {applyAllRun.cancelRequested ? " — stopping after this group" : ""}
           </span>
@@ -74,7 +78,7 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
         </div>
       )}
       {applyAllSummary && !running && (
-        <div className="px-3 py-2 bg-gray-100 border border-gray-200 rounded-md text-xs text-gray-800">{applyAllSummary}</div>
+        <div role="status" className="px-3 py-2 bg-gray-100 border border-gray-200 rounded-md text-xs text-gray-800">{applyAllSummary}</div>
       )}
       {applyBlockedReason && (
         <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-900">
@@ -88,17 +92,16 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
         return (
           <div key={group.serverGroupId} className="border-2 border-gray-200 rounded-lg p-4 space-y-2">
             {!group.validation.passed && (
-              <div className="flex items-center gap-2 text-red-700 text-xs font-semibold">
-                <AlertCircle size={14} />
-                Failed validation — cannot apply
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-red-700 text-xs font-semibold">
+                  <AlertCircle size={14} />
+                  Failed validation — cannot apply
+                </div>
+                <CodeAssistantFailedChecks checks={group.validation.checks} />
               </div>
             )}
             {group.diff.map((d, i) => (
-              <div key={i} className="text-xs font-mono bg-gray-50 rounded p-2">
-                <div className="text-gray-500">{d.targetPath}</div>
-                <div className="text-red-600 line-through">{d.before}</div>
-                <div className="text-green-700">{d.after}</div>
-              </div>
+              <CodeAssistantDiffEntry key={i} entry={d} onShowInCodeView={onShowInCodeView} />
             ))}
             <div className="flex flex-wrap items-center gap-2 pt-1">
               {decision === "pending" && group.validation.passed && (
@@ -125,7 +128,7 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
                   )}
                 </>
               )}
-              {decision === "applying" && <Loader2 size={16} className="animate-spin text-gray-500" />}
+              {decision === "applying" && <Loader2 size={16} className="animate-spin text-gray-500" aria-label="Applying" />}
               {decision === "applied" && (
                 <span className="flex items-center gap-1 text-xs text-green-700 font-semibold">
                   <CheckCircle size={14} /> Applied

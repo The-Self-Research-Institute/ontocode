@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.config.EditorApiAuthInterceptor;
+import self.research.ontology.owlEditor.service.ProjectAccessService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -51,6 +53,9 @@ class AssistantSessionControllerTest {
     @Mock
     private AssistantAuditService auditService;
 
+    @Mock
+    private ProjectAccessService projectAccessService;
+
     private AssistantSessionController controller;
     private final AtomicInteger ids = new AtomicInteger();
 
@@ -63,7 +68,8 @@ class AssistantSessionControllerTest {
         ReflectionTestUtils.setField(service, "defaultTokenBudget", 8000);
         ReflectionTestUtils.setField(service, "deadlineSeconds", 300L);
         ReflectionTestUtils.setField(service, "maxActiveSessionsPerUser", 20);
-        controller = new AssistantSessionController(service, new AssistantAdmissionLimiter(4, 8, 32, 30, 1));
+        controller = new AssistantSessionController(service, new AssistantAdmissionLimiter(4, 8, 32, 30, 1),
+                projectAccessService);
         when(metadataService.getMutationVersion("proj-1")).thenReturn(42L);
         when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(0L);
         when(sessionRepository.save(any())).thenAnswer(inv -> {
@@ -71,6 +77,37 @@ class AssistantSessionControllerTest {
             doc.setId("session-" + ids.incrementAndGet());
             return doc;
         });
+    }
+
+    @Test
+    void createSessionRejectsAProjectTheVerifiedUserCannotAccess() {
+        MockHttpServletRequest http = requestWithBearerToken("intruder@x.com");
+        http.setAttribute(EditorApiAuthInterceptor.VERIFIED_EMAIL_ATTRIBUTE, "intruder@x.com");
+        when(projectAccessService.hasProjectAccess("proj-1", "intruder@x.com")).thenReturn(false);
+
+        ResponseEntity<?> response = controller.createSession(request("proj-1"), http);
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verify(sessionRepository, never()).save(any());
+    }
+
+    @Test
+    void createSessionAllowsAProjectTheVerifiedUserCanAccess() {
+        MockHttpServletRequest http = requestWithBearerToken("owner@x.com");
+        http.setAttribute(EditorApiAuthInterceptor.VERIFIED_EMAIL_ATTRIBUTE, "owner@x.com");
+        when(projectAccessService.hasProjectAccess("proj-1", "owner@x.com")).thenReturn(true);
+
+        ResponseEntity<?> response = controller.createSession(request("proj-1"), http);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+    }
+
+    @Test
+    void createSessionSkipsTheAccessCheckWhenJwtVerificationIsOff() {
+        ResponseEntity<?> response = controller.createSession(request("proj-1"), requestWithBearerToken("dev@x.com"));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        verify(projectAccessService, never()).hasProjectAccess(any(), any());
     }
 
     @Test

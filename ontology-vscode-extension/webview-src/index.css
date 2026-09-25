@@ -1211,3 +1211,12 @@ textarea.code-editor-textarea {
 .chat-chip-enter {
   animation: chat-chip-fade-in 0.22s ease-out both;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-message-enter,
+  .chat-chip-enter,
+  .code-line {
+    animation: none !important;
+    transition: none !important;
+  }
+}

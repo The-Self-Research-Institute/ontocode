@@ -4,7 +4,7 @@ import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8083';
-const EMAIL = __ENV.ASSISTANT_EMAIL || 'k6-loadtest@example.com';
+const EMAIL_DOMAIN = __ENV.ASSISTANT_EMAIL_DOMAIN || 'loadtest.example.test';
 const PLAN = __ENV.ASSISTANT_PLAN || 'PRO';
 const PROJECT_PREFIX = __ENV.PROJECT_PREFIX || 'k6-loadtest-project';
 const TARGET_VUS = Number(__ENV.TARGET_VUS || 20);
@@ -18,7 +18,9 @@ function buildUnsignedJwt(email, plan) {
   return `${header}.${payload}.unsigned`;
 }
 
-const AUTH_TOKEN = buildUnsignedJwt(EMAIL, PLAN);
+function identityFor(vu, iter) {
+  return `k6-vu${vu}-it${iter}@${EMAIL_DOMAIN}`;
+}
 
 export const sessionCreateErrors = new Rate('assistant_session_create_errors');
 export const sessionCreateDuration = new Trend('assistant_session_create_duration', true);
@@ -56,7 +58,7 @@ export function createSession() {
   const res = http.post(`${BASE_URL}/api/v1/code-assistant/sessions`, payload, {
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${AUTH_TOKEN}`,
+      Authorization: `Bearer ${buildUnsignedJwt(identityFor(__VU, __ITER), PLAN)}`,
     },
     tags: { name: 'CreateAssistantSession' },
   });

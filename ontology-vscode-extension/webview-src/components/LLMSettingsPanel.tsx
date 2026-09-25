@@ -318,7 +318,6 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
         </p>
       </div>
 
-      {/* Advanced */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Max response length (tokens)

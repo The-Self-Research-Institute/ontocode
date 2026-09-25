@@ -304,7 +304,6 @@ export function setStoredMaxResponseTokens(value: number): void {
     const clamped = Math.round(Math.min(MAX_MAX_RESPONSE_TOKENS, Math.max(MIN_MAX_RESPONSE_TOKENS, value)));
     localStorage.setItem(MAX_TOKENS_STORAGE, String(clamped));
   } catch {
-    /* ignore */
   }
 }
 

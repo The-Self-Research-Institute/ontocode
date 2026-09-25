@@ -32,6 +32,7 @@ public class AssistantEditGroupDocument {
     private AssistantEditGroupStatus status;
 
     private Long publicGraphVersionAtPropose;
+    private Long positionsVerifiedAtVersion;
     private Long appliedRevision;
 
     private String staleReason;

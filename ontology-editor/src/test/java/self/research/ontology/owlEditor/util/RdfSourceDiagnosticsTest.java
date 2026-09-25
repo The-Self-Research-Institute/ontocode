@@ -44,7 +44,7 @@ class RdfSourceDiagnosticsTest {
 
     @Test
     void syntaxErrorIsReportedOnceAsFatalWithItsLineNumber() throws IOException {
-        Path file = write("@prefix ex: <http://ex.org/> .\nex:A a ex:B .\nex:C a ex:D ;\n    ex:p .\nex:E a ex:F .\n");
+        Path file = write("@prefix ex: <http://ex.org/> .\nex:A a ex:B .\nex:C a ex:D ;\n    ex:p ex:q ex:r .\nex:E a ex:F .\n");
 
         RdfSourceDiagnostics.Result result = collect(file, RDFFormat.TURTLE);
 

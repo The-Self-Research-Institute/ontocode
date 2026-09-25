@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
+import self.research.ontology.owlEditor.util.PerfPhases;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -17,10 +18,6 @@ import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditOperation;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditRange;
 import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 
-import java.io.BufferedReader;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -47,6 +44,7 @@ public class AssistantEditProposalService {
     private final AssistantEditReferenceCoverageValidator referenceCoverageValidator;
     private final AssistantRenameService renameService;
     private final AssistantEditSemanticValidator semanticValidator;
+    private final ProjectWriteLockRegistry lockRegistry;
     private final AssistantAuditService auditService;
 
     @Value("${assistant.propose.max-edit-bytes:200000}")
@@ -71,7 +69,8 @@ public class AssistantEditProposalService {
                                          AssistantEditReferenceCoverageValidator referenceCoverageValidator,
                                          AssistantRenameService renameService,
                                          AssistantEditSemanticValidator semanticValidator,
-                                         AssistantAuditService auditService) {
+                                         AssistantAuditService auditService,
+                                         ProjectWriteLockRegistry lockRegistry) {
         this.sessionService = sessionService;
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
@@ -80,6 +79,7 @@ public class AssistantEditProposalService {
         this.renameService = renameService;
         this.semanticValidator = semanticValidator;
         this.auditService = auditService;
+        this.lockRegistry = lockRegistry;
     }
 
     public ProposeEditResult propose(String sessionId, String userEmail, List<EditGroupInput> groups) {
@@ -104,13 +104,23 @@ public class AssistantEditProposalService {
             return rejectRequest(session, "Too many groups in one proposal (max " + maxGroupsPerRequest + ")");
         }
 
-        long publicGraphVersion = storageManager.getPublicGraphVersion(session.getProjectId());
         Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(ttlHours * 3600);
 
-        List<GroupProposalOutcome> outcomes = new ArrayList<>();
-        for (EditGroupInput groupInput : groups) {
-            outcomes.add(proposeOneGroup(session, groupInput, publicGraphVersion, now, expiresAt));
+        List<GroupProposalOutcome> outcomes;
+        try {
+            outcomes = lockRegistry.runShared(session.getProjectId(), () -> {
+                long publicGraphVersion = storageManager.getPublicGraphVersion(session.getProjectId());
+                List<GroupProposalOutcome> proposed = new ArrayList<>();
+                for (EditGroupInput groupInput : groups) {
+                    proposed.add(proposeOneGroup(session, groupInput, publicGraphVersion, now, expiresAt));
+                }
+                return proposed;
+            });
+        } catch (Exception e) {
+            log.warn("[Assistant] propose failed for session {}: {}", session.getId(), e.getMessage());
+            return ProposeEditResult.builder().ok(false).errorCode("QUERY_ERROR")
+                    .message(e.getMessage() != null ? e.getMessage() : "propose failed").build();
         }
 
         return ProposeEditResult.builder().ok(true).groups(outcomes).build();
@@ -125,6 +135,7 @@ public class AssistantEditProposalService {
 
     private GroupProposalOutcome proposeOneGroup(AssistantSessionDocument session, EditGroupInput groupInput,
                                                   long publicGraphVersion, Instant now, Instant expiresAt) {
+        PerfPhases perf = new PerfPhases();
         List<CheckResult> checks = new ArrayList<>();
         List<EditInput> inputEdits = groupInput.edits() == null ? List.of() : groupInput.edits();
         EditOperation operation = groupInput.operation();
@@ -140,6 +151,7 @@ public class AssistantEditProposalService {
             }
             AssistantRenameService.RenameDerivation derivation =
                     renameService.derive(session.getProjectId(), operation, maxRenameLines);
+            perf.mark("renameDerive");
             if (!derivation.ok()) {
                 return rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
                         new CheckResult(RENAME_CHECK, false, derivation.detail()));
@@ -187,6 +199,7 @@ public class AssistantEditProposalService {
                 && (derived ? noOverlap && matchesLiveContentInOnePass(session.getProjectId(), targetPath, sortedEdits)
                 : sortedEdits.stream().allMatch(e -> matchesLiveContent(session.getProjectId(), e)));
         checks.add(new CheckResult("original_text_matches_live", liveMatch));
+        perf.mark("structuralAndLiveMatch");
 
         boolean structurallySound = hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
         CheckResult syntax;
@@ -198,12 +211,14 @@ public class AssistantEditProposalService {
             syntax = new CheckResult("syntax_valid", true);
         }
         checks.add(syntax);
+        perf.mark("syntax");
 
         CheckResult referenceCoverage = !structurallySound
                 ? new CheckResult("complete_reference_coverage", true)
                 : toCheckResult(referenceCoverageValidator.check(
                         session.getProjectId(), targetPath, toCoverageEdits(sortedEdits)));
         checks.add(referenceCoverage);
+        perf.mark("referenceCoverage");
 
         if (!structurallySound) {
             checks.addAll(AssistantEditSemanticValidator.skipped(
@@ -216,17 +231,25 @@ public class AssistantEditProposalService {
                     toSemanticEdits(sortedEdits), introducedByOperation));
         }
 
+        perf.mark("semantic");
         boolean passed = checks.stream().allMatch(CheckResult::passed);
 
         List<EditEntry> editEntries = sortedEdits.stream().map(this::toEditEntry).toList();
         List<DiffEntry> diff = sortedEdits.stream()
-                .map(e -> new DiffEntry(e.targetPath(), e.originalText(), e.newText()))
+                .map(e -> new DiffEntry(e.targetPath(), e.originalText(), e.newText(),
+                        e.range() == null ? null : e.range().startLine(),
+                        e.range() == null ? null : e.range().lineCount()))
                 .toList();
 
         String summary = renameSummary != null ? renameSummary
                 : sortedEdits.size() + " edit" + (sortedEdits.size() == 1 ? "" : "s") + " on " + targetPath;
-        return persistGroup(session, groupInput, targetPath, editEntries, passed, publicGraphVersion, now, expiresAt,
-                checks, diff, summary);
+        GroupProposalOutcome outcome = persistGroup(session, groupInput, targetPath, editEntries, passed,
+                publicGraphVersion, now, expiresAt, checks, diff, summary);
+        perf.mark("persist");
+        log.info("[Assistant] [PERF] propose project={} session={} format={} edits={} rename={} passed={} {}",
+                session.getProjectId(), session.getId(), targetPath, sortedEdits.size(), derived, passed,
+                perf.summary());
+        return outcome;
     }
 
     private GroupProposalOutcome rejectGroup(AssistantSessionDocument session, EditGroupInput groupInput,
@@ -297,43 +320,11 @@ public class AssistantEditProposalService {
     }
 
     private boolean matchesLiveContentInOnePass(String projectId, String targetPath, List<EditInput> sortedEdits) {
-        try {
-            Path file = storageManager.ensureCodeViewFile(projectId, targetPath);
-            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-                long lineNo = 0;
-                String line = reader.readLine();
-                for (EditInput edit : sortedEdits) {
-                    long start = edit.range().startLine();
-                    int count = edit.range().lineCount();
-                    if (count == 0) {
-                        continue;
-                    }
-                    while (line != null && lineNo < start) {
-                        line = reader.readLine();
-                        lineNo++;
-                    }
-                    StringBuilder live = new StringBuilder();
-                    for (int k = 0; k < count; k++) {
-                        if (line == null) {
-                            return false;
-                        }
-                        if (k > 0) {
-                            live.append('\n');
-                        }
-                        live.append(line);
-                        line = reader.readLine();
-                        lineNo++;
-                    }
-                    if (!live.toString().equals(edit.originalText())) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-        } catch (Exception e) {
-            log.warn("[Assistant] Live-content check failed for {}: {}", targetPath, e.getMessage());
-            return false;
-        }
+        List<CodeViewRangeMatcher.ExpectedRange> expected = sortedEdits.stream()
+                .map(e -> new CodeViewRangeMatcher.ExpectedRange(e.range().startLine(), e.range().lineCount(),
+                        e.originalText()))
+                .toList();
+        return new CodeViewRangeMatcher(storageManager).allMatch(projectId, targetPath, expected);
     }
 
     private boolean isRangeWellFormed(EditInput edit) {
@@ -432,7 +423,11 @@ public class AssistantEditProposalService {
         }
     }
 
-    public record DiffEntry(String targetPath, String before, String after) {}
+    public record DiffEntry(String targetPath, String before, String after, Long startLine, Integer lineCount) {
+        public DiffEntry(String targetPath, String before, String after) {
+            this(targetPath, before, after, null, null);
+        }
+    }
 
     @Data
     @Builder

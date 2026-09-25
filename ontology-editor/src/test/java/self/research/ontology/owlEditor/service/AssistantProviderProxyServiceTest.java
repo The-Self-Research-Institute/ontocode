@@ -112,6 +112,25 @@ class AssistantProviderProxyServiceTest {
     }
 
     @Test
+    void upstreamUriUsesRealProvidersByDefault() {
+        AssistantProviderProxyService svc = newService("claude", "claude-sonnet-5", "k");
+        assertEquals("https://api.anthropic.com/v1/messages", svc.upstreamUri("claude", "m").toString());
+        assertEquals("https://api.openai.com/v1/chat/completions", svc.upstreamUri("openai", "m").toString());
+        assertEquals("https://generativelanguage.googleapis.com/v1beta/models/gemini-x:generateContent",
+                svc.upstreamUri("gemini", "gemini-x").toString());
+    }
+
+    @Test
+    void upstreamUriFollowsBaseUrlOverrideForMockProviders() {
+        AssistantProviderProxyService svc = newService("claude", "claude-sonnet-5", "k");
+        ReflectionTestUtils.setField(svc, "baseUrlOverride", "http://localhost:9099/");
+        assertEquals("http://localhost:9099/v1/messages", svc.upstreamUri("claude", "m").toString());
+        assertEquals("http://localhost:9099/v1/chat/completions", svc.upstreamUri("openai", "m").toString());
+        assertEquals("http://localhost:9099/v1beta/models/gemini-x:generateContent",
+                svc.upstreamUri("gemini", "gemini-x").toString());
+    }
+
+    @Test
     void notManagedWhenAnyOfProviderModelOrKeyIsMissing() {
         assertFalse(newService("", "claude-sonnet-4-5", "k").isManaged());
         assertFalse(newService("claude", "", "k").isManaged());

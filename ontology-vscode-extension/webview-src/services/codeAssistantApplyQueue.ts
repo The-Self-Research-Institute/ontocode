@@ -90,6 +90,15 @@ export function classifyApplyFailure(errorCode: string | undefined, status: numb
     return { kind: "conflict", decision: "conflict", message, reason: "the document changed since it was checked", checkRecovery: false };
   }
   if (errorCode === "VALIDATION_FAILED") {
+    if (/unknown or unauthorized proposal/i.test(message)) {
+      return {
+        kind: "rejected",
+        decision: "failed",
+        message: "This proposal is no longer available. Proposals expire after 24 hours; ask again to get a fresh one.",
+        reason: "the proposal expired",
+        checkRecovery: false,
+      };
+    }
     return { kind: "rejected", decision: "failed", message, reason: "the server can't apply it", checkRecovery: false };
   }
   return { kind: "error", decision: "pending", message, reason: shortReason(message), checkRecovery: false };

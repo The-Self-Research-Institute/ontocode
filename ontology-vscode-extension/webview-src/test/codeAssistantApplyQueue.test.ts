@@ -224,3 +224,17 @@ describe("formatApplyAllSummary", () => {
     expect(summary.toLowerCase()).not.toMatch(/roll|undo|revert/);
   });
 });
+
+describe("classifyApplyFailure for expired proposals", () => {
+  it("explains that a deleted proposal expired instead of showing the raw rejection", () => {
+    const failure = classifyApplyFailure("VALIDATION_FAILED", 200, "Unknown or unauthorized proposal");
+    expect(failure.decision).toBe("failed");
+    expect(failure.message).toContain("expire after 24 hours");
+    expect(failure.reason).toBe("the proposal expired");
+  });
+
+  it("keeps other validation failures as they are", () => {
+    const failure = classifyApplyFailure("VALIDATION_FAILED", 200, "Proposal is not applicable");
+    expect(failure.message).toBe("Proposal is not applicable");
+  });
+});
