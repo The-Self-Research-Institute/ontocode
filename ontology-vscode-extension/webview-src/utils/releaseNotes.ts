@@ -18,7 +18,25 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
-  version: "1.2.2-beta.1",
+    version: "1.2.4",
+    date: "September 25, 2026",
+    highlights: [
+      "TSRI-365: Ontology Prefixes — Fixed prefixes from a file's namespace declarations not showing in the Ontology Prefixes panel and fixed the prefix count increasing on export.",
+    ],
+    videoUrl: "",
+  },
+
+  {
+    version: "1.2.3",
+    date: "September 24, 2026",
+    highlights: [
+      "TSRI-365: Active Ontology — Fixed Metrics panel showing wrong counts for Annotation Properties and Datatypes compared to the Entities tab.",
+    ],
+    videoUrl: "",
+  },
+
+  {
+    version: "1.2.2-beta.1",
   webVersion: "1.2.2",
   date: "September 8, 2026",
   highlights: [

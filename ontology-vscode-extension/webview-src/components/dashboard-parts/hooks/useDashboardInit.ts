@@ -913,7 +913,7 @@ export function useDashboardInit(state: DashboardState) {
   const refreshPrefixes = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`);
+      const response = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}/prefixes`);
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
       const list = Object.entries(data).map(([prefix, namespace]) => ({

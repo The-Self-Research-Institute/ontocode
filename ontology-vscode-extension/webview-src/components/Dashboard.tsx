@@ -5236,7 +5236,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshPrefixes = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`));
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${encodeProjectId(projectId)}/prefixes`));
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
       setPrefixMappings(normalizePrefixMappings(data));
@@ -5663,6 +5663,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Refresh prefixes from server
       await refreshPrefixes();
+      void silentRefreshMetadata();
 
       notificationService.success(
         isEdit ? "Prefix Updated" : "Prefix Added",
@@ -5688,6 +5689,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Refresh from server
       await refreshPrefixes();
+      void silentRefreshMetadata();
 
       notificationService.success("Prefix Deleted", "Prefix deleted successfully.");
     } catch (error) {
@@ -16613,9 +16615,9 @@ const updateItemInState = useCallback(
                   title: "Assertion axioms",
                   data: {
                     "Class assertions": (metadata as any)?.classAssertionAxiomCount,
-                    "Object assertions": (metadata as any)?.objectPropertyAssertionCount,
-                    "Data assertions": (metadata as any)?.dataPropertyAssertionCount,
-                    "Annotation assertions": (metadata as any)?.annotationAssertionCount,
+                    "Object assertions": (metadata as any)?.objectPropertyAssertionAxiomCount,
+                    "Data assertions": (metadata as any)?.dataPropertyAssertionAxiomCount,
+                    "Annotation assertions": (metadata as any)?.annotationAssertionAxiomCount,
                   },
                 },
               ].map((metricSection) => (
