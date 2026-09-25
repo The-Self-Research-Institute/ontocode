@@ -1,19 +1,7 @@
-import { useRef, useState, type MutableRefObject } from "react";
-import type { AppliedRange } from "../services/codeAssistantSession";
-import { buildApplyAllQueue, formatApplyAllSummary, groupLabel, runApplyAll } from "../services/codeAssistantApplyQueue";
+import { useRef, useState } from "react";
 import type { AppliedChanges } from "../components/codeAssistantChatEntries";
 import { applyReviewGroup } from "../components/codeAssistantApplyGroup";
-import type { CodeAssistantEntries } from "./useCodeAssistantEntries";
-
-interface ApplyOptions {
-  chat: CodeAssistantEntries;
-  tokenRef: MutableRefObject<string | undefined>;
-  projectIdRef: MutableRefObject<string | undefined>;
-  mountedRef: MutableRefObject<boolean>;
-  blockedReason: () => string | null;
-  noteRecoveryProblem: () => void;
-  onApplySuccess?: (changedTexts: string[], appliedRanges: AppliedRange[]) => void;
-}
+import { makeApplyAllPending, type ApplyOptions } from "./codeAssistantApplyAll";
 
 export function useCodeAssistantApply(options: ApplyOptions) {
   const { chat } = options;
@@ -62,47 +50,9 @@ export function useCodeAssistantApply(options: ApplyOptions) {
     chat.updateReviewEntry(entryId, (e) => ({ ...e, decisions: { ...e.decisions, [serverGroupId]: "skipped" } }));
   };
 
-  const applyAllPending = async (entryId: string, sessionId: string) => {
-    if (applyBusyRef.current || optionsRef.current.blockedReason()) return;
-    const entry = chat.findReviewEntry(entryId);
-    if (!entry) return;
-    const queue = buildApplyAllQueue(entry.groups, entry.decisions);
-    if (queue.length === 0) return;
-    const deferredChanges: AppliedChanges = { texts: [], ranges: [] };
-    cancelApplyAllRef.current.delete(entryId);
-    setApplyBusyNow(true);
-    chat.updateReviewEntry(entryId, (e) => ({
-      ...e,
-      applyAllRun: { running: true, position: 0, total: queue.length, cancelRequested: false },
-      applyAllSummary: null,
-    }));
-    try {
-      const report = await runApplyAll(queue, {
-        readDecisions: () => chat.findReviewEntry(entryId)?.decisions ?? {},
-        applyOne: (serverGroupId) => applyGroupOnce(entryId, sessionId, serverGroupId, deferredChanges),
-        isCancelRequested: () => cancelApplyAllRef.current.has(entryId),
-        blockedReason: () => {
-          if (!optionsRef.current.mountedRef.current) return "the assistant panel was closed";
-          if (!chat.findReviewEntry(entryId)) return "the conversation was cleared";
-          return optionsRef.current.blockedReason();
-        },
-        onProgress: (progress) =>
-          chat.updateReviewEntry(entryId, (e) => ({
-            ...e,
-            applyAllRun: { running: true, position: progress.position, total: progress.total, cancelRequested: e.applyAllRun?.cancelRequested ?? false },
-          })),
-      });
-      chat.updateReviewEntry(entryId, (e) => ({
-        ...e,
-        applyAllRun: null,
-        applyAllSummary: formatApplyAllSummary(report, (id) => groupLabel(e.groups, id)),
-      }));
-    } finally {
-      cancelApplyAllRef.current.delete(entryId);
-      setApplyBusyNow(false);
-      refreshCodeViewIfSameProject(entry.projectId, deferredChanges);
-    }
-  };
+  const applyAllPending = makeApplyAllPending({
+    chat, optionsRef, applyBusyRef, cancelApplyAllRef, setApplyBusyNow, applyGroupOnce, refreshCodeViewIfSameProject,
+  });
 
   const cancelApplyAll = (entryId: string) => {
     cancelApplyAllRef.current.add(entryId);

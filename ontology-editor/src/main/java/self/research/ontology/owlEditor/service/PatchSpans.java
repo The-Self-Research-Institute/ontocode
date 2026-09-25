@@ -5,6 +5,7 @@ import self.research.ontology.owlEditor.util.SubjectRangeIndex;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 record PatchSpans(List<long[]> oldSpans, List<long[]> newSpans) {
 
@@ -21,9 +22,17 @@ record PatchSpans(List<long[]> oldSpans, List<long[]> newSpans) {
     }
 
     static PatchSpans compute(List<TriplePatchPlanner.Edit> edits, SubjectRangeIndex oldIndex, SubjectRangeIndex newIndex) {
+        return compute(edits, oldIndex, newIndex, Set.of());
+    }
+
+    static PatchSpans compute(List<TriplePatchPlanner.Edit> edits, SubjectRangeIndex oldIndex, SubjectRangeIndex newIndex,
+                              Set<Long> headerOnlyStarts) {
         List<Shift> shifts = shifts(edits);
         List<long[]> old = new ArrayList<>();
         for (Shift shift : shifts) {
+            if (headerOnlyStarts.contains(shift.oldStart)) {
+                continue;
+            }
             if (touchesHeader(oldIndex, shift.oldStart, shift.oldCount)
                     || touchesHeader(newIndex, shift.newStart, shift.newCount)) {
                 return null;

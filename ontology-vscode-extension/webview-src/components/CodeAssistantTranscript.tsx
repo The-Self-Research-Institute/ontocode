@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CodeAssistantActionChips } from "./CodeAssistantActionChips";
+import { CodeAssistantMarkdown } from "./CodeAssistantMarkdown";
 import { CodeAssistantTranscriptEntry, type ReviewHandlers } from "./CodeAssistantTranscriptEntry";
 import type { CodeAssistantAction } from "./codeAssistantPanelHelpers";
 import type { ChatEntry, PromptToRetry } from "./codeAssistantChatEntries";
@@ -13,6 +14,7 @@ interface CodeAssistantTranscriptProps {
   editLockedMessage: string;
   busy: boolean;
   statusText: string;
+  draft: string;
   now: number;
   review: ReviewHandlers;
   onResubmit: (retry: PromptToRetry | undefined) => void;
@@ -49,7 +51,7 @@ export const CodeAssistantTranscript: React.FC<CodeAssistantTranscriptProps> = (
     if (!container) return;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     if (distanceFromBottom < 120) endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [entries, busy, statusText]);
+  }, [entries, busy, statusText, props.draft]);
 
   const copyText = async (entryId: string, text: string) => {
     try {
@@ -86,6 +88,13 @@ export const CodeAssistantTranscript: React.FC<CodeAssistantTranscriptProps> = (
           onSignIn={props.onSignIn}
         />
       ))}
+      {busy && props.draft && (
+        <div className="flex flex-col items-start" data-streaming-answer>
+          <div className="max-w-[85%] min-w-0 bg-gray-100 rounded-lg rounded-bl-sm px-3 py-2 text-sm text-gray-800">
+            <CodeAssistantMarkdown text={props.draft} />
+          </div>
+        </div>
+      )}
       {busy && <BusyIndicator statusText={statusText} onCancel={props.onCancel} />}
       <div ref={endRef} />
     </div>

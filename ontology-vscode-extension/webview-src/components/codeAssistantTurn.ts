@@ -18,6 +18,7 @@ export interface TurnRequest {
   signal: AbortSignal;
   onStage: (event: LoopStageEvent) => void;
   onProviderConfig: (config: ProviderConfig) => void;
+  onDraft?: (text: string) => void;
 }
 
 export interface TurnResult {
@@ -56,6 +57,7 @@ export async function runAssistantTurn(request: TurnRequest): Promise<TurnResult
     request.history,
     (event) => contextUsed.push(event),
     (event) => usage.push(event),
+    request.onDraft,
   );
   return { outcome, sessionId: session.sessionId, contextUsed, usage };
 }
@@ -97,4 +99,8 @@ export function deadEndEntry(deadEnd: DeadEnd, prompt: PromptToRetry, startedAt:
     retry: prompt,
     retryAt: seconds ? startedAt + seconds * 1000 : null,
   };
+}
+
+export function stoppedAnswerEntry(partial: string): ChatEntry {
+  return { id: nextEntryId(), role: "assistant", kind: "answer", text: `${partial}\n\n*Stopped.*`, contextUsed: [], usage: [] };
 }

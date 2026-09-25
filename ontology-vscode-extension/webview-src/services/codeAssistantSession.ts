@@ -10,6 +10,8 @@ import type {
   SparqlResult,
 } from "./codeAssistantSessionTypes";
 import { newIdempotencyKey, postJson, type IdempotentCallOptions } from "./codeAssistantSessionHttp";
+import { AssistantApiError } from "./codeAssistantSessionErrors";
+import { delay } from "./codeAssistantProviderHttp";
 
 export type {
   AssistantSnapshot,
@@ -147,18 +149,30 @@ export function reportAssistantUsage(
   }
 }
 
+const APPLY_IN_FLIGHT_POLL_MS = 2_000;
+const APPLY_IN_FLIGHT_MAX_WAIT_MS = 120_000;
+
+function isApplyStillRunning(e: unknown): boolean {
+  return e instanceof AssistantApiError && e.errorCode === "IDEMPOTENCY_KEY_REUSED" && e.status === 409;
+}
+
 export async function applyEditGroup(
   apiBaseUrl: string,
   token: string | undefined,
   sessionId: string,
   serverGroupId: string,
   signal?: AbortSignal,
+  options: IdempotentCallOptions = {},
 ): Promise<ApplyResult> {
-  return postJson<ApplyResult>(
-    apiBaseUrl,
-    `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/groups/${encodeURIComponent(serverGroupId)}/apply`,
-    token,
-    {},
-    signal,
-  );
+  const path = `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/groups/${encodeURIComponent(serverGroupId)}/apply`;
+  const key = options.idempotencyKey ?? newIdempotencyKey();
+  const deadline = Date.now() + APPLY_IN_FLIGHT_MAX_WAIT_MS;
+  for (;;) {
+    try {
+      return await postJson<ApplyResult>(apiBaseUrl, path, token, {}, signal, key);
+    } catch (e) {
+      if (!isApplyStillRunning(e) || Date.now() >= deadline || signal?.aborted) throw e;
+      await delay(APPLY_IN_FLIGHT_POLL_MS, signal);
+    }
+  }
 }

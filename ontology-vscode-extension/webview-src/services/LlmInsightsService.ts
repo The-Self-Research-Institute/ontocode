@@ -1,4 +1,4 @@
-
+import { getApiKey, initApiKeyStore, setApiKey } from './assistantKeyStore';
 
 export type LlmProvider = 'gemini' | 'claude' | 'openai';
 
@@ -142,7 +142,7 @@ export function getProviderModels(provider: LlmProvider): KnownModel[] {
   return PROVIDERS[provider]?.models ?? [];
 }
 
-const BUDGET_TIER = /(lite|mini|nano|-8b|small)/i;
+const BUDGET_TIER = /(^|-)(lite|mini|nano|8b|small)(-|$)/i;
 const GEMINI_PAID_TIER = /(^|-)pro(-|$)/i;
 
 export function isLikelyPaidOnlyModel(provider: LlmProvider, modelId: string): boolean {
@@ -242,22 +242,17 @@ export async function refreshAvailableModels(provider: LlmProvider, key: string)
   return { models: live, live: true };
 }
 
+export function ensureApiKeyLoaded(): Promise<void> {
+  return initApiKeyStore(KEY_STORAGE);
+}
+
 export function getStoredApiKey(): string {
-  try {
-    return localStorage.getItem(KEY_STORAGE) ?? '';
-  } catch {
-    return '';
-  }
+  void ensureApiKeyLoaded();
+  return getApiKey();
 }
 
 export function setStoredApiKey(key: string): void {
-  try {
-    const trimmed = key.trim();
-    if (trimmed) localStorage.setItem(KEY_STORAGE, trimmed);
-    else localStorage.removeItem(KEY_STORAGE);
-  } catch {
-    /* storage unavailable — ignore */
-  }
+  void setApiKey(key);
 }
 
 export function hasApiKey(): boolean {

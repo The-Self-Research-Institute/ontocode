@@ -17,6 +17,7 @@ import {
 } from "./codeAssistantProviderTypes";
 import { buildRequestBody, providerEndpoint, startConversation } from "./codeAssistantProviderRequest";
 import { parseProviderUsage, parseTurn } from "./codeAssistantProviderResponse";
+import { createStreamAssembler, readSseEvents, streamingUrl, withStreamFlags } from "./codeAssistantStream";
 import {
   delay,
   managedTarget,
@@ -99,12 +100,62 @@ export async function startAssistantConversation(
   return startConversation(provider ?? getStoredProvider(), systemPrompt, history, userMessage);
 }
 
+function turnTarget(
+  provider: LlmProvider,
+  model: string,
+  key: string,
+  body: Record<string, unknown>,
+  managed: ManagedProviderCall | undefined,
+  streaming: boolean,
+): ProviderTarget {
+  if (managed) {
+    const target = managedTarget(managed, body);
+    if (!streaming) return target;
+    return { ...target, url: `${target.url}/stream`, path: `${target.path}/stream` };
+  }
+  const endpoint = providerEndpoint(provider, model, key);
+  if (!streaming) return { ...endpoint, payload: JSON.stringify(body) };
+  return { ...endpoint, url: streamingUrl(provider, endpoint.url), payload: JSON.stringify(withStreamFlags(provider, body)) };
+}
+
+async function readStreamedTurn(
+  res: Response,
+  provider: LlmProvider,
+  path: string | undefined,
+  onTextDelta: (delta: string) => void,
+): Promise<unknown> {
+  if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) return res.json();
+  const assembler = createStreamAssembler(provider);
+  let proxyError: { status?: number } & Record<string, unknown> | null = null;
+  let whole: unknown = null;
+  await readSseEvents(res, (event, data) => {
+    if (proxyError) return;
+    if (event === "proxy_error") {
+      proxyError = JSON.parse(data);
+      return;
+    }
+    if (event === "complete") {
+      whole = JSON.parse(data);
+      return;
+    }
+    const delta = assembler.accept(event, data);
+    if (delta) onTextDelta(delta);
+  });
+  if (proxyError) {
+    const failed = proxyError as { status?: number };
+    const errorResponse = new Response(JSON.stringify(failed), { status: failed.status ?? 502 });
+    throw await mapManagedHttpError(provider, errorResponse, path ?? "");
+  }
+  return whole ?? assembler.result();
+}
+
 export async function requestNextTurn(
   inputConversation: ConversationState,
   tools: ToolDefinition[],
   signal?: AbortSignal,
   onRetry?: (attempt: number, maxAttempts: number, status: number) => void,
   managed?: ManagedProviderCall,
+  onTextDelta?: (delta: string) => void,
 ): Promise<NextTurn> {
   let key = "";
   if (!managed) {
@@ -114,9 +165,7 @@ export async function requestNextTurn(
   const model = managed ? managed.model : getStoredModel();
 
   const { conversation, body } = fitConversationToBudget(inputConversation, model, tools);
-  const target: ProviderTarget = managed
-    ? managedTarget(managed, body)
-    : { ...providerEndpoint(conversation.provider, model, key), payload: JSON.stringify(body) };
+  const target = turnTarget(conversation.provider, model, key, body, managed, Boolean(onTextDelta));
 
   let res: Response;
   let attempt = 0;
@@ -135,7 +184,8 @@ export async function requestNextTurn(
       : await mapHttpError(conversation.provider, res);
   }
 
-  const raw = await res.json().catch(() => {
+  const raw = await (onTextDelta ? readStreamedTurn(res, conversation.provider, target.path, onTextDelta) : res.json()).catch((e) => {
+    if (e instanceof Error && !(e instanceof SyntaxError)) throw e;
     throw new ProviderProtocolError(`${conversation.provider} returned a response that could not be parsed as JSON.`);
   });
 

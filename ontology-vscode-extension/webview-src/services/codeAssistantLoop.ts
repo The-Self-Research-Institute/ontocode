@@ -173,6 +173,7 @@ export async function runAssistantLoop(
   history: HistoryTurn[] = [],
   onContext?: (event: ContextEvent) => void,
   onUsage?: (usage: ProviderUsage) => void,
+  onDraft?: (text: string) => void,
 ): Promise<LoopOutcome> {
   const managedCall = managedCallFor(ctx);
   const managedProvider = ctx.providerConfig?.managed ? ctx.providerConfig.provider : undefined;
@@ -184,7 +185,15 @@ export async function runAssistantLoop(
     const onRetry = (attempt: number, maxAttempts: number, status: number) => {
       scope.emit({ stage: "calling-provider", detail: `Provider busy (HTTP ${status}) — retrying ${attempt}/${maxAttempts}...` });
     };
-    const { turn, advance, usage } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal, onRetry, managedCall);
+    let draft = "";
+    onDraft?.("");
+    const onTextDelta = onDraft
+      ? (delta: string) => {
+          draft += delta;
+          onDraft(draft);
+        }
+      : undefined;
+    const { turn, advance, usage } = await requestNextTurn(conversation, ASSISTANT_TOOLS, signal, onRetry, managedCall, onTextDelta);
     if (usage) {
       notifyUsage(onUsage, usage);
       reportAssistantUsage(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, usage);

@@ -138,32 +138,18 @@ public class AssistantEditProposalService {
         PerfPhases perf = new PerfPhases();
         List<CheckResult> checks = new ArrayList<>();
         List<EditInput> inputEdits = groupInput.edits() == null ? List.of() : groupInput.edits();
-        EditOperation operation = groupInput.operation();
-        boolean derived = operation != null;
+        boolean derived = groupInput.operation() != null;
         Set<String> introducedByOperation = Set.of();
         String renameSummary = null;
         if (derived) {
-            String operationPath = operation.targetPath() == null ? "" : operation.targetPath();
-            if (!inputEdits.isEmpty()) {
-                return rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
-                        new CheckResult(RENAME_CHECK, false,
-                                "A group can carry either explicit edits or an operation, not both."));
+            OperationEdits operationEdits = deriveOperationEdits(session, groupInput, inputEdits, publicGraphVersion,
+                    now, expiresAt, perf, checks);
+            if (operationEdits.rejection() != null) {
+                return operationEdits.rejection();
             }
-            AssistantRenameService.RenameDerivation derivation =
-                    renameService.derive(session.getProjectId(), operation, maxRenameLines);
-            perf.mark("renameDerive");
-            if (!derivation.ok()) {
-                return rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
-                        new CheckResult(RENAME_CHECK, false, derivation.detail()));
-            }
-            checks.add(new CheckResult(RENAME_CHECK, true, derivation.detail()));
-            introducedByOperation = Set.of(derivation.replacementIri());
-            renameSummary = AssistantRenameService.RENAME_IDENTIFIER + " <" + derivation.targetIri() + "> -> <"
-                    + derivation.replacementIri() + ">, " + derivation.occurrences() + " occurrences";
-            inputEdits = derivation.edits().stream()
-                    .map(e -> new EditInput(operation.targetPath(), new EditRange(e.line(), 1), e.originalText(),
-                            e.newText()))
-                    .toList();
+            introducedByOperation = operationEdits.introducedIris();
+            renameSummary = operationEdits.summary();
+            inputEdits = operationEdits.edits();
         }
         if (inputEdits.stream().anyMatch(Objects::isNull)) {
             String path = inputEdits.stream().filter(Objects::nonNull).map(EditInput::targetPath)
@@ -177,6 +163,59 @@ public class AssistantEditProposalService {
         String targetPath = sortedEdits.isEmpty() || sortedEdits.get(0).targetPath() == null
                 ? "" : sortedEdits.get(0).targetPath();
 
+        boolean structurallySound = addStructuralChecks(session, targetPath, sortedEdits, derived, checks);
+        perf.mark("structuralAndLiveMatch");
+        addContentChecks(session, targetPath, sortedEdits, structurallySound, introducedByOperation, checks, perf);
+        boolean passed = checks.stream().allMatch(CheckResult::passed);
+
+        List<EditEntry> editEntries = sortedEdits.stream().map(this::toEditEntry).toList();
+        List<DiffEntry> diff = toDiffEntries(sortedEdits);
+
+        String summary = renameSummary != null ? renameSummary
+                : sortedEdits.size() + " edit" + (sortedEdits.size() == 1 ? "" : "s") + " on " + targetPath;
+        GroupProposalOutcome outcome = persistGroup(session, groupInput, targetPath, editEntries, passed,
+                publicGraphVersion, now, expiresAt, checks, diff, summary);
+        perf.mark("persist");
+        log.info("[Assistant] [PERF] propose project={} session={} format={} edits={} rename={} passed={} {}",
+                session.getProjectId(), session.getId(), targetPath, sortedEdits.size(), derived, passed,
+                perf.summary());
+        return outcome;
+    }
+
+    private record OperationEdits(List<EditInput> edits, Set<String> introducedIris, String summary,
+                                  GroupProposalOutcome rejection) {}
+
+    private OperationEdits deriveOperationEdits(AssistantSessionDocument session, EditGroupInput groupInput,
+                                                List<EditInput> inputEdits, long publicGraphVersion, Instant now,
+                                                Instant expiresAt, PerfPhases perf, List<CheckResult> checks) {
+        EditOperation operation = groupInput.operation();
+        String operationPath = operation.targetPath() == null ? "" : operation.targetPath();
+        if (!inputEdits.isEmpty()) {
+            return new OperationEdits(null, null, null,
+                    rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
+                            new CheckResult(RENAME_CHECK, false,
+                                    "A group can carry either explicit edits or an operation, not both.")));
+        }
+        AssistantRenameService.RenameDerivation derivation =
+                renameService.derive(session.getProjectId(), operation, maxRenameLines);
+        perf.mark("renameDerive");
+        if (!derivation.ok()) {
+            return new OperationEdits(null, null, null,
+                    rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
+                            new CheckResult(RENAME_CHECK, false, derivation.detail())));
+        }
+        checks.add(new CheckResult(RENAME_CHECK, true, derivation.detail()));
+        String summary = AssistantRenameService.RENAME_IDENTIFIER + " <" + derivation.targetIri() + "> -> <"
+                + derivation.replacementIri() + ">, " + derivation.occurrences() + " occurrences";
+        List<EditInput> edits = derivation.edits().stream()
+                .map(e -> new EditInput(operation.targetPath(), new EditRange(e.line(), 1), e.originalText(),
+                        e.newText()))
+                .toList();
+        return new OperationEdits(edits, Set.of(derivation.replacementIri()), summary, null);
+    }
+
+    private boolean addStructuralChecks(AssistantSessionDocument session, String targetPath,
+                                        List<EditInput> sortedEdits, boolean derived, List<CheckResult> checks) {
         boolean hasEdits = !sortedEdits.isEmpty();
         checks.add(new CheckResult("has_edits", hasEdits));
 
@@ -199,9 +238,13 @@ public class AssistantEditProposalService {
                 && (derived ? noOverlap && matchesLiveContentInOnePass(session.getProjectId(), targetPath, sortedEdits)
                 : sortedEdits.stream().allMatch(e -> matchesLiveContent(session.getProjectId(), e)));
         checks.add(new CheckResult("original_text_matches_live", liveMatch));
-        perf.mark("structuralAndLiveMatch");
 
-        boolean structurallySound = hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
+        return hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
+    }
+
+    private void addContentChecks(AssistantSessionDocument session, String targetPath, List<EditInput> sortedEdits,
+                                  boolean structurallySound, Set<String> introducedByOperation,
+                                  List<CheckResult> checks, PerfPhases perf) {
         CheckResult syntax;
         if (structurallySound) {
             AssistantEditSyntaxValidator.SyntaxResult result =
@@ -232,24 +275,14 @@ public class AssistantEditProposalService {
         }
 
         perf.mark("semantic");
-        boolean passed = checks.stream().allMatch(CheckResult::passed);
+    }
 
-        List<EditEntry> editEntries = sortedEdits.stream().map(this::toEditEntry).toList();
-        List<DiffEntry> diff = sortedEdits.stream()
+    private List<DiffEntry> toDiffEntries(List<EditInput> sortedEdits) {
+        return sortedEdits.stream()
                 .map(e -> new DiffEntry(e.targetPath(), e.originalText(), e.newText(),
                         e.range() == null ? null : e.range().startLine(),
                         e.range() == null ? null : e.range().lineCount()))
                 .toList();
-
-        String summary = renameSummary != null ? renameSummary
-                : sortedEdits.size() + " edit" + (sortedEdits.size() == 1 ? "" : "s") + " on " + targetPath;
-        GroupProposalOutcome outcome = persistGroup(session, groupInput, targetPath, editEntries, passed,
-                publicGraphVersion, now, expiresAt, checks, diff, summary);
-        perf.mark("persist");
-        log.info("[Assistant] [PERF] propose project={} session={} format={} edits={} rename={} passed={} {}",
-                session.getProjectId(), session.getId(), targetPath, sortedEdits.size(), derived, passed,
-                perf.summary());
-        return outcome;
     }
 
     private GroupProposalOutcome rejectGroup(AssistantSessionDocument session, EditGroupInput groupInput,

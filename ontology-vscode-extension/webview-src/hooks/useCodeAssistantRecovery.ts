@@ -1,15 +1,11 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import {
   clearRecoveryLock,
-  fetchRecoveryState,
-  RecoveryApiError,
   restorePreviousVersion,
   UNLOCKED_RECOVERY_STATE,
   type RecoveryState,
 } from "../services/codeAssistantRecovery";
-import { getApiBaseUrl, toFriendlyErrorMessage } from "../components/codeAssistantPanelHelpers";
-
-type RecoveryRequest = (apiBaseUrl: string, token: string | undefined, projectId: string) => Promise<void>;
+import { makeRefreshRecovery, makeRunRecoveryAction } from "./codeAssistantRecoveryActions";
 
 interface RecoveryOptions {
   projectId?: string;
@@ -22,47 +18,22 @@ interface RecoveryOptions {
   onProjectRestored?: () => void;
 }
 
-export function useCodeAssistantRecovery(options: RecoveryOptions) {
-  const { projectId, projectIdRef, tokenRef, token, mountedRef, recoveryVersion } = options;
-  const [recoveryState, setRecoveryState] = useState<RecoveryState>(UNLOCKED_RECOVERY_STATE);
-  const [recoveryBusy, setRecoveryBusy] = useState(false);
-  const [recoveryError, setRecoveryError] = useState<string | null>(null);
-  const requestRef = useRef(0);
+interface RecoveryTriggers {
+  projectId?: string;
+  token?: string;
+  recoveryVersion: number;
+  recoveryLocked: boolean;
+  refreshRecovery: () => Promise<void>;
+  onProjectChanged: () => void;
+}
+
+function useRecoveryTriggers({ projectId, token, recoveryVersion, recoveryLocked, refreshRecovery, onProjectChanged }: RecoveryTriggers) {
   const projectRef = useRef<string | undefined>(undefined);
-  const recoveryLocked = recoveryState.locked;
-  const recoveryLockedRef = useRef(recoveryLocked);
-  recoveryLockedRef.current = recoveryLocked;
-  const optionsRef = useRef(options);
-  optionsRef.current = options;
-
-  const refreshRecovery = async (): Promise<void> => {
-    const pid = projectIdRef.current;
-    const requestId = ++requestRef.current;
-    if (!pid) {
-      setRecoveryState(UNLOCKED_RECOVERY_STATE);
-      return;
-    }
-    try {
-      const next = await fetchRecoveryState(getApiBaseUrl(), tokenRef.current, pid);
-      if (requestId === requestRef.current && mountedRef.current) setRecoveryState(next);
-    } catch (e) {
-      if (requestId !== requestRef.current || !mountedRef.current) return;
-      if (e instanceof RecoveryApiError && e.status === 404) setRecoveryState(UNLOCKED_RECOVERY_STATE);
-    }
-  };
-
-  const noteRecoveryProblem = () => {
-    recoveryLockedRef.current = true;
-    setRecoveryState((prev) => (prev.locked ? prev : { ...prev, locked: true }));
-    void refreshRecovery();
-  };
 
   useEffect(() => {
     if (projectRef.current !== projectId) {
       projectRef.current = projectId;
-      recoveryLockedRef.current = false;
-      setRecoveryState(UNLOCKED_RECOVERY_STATE);
-      setRecoveryError(null);
+      onProjectChanged();
     }
     void refreshRecovery();
   }, [projectId, token]);
@@ -77,24 +48,43 @@ export function useCodeAssistantRecovery(options: RecoveryOptions) {
     window.addEventListener("focus", recheck);
     return () => window.removeEventListener("focus", recheck);
   }, [recoveryLocked]);
+}
 
-  const runRecoveryAction = async (request: RecoveryRequest, failurePrefix: string, onSuccess?: () => void) => {
-    const pid = projectIdRef.current;
-    if (!pid) return;
-    setRecoveryBusy(true);
-    setRecoveryError(null);
-    try {
-      await request(getApiBaseUrl(), tokenRef.current, pid);
-      onSuccess?.();
-    } catch (e) {
-      const message = e instanceof Error ? toFriendlyErrorMessage(e.message) : "unexpected error";
-      if (mountedRef.current) setRecoveryError(`${failurePrefix}: ${message}`);
-    } finally {
-      await refreshRecovery();
-      if (mountedRef.current) setRecoveryBusy(false);
-      optionsRef.current.onRecoveryChanged?.();
-    }
+export function useCodeAssistantRecovery(options: RecoveryOptions) {
+  const { projectId, projectIdRef, tokenRef, token, mountedRef, recoveryVersion } = options;
+  const [recoveryState, setRecoveryState] = useState<RecoveryState>(UNLOCKED_RECOVERY_STATE);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const requestRef = useRef(0);
+  const recoveryLocked = recoveryState.locked;
+  const recoveryLockedRef = useRef(recoveryLocked);
+  recoveryLockedRef.current = recoveryLocked;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+  const refreshRecovery = makeRefreshRecovery({ projectIdRef, tokenRef, mountedRef, requestRef, setRecoveryState });
+
+  const noteRecoveryProblem = () => {
+    recoveryLockedRef.current = true;
+    setRecoveryState((prev) => (prev.locked ? prev : { ...prev, locked: true }));
+    void refreshRecovery();
   };
+
+  const onProjectChanged = () => {
+    recoveryLockedRef.current = false;
+    setRecoveryState(UNLOCKED_RECOVERY_STATE);
+    setRecoveryError(null);
+  };
+  useRecoveryTriggers({ projectId, token, recoveryVersion, recoveryLocked, refreshRecovery, onProjectChanged });
+
+  const runRecoveryAction = makeRunRecoveryAction({
+    projectIdRef,
+    tokenRef,
+    mountedRef,
+    setRecoveryBusy,
+    setRecoveryError,
+    refreshRecovery,
+    onRecoveryChanged: () => optionsRef.current.onRecoveryChanged?.(),
+  });
 
   const restoreProject = () =>
     runRecoveryAction(restorePreviousVersion, "Couldn't restore the previous version", () =>

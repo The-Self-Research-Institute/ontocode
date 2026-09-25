@@ -3,6 +3,7 @@ import { AlertCircle, Copy, Check } from "lucide-react";
 import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
 import { CodeAssistantReviewGroups } from "./CodeAssistantReviewGroups";
 import { CodeAssistantDeadEndNotice } from "./CodeAssistantDeadEndNotice";
+import { CodeAssistantMarkdown } from "./CodeAssistantMarkdown";
 import { ACTIONS, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
 import type { ChatEntry, PromptToRetry, ReviewEntry } from "./codeAssistantChatEntries";
 
@@ -33,7 +34,11 @@ function actionLabel(action: CodeAssistantAction): string {
 
 const ReviewCard: React.FC<{ entry: ReviewEntry; review: ReviewHandlers }> = ({ entry, review }) => (
   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 chat-message-enter">
-    {entry.explanation && <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.explanation}</p>}
+    {entry.explanation && (
+      <div className="text-sm text-gray-800">
+        <CodeAssistantMarkdown text={entry.explanation} />
+      </div>
+    )}
     <CodeAssistantReviewGroups
       groups={entry.groups}
       decisions={entry.decisions}
@@ -67,8 +72,8 @@ export const CodeAssistantTranscriptEntry: React.FC<TranscriptEntryProps> = (pro
   if (entry.kind === "answer") {
     return (
       <div className="flex flex-col items-start chat-message-enter">
-        <div className="max-w-[85%] bg-gray-100 rounded-lg rounded-bl-sm px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
-          {entry.text}
+        <div className="max-w-[85%] min-w-0 bg-gray-100 rounded-lg rounded-bl-sm px-3 py-2 text-sm text-gray-800">
+          <CodeAssistantMarkdown text={entry.text} />
         </div>
         <div className="flex items-center gap-3 mt-1">
           <button

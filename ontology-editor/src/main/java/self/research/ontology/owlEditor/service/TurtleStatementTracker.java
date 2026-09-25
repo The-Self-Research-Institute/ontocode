@@ -52,39 +52,29 @@ public final class TurtleStatementTracker {
         if (token.directive() || token.kind() == TurtleLineScanner.Kind.OTHER) {
             return;
         }
-        String text = token.text();
         if (token.kind() == TurtleLineScanner.Kind.PUNCT) {
-            if (text.equals("[") || text.equals("(") || text.equals("<<")) {
-                if (depth == 0 && stage == Stage.SUBJECT) {
-                    subject = null;
-                }
-                depth++;
-                return;
+            acceptPunct(token.text());
+            return;
+        }
+        if (depth > 0) {
+            return;
+        }
+        acceptTerm(token);
+    }
+
+    private void acceptPunct(String text) {
+        if (text.equals("[") || text.equals("(") || text.equals("<<")) {
+            if (depth == 0 && stage == Stage.SUBJECT) {
+                subject = null;
             }
-            if (text.equals("]") || text.equals(")") || text.equals(">>")) {
-                if (depth > 0) {
-                    depth--;
-                    if (depth == 0) {
-                        stage = stage == Stage.SUBJECT ? Stage.PREDICATE : Stage.AFTER_OBJECT;
-                    }
-                }
-                return;
-            }
+            depth++;
+            return;
+        }
+        if (text.equals("]") || text.equals(")") || text.equals(">>")) {
             if (depth > 0) {
-                return;
-            }
-            switch (text) {
-                case "." -> {
-                    stage = Stage.SUBJECT;
-                    subject = null;
-                    predicate = null;
-                }
-                case ";" -> {
-                    stage = Stage.PREDICATE;
-                    predicate = null;
-                }
-                case "," -> stage = Stage.OBJECT;
-                default -> {
+                depth--;
+                if (depth == 0) {
+                    stage = stage == Stage.SUBJECT ? Stage.PREDICATE : Stage.AFTER_OBJECT;
                 }
             }
             return;
@@ -92,6 +82,23 @@ public final class TurtleStatementTracker {
         if (depth > 0) {
             return;
         }
+        switch (text) {
+            case "." -> {
+                stage = Stage.SUBJECT;
+                subject = null;
+                predicate = null;
+            }
+            case ";" -> {
+                stage = Stage.PREDICATE;
+                predicate = null;
+            }
+            case "," -> stage = Stage.OBJECT;
+            default -> {
+            }
+        }
+    }
+
+    private void acceptTerm(TurtleLineScanner.Token token) {
         String value = token.isTerm() && !token.unresolved() ? token.iri() : null;
         switch (stage) {
             case SUBJECT -> {

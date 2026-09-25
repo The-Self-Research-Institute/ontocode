@@ -209,14 +209,15 @@ class AssistantProviderControllerTest {
     }
 
     @Test
-    void providerCallForwardsAndReturnsProviderJson() throws Exception {
+    void providerCallForwardsAndReturnsTheFilteredProviderJson() throws Exception {
         ResponseEntity<?> response = controller.providerCall("sess-1",
                 authed("{\"request\":{\"max_tokens\":50,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}}"));
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(MediaType.APPLICATION_JSON, response.getHeaders().getContentType());
         JsonNode body = objectMapper.readTree((String) response.getBody());
-        assertEquals("msg_1", body.path("id").asText());
+        assertFalse(body.has("id"));
+        assertEquals(3, body.path("usage").path("input_tokens").asInt());
         assertEquals(1, upstreamCalls.size());
         assertEquals("server-key", upstreamCalls.get(0).headers().getFirst("x-api-key"));
     }
@@ -390,14 +391,15 @@ class AssistantProviderControllerTest {
     }
 
     @Test
-    void upstreamClientErrorsAndThrottlingPassThroughWithProviderJson() throws Exception {
+    void upstreamClientErrorsAndThrottlingKeepTheirStatusWithAGenericMessage() throws Exception {
         respondWith(HttpStatus.BAD_REQUEST, "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\"}}", null);
 
         ResponseEntity<?> bad = controller.providerCall("sess-1", authed("{\"request\":{\"messages\":[]}}"));
 
         assertEquals(HttpStatus.BAD_REQUEST, bad.getStatusCode());
-        assertEquals("invalid_request_error",
-                objectMapper.readTree((String) bad.getBody()).path("error").path("type").asText());
+        JsonNode badBody = objectMapper.readTree((String) bad.getBody());
+        assertEquals("The AI provider could not complete the request.", badBody.path("error").path("message").asText());
+        assertFalse(badBody.path("error").has("type"));
 
         respondWith(HttpStatus.TOO_MANY_REQUESTS, "{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\"}}", "4");
 

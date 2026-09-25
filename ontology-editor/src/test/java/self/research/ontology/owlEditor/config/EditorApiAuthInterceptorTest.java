@@ -116,12 +116,60 @@ class EditorApiAuthInterceptorTest {
     }
 
     @Test
-    void nothingIsCheckedWhenJwtEnforcementIsOff() throws Exception {
+    void requestWithoutATokenPassesWhenJwtIsNotRequired() throws Exception {
         ReflectionTestUtils.setField(interceptor, "requireJwt", false);
+        MockHttpServletRequest anonymous = new MockHttpServletRequest("POST", "/api/v1/code-assistant/sessions/s1/tools/run_sparql");
+        anonymous.setRemoteAddr("10.0.0.5");
 
-        assertTrue(interceptor.preHandle(
-                request("POST", "/api/v1/code-assistant/sessions/s1/tools/run_sparql", "anyone@x.com"),
-                new MockHttpServletResponse(), new Object()));
+        assertTrue(interceptor.preHandle(anonymous, new MockHttpServletResponse(), new Object()));
         verify(sessionRepository, never()).findById(any());
+    }
+
+    @Test
+    void aTokenThatIsSentIsStillCheckedForProjectAccessWhenJwtIsNotRequired() throws Exception {
+        ReflectionTestUtils.setField(interceptor, "requireJwt", false);
+        sessionOnProject("s1", "proj-victim");
+        when(projectAccessService.hasProjectAccess("proj-victim", "attacker@x.com")).thenReturn(false);
+        when(projectAccessService.projectExists("proj-victim")).thenReturn(true);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(
+                request("POST", "/api/v1/code-assistant/sessions/s1/tools/run_sparql", "attacker@x.com"),
+                response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
+
+    @Test
+    void aProjectThatDoesNotExistYetCanBeCreatedWhenJwtIsNotRequired() throws Exception {
+        ReflectionTestUtils.setField(interceptor, "requireJwt", false);
+        MockHttpServletRequest upload = request("POST", "/api/ontology/upload/new-proj", "dev@x.com");
+        upload.setAttribute(org.springframework.web.servlet.HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE,
+                java.util.Map.of("projectId", "new-proj"));
+
+        assertTrue(interceptor.preHandle(upload, new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void aProjectThatDoesNotExistIsStillRefusedWhenJwtIsRequired() throws Exception {
+        MockHttpServletRequest upload = request("POST", "/api/ontology/upload/new-proj", "dev@x.com");
+        upload.setAttribute(org.springframework.web.servlet.HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE,
+                java.util.Map.of("projectId", "new-proj"));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(upload, response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
+
+    @Test
+    void aForgedTokenIsRejectedWhenJwtIsNotRequired() throws Exception {
+        ReflectionTestUtils.setField(interceptor, "requireJwt", false);
+        MockHttpServletRequest forged = new MockHttpServletRequest("POST", "/api/v1/code-assistant/sessions/s1/tools/run_sparql");
+        forged.setRemoteAddr("10.0.0.5");
+        forged.addHeader("Authorization", "Bearer "
+                + Jwts.builder().subject("victim@x.com").signWith(Jwts.SIG.HS256.key().build()).compact());
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(forged, response, new Object()));
+        assertEquals(401, response.getStatus());
     }
 }

@@ -5,6 +5,7 @@ import {
   runSparql,
   readContext,
   proposeEditGroups,
+  applyEditGroup,
   AssistantApiError,
   isDeadEndErrorCode,
 } from "../services/codeAssistantSession";
@@ -283,5 +284,52 @@ describe("codeAssistantSession HTTP status mapping", () => {
       expect(isDeadEndErrorCode(code)).toBe(false);
     }
     expect(isDeadEndErrorCode(undefined)).toBe(false);
+  });
+});
+
+describe("applyEditGroup", () => {
+  function response(status: number, body: unknown) {
+    return { ok: status >= 200 && status < 300, status, headers: new Headers(), json: async () => body };
+  }
+
+  it("sends an Idempotency-Key", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(response(200, { ok: true, applied: true, newRevision: 3 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await applyEditGroup("http://api", "token", "s1", "g1");
+
+    expect(fetchSpy.mock.calls[0][1].headers["Idempotency-Key"]).toBeTruthy();
+  });
+
+  it("keeps waiting with the same key while a long apply is still running", async () => {
+    vi.useFakeTimers();
+    try {
+      const inFlight = response(409, { ok: false, errorCode: "IDEMPOTENCY_KEY_REUSED", message: "still being processed" });
+      const fetchSpy = vi.fn();
+      for (let i = 0; i < 6; i++) fetchSpy.mockResolvedValueOnce(inFlight);
+      fetchSpy.mockResolvedValueOnce(response(200, { ok: true, applied: true, newRevision: 7 }));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const pending = applyEditGroup("http://api", "token", "s1", "g1", undefined, { idempotencyKey: "apply-key" });
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.newRevision).toBe(7);
+      expect(new Set(fetchSpy.mock.calls.map((c) => c[1].headers["Idempotency-Key"]))).toEqual(new Set(["apply-key"]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry a proposal that is unknown or belongs to someone else", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(
+      response(403, { ok: false, errorCode: "PROPOSAL_NOT_FOUND", message: "Unknown or unauthorized proposal" }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const error = await captureError(applyEditGroup("http://api", "token", "s1", "g1"));
+
+    expect(error.errorCode).toBe("PROPOSAL_NOT_FOUND");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

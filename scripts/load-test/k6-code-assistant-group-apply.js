@@ -1,5 +1,5 @@
 import http from 'k6/http';
-import encoding from 'k6/encoding';
+import { devJwt } from './lib/assistant-k6.js';
 import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 
@@ -14,13 +14,7 @@ const PARALLEL_PROJECT_COUNT = Number(__ENV.PARALLEL_PROJECT_COUNT || 5);
 const IMPORT_POLL_TIMEOUT_SECONDS = Number(__ENV.IMPORT_POLL_TIMEOUT_SECONDS || 60);
 const IMPORT_POLL_INTERVAL_SECONDS = Number(__ENV.IMPORT_POLL_INTERVAL_SECONDS || 1);
 
-function buildUnsignedJwt(email, plan) {
-  const header = encoding.b64encode(JSON.stringify({ alg: 'none', typ: 'JWT' }), 'rawurl');
-  const payload = encoding.b64encode(JSON.stringify({ email, plan }), 'rawurl');
-  return `${header}.${payload}.unsigned`;
-}
-
-const AUTH_TOKEN = buildUnsignedJwt(EMAIL, PLAN);
+const AUTH_TOKEN = devJwt(EMAIL, PLAN);
 
 export const applyDisjointErrors = new Rate('assistant_apply_disjoint_errors');
 export const applyDisjointDuration = new Trend('assistant_apply_disjoint_duration', true);
@@ -58,7 +52,9 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_duration: ['p(95)<2000', 'p(99)<4000'],
+    assistant_apply_parallel_duration: ['p(95)<2000'],
+    assistant_apply_overlap_duration: ['p(95)<2000'],
+    assistant_apply_disjoint_duration: [`p(95)<${DISJOINT_GROUP_COUNT * 1000}`],
     checks: ['rate>0.99'],
     assistant_apply_disjoint_errors: ['rate<0.01'],
     assistant_apply_overlap_unexpected_result: ['rate<0.01'],
@@ -103,7 +99,7 @@ function buildSeedTurtle(numSlots, runId) {
 
 function uploadSeedProject(projectId, turtleContent) {
   const res = http.post(
-    `${BASE_URL}/api/ontology/upload/${projectId}`,
+    `${BASE_URL}/api/ontology/upload/${projectId}?ownerEmail=${encodeURIComponent(EMAIL)}`,
     { file: http.file(turtleContent, `${projectId}.ttl`, 'text/turtle') },
     { headers: authHeaders(), tags: { name: 'SeedUploadProject' } },
   );

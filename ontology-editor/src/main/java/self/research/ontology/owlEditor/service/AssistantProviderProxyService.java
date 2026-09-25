@@ -66,6 +66,8 @@ public class AssistantProviderProxyService {
 
     private final WebClient.Builder webClientBuilder;
     private final ObjectMapper objectMapper;
+    private final ProviderResponseFilter responseFilter;
+    private final ProviderStreamRelay providerStream;
 
     @Value("${ASSISTANT_PROVIDER:}")
     private String provider;
@@ -108,6 +110,8 @@ public class AssistantProviderProxyService {
     public AssistantProviderProxyService(WebClient.Builder webClientBuilder, ObjectMapper objectMapper) {
         this.webClientBuilder = webClientBuilder;
         this.objectMapper = objectMapper;
+        this.responseFilter = new ProviderResponseFilter(objectMapper);
+        this.providerStream = new ProviderStreamRelay(responseFilter, this);
     }
 
     @PostConstruct
@@ -157,6 +161,14 @@ public class AssistantProviderProxyService {
         return new ProviderConfigView(true, normalizedProvider(), model.trim());
     }
 
+    String baseUrlOverride() {
+        return baseUrlOverride;
+    }
+
+    long responseTimeoutSeconds() {
+        return responseTimeoutSeconds;
+    }
+
     public int getMaxRequestBytes() {
         return maxRequestBytes;
     }
@@ -175,7 +187,7 @@ public class AssistantProviderProxyService {
         }
         String activeProvider = normalizedProvider();
         String activeModel = model.trim();
-        ObjectNode shaped = shape(activeProvider, activeModel, ((ObjectNode) request).deepCopy());
+        ObjectNode shaped = shaper().shape(activeProvider, activeModel, ((ObjectNode) request).deepCopy(), false);
         byte[] payload;
         try {
             payload = objectMapper.writeValueAsBytes(shaped);
@@ -217,25 +229,19 @@ public class AssistantProviderProxyService {
             return ProviderCallResult.error(503, "PROVIDER_UNAVAILABLE",
                     "The AI provider returned an unreadable response");
         }
+        String filtered;
+        try {
+            filtered = responseFilter.filter(activeProvider, status, body);
+        } catch (IOException e) {
+            return ProviderCallResult.error(503, "PROVIDER_UNAVAILABLE",
+                    "The AI provider returned an unreadable response");
+        }
         Long retryAfter = parseRetryAfter(upstream.retryAfter());
-        return new ProviderCallResult(status, body, null, null, retryAfter);
+        return new ProviderCallResult(status, filtered, null, null, retryAfter);
     }
 
     URI upstreamUri(String activeProvider, String activeModel) {
-        String base = baseUrlOverride == null ? "" : baseUrlOverride.trim();
-        if (!base.isEmpty()) {
-            String root = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
-            return switch (activeProvider) {
-                case CLAUDE -> URI.create(root + "/v1/messages");
-                case OPENAI -> URI.create(root + "/v1/chat/completions");
-                default -> URI.create(root + "/v1beta/models/" + activeModel + ":generateContent");
-            };
-        }
-        return switch (activeProvider) {
-            case CLAUDE -> URI.create(CLAUDE_URL);
-            case OPENAI -> URI.create(OPENAI_URL);
-            default -> URI.create(GEMINI_URL_PREFIX + activeModel + ":generateContent");
-        };
+        return ProviderRequestShaper.uri(activeProvider, activeModel, baseUrlOverride, false);
     }
 
     private UpstreamResponse send(String activeProvider, String activeModel, byte[] payload) {
@@ -245,7 +251,7 @@ public class AssistantProviderProxyService {
                 .uri(uri)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON)
-                .headers(headers -> applyAuthHeaders(activeProvider, key, headers))
+                .headers(headers -> ProviderRequestShaper.applyAuthHeaders(activeProvider, key, headers))
                 .bodyValue(payload)
                 .exchangeToMono(response -> response.bodyToMono(String.class)
                         .defaultIfEmpty("")
@@ -254,63 +260,6 @@ public class AssistantProviderProxyService {
                 .timeout(Duration.ofSeconds(responseTimeoutSeconds + 5))
                 .switchIfEmpty(Mono.error(new IllegalStateException("empty upstream response")))
                 .block();
-    }
-
-    private static void applyAuthHeaders(String activeProvider, String key, HttpHeaders headers) {
-        switch (activeProvider) {
-            case CLAUDE -> {
-                headers.set("x-api-key", key);
-                headers.set("anthropic-version", "2023-06-01");
-                headers.set("anthropic-beta", "prompt-caching-2024-07-31");
-            }
-            case OPENAI -> headers.setBearerAuth(key);
-            default -> headers.set("x-goog-api-key", key);
-        }
-    }
-
-    private ObjectNode shape(String activeProvider, String activeModel, ObjectNode body) {
-        body.remove("stream");
-        body.remove("stream_options");
-        switch (activeProvider) {
-            case CLAUDE -> {
-                body.put("model", activeModel);
-                body.put("max_tokens", cappedTokens(body.get("max_tokens")));
-            }
-            case OPENAI -> {
-                body.put("model", activeModel);
-                body.remove("n");
-                boolean hasLegacy = body.has("max_tokens");
-                boolean hasCompletion = body.has("max_completion_tokens");
-                if (hasLegacy) {
-                    body.put("max_tokens", cappedTokens(body.get("max_tokens")));
-                }
-                if (hasCompletion || !hasLegacy) {
-                    body.put("max_completion_tokens", cappedTokens(body.get("max_completion_tokens")));
-                }
-            }
-            default -> {
-                body.remove("model");
-                JsonNode existing = body.get("generationConfig");
-                ObjectNode generationConfig = existing != null && existing.isObject()
-                        ? (ObjectNode) existing
-                        : body.putObject("generationConfig");
-                generationConfig.put("maxOutputTokens", cappedTokens(generationConfig.get("maxOutputTokens")));
-                generationConfig.remove("candidateCount");
-            }
-        }
-        return body;
-    }
-
-    private int cappedTokens(JsonNode requested) {
-        int cap = Math.max(1, maxOutputTokens);
-        if (requested == null || !requested.canConvertToInt() || !requested.isNumber()) {
-            return cap;
-        }
-        int value = requested.asInt();
-        if (value < 1) {
-            return cap;
-        }
-        return Math.min(value, cap);
     }
 
     private boolean isJson(String body) {
@@ -331,6 +280,42 @@ public class AssistantProviderProxyService {
             return seconds >= 0 && seconds <= 3600 ? seconds : null;
         } catch (NumberFormatException e) {
             return null;
+        }
+    }
+
+    private ProviderRequestShaper shaper() {
+        return new ProviderRequestShaper(maxOutputTokens);
+    }
+
+    public interface StreamSink {
+        void event(String data) throws IOException;
+
+        void complete(String json) throws IOException;
+
+        void error(int status, String errorCode, String message, Long retryAfterSeconds) throws IOException;
+    }
+
+    public void stream(JsonNode request, StreamSink sink) throws IOException {
+        if (!isManaged() || request == null || !request.isObject()) {
+            sink.error(503, "PROVIDER_UNAVAILABLE", "Managed provider mode is not configured on this server", null);
+            return;
+        }
+        String activeProvider = normalizedProvider();
+        String activeModel = model.trim();
+        ObjectNode shaped = shaper().shape(activeProvider, activeModel, ((ObjectNode) request).deepCopy(), true);
+        byte[] payload = objectMapper.writeValueAsBytes(shaped);
+        if (payload.length > maxRequestBytes) {
+            sink.error(413, "VALIDATION_FAILED", "request is larger than the allowed size", null);
+            return;
+        }
+        if (!concurrencyLimit.tryAcquire()) {
+            sink.error(429, "RATE_LIMITED", "Too many provider calls in progress, try again shortly", 2L);
+            return;
+        }
+        try {
+            providerStream.relay(webClient, activeProvider, activeModel, apiKey.trim(), payload, sink);
+        } finally {
+            concurrencyLimit.release();
         }
     }
 

@@ -77,87 +77,24 @@ public class CodeViewReimportPipeline {
 
     public ReimportResult reimport(ReimportRequest req) throws IOException {
         String format = req.format();
-        boolean isOwlApiFormat = format.equalsIgnoreCase("owlxml")
-                || format.equalsIgnoreCase("manchester")
-                || format.equalsIgnoreCase("manchestersyntax")
-                || format.equalsIgnoreCase("functional")
-                || format.equalsIgnoreCase("functionalsyntax");
-
-        RDFFormat rdfFormat;
-        Path importSourceFile;
-        Path retrySourceFile;
-        Path pristineCopy = null;
-        Path generatedFile = null;
+        boolean isOwlApiFormat = isOwlApiFormat(format);
+        ReimportFiles files = new ReimportFiles();
         PerfPhases perf = new PerfPhases();
-        boolean completed = false, reserializedOnRetry = false;
+        boolean completed = false;
 
         try {
-            if (isOwlApiFormat) {
-                importSourceFile = convertToRdfXml(req.contentFile());
-                generatedFile = importSourceFile;
-                retrySourceFile = req.contentFile();
-                rdfFormat = RDFFormat.RDFXML;
-                log.info("[CODE-VIEW-SAVE] Converted {} to RDF/XML ({} bytes)", format, Files.size(importSourceFile));
-            } else {
-                pristineCopy = Files.createTempFile("codeview-pristine-", "." + storageManager.extensionFor(format));
-                Files.copy(req.contentFile(), pristineCopy, StandardCopyOption.REPLACE_EXISTING);
-                if (req.skipSanitization()) {
-                    log.info("[CODE-VIEW-SAVE] Skipping sanitization/OWL-API reserialization for format {} "
-                            + "(caller already validated the content and needs line-position stability)", format);
-                } else {
-                    try {
-                        OWLFormatConverter.sanitizeFileOnDisk(req.contentFile());
-                        log.info("[CODE-VIEW-SAVE] Sanitization completed for format: {}", format);
-                    } catch (Exception sanitizeEx) {
-                        log.warn("[CODE-VIEW-SAVE] Sanitization failed (continuing with original): {}", sanitizeEx.getMessage());
-                    }
-                }
-                importSourceFile = req.contentFile();
-                retrySourceFile = pristineCopy;
-                rdfFormat = switch (format.toLowerCase(Locale.ROOT)) {
-                    case "turtle", "ttl" -> RDFFormat.TURTLE;
-                    case "ntriples", "nt" -> RDFFormat.NTRIPLES;
-                    default -> RDFFormat.RDFXML;
-                };
-            }
+            prepareSource(req, isOwlApiFormat, files);
 
             perf.mark("prepareSource");
             log.info("[CODE-VIEW-SAVE] Reimporting {} bytes into GraphDB as {} (draft={}, targetGraph={})",
-                    Files.size(importSourceFile), rdfFormat, req.draft(), req.targetGraphOverride());
-            try {
-                streamIntoGraphDb(req.projectId(), importSourceFile, rdfFormat, req.targetGraphOverride());
-            } catch (RuntimeException bulkEx) {
-                if (rdfFormat == RDFFormat.RDFXML && isXmlStructuralError(bulkEx)) {
-                    log.warn("[CODE-VIEW-SAVE] RDF/XML reimport failed with structural XML error; retrying after OWL API re-serialization for project: {}. Error: {}",
-                            req.projectId(), bulkEx.getMessage());
-                    Path retryConverted = convertToRdfXml(retrySourceFile);
-                    if (generatedFile != null) {
-                        Files.deleteIfExists(generatedFile);
-                    }
-                    importSourceFile = retryConverted;
-                    generatedFile = retryConverted;
-                    reserializedOnRetry = true;
-                    streamIntoGraphDb(req.projectId(), importSourceFile, RDFFormat.RDFXML, req.targetGraphOverride());
-                    log.info("[CODE-VIEW-SAVE] OWL API re-serialization retry succeeded ({} bytes)", Files.size(importSourceFile));
-                } else {
-                    throw bulkEx;
-                }
-            }
+                    Files.size(files.importSourceFile), files.rdfFormat, req.draft(), req.targetGraphOverride());
+            importWithRetry(req, files);
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
             invalidateReasonerCaches(req.projectId());
 
             perf.mark("graphImport");
-            if (req.oldContentFileForDiff() != null) {
-                try {
-                    Model oldModel = parseToModel(req.oldContentFileForDiff(), RdfFiles.snapshotFormat(req.oldContentFileForDiff()));
-                    Model newModel = parseToModel(importSourceFile, rdfFormat);
-                    historyRecorder.record(req.projectId(), CodeViewHistoryRecorder.effectiveUserId(req.userId(), desktopMode),
-                            CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft());
-                } catch (Exception diffEx) {
-                    log.warn("[CODE-VIEW-SAVE] Failed to record change history diff (save itself succeeded): {}", diffEx.getMessage());
-                }
-            }
+            recordHistoryDiff(req, files);
 
             perf.mark("historyDiff");
             invalidateAfterGraphReplaced(req.projectId());
@@ -166,24 +103,109 @@ public class CodeViewReimportPipeline {
 
             String cachedContent = isOwlApiFormat
                     ? Files.readString(req.contentFile(), StandardCharsets.UTF_8)
-                    : Files.readString(importSourceFile, StandardCharsets.UTF_8);
+                    : Files.readString(files.importSourceFile, StandardCharsets.UTF_8);
             storageManager.storeCodeViewCache(req.projectId(), cachedContent, format);
             log.info("[CODE-VIEW-SAVE] Current format cache restored");
             perf.mark("cacheWrite");
 
             completed = true;
-            boolean cacheMatches = !reserializedOnRetry && (isOwlApiFormat || req.skipSanitization());
-            return new ReimportResult(format, rdfFormat, storageManager.getPublicGraphVersion(req.projectId()),
+            boolean cacheMatches = !files.reserializedOnRetry && (isOwlApiFormat || req.skipSanitization());
+            return new ReimportResult(format, files.rdfFormat, storageManager.getPublicGraphVersion(req.projectId()),
                     cacheMatches);
         } finally {
             log.info("[CODE-VIEW-SAVE] [PERF] reimport project={} format={} bytes={} outcome={} {}", req.projectId(),
                     format, RdfFiles.sizeOrUnknown(req.contentFile()), completed ? "ok" : "failed", perf.summary());
-            if (generatedFile != null) {
-                Files.deleteIfExists(generatedFile);
+            if (files.generatedFile != null) {
+                Files.deleteIfExists(files.generatedFile);
             }
-            if (pristineCopy != null) {
-                Files.deleteIfExists(pristineCopy);
+            if (files.pristineCopy != null) {
+                Files.deleteIfExists(files.pristineCopy);
             }
+        }
+    }
+
+    private static final class ReimportFiles {
+        RDFFormat rdfFormat;
+        Path importSourceFile;
+        Path retrySourceFile;
+        Path pristineCopy;
+        Path generatedFile;
+        boolean reserializedOnRetry;
+    }
+
+    private static boolean isOwlApiFormat(String format) {
+        return format.equalsIgnoreCase("owlxml")
+                || format.equalsIgnoreCase("manchester")
+                || format.equalsIgnoreCase("manchestersyntax")
+                || format.equalsIgnoreCase("functional")
+                || format.equalsIgnoreCase("functionalsyntax");
+    }
+
+    private void prepareSource(ReimportRequest req, boolean isOwlApiFormat, ReimportFiles files) throws IOException {
+        String format = req.format();
+        if (isOwlApiFormat) {
+            files.importSourceFile = convertToRdfXml(req.contentFile());
+            files.generatedFile = files.importSourceFile;
+            files.retrySourceFile = req.contentFile();
+            files.rdfFormat = RDFFormat.RDFXML;
+            log.info("[CODE-VIEW-SAVE] Converted {} to RDF/XML ({} bytes)", format, Files.size(files.importSourceFile));
+            return;
+        }
+        files.pristineCopy = Files.createTempFile("codeview-pristine-", "." + storageManager.extensionFor(format));
+        Files.copy(req.contentFile(), files.pristineCopy, StandardCopyOption.REPLACE_EXISTING);
+        if (req.skipSanitization()) {
+            log.info("[CODE-VIEW-SAVE] Skipping sanitization/OWL-API reserialization for format {} "
+                    + "(caller already validated the content and needs line-position stability)", format);
+        } else {
+            try {
+                OWLFormatConverter.sanitizeFileOnDisk(req.contentFile());
+                log.info("[CODE-VIEW-SAVE] Sanitization completed for format: {}", format);
+            } catch (Exception sanitizeEx) {
+                log.warn("[CODE-VIEW-SAVE] Sanitization failed (continuing with original): {}", sanitizeEx.getMessage());
+            }
+        }
+        files.importSourceFile = req.contentFile();
+        files.retrySourceFile = files.pristineCopy;
+        files.rdfFormat = switch (format.toLowerCase(Locale.ROOT)) {
+            case "turtle", "ttl" -> RDFFormat.TURTLE;
+            case "ntriples", "nt" -> RDFFormat.NTRIPLES;
+            default -> RDFFormat.RDFXML;
+        };
+    }
+
+    private void importWithRetry(ReimportRequest req, ReimportFiles files) throws IOException {
+        try {
+            streamIntoGraphDb(req.projectId(), files.importSourceFile, files.rdfFormat, req.targetGraphOverride());
+        } catch (RuntimeException bulkEx) {
+            if (files.rdfFormat == RDFFormat.RDFXML && isXmlStructuralError(bulkEx)) {
+                log.warn("[CODE-VIEW-SAVE] RDF/XML reimport failed with structural XML error; retrying after OWL API re-serialization for project: {}. Error: {}",
+                        req.projectId(), bulkEx.getMessage());
+                Path retryConverted = convertToRdfXml(files.retrySourceFile);
+                if (files.generatedFile != null) {
+                    Files.deleteIfExists(files.generatedFile);
+                }
+                files.importSourceFile = retryConverted;
+                files.generatedFile = retryConverted;
+                files.reserializedOnRetry = true;
+                streamIntoGraphDb(req.projectId(), files.importSourceFile, RDFFormat.RDFXML, req.targetGraphOverride());
+                log.info("[CODE-VIEW-SAVE] OWL API re-serialization retry succeeded ({} bytes)", Files.size(files.importSourceFile));
+            } else {
+                throw bulkEx;
+            }
+        }
+    }
+
+    private void recordHistoryDiff(ReimportRequest req, ReimportFiles files) {
+        if (req.oldContentFileForDiff() == null) {
+            return;
+        }
+        try {
+            Model oldModel = parseToModel(req.oldContentFileForDiff(), RdfFiles.snapshotFormat(req.oldContentFileForDiff()));
+            Model newModel = parseToModel(files.importSourceFile, files.rdfFormat);
+            historyRecorder.record(req.projectId(), CodeViewHistoryRecorder.effectiveUserId(req.userId(), desktopMode),
+                    CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft());
+        } catch (Exception diffEx) {
+            log.warn("[CODE-VIEW-SAVE] Failed to record change history diff (save itself succeeded): {}", diffEx.getMessage());
         }
     }
 

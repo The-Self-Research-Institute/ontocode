@@ -24,6 +24,7 @@ final class AssistantGraphWriter {
     private final SparqlDatasetService datasetService;
     private final AssistantApplyFailureHandler failureHandler;
     private final TriplePatchPlanner planner = new TriplePatchPlanner();
+    private final OwlFormatPatchPlanner owlFormatPlanner = new OwlFormatPatchPlanner();
     private final TriplePatchExecutor executor;
 
     AssistantGraphWriter(AssistantApplyOperationService operationService, CodeViewReimportPipeline reimportPipeline,
@@ -46,13 +47,23 @@ final class AssistantGraphWriter {
         return reimport(group, splicedFile, userEmail, perf);
     }
 
+    private static void seedIndex(Path cacheFile, TriplePatchPlanner.TriplePatch patch) {
+        try {
+            CodeViewSubjectIndex.seed(cacheFile, patch.newIndex());
+        } catch (Exception seedEx) {
+            log.debug("[Assistant] Could not seed the subject index for {}: {}", cacheFile, seedEx.getMessage());
+        }
+    }
+
     private Optional<Written> tryPatch(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile,
                                        String userEmail, PerfPhases perf) {
         String projectId = group.getProjectId();
         Optional<TriplePatchPlanner.TriplePatch> plan;
         try {
-            plan = planner.plan(group.getTargetPath(), sourceFile, splicedFile, edits(group),
-                    datasetService.graphTarget(projectId).graphUri());
+            String graphUri = datasetService.graphTarget(projectId).graphUri();
+            plan = OwlFormatPatchPlanner.supports(group.getTargetPath())
+                    ? owlFormatPlanner.plan(sourceFile, splicedFile, graphUri)
+                    : planner.plan(group.getTargetPath(), sourceFile, splicedFile, edits(group), graphUri);
         } catch (Exception planEx) {
             log.info("[Assistant] Could not plan a triple patch for group {} ({}); reimporting", group.getId(),
                     AssistantApplyFailureHandler.messageOf(planEx));
@@ -79,6 +90,7 @@ final class AssistantGraphWriter {
             long version = reimportPipeline.finishPatch(projectId, group.getTargetPath(), splicedFile, userEmail,
                     userEmail, removed, added);
             operationService.markCommitted(operation);
+            seedIndex(sourceFile, patch);
             perf.mark("patchFinish");
             log.info("[Assistant] Patched {} removed and {} added triples for group {} instead of reimporting",
                     removed.size(), added.size(), group.getId());

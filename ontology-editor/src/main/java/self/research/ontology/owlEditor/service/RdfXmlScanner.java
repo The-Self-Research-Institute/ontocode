@@ -303,82 +303,16 @@ public final class RdfXmlScanner {
         int n = line.length();
         while (i < n) {
             char c = line.charAt(i);
-            switch (phase) {
-                case NAME -> {
-                    if (Character.isWhitespace(c) || c == '>' || c == '/' || c == '=') {
-                        if (name.isEmpty()) {
-                            mode = Mode.TEXT;
-                            return i;
-                        }
-                        nameEnd = i;
-                        phase = Phase.SPACE;
-                        continue;
-                    }
-                    name.append(c);
-                    i++;
-                }
-                case SPACE -> {
-                    if (Character.isWhitespace(c)) {
-                        i++;
-                    } else if (c == '>') {
-                        finishTag(selfClosingPending);
-                        return i + 1;
-                    } else if (c == '/' || c == '?') {
-                        selfClosingPending = true;
-                        i++;
-                    } else {
-                        currentAttr = new Attr();
-                        currentAttr.name = "";
-                        currentAttr.nameLine = lineNo;
-                        currentAttr.nameStart = i;
-                        phase = Phase.ATTR_NAME;
-                    }
-                }
-                case ATTR_NAME -> {
-                    if (Character.isWhitespace(c) || c == '=' || c == '>' || c == '/') {
-                        currentAttr.nameEnd = i;
-                        phase = Phase.EQ;
-                        continue;
-                    }
-                    currentAttr.name += c;
-                    i++;
-                }
-                case EQ -> {
-                    if (Character.isWhitespace(c)) {
-                        i++;
-                    } else if (c == '=') {
-                        phase = Phase.VALUE_START;
-                        i++;
-                    } else {
-                        phase = Phase.SPACE;
-                    }
-                }
-                case VALUE_START -> {
-                    if (Character.isWhitespace(c)) {
-                        i++;
-                    } else if (c == '"' || c == '\'') {
-                        currentAttr.quote = c;
-                        currentAttr.valueLine = lineNo;
-                        currentAttr.valueStart = i + 1;
-                        phase = Phase.VALUE;
-                        i++;
-                    } else {
-                        phase = Phase.SPACE;
-                    }
-                }
-                case VALUE -> {
-                    int close = line.indexOf(currentAttr.quote, i);
-                    if (close < 0) {
-                        currentAttr.value.append(line, i, n);
-                        return n;
-                    }
-                    currentAttr.value.append(line, i, close);
-                    currentAttr.valueEnd = close;
-                    attrs.add(currentAttr);
-                    currentAttr = null;
-                    phase = Phase.SPACE;
-                    i = close + 1;
-                }
+            i = switch (phase) {
+                case NAME -> scanName(c, i);
+                case SPACE -> scanSpace(c, i, lineNo);
+                case ATTR_NAME -> scanAttrName(c, i);
+                case EQ -> scanEq(c, i);
+                case VALUE_START -> scanValueStart(c, i, lineNo);
+                case VALUE -> scanValue(line, i);
+            };
+            if (mode != Mode.TAG) {
+                return i;
             }
         }
         if (phase == Phase.NAME && !name.isEmpty()) {
@@ -389,6 +323,87 @@ public final class RdfXmlScanner {
             phase = Phase.EQ;
         }
         return n;
+    }
+
+    private int scanName(char c, int i) {
+        if (Character.isWhitespace(c) || c == '>' || c == '/' || c == '=') {
+            if (name.isEmpty()) {
+                mode = Mode.TEXT;
+                return i;
+            }
+            nameEnd = i;
+            phase = Phase.SPACE;
+            return i;
+        }
+        name.append(c);
+        return i + 1;
+    }
+
+    private int scanSpace(char c, int i, long lineNo) {
+        if (Character.isWhitespace(c)) {
+            return i + 1;
+        } else if (c == '>') {
+            finishTag(selfClosingPending);
+            return i + 1;
+        } else if (c == '/' || c == '?') {
+            selfClosingPending = true;
+            return i + 1;
+        }
+        currentAttr = new Attr();
+        currentAttr.name = "";
+        currentAttr.nameLine = lineNo;
+        currentAttr.nameStart = i;
+        phase = Phase.ATTR_NAME;
+        return i;
+    }
+
+    private int scanAttrName(char c, int i) {
+        if (Character.isWhitespace(c) || c == '=' || c == '>' || c == '/') {
+            currentAttr.nameEnd = i;
+            phase = Phase.EQ;
+            return i;
+        }
+        currentAttr.name += c;
+        return i + 1;
+    }
+
+    private int scanEq(char c, int i) {
+        if (Character.isWhitespace(c)) {
+            return i + 1;
+        } else if (c == '=') {
+            phase = Phase.VALUE_START;
+            return i + 1;
+        }
+        phase = Phase.SPACE;
+        return i;
+    }
+
+    private int scanValueStart(char c, int i, long lineNo) {
+        if (Character.isWhitespace(c)) {
+            return i + 1;
+        } else if (c == '"' || c == '\'') {
+            currentAttr.quote = c;
+            currentAttr.valueLine = lineNo;
+            currentAttr.valueStart = i + 1;
+            phase = Phase.VALUE;
+            return i + 1;
+        }
+        phase = Phase.SPACE;
+        return i;
+    }
+
+    private int scanValue(String line, int i) {
+        int close = line.indexOf(currentAttr.quote, i);
+        if (close < 0) {
+            currentAttr.value.append(line, i, line.length());
+            return line.length();
+        }
+        currentAttr.value.append(line, i, close);
+        currentAttr.valueEnd = close;
+        attrs.add(currentAttr);
+        currentAttr = null;
+        phase = Phase.SPACE;
+        return close + 1;
     }
 
     private void finishTag(boolean selfClosing) {
@@ -414,26 +429,8 @@ public final class RdfXmlScanner {
 
     private void handleStartTag(String tagName, boolean selfClosing) {
         Frame parent = stack.peek();
-        Map<String, String> namespaces = parent.namespaces();
-        String base = parent.base();
-        boolean copied = false;
-        for (Attr attr : attrs) {
-            if (attr.name.equals("xmlns") || attr.name.startsWith("xmlns:")) {
-                if (!copied) {
-                    namespaces = new HashMap<>(namespaces);
-                    copied = true;
-                }
-                String decoded = decode(attr.value.toString(), entities);
-                namespaces.put(attr.name.equals("xmlns") ? "" : attr.name.substring(6), decoded == null ? "" : decoded);
-            }
-        }
-        for (Attr attr : attrs) {
-            if (attr.name.equals("xml:base")) {
-                String decoded = decode(attr.value.toString(), entities);
-                String resolved = decoded == null ? null : TurtleLineScanner.resolveAgainst(parent.base(), decoded);
-                base = resolved;
-            }
-        }
+        Map<String, String> namespaces = scopedNamespaces(parent);
+        String base = scopedBase(parent);
         boolean isRoot = !rootSeen;
         if (isRoot) {
             rootSeen = true;
@@ -456,17 +453,62 @@ public final class RdfXmlScanner {
         emitName(OccurrenceKind.ELEMENT_NAME, tagName, nameLine, nameStart, nameEnd, namespaces, true);
 
         Role role = parent.childRole();
+        AttrScan scan = scanAttributes(role, base, namespaces);
+
+        Frame frame = role == Role.NODE
+                ? nodeFrame(elementIri, scan, namespaces, base)
+                : propertyFrame(elementIri, scan, parent, namespaces, base);
+        if (!selfClosing) {
+            stack.push(frame);
+        }
+    }
+
+    private record AttrScan(String aboutIri, String resourceIri, String parseType, List<String> typeValues) {}
+
+    private Map<String, String> scopedNamespaces(Frame parent) {
+        Map<String, String> namespaces = parent.namespaces();
+        boolean copied = false;
+        for (Attr attr : attrs) {
+            if (attr.name.equals("xmlns") || attr.name.startsWith("xmlns:")) {
+                if (!copied) {
+                    namespaces = new HashMap<>(namespaces);
+                    copied = true;
+                }
+                String decoded = decode(attr.value.toString(), entities);
+                namespaces.put(attr.name.equals("xmlns") ? "" : attr.name.substring(6), decoded == null ? "" : decoded);
+            }
+        }
+        return namespaces;
+    }
+
+    private String scopedBase(Frame parent) {
+        String base = parent.base();
+        for (Attr attr : attrs) {
+            if (attr.name.equals("xml:base")) {
+                String decoded = decode(attr.value.toString(), entities);
+                String resolved = decoded == null ? null : TurtleLineScanner.resolveAgainst(parent.base(), decoded);
+                base = resolved;
+            }
+        }
+        return base;
+    }
+
+    private String attributeIri(Attr attr, Map<String, String> namespaces) {
+        if (attr.name.equals("xmlns") || attr.name.startsWith("xmlns:") || attr.name.startsWith("xml:")) {
+            return null;
+        }
+        return attr.name.indexOf(':') < 0
+                ? (SYNTAX_ATTRIBUTES.contains(attr.name) ? RDF_NS + attr.name : null)
+                : expandQName(attr.name, namespaces, false);
+    }
+
+    private AttrScan scanAttributes(Role role, String base, Map<String, String> namespaces) {
         String aboutIri = null;
         String resourceIri = null;
         String parseType = null;
         List<String> typeValues = new ArrayList<>();
         for (Attr attr : attrs) {
-            if (attr.name.equals("xmlns") || attr.name.startsWith("xmlns:") || attr.name.startsWith("xml:")) {
-                continue;
-            }
-            String attrIri = attr.name.indexOf(':') < 0
-                    ? (SYNTAX_ATTRIBUTES.contains(attr.name) ? RDF_NS + attr.name : null)
-                    : expandQName(attr.name, namespaces, false);
+            String attrIri = attributeIri(attr, namespaces);
             if (attrIri == null) {
                 continue;
             }
@@ -489,50 +531,55 @@ public final class RdfXmlScanner {
                 case "nodeID", "bagID", "aboutEach", "aboutEachPrefix" -> {
                 }
                 case "parseType" -> parseType = decoded;
-                default -> {
-                    emitName(OccurrenceKind.ATTRIBUTE_NAME, attr.name, attr.nameLine, attr.nameStart, attr.nameEnd,
-                            namespaces, false);
-                    reference(attrIri);
-                    if ((RDF_NS + "type").equals(attrIri)) {
-                        String typeIri = emitValue(OccurrenceKind.TYPE_VALUE, attr, decoded, base, namespaces);
-                        reference(typeIri);
-                        if (typeIri != null) {
-                            typeValues.add(typeIri);
-                        }
-                    }
-                }
+                default -> emitPropertyAttribute(attr, attrIri, decoded, base, namespaces, typeValues);
             }
         }
+        return new AttrScan(aboutIri, resourceIri, parseType, typeValues);
+    }
 
-        Frame frame;
-        if (role == Role.NODE) {
-            if (aboutIri != null) {
-                listener.subject(aboutIri);
+    private void emitPropertyAttribute(Attr attr, String attrIri, String decoded, String base,
+                                       Map<String, String> namespaces, List<String> typeValues) {
+        emitName(OccurrenceKind.ATTRIBUTE_NAME, attr.name, attr.nameLine, attr.nameStart, attr.nameEnd,
+                namespaces, false);
+        reference(attrIri);
+        if ((RDF_NS + "type").equals(attrIri)) {
+            String typeIri = emitValue(OccurrenceKind.TYPE_VALUE, attr, decoded, base, namespaces);
+            reference(typeIri);
+            if (typeIri != null) {
+                typeValues.add(typeIri);
             }
-            if (elementIri != null && !(RDF_NS + "Description").equals(elementIri)) {
-                reference(elementIri);
-                if (aboutIri != null) {
-                    listener.declared(aboutIri, elementIri);
-                }
-            }
-            if (aboutIri != null) {
-                for (String type : typeValues) {
-                    listener.declared(aboutIri, type);
-                }
-            }
-            frame = new Frame(namespaces, base, Role.PROPERTY, aboutIri, true);
-        } else {
+        }
+    }
+
+    private Frame nodeFrame(String elementIri, AttrScan scan, Map<String, String> namespaces, String base) {
+        String aboutIri = scan.aboutIri();
+        if (aboutIri != null) {
+            listener.subject(aboutIri);
+        }
+        if (elementIri != null && !(RDF_NS + "Description").equals(elementIri)) {
             reference(elementIri);
-            if ((RDF_NS + "type").equals(elementIri) && resourceIri != null && parent.subject() != null) {
-                listener.declared(parent.subject(), resourceIri);
+            if (aboutIri != null) {
+                listener.declared(aboutIri, elementIri);
             }
-            Role childRole = "Resource".equals(parseType) ? Role.PROPERTY
-                    : "Literal".equals(parseType) ? Role.LITERAL : Role.NODE;
-            frame = new Frame(namespaces, base, childRole, null, true);
         }
-        if (!selfClosing) {
-            stack.push(frame);
+        if (aboutIri != null) {
+            for (String type : scan.typeValues()) {
+                listener.declared(aboutIri, type);
+            }
         }
+        return new Frame(namespaces, base, Role.PROPERTY, aboutIri, true);
+    }
+
+    private Frame propertyFrame(String elementIri, AttrScan scan, Frame parent, Map<String, String> namespaces,
+                                String base) {
+        reference(elementIri);
+        if ((RDF_NS + "type").equals(elementIri) && scan.resourceIri() != null && parent.subject() != null) {
+            listener.declared(parent.subject(), scan.resourceIri());
+        }
+        String parseType = scan.parseType();
+        Role childRole = "Resource".equals(parseType) ? Role.PROPERTY
+                : "Literal".equals(parseType) ? Role.LITERAL : Role.NODE;
+        return new Frame(namespaces, base, childRole, null, true);
     }
 
     private void reference(String iri) {

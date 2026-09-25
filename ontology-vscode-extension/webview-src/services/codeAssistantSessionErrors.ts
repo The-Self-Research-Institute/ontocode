@@ -19,7 +19,8 @@ export type AssistantErrorCode =
   | "IDEMPOTENCY_KEY_REUSED"
   | "PROVIDER_UNAVAILABLE"
   | "UNAUTHORIZED"
-  | "FORBIDDEN";
+  | "FORBIDDEN"
+  | "PROPOSAL_NOT_FOUND";
 
 export interface AssistantApiErrorDetails {
   status?: number;

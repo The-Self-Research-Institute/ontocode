@@ -44,7 +44,7 @@ class AssistantEditProposalValidationTest extends AssistantEditProposalTestBase 
         Files.writeString(brokenFile, "this is not valid turtle @@@ <<<", StandardCharsets.UTF_8);
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(brokenFile);
 
-        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(validGroup()));
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(unterminatedGroup()));
 
         GroupProposalOutcome outcome = result.getGroups().get(0);
         assertFalse(outcome.isValidationPassed());
@@ -269,7 +269,7 @@ class AssistantEditProposalValidationTest extends AssistantEditProposalTestBase 
         Files.writeString(brokenFile, "@prefix : <http://example.org/> .\n:A :b", StandardCharsets.UTF_8);
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(brokenFile);
 
-        GroupProposalOutcome outcome = proposalService.propose("s1", "u@x.com", List.of(validGroup())).getGroups().get(0);
+        GroupProposalOutcome outcome = proposalService.propose("s1", "u@x.com", List.of(unterminatedGroup())).getGroups().get(0);
 
         AssistantEditProposalService.CheckResult syntax = checkNamed(outcome, "syntax_valid").get();
         assertFalse(syntax.passed());
@@ -403,5 +403,10 @@ class AssistantEditProposalValidationTest extends AssistantEditProposalTestBase 
 
         assertTrue(result.isOk());
         assertTrue(result.getGroups().get(0).isValidationPassed());
+    }
+
+    private EditGroupInput unterminatedGroup() {
+        EditInput edit = new EditInput("turtle", new EditRange(1, 1), ":OldClass a owl:Class .", ":NewClass a");
+        return new EditGroupInput("c1", List.of(edit));
     }
 }

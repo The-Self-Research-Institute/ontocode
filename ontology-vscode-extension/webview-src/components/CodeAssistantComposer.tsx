@@ -49,20 +49,11 @@ interface CodeAssistantComposerProps {
   onSubmit: () => void;
 }
 
-export const CodeAssistantComposer: React.FC<CodeAssistantComposerProps> = (props) => {
-  const { input, setInput, commands } = props;
+function useSlashCommandMenu(input: string, setInput: (value: string) => void, commands: SlashCommand[], onSubmit: () => void) {
   const [commandIndex, setCommandIndex] = useState(0);
-  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const commandQuery = input.startsWith("/") && !input.includes(" ") ? input.toLowerCase() : null;
   const matches = commandQuery ? commands.filter((c) => c.cmd.startsWith(commandQuery)) : [];
   const activeIndex = Math.min(commandIndex, Math.max(matches.length - 1, 0));
-
-  useEffect(() => {
-    const el = composerRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  }, [input]);
 
   const runCommand = (command: SlashCommand) => {
     if (command.disabled) return;
@@ -90,34 +81,57 @@ export const CodeAssistantComposer: React.FC<CodeAssistantComposerProps> = (prop
     if (matches.length > 0 && handleCommandKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      props.onSubmit();
+      onSubmit();
     }
   };
 
+  return { matches, activeIndex, runCommand, handleKeyDown };
+}
+
+const SlashCommandMenu: React.FC<{
+  matches: SlashCommand[];
+  activeIndex: number;
+  runCommand: (command: SlashCommand) => void;
+}> = ({ matches, activeIndex, runCommand }) => (
+  <div className="absolute bottom-full left-0 mb-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
+    {matches.map((c, idx) => (
+      <button
+        key={c.cmd}
+        onClick={() => runCommand(c)}
+        disabled={c.disabled}
+        className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+          idx === activeIndex ? "bg-purple-50" : "hover:bg-gray-50"
+        }`}
+      >
+        <span className="text-sm font-semibold text-purple-700">{c.cmd}</span>
+        <span className="text-xs text-gray-500 truncate">{c.description}</span>
+      </button>
+    ))}
+  </div>
+);
+
+export const CodeAssistantComposer: React.FC<CodeAssistantComposerProps> = (props) => {
+  const { input, setInput, commands } = props;
+  const menu = useSlashCommandMenu(input, setInput, commands, () => props.onSubmit());
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
+
   return (
     <div className="relative flex items-end gap-2">
-      {matches.length > 0 && (
-        <div className="absolute bottom-full left-0 mb-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
-          {matches.map((c, idx) => (
-            <button
-              key={c.cmd}
-              onClick={() => runCommand(c)}
-              disabled={c.disabled}
-              className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                idx === activeIndex ? "bg-purple-50" : "hover:bg-gray-50"
-              }`}
-            >
-              <span className="text-sm font-semibold text-purple-700">{c.cmd}</span>
-              <span className="text-xs text-gray-500 truncate">{c.description}</span>
-            </button>
-          ))}
-        </div>
+      {menu.matches.length > 0 && (
+        <SlashCommandMenu matches={menu.matches} activeIndex={menu.activeIndex} runCommand={menu.runCommand} />
       )}
       <textarea
         ref={composerRef}
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        onKeyDown={handleKeyDown}
+        onKeyDown={menu.handleKeyDown}
         rows={1}
         disabled={props.disabled}
         placeholder={props.placeholder}

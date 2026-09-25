@@ -34,19 +34,7 @@ public class AssistantEditReferenceCoverageValidator {
     public record CoverageResult(boolean covered, String detail) {}
 
     public CoverageResult check(String projectId, String targetPath, List<CoverageEdit> edits) {
-        Set<String> removedTokens = new LinkedHashSet<>();
-        Set<String> retainedTokens = new HashSet<>();
-        for (CoverageEdit edit : edits) {
-            Set<String> oldSubjectTokens = extractSubjectPositionTokens(edit.originalText());
-            Set<String> newTokens = extractTokens(edit.newText());
-            retainedTokens.addAll(newTokens);
-            for (String token : oldSubjectTokens) {
-                if (!newTokens.contains(token)) {
-                    removedTokens.add(token);
-                }
-            }
-        }
-        removedTokens.removeAll(retainedTokens);
+        Set<String> removedTokens = removedSubjectTokens(edits);
         if (removedTokens.isEmpty()) {
             return new CoverageResult(true, null);
         }
@@ -55,39 +43,12 @@ public class AssistantEditReferenceCoverageValidator {
                 .map(e -> new long[]{e.startLine(), e.startLine() + e.lineCount()})
                 .sorted(Comparator.comparingLong(range -> range[0]))
                 .toList();
-        int rangeCursor = 0;
 
         List<String> missed = new ArrayList<>();
         Set<String> unresolved = new LinkedHashSet<>(removedTokens);
         TurtleLineScanner scanner = AssistantRenameService.isTurtleFamily(targetPath) ? new TurtleLineScanner() : null;
         try {
-            Path sourceFile = storageManager.ensureCodeViewFile(projectId, targetPath);
-            try (BufferedReader reader = Files.newBufferedReader(sourceFile)) {
-                String line;
-                long lineNo = 0;
-                while (!unresolved.isEmpty() && (line = reader.readLine()) != null) {
-                    Set<String> lineTokens = scanner != null ? termTexts(scanner.scan(line)) : null;
-                    while (rangeCursor < editedRanges.size() && editedRanges.get(rangeCursor)[1] <= lineNo) {
-                        rangeCursor++;
-                    }
-                    boolean insideEditedRange = rangeCursor < editedRanges.size()
-                            && lineNo >= editedRanges.get(rangeCursor)[0];
-                    if (!insideEditedRange) {
-                        if (lineTokens == null) {
-                            lineTokens = extractTokens(line);
-                        }
-                        Iterator<String> it = unresolved.iterator();
-                        while (it.hasNext()) {
-                            String token = it.next();
-                            if (lineTokens.contains(token)) {
-                                missed.add(token + " still appears at line " + lineNo);
-                                it.remove();
-                            }
-                        }
-                    }
-                    lineNo++;
-                }
-            }
+            scanOutsideEditedRanges(projectId, targetPath, editedRanges, scanner, unresolved, missed);
         } catch (Exception e) {
             log.warn("[Assistant] complete_reference_coverage scan failed for project {} targetPath {}: {}",
                     projectId, targetPath, e.getMessage());
@@ -102,6 +63,60 @@ public class AssistantEditReferenceCoverageValidator {
                 "This proposal removes an identifier from the edited ranges, but it still appears elsewhere "
                         + "in the document, which this group would leave untouched: " + String.join("; ", missed)
                         + ". Include those occurrences in this group, or confirm they're intentionally kept.");
+    }
+
+    private Set<String> removedSubjectTokens(List<CoverageEdit> edits) {
+        Set<String> removedTokens = new LinkedHashSet<>();
+        Set<String> retainedTokens = new HashSet<>();
+        for (CoverageEdit edit : edits) {
+            Set<String> oldSubjectTokens = extractSubjectPositionTokens(edit.originalText());
+            Set<String> newTokens = extractTokens(edit.newText());
+            retainedTokens.addAll(newTokens);
+            for (String token : oldSubjectTokens) {
+                if (!newTokens.contains(token)) {
+                    removedTokens.add(token);
+                }
+            }
+        }
+        removedTokens.removeAll(retainedTokens);
+        return removedTokens;
+    }
+
+    private void scanOutsideEditedRanges(String projectId, String targetPath, List<long[]> editedRanges,
+                                         TurtleLineScanner scanner, Set<String> unresolved, List<String> missed)
+            throws Exception {
+        int rangeCursor = 0;
+        Path sourceFile = storageManager.ensureCodeViewFile(projectId, targetPath);
+        try (BufferedReader reader = Files.newBufferedReader(sourceFile)) {
+            String line;
+            long lineNo = 0;
+            while (!unresolved.isEmpty() && (line = reader.readLine()) != null) {
+                Set<String> lineTokens = scanner != null ? termTexts(scanner.scan(line)) : null;
+                while (rangeCursor < editedRanges.size() && editedRanges.get(rangeCursor)[1] <= lineNo) {
+                    rangeCursor++;
+                }
+                boolean insideEditedRange = rangeCursor < editedRanges.size()
+                        && lineNo >= editedRanges.get(rangeCursor)[0];
+                if (!insideEditedRange) {
+                    if (lineTokens == null) {
+                        lineTokens = extractTokens(line);
+                    }
+                    collectMisses(unresolved, lineTokens, lineNo, missed);
+                }
+                lineNo++;
+            }
+        }
+    }
+
+    private void collectMisses(Set<String> unresolved, Set<String> lineTokens, long lineNo, List<String> missed) {
+        Iterator<String> it = unresolved.iterator();
+        while (it.hasNext()) {
+            String token = it.next();
+            if (lineTokens.contains(token)) {
+                missed.add(token + " still appears at line " + lineNo);
+                it.remove();
+            }
+        }
     }
 
     private Set<String> extractSubjectPositionTokens(String text) {

@@ -27,7 +27,7 @@ The target is `POST /api/v1/code-assistant/sessions` on the `ontology-editor` se
      java -jar ontology-editor/target/owlEditor-1.0.0-exec.jar
    ```
    Fuseki being unavailable only breaks SPARQL/reasoner endpoints — you'll see loud `JenaHealthCheck` errors in the log at startup, they're expected and don't affect this endpoint.
-3. `dev` profile disables the generic JWT-required filter, but the controller itself still requires a Bearer token with an `email` claim (401 otherwise), and `FreeViewOnlyInterceptor` still blocks writes for a `FREE`-plan JWT (403) unless the caller owns the workspace. The k6 script below mints its own unsigned JWT with `plan: "PRO"` so it isn't blocked — pass `-e ASSISTANT_PLAN=FREE` if you specifically want to load-test the 403 path.
+3. The `dev` profile doesn't require a token, but any token that is sent is verified against `JWT_SECRET` and checked for project access, and `FreeViewOnlyInterceptor` still blocks writes for a `FREE`-plan JWT (403) unless the caller owns the workspace. The scripts sign their own JWT with the dev secret and `plan: "PRO"` — pass `-e ASSISTANT_PLAN=FREE` if you specifically want to load-test the 403 path.
 
 ## Running the load test
 
@@ -42,12 +42,11 @@ Useful overrides (all optional, `k6 run -e NAME=value ...`):
 | `BASE_URL` | `http://localhost:8083` | editor service base URL |
 | `ASSISTANT_EMAIL` | `k6-loadtest@example.com` | `email` claim in the minted JWT |
 | `ASSISTANT_PLAN` | `PRO` | `plan` claim in the minted JWT |
-| `TARGET_VUS` | `20` | peak concurrent virtual users |
-| `RAMP_DURATION` | `15s` | time to ramp 0 -> TARGET_VUS |
-| `SUSTAIN_DURATION` | `30s` | time held at TARGET_VUS |
+| `TARGET_VUS` | `20` | concurrent virtual users |
+| `SESSIONS_PER_VU` | `20` | sessions each VU creates (the per-user active limit is 20) |
 | `THINK_TIME_SECONDS` | `0.2` | pause between iterations per VU |
 
-Each iteration creates a brand-new session with a unique `projectId` (`<prefix>-<vu>-<iteration>`), so this measures session *creation* throughput, not repeated access to one session. Thresholds baked into the script (`p95 < 800ms`, `p99 < 1500ms`, error rate `< 1%`) make `k6 run` exit non-zero if the endpoint regresses — wire that into a CI gate once this repo has CI.
+`setup()` uploads one small project per VU, owned by that VU's identity. Each iteration then creates a new session on it, so this measures session *creation* throughput, not repeated access to one session. Thresholds baked into the script (`p95 < 800ms`, `p99 < 1500ms`, error rate `< 1%`) make `k6 run` exit non-zero if the endpoint regresses — wire that into a CI gate once this repo has CI.
 
 To capture results as JSON instead of only the terminal summary:
 ```
@@ -178,7 +177,29 @@ exact gates this run cleared.
 
 ## Assistant load suite
 
-All scripts share `lib/assistant-k6.js` (unsigned JWTs, upload and wait, sessions, propose, apply, tools). They target the dev profile, where `ontocode.editor.require-jwt=false` accepts unsigned tokens; the docker profile rejects them. Pass a fresh `-e RUN_ID=$(date +%s)` per run so identities and project ids never collide with earlier runs.
+All scripts share `lib/assistant-k6.js` (signed dev JWTs, upload and wait, sessions, propose, apply, tools). Tokens are signed with HS256 using `JWT_SECRET` (default: the dev secret in `application-dev.properties`), because the editor now verifies every token it receives, even in the dev profile. Every script seeds its own projects in `setup()` with `ownerEmail` set, so the project access check passes for the identity that owns them. Pass a fresh `-e RUN_ID=$(date +%s)` per run so identities and project ids never collide with earlier runs.
+
+### Running it against a throwaway stack
+
+Keep load-test data out of your dev containers:
+
+```
+docker run -d --name ontocode-mongo-loadtest -p 127.0.0.1:27019:27017 mongo:6
+docker run -d --name ontocode-fuseki-loadtest -p 3032:3030 --tmpfs "/fuseki:rw,size=4g,mode=1777" -e FUSEKI_DATASET_1=ontocode -e ADMIN_PASSWORD=admin ontocode-fuseki-local:6.1.0
+python mock-llm-provider.py
+```
+
+Then start the editor from the repo root with `SPRING_PROFILES_ACTIVE=dev`, `MONGODB_URI=mongodb://127.0.0.1:27019/ontocode-loadtest`, the three `FUSEKI_*_ENDPOINT` variables pointing at port 3032, managed mode pointing at the mock (`ASSISTANT_PROVIDER=claude ASSISTANT_PROVIDER_MODEL=claude-sonnet-5 ASSISTANT_PROVIDER_API_KEY=test`), and these arguments:
+
+```
+mvn -pl ontology-editor spring-boot:run "-Dspring-boot.run.arguments=--server.port=8093 --assistant.provider.base-url=http://localhost:9099 --assistant.admission.session.max-active-per-user=100000 --assistant.admission.session.max-creates-per-minute=100000 --assistant.admission.tool.max-concurrent-per-user=64"
+```
+
+Run the suite with `-e BASE_URL=http://localhost:8093`. Remove the containers with `docker rm -f -v ontocode-mongo-loadtest ontocode-fuseki-loadtest` afterwards.
+
+- The raised per-user limits are only for the mixed script. Project membership is written by the auth service, which isn't part of this harness, so every reader has to be the project owner, and one user would otherwise hit the per-user session and tool limits instead of the per-project ones the test is about. The per-project (8) and global (32) tool limits stay at their defaults. Run `k6-code-assistant-limits.js` against an editor on the default limits.
+- A memory-backed Fuseki is used because on Docker Desktop for Windows a disk-backed TDB2 volume took 3–17 s for a one-triple write even when idle, which measures the host disk rather than the editor. Recreate the container between the 50 MB and 100 MB runs, since TDB2 does not free space for dropped graphs.
+- `k6-code-assistant-provider-proxy.js` also calls the streaming endpoint (`/provider-call/stream`) and checks that events arrive without the provider's message id.
 
 Generate fixtures first:
 
@@ -188,14 +209,14 @@ node generate-fixtures.js --only dense1,dense10,rename-10,rename-100,rename-1000
 
 | Script | What it proves | Key options |
 |---|---|---|
-| `k6-code-assistant-sessions.js` | Session-create throughput with one identity per iteration | `TARGET_VUS`, `SUSTAIN_DURATION` |
+| `k6-code-assistant-sessions.js` | Session-create throughput: one identity and seeded project per VU, up to the 20-session limit each | `TARGET_VUS`, `SESSIONS_PER_VU` |
 | `k6-code-assistant-limits.js` | One identity gets exactly 20 sessions, then 429 with a matching `Retry-After` | `MAX_ACTIVE`, `BURST` |
 | `k6-code-assistant-group-apply.js` | Disjoint, overlapping and cross-project applies stay correct | `DISJOINT_GROUP_COUNT`, `PARALLEL_PROJECT_COUNT` |
 | `k6-code-assistant-apply-chain.js` | Insert-only groups applied one after another all succeed (Apply All) | `CHAIN_GROUPS`, `TARGET_FORMAT` |
 | `k6-code-assistant-mixed.js` | Readers (`read_context` range and statement, `run_sparql`) keep working while a writer applies on the same project | `FIXTURE`, `READERS`, `WRITES`, `DURATION`, `READ_P95_MS` |
 | `k6-code-assistant-rename.js` | Server-derived rename at 10 to 5,000 lines, and refusal above the limit | `RENAME_FIXTURE`, `TARGET_FORMAT` |
 | `k6-code-assistant-idempotency.js` | Replay of identical retries, 422 on a reused key, no duplicate sessions under concurrent retries | none |
-| `k6-code-assistant-provider-proxy.js` | Managed-mode proxy overhead and the 30 calls/min limit, against `mock-llm-provider.py` | `TARGET_VUS`, `DURATION`, `PROXY_P95_MS` |
+| `k6-code-assistant-provider-proxy.js` | Managed-mode proxy latency (each VU paced under the 30 calls/min limit), the limit itself, and the streaming endpoint, against `mock-llm-provider.py` | `TARGET_VUS`, `DURATION`, `PROXY_P95_MS` |
 | `k6-code-assistant-two-node.js` | Overlapping applies sent to two editor nodes: exactly one wins | `SECOND_NODE_URL`, `OVERLAPPING_GROUPS` |
 
 ### File-size scaling

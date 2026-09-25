@@ -1,29 +1,22 @@
-import React, { useEffect, useRef, useState } from "react";
+import React from "react";
 import { X } from "lucide-react";
 import { AskAiIcon } from "./AskAiIcon";
-import { hasApiKey, setStoredApiKey } from "../services/LlmInsightsService";
-import { CodeAssistantModelSwitcher } from "./CodeAssistantModelSwitcher";
-import { CodeAssistantRecoveryBanner } from "./CodeAssistantRecoveryBanner";
+import { setStoredApiKey } from "../services/LlmInsightsService";
+import { ProviderFooter, RecoveryNotice } from "./CodeAssistantPanelParts";
 import { CodeAssistantActionChips } from "./CodeAssistantActionChips";
 import { CodeAssistantTranscript } from "./CodeAssistantTranscript";
 import { CodeAssistantComposer, buildSlashCommands } from "./CodeAssistantComposer";
 import type { ReviewHandlers } from "./CodeAssistantTranscriptEntry";
-import { useAuth } from "../custom-hook/useAuth";
-import { useSubscription } from "../hooks/useSubscription";
-import { useCodeAssistantRecovery } from "../hooks/useCodeAssistantRecovery";
-import { useCodeAssistantEntries } from "../hooks/useCodeAssistantEntries";
-import { useCodeAssistantRun } from "../hooks/useCodeAssistantRun";
-import { useCodeAssistantApply } from "../hooks/useCodeAssistantApply";
+import { useCodeAssistantPanel, type CodeAssistantPanelController } from "../hooks/useCodeAssistantPanel";
 import type { AppliedRange } from "../services/codeAssistantSession";
-import { getApiBaseUrl, resolveApplyBlock, clearStoredChatEntries, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
-import { getCachedProviderConfig, getProviderConfig, type ProviderConfig } from "../services/codeAssistantProviderConfig";
+import { clearStoredChatEntries, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
 import type { EditorSelectionContext } from "./codeSelection";
 import type { PromptToRetry } from "./codeAssistantChatEntries";
 import { SelectionChip } from "./CodeAssistantSelectionChip";
 
 export type { CodeAssistantAction };
 
-interface CodeAssistantPanelProps {
+export interface CodeAssistantPanelProps {
   projectId?: string;
   projectName?: string;
   documentPath?: string;
@@ -73,177 +66,112 @@ const PanelHeader: React.FC<{ documentPath?: string; onClose?: () => void }> = (
   </div>
 );
 
+type PanelController = CodeAssistantPanelController;
+
+function buildPanelCommands(c: PanelController, projectId: string | undefined) {
+  return buildSlashCommands({
+    editLocked: c.isFree,
+    editLockedMessage: c.editLockedMessage,
+    clearDisabled: c.apply.applyBusy,
+    canLogout: !c.managedProvider,
+    setAction: c.setAction,
+    clearChat: () => {
+      c.run.abandonRun();
+      c.chat.commitEntries(() => []);
+      if (projectId) clearStoredChatEntries(projectId);
+    },
+    logout: () => {
+      setStoredApiKey("");
+      c.setConfigured(false);
+    },
+  });
+}
+
+function buildReviewHandlers(c: PanelController, props: CodeAssistantPanelProps): ReviewHandlers {
+  return {
+    onApply: (entry, groupId) => void c.apply.applyGroup(entry.id, entry.sessionId, groupId),
+    onSkip: (entry, groupId) => c.apply.skipGroup(entry.id, groupId),
+    onApplyAll: (entry) => void c.apply.applyAllPending(entry.id, entry.sessionId),
+    onCancelApplyAll: (entry) => c.apply.cancelApplyAll(entry.id),
+    applyBusy: c.apply.applyBusy,
+    applyBlockedReason: c.applyBlock?.message ?? null,
+    showInCodeViewFor: (entry) =>
+      props.onShowInCodeView && (!entry.projectId || entry.projectId === props.projectId) ? props.onShowInCodeView : undefined,
+  };
+}
+
+const PanelFooter: React.FC<{
+  c: PanelController;
+  projectId?: string;
+  editorSelection: PanelEditorSelection | null;
+  onClearEditorSelection?: () => void;
+  onSubmit: () => void;
+}> = ({ c, projectId, editorSelection, onClearEditorSelection, onSubmit }) => (
+  <div className="border-t border-gray-200 px-4 py-3 flex-shrink-0 space-y-2">
+    {c.chat.entries.length > 0 && (
+      <CodeAssistantActionChips action={c.action} onSelect={c.setAction} editLocked={c.isFree} editLockedMessage={c.editLockedMessage} compact />
+    )}
+    {!projectId && (
+      <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-md text-amber-900 text-xs">
+        Open a project first — the assistant needs one to work against.
+      </div>
+    )}
+    {editorSelection && <SelectionChip selection={editorSelection} onClear={onClearEditorSelection} />}
+    <CodeAssistantComposer
+      input={c.input}
+      setInput={c.setInput}
+      commands={buildPanelCommands(c, projectId)}
+      disabled={c.run.busy || !projectId || !c.ready || c.recoveryLocked}
+      placeholder={composerPlaceholder(c.recoveryLocked, c.ready, c.action)}
+      onSubmit={onSubmit}
+    />
+    <ProviderFooter c={c} />
+  </div>
+);
+
 export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => {
-  const { projectId, documentPath, hasUnsavedCodeViewChanges = false, editorSelection = null } = props;
-  const { user, logout } = useAuth();
-  const { isFree, getUpgradeMessage } = useSubscription();
-  const [configured, setConfigured] = useState(hasApiKey());
-  const [providerConfig, setProviderConfig] = useState<ProviderConfig | null>(() => getCachedProviderConfig());
-  const managedProvider = providerConfig?.managed ? providerConfig : null;
-  const ready = managedProvider !== null || configured;
-  const [action, setAction] = useState<CodeAssistantAction>("ask");
-  const [input, setInput] = useState("");
-  const mountedRef = useRef(true);
-  const projectIdRef = useRef(projectId);
-  projectIdRef.current = projectId;
-  const tokenRef = useRef(user?.token);
-  tokenRef.current = user?.token;
-  const editLockedMessage = getUpgradeMessage("AI-assisted editing");
-
-  const recovery = useCodeAssistantRecovery({
-    projectId,
-    projectIdRef,
-    tokenRef,
-    token: user?.token,
-    mountedRef,
-    recoveryVersion: props.recoveryVersion ?? 0,
-    onRecoveryChanged: props.onRecoveryChanged,
-    onProjectRestored: props.onProjectRestored,
-  });
-  const { recoveryLocked, recoveryLockedRef } = recovery;
-  const applyBlock = resolveApplyBlock({ hasUnsavedCodeViewChanges, recoveryLocked });
-  const applyBlockRef = useRef(applyBlock);
-  applyBlockRef.current = applyBlock;
-
-  const chat = useCodeAssistantEntries(projectId, projectIdRef, (previous) => run.abandonRunFor(previous));
-  const run = useCodeAssistantRun({
-    chat,
-    projectIdRef,
-    mountedRef,
-    recoveryLockedRef,
-    noteRecoveryProblem: recovery.noteRecoveryProblem,
-    setInput,
-    setAction,
-    setProviderConfig,
-  });
-  const apply = useCodeAssistantApply({
-    chat,
-    tokenRef,
-    projectIdRef,
-    mountedRef,
-    blockedReason: () => (recoveryLockedRef.current ? "the project is locked for recovery" : applyBlockRef.current?.shortReason ?? null),
-    noteRecoveryProblem: recovery.noteRecoveryProblem,
-    onApplySuccess: props.onApplySuccess,
-  });
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      run.abortOnUnmount();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void getProviderConfig(getApiBaseUrl(), user?.token).then((config) => {
-      if (!cancelled) setProviderConfig(config);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.token]);
+  const { projectId, documentPath, editorSelection = null } = props;
+  const c = useCodeAssistantPanel(props);
 
   const submitMessage = (override?: PromptToRetry) =>
-    void run.submit({
-      text: (override?.text ?? input).trim(),
-      action: override?.action ?? action,
+    void c.run.submit({
+      text: (override?.text ?? c.input).trim(),
+      action: override?.action ?? c.action,
       projectId,
       documentPath,
-      token: user?.token,
+      token: c.user?.token,
       selection: override ? null : editorSelection,
       fromRetry: Boolean(override),
       onSelectionUsed: props.onClearEditorSelection,
     });
 
-  const commands = buildSlashCommands({
-    editLocked: isFree,
-    editLockedMessage,
-    clearDisabled: apply.applyBusy,
-    canLogout: !managedProvider,
-    setAction,
-    clearChat: () => {
-      run.abandonRun();
-      chat.commitEntries(() => []);
-      if (projectId) clearStoredChatEntries(projectId);
-    },
-    logout: () => {
-      setStoredApiKey("");
-      setConfigured(false);
-    },
-  });
-
-  const review: ReviewHandlers = {
-    onApply: (entry, groupId) => void apply.applyGroup(entry.id, entry.sessionId, groupId),
-    onSkip: (entry, groupId) => apply.skipGroup(entry.id, groupId),
-    onApplyAll: (entry) => void apply.applyAllPending(entry.id, entry.sessionId),
-    onCancelApplyAll: (entry) => apply.cancelApplyAll(entry.id),
-    applyBusy: apply.applyBusy,
-    applyBlockedReason: applyBlock?.message ?? null,
-    showInCodeViewFor: (entry) =>
-      props.onShowInCodeView && (!entry.projectId || entry.projectId === projectId) ? props.onShowInCodeView : undefined,
-  };
-
-  const composerDisabled = run.busy || !projectId || !ready || recoveryLocked;
-
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--color-background)" }}>
       <PanelHeader documentPath={documentPath} onClose={props.onClose} />
-      {recoveryLocked && props.recoveryShownByHost && (
-        <div role="status" className="mx-4 mt-3 px-3 py-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md">
-          Changes are paused until the project is checked. See the notice above the code.
-        </div>
-      )}
-      {recoveryLocked && !props.recoveryShownByHost && (
-        <CodeAssistantRecoveryBanner
-          state={recovery.recoveryState}
-          busy={recovery.recoveryBusy}
-          error={recovery.recoveryError}
-          onRestore={() => void recovery.restoreProject()}
-          onClear={() => void recovery.unlockProject()}
-        />
-      )}
+      <RecoveryNotice c={c} shownByHost={props.recoveryShownByHost} />
       <CodeAssistantTranscript
-        entries={chat.entries}
-        ready={ready}
-        action={action}
-        onSelectAction={setAction}
-        editLocked={isFree}
-        editLockedMessage={editLockedMessage}
-        busy={run.busy}
-        statusText={run.statusText}
-        now={chat.now}
-        review={review}
+        entries={c.chat.entries}
+        ready={c.ready}
+        action={c.action}
+        onSelectAction={c.setAction}
+        editLocked={c.isFree}
+        editLockedMessage={c.editLockedMessage}
+        busy={c.run.busy}
+        statusText={c.run.statusText}
+        draft={c.run.draft}
+        now={c.chat.now}
+        review={buildReviewHandlers(c, props)}
         onResubmit={(retry) => retry && submitMessage(retry)}
-        onSignIn={() => logout(true)}
-        onCancel={run.cancelRun}
+        onSignIn={() => c.logout(true)}
+        onCancel={c.run.cancelRun}
       />
-      <div className="border-t border-gray-200 px-4 py-3 flex-shrink-0 space-y-2">
-        {chat.entries.length > 0 && (
-          <CodeAssistantActionChips action={action} onSelect={setAction} editLocked={isFree} editLockedMessage={editLockedMessage} compact />
-        )}
-        {!projectId && (
-          <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-md text-amber-900 text-xs">
-            Open a project first — the assistant needs one to work against.
-          </div>
-        )}
-        {editorSelection && <SelectionChip selection={editorSelection} onClear={props.onClearEditorSelection} />}
-        <CodeAssistantComposer
-          input={input}
-          setInput={setInput}
-          commands={commands}
-          disabled={composerDisabled}
-          placeholder={composerPlaceholder(recoveryLocked, ready, action)}
-          onSubmit={() => submitMessage()}
-        />
-        {managedProvider ? (
-          <p className="text-xs text-gray-500" data-managed-provider>
-            Managed by your organization · {managedProvider.provider} · {managedProvider.model}
-          </p>
-        ) : (
-          <CodeAssistantModelSwitcher onChange={() => setConfigured(hasApiKey())} />
-        )}
-      </div>
+      <PanelFooter
+        c={c}
+        projectId={projectId}
+        editorSelection={editorSelection}
+        onClearEditorSelection={props.onClearEditorSelection}
+        onSubmit={() => submitMessage()}
+      />
     </div>
   );
 };

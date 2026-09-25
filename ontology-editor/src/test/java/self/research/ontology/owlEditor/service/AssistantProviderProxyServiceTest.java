@@ -245,12 +245,12 @@ class AssistantProviderProxyServiceTest {
     }
 
     @Test
-    void providerErrorStatusAndJsonArePassedThrough() throws Exception {
+    void providerErrorKeepsItsStatusButNotTheProvidersDetails() throws Exception {
         AssistantProviderProxyService claude = newService("claude", "claude-sonnet-4-5", "server-key");
         responder.set(req -> Mono.just(ClientResponse.create(HttpStatus.TOO_MANY_REQUESTS)
                 .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .header(HttpHeaders.RETRY_AFTER, "7")
-                .body("{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\"}}")
+                .body("{\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"org-123 over quota\"}}")
                 .build()));
 
         AssistantProviderProxyService.ProviderCallResult result = claude.forward(json("{\"messages\":[]}"));
@@ -258,7 +258,9 @@ class AssistantProviderProxyServiceTest {
         assertFalse(result.isError());
         assertEquals(429, result.status());
         assertEquals(7L, result.retryAfterSeconds());
-        assertEquals("rate_limit_error", json(result.body()).path("error").path("type").asText());
+        assertEquals("Quota exceeded.", json(result.body()).path("error").path("message").asText());
+        assertFalse(result.body().contains("org-123"));
+        assertFalse(json(result.body()).has("type"));
     }
 
     @Test

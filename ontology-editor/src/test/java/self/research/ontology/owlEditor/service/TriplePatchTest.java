@@ -179,6 +179,24 @@ class TriplePatchTest {
     }
 
     @Test
+    void addingANewPrefixAndABlockThatUsesItIsPatched() throws Exception {
+        String before = ttl("ex:Dog a owl:Class .");
+        String after = before.replace("@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n",
+                "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix vet: <http://vet.example/> .\n")
+                + "vet:Clinic a owl:Class .\n";
+        assertPatchedTo("turtle", RDFFormat.TURTLE, before, after,
+                new TriplePatchPlanner.Edit(3, 0, 1), new TriplePatchPlanner.Edit(4, 0, 1));
+    }
+
+    @Test
+    void addingOnlyAPrefixLeavesTheGraphUnchanged() throws Exception {
+        String before = ttl("ex:Dog a owl:Class .");
+        String after = before.replace("@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n",
+                "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix vet: <http://vet.example/> .\n");
+        assertPatchedTo("turtle", RDFFormat.TURTLE, before, after, new TriplePatchPlanner.Edit(3, 0, 1));
+    }
+
+    @Test
     void labelledBlankNodesFallBackToAFullReimport() throws Exception {
         String before = ttl("ex:Dog ex:p _:b1 .", "_:b1 ex:q ex:x .");
         String after = ttl("ex:Dog ex:p _:b1 .", "_:b1 ex:q ex:y .");

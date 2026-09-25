@@ -186,6 +186,13 @@ describe("classifyApplyFailure", () => {
     expect(classifyApplyFailure("STALE_GROUP", 409, "x")).toMatchObject({ decision: "stale", checkRecovery: false });
     expect(classifyApplyFailure("CONFLICT", 409, "x")).toMatchObject({ decision: "conflict" });
     expect(classifyApplyFailure("VALIDATION_FAILED", 400, "x")).toMatchObject({ decision: "failed" });
+    expect(classifyApplyFailure("PROPOSAL_NOT_FOUND", 403, "Unknown or unauthorized proposal")).toMatchObject({
+      decision: "failed",
+      reason: "the proposal expired",
+    });
+    expect(classifyApplyFailure("VALIDATION_FAILED", 200, "Unknown or unauthorized proposal")).toMatchObject({
+      reason: "the proposal expired",
+    });
     expect(classifyApplyFailure(undefined, 500, "Gateway timeout.")).toMatchObject({ kind: "error", decision: "pending", reason: "Gateway timeout" });
     expect(classifyApplyFailure(undefined, 500, "y".repeat(200)).reason).toBe("unexpected error");
   });

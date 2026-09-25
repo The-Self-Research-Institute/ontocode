@@ -61,6 +61,16 @@ final class CodeViewSubjectIndex {
         return Optional.of(index);
     }
 
+    static void seed(Path file, SubjectRangeIndex index) throws IOException {
+        if (file == null || index == null || !Files.exists(file)) {
+            return;
+        }
+        if (CACHE.size() >= MAX_CACHED_FILES) {
+            CACHE.clear();
+        }
+        CACHE.put(file.toString(), new Cached(Files.getLastModifiedTime(file).toMillis(), Files.size(file), index));
+    }
+
     static SubjectRangeIndex build(Path file, String format) throws IOException {
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             return isTurtleFamily(format) ? TurtleSubjectBlockReader.index(reader) : RdfXmlSubjectBlockReader.index(reader);

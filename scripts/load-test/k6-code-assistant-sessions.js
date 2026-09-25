@@ -1,55 +1,54 @@
 import http from 'k6/http';
-import encoding from 'k6/encoding';
+import { devJwt, RUN_ID, uploadAndWait } from './lib/assistant-k6.js';
 import { check, sleep } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8083';
 const EMAIL_DOMAIN = __ENV.ASSISTANT_EMAIL_DOMAIN || 'loadtest.example.test';
 const PLAN = __ENV.ASSISTANT_PLAN || 'PRO';
-const PROJECT_PREFIX = __ENV.PROJECT_PREFIX || 'k6-loadtest-project';
 const TARGET_VUS = Number(__ENV.TARGET_VUS || 20);
-const RAMP_DURATION = __ENV.RAMP_DURATION || '15s';
-const SUSTAIN_DURATION = __ENV.SUSTAIN_DURATION || '30s';
+const SESSIONS_PER_VU = Number(__ENV.SESSIONS_PER_VU || 20);
 const THINK_TIME_SECONDS = Number(__ENV.THINK_TIME_SECONDS || 0.2);
+const SEED = open('./fixtures/small-20kb.owl');
 
-function buildUnsignedJwt(email, plan) {
-  const header = encoding.b64encode(JSON.stringify({ alg: 'none', typ: 'JWT' }), 'rawurl');
-  const payload = encoding.b64encode(JSON.stringify({ email, plan }), 'rawurl');
-  return `${header}.${payload}.unsigned`;
+function identityFor(vu) {
+  return `k6-sessions-${RUN_ID}-vu${vu}@${EMAIL_DOMAIN}`;
 }
 
-function identityFor(vu, iter) {
-  return `k6-vu${vu}-it${iter}@${EMAIL_DOMAIN}`;
+function projectFor(vu) {
+  return `k6-sessions-${RUN_ID}-${vu}`;
 }
 
 export const sessionCreateErrors = new Rate('assistant_session_create_errors');
 export const sessionCreateDuration = new Trend('assistant_session_create_duration', true);
 
 export const options = {
+  setupTimeout: '600s',
   scenarios: {
     createSessionLoad: {
-      executor: 'ramping-vus',
+      executor: 'per-vu-iterations',
       exec: 'createSession',
-      startVUs: 0,
-      stages: [
-        { duration: RAMP_DURATION, target: TARGET_VUS },
-        { duration: SUSTAIN_DURATION, target: TARGET_VUS },
-        { duration: '10s', target: 0 },
-      ],
-      gracefulRampDown: '5s',
+      vus: TARGET_VUS,
+      iterations: SESSIONS_PER_VU,
+      maxDuration: '5m',
     },
   },
   thresholds: {
-    http_req_duration: ['p(95)<800', 'p(99)<1500'],
+    'http_req_duration{name:CreateAssistantSession}': ['p(95)<800', 'p(99)<1500'],
     assistant_session_create_errors: ['rate<0.01'],
     checks: ['rate>0.99'],
   },
 };
 
+export function setup() {
+  for (let vu = 1; vu <= TARGET_VUS; vu++) {
+    uploadAndWait(projectFor(vu), 'seed.owl', SEED, devJwt(identityFor(vu), PLAN));
+  }
+}
+
 export function createSession() {
-  const projectId = `${PROJECT_PREFIX}-${__VU}-${__ITER}`;
   const payload = JSON.stringify({
-    projectId,
+    projectId: projectFor(__VU),
     documentPath: '/doc.owl',
     actionType: 'ask',
     actionContext: 'k6 load test iteration',
@@ -58,7 +57,7 @@ export function createSession() {
   const res = http.post(`${BASE_URL}/api/v1/code-assistant/sessions`, payload, {
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${buildUnsignedJwt(identityFor(__VU, __ITER), PLAN)}`,
+      Authorization: `Bearer ${devJwt(identityFor(__VU), PLAN)}`,
     },
     tags: { name: 'CreateAssistantSession' },
   });

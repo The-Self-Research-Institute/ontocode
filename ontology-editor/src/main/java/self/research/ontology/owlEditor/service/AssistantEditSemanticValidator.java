@@ -113,38 +113,12 @@ public class AssistantEditSemanticValidator {
         List<String> missing = new ArrayList<>();
         List<String> invalid = new ArrayList<>();
         if (!checked.isEmpty()) {
-            List<String> lookup = new ArrayList<>();
-            for (String iri : checked) {
-                if (AssistantGraphIdentifierLookup.isSafeIri(iri)) {
-                    lookup.add(iri);
-                } else {
-                    invalid.add(iri);
-                }
-            }
-            try {
-                Set<String> existing = lookup.isEmpty() ? Set.of() : graphLookup.existing(projectId, lookup);
-                for (String iri : lookup) {
-                    if (!existing.contains(iri)) {
-                        missing.add(iri);
-                    }
-                }
-            } catch (Exception e) {
-                return new CheckResult(REFERENCES_RESOLVE, false,
-                        "Could not look up this group's new identifiers in the graph (" + e.getMessage() + ").");
+            CheckResult lookupFailure = findMissingReferences(projectId, checked, missing, invalid);
+            if (lookupFailure != null) {
+                return lookupFailure;
             }
         }
-        List<String> problems = new ArrayList<>();
-        if (!missing.isEmpty()) {
-            problems.add("these identifiers are not in the graph and are not declared in this group, which usually "
-                    + "means a typo: " + angle(missing));
-        }
-        if (!invalid.isEmpty()) {
-            problems.add("these are not valid IRIs: " + angle(invalid));
-        }
-        if (!unresolved.isEmpty()) {
-            problems.add("these can't be resolved to full IRIs (undeclared prefix or relative IRI): "
-                    + String.join(", ", unresolved));
-        }
+        List<String> problems = referenceProblems(missing, invalid, unresolved);
         String overflow = notChecked > 0
                 ? " " + notChecked + " more new identifier" + (notChecked == 1 ? " was" : "s were")
                 + " not checked (limit " + MAX_IDENTIFIERS_PER_GROUP + " per group)."
@@ -160,12 +134,79 @@ public class AssistantEditSemanticValidator {
                 + (checked.size() == 1 ? "" : "s") + " referenced by this group already exist in the graph." + overflow);
     }
 
+    private CheckResult findMissingReferences(String projectId, List<String> checked, List<String> missing,
+                                              List<String> invalid) {
+        List<String> lookup = new ArrayList<>();
+        for (String iri : checked) {
+            if (AssistantGraphIdentifierLookup.isSafeIri(iri)) {
+                lookup.add(iri);
+            } else {
+                invalid.add(iri);
+            }
+        }
+        try {
+            Set<String> existing = lookup.isEmpty() ? Set.of() : graphLookup.existing(projectId, lookup);
+            for (String iri : lookup) {
+                if (!existing.contains(iri)) {
+                    missing.add(iri);
+                }
+            }
+        } catch (Exception e) {
+            return new CheckResult(REFERENCES_RESOLVE, false,
+                    "Could not look up this group's new identifiers in the graph (" + e.getMessage() + ").");
+        }
+        return null;
+    }
+
+    private List<String> referenceProblems(List<String> missing, List<String> invalid, List<String> unresolved) {
+        List<String> problems = new ArrayList<>();
+        if (!missing.isEmpty()) {
+            problems.add("these identifiers are not in the graph and are not declared in this group, which usually "
+                    + "means a typo: " + angle(missing));
+        }
+        if (!invalid.isEmpty()) {
+            problems.add("these are not valid IRIs: " + angle(invalid));
+        }
+        if (!unresolved.isEmpty()) {
+            problems.add("these can't be resolved to full IRIs (undeclared prefix or relative IRI): "
+                    + String.join(", ", unresolved));
+        }
+        return problems;
+    }
+
     private CheckResult checkDeclarations(String projectId, Extracted extracted) {
         Map<String, Set<String>> added = addedDeclarations(extracted);
         if (added.isEmpty()) {
             return new CheckResult(NO_CONFLICTING_DECLARATION, true, "This group adds no OWL declarations.");
         }
         List<String> conflicts = new ArrayList<>();
+        addIntraGroupConflicts(extracted, added, conflicts);
+        List<String> iris = new ArrayList<>(added.keySet());
+        List<String> checked = iris.subList(0, Math.min(iris.size(), MAX_IDENTIFIERS_PER_GROUP));
+        int notChecked = iris.size() - checked.size();
+        Map<String, Set<String>> graphKinds;
+        try {
+            graphKinds = graphLookup.declaredKinds(projectId, checked);
+        } catch (Exception e) {
+            return new CheckResult(NO_CONFLICTING_DECLARATION, false,
+                    "Could not look up existing declarations in the graph (" + e.getMessage() + ").");
+        }
+        addGraphConflicts(checked, graphKinds, removedDeclarations(extracted), added, conflicts);
+        String overflow = notChecked > 0
+                ? " " + notChecked + " more declared identifier" + (notChecked == 1 ? " was" : "s were")
+                + " not checked against the graph (limit " + MAX_IDENTIFIERS_PER_GROUP + " per group)."
+                : "";
+        if (!conflicts.isEmpty()) {
+            return new CheckResult(NO_CONFLICTING_DECLARATION, false, String.join("; ", conflicts)
+                    + ". Class-and-individual punning is allowed, but a class can't also be a property and the "
+                    + "object, datatype and annotation property kinds can't be mixed." + overflow);
+        }
+        return new CheckResult(NO_CONFLICTING_DECLARATION, true, "None of the " + checked.size()
+                + " newly declared identifier" + (checked.size() == 1 ? "" : "s")
+                + " conflicts with an existing declaration." + overflow);
+    }
+
+    private void addIntraGroupConflicts(Extracted extracted, Map<String, Set<String>> added, List<String> conflicts) {
         for (Map.Entry<String, Set<String>> entry : added.entrySet()) {
             List<String> kinds = new ArrayList<>(extracted.after().declared.get(entry.getKey()));
             for (int i = 0; i < kinds.size(); i++) {
@@ -179,17 +220,11 @@ public class AssistantEditSemanticValidator {
                 }
             }
         }
-        List<String> iris = new ArrayList<>(added.keySet());
-        List<String> checked = iris.subList(0, Math.min(iris.size(), MAX_IDENTIFIERS_PER_GROUP));
-        int notChecked = iris.size() - checked.size();
-        Map<String, Set<String>> graphKinds;
-        try {
-            graphKinds = graphLookup.declaredKinds(projectId, checked);
-        } catch (Exception e) {
-            return new CheckResult(NO_CONFLICTING_DECLARATION, false,
-                    "Could not look up existing declarations in the graph (" + e.getMessage() + ").");
-        }
-        Map<String, Set<String>> removed = removedDeclarations(extracted);
+    }
+
+    private void addGraphConflicts(List<String> checked, Map<String, Set<String>> graphKinds,
+                                   Map<String, Set<String>> removed, Map<String, Set<String>> added,
+                                   List<String> conflicts) {
         for (String iri : checked) {
             Set<String> existing = new LinkedHashSet<>(graphKinds.getOrDefault(iri, Set.of()));
             existing.removeAll(removed.getOrDefault(iri, Set.of()));
@@ -202,18 +237,6 @@ public class AssistantEditSemanticValidator {
                 }
             }
         }
-        String overflow = notChecked > 0
-                ? " " + notChecked + " more declared identifier" + (notChecked == 1 ? " was" : "s were")
-                + " not checked against the graph (limit " + MAX_IDENTIFIERS_PER_GROUP + " per group)."
-                : "";
-        if (!conflicts.isEmpty()) {
-            return new CheckResult(NO_CONFLICTING_DECLARATION, false, String.join("; ", conflicts)
-                    + ". Class-and-individual punning is allowed, but a class can't also be a property and the "
-                    + "object, datatype and annotation property kinds can't be mixed." + overflow);
-        }
-        return new CheckResult(NO_CONFLICTING_DECLARATION, true, "None of the " + checked.size()
-                + " newly declared identifier" + (checked.size() == 1 ? "" : "s")
-                + " conflicts with an existing declaration." + overflow);
     }
 
     private Map<String, Set<String>> addedDeclarations(Extracted extracted) {

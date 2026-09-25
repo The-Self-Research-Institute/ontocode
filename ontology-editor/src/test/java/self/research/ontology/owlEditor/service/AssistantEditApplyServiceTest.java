@@ -41,23 +41,23 @@ import static org.mockito.Mockito.when;
 class AssistantEditApplyServiceTest extends AssistantEditApplyTestBase {
 
     @Test
-    void unknownGroupReturnsValidationFailed() {
+    void unknownGroupReturnsProposalNotFound() {
         when(groupRepository.findById("g1")).thenReturn(Optional.empty());
 
         ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
 
         assertFalse(result.isOk());
-        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+        assertEquals("PROPOSAL_NOT_FOUND", result.getErrorCode());
     }
 
     @Test
-    void wrongUserReturnsValidationFailedNotAuthorizationLeak() {
+    void wrongUserGetsTheSameProposalNotFoundAsAnUnknownGroup() {
         when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.PENDING)));
 
         ApplyResult result = applyService.applyGroup("s1", "g1", "attacker@x.com");
 
         assertFalse(result.isOk());
-        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+        assertEquals("PROPOSAL_NOT_FOUND", result.getErrorCode());
     }
 
     @Test
@@ -331,7 +331,7 @@ class AssistantEditApplyServiceTest extends AssistantEditApplyTestBase {
         ApplyResult result = applyService.applyGroup("s-other", "g1", "u@x.com");
 
         assertFalse(result.isOk());
-        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+        assertEquals("PROPOSAL_NOT_FOUND", result.getErrorCode());
         assertEquals("Unknown or unauthorized proposal", result.getMessage());
         verify(reimportPipeline, never()).reimport(any());
         verify(spliceWriter, never()).splice(any(), anyString(), any());
@@ -343,7 +343,7 @@ class AssistantEditApplyServiceTest extends AssistantEditApplyTestBase {
 
         ApplyResult result = applyService.applyGroup(null, "g1", "u@x.com");
 
-        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+        assertEquals("PROPOSAL_NOT_FOUND", result.getErrorCode());
         verify(reimportPipeline, never()).reimport(any());
     }
 

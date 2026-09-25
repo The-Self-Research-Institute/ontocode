@@ -116,6 +116,19 @@ class AssistantEditControllerTest {
     }
 
     @Test
+    void applyOfAnUnknownOrForeignProposalIsForbidden() {
+        when(applyService.applyGroup(anyString(), anyString(), anyString())).thenReturn(ApplyResult.builder().ok(false)
+                .errorCode(AssistantEditApplyService.PROPOSAL_NOT_FOUND).message("Unknown or unauthorized proposal").build());
+
+        ResponseEntity<?> response = controller.apply("s1", "g1", requestWithBearerToken());
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals("PROPOSAL_NOT_FOUND", body.get("errorCode"));
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void proposeIncludesEachChecksDetailOnlyWhenPresent() {
         GroupProposalOutcome outcome = GroupProposalOutcome.builder()

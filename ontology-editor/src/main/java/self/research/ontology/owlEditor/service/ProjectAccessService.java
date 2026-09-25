@@ -22,6 +22,19 @@ public class ProjectAccessService {
         this.mongoTemplate = mongoTemplate;
     }
 
+    public boolean projectExists(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            return false;
+        }
+        if (projectRepository.existsById(projectId)) {
+            return true;
+        }
+        int compositeSep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
+        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
+        return mongoTemplate.exists(new Query(Criteria.where("projectId").is(parentProjectId)), ProjectDocument.class,
+                "projects");
+    }
+
     public boolean hasProjectAccess(String projectId, String email) {
         if (projectId == null || projectId.isBlank() || email == null || email.isBlank()) {
             return false;

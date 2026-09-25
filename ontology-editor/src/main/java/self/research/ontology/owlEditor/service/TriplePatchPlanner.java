@@ -29,7 +29,8 @@ final class TriplePatchPlanner {
     record Edit(long startLine, int lineCount, int newLineCount) {}
 
     record TriplePatch(Model removed, Model added, Map<IRI, Integer> treeDeleteDepth, Model insertedTrees,
-                       Model restoredTrees, Model kept, Set<IRI> subjects, Model expected, int verifyDepth) {}
+                       Model restoredTrees, Model kept, Set<IRI> subjects, Model expected, int verifyDepth,
+                       SubjectRangeIndex newIndex) {}
 
     Optional<TriplePatch> plan(String format, Path oldFile, Path newFile, List<Edit> edits, String baseUri)
             throws IOException {
@@ -37,11 +38,15 @@ final class TriplePatchPlanner {
             return Optional.empty();
         }
         SubjectRangeIndex oldIndex = CodeViewSubjectIndex.forFile(oldFile, format).orElse(null);
-        SubjectRangeIndex newIndex = CodeViewSubjectIndex.build(newFile, format);
+        SubjectRangeIndex newIndex = newIndexFor(oldIndex, edits, newFile, format);
         if (oldIndex == null || !oldIndex.complete() || !newIndex.complete()) {
             return Optional.empty();
         }
-        PatchSpans spans = PatchSpans.compute(edits, oldIndex, newIndex);
+        Set<Long> headerOnly = PrefixOnlyEdits.find(format, edits, oldIndex, newIndex, newFile);
+        if (headerOnly == null) {
+            return Optional.empty();
+        }
+        PatchSpans spans = PatchSpans.compute(edits, oldIndex, newIndex, headerOnly);
         if (spans == null || spans.totalOldLines() > MAX_PATCH_LINES) {
             return Optional.empty();
         }
@@ -109,7 +114,20 @@ final class TriplePatchPlanner {
             return Optional.empty();
         }
         return Optional.of(new TriplePatch(removed, added, treeDeleteDepth, insertedTrees, restoredTrees, kept,
-                subjects, expected, maxDepth + 1));
+                subjects, expected, maxDepth + 1, newIndex));
+    }
+
+    private static SubjectRangeIndex newIndexFor(SubjectRangeIndex oldIndex, List<Edit> edits, Path newFile,
+                                                 String format) throws IOException {
+        if (oldIndex == null) {
+            return CodeViewSubjectIndex.build(newFile, format);
+        }
+        long started = System.nanoTime();
+        Optional<SubjectRangeIndex> derived = IncrementalSubjectIndex.derive(oldIndex, edits, newFile, format);
+        SubjectRangeIndex index = derived.isPresent() ? derived.get() : CodeViewSubjectIndex.build(newFile, format);
+        log.info("[PERF] Patch plan new-file index: {} in {}ms", derived.isPresent() ? "incremental" : "full rebuild",
+                (System.nanoTime() - started) / 1_000_000);
+        return index;
     }
 
     private Model expectedAfter(Set<IRI> subjects, SubjectRangeIndex newIndex, PatchFragments fragments, Path newFile)

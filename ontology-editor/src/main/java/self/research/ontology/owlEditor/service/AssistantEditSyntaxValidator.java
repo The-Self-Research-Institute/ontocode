@@ -40,6 +40,12 @@ public class AssistantEditSyntaxValidator {
         Path splicedFile = null;
         try {
             Path sourceFile = storageManager.ensureCodeViewFile(projectId, targetPath);
+            long started = System.nanoTime();
+            if (RegionSyntaxCheck.parses(sourceFile, targetPath, edits)) {
+                log.info("[PERF] Syntax check parsed only the edited region in {}ms",
+                        (System.nanoTime() - started) / 1_000_000);
+                return new SyntaxResult(true, null);
+            }
             String extension = storageManager.extensionFor(targetPath);
             splicedFile = spliceWriter.splice(sourceFile, extension, edits);
             RDFFormat format = rdfFormatFor(targetPath);
@@ -48,6 +54,7 @@ public class AssistantEditSyntaxValidator {
                 parser.setRDFHandler(new AbstractRDFHandler() {});
                 parser.parse(is, "");
             }
+            log.info("[PERF] Syntax check parsed the whole file in {}ms", (System.nanoTime() - started) / 1_000_000);
             return new SyntaxResult(true, null);
         } catch (Exception e) {
             log.warn("[Assistant] Syntax check failed for project {} targetPath {}: {}",

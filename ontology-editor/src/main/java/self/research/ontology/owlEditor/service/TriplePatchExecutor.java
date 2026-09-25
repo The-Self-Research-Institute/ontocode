@@ -28,6 +28,9 @@ final class TriplePatchExecutor {
     }
 
     Outcome apply(String projectId, TriplePatchPlanner.TriplePatch patch) {
+        if (patch.subjects().isEmpty()) {
+            return Outcome.APPLIED;
+        }
         SparqlDatasetService.ProjectGraphTarget target = datasetService.graphTarget(projectId);
         String graph = target.graphUri();
         try (RepositoryConnection conn = target.repository().getConnection()) {

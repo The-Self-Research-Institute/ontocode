@@ -179,18 +179,45 @@ public final class RdfXmlSubjectBlockReader {
     private void finishTag(long lineNo) {
         String tag = markup.toString();
         if (tag.startsWith("</")) {
-            depth = Math.max(0, depth - 1);
-            if (blockDepth >= 0 && depth == blockDepth) {
-                closeBlock();
-            }
-            if (index != null && depth == 1) {
-                index.closeBlock(lineNo);
-            } else if (index != null && depth == 0) {
-                index.footer(tag, lineNo);
-            }
+            finishEndTag(tag, lineNo);
             return;
         }
         boolean selfClosing = tag.endsWith("/>");
+        SubjectAttributes attributes = readAttributes(tag);
+        String about = attributes.about();
+        if (index != null) {
+            indexTag(tag, selfClosing, about, attributes.rdfId(), attributes.nodeId(), lineNo);
+        }
+        if (about != null && blockDepth < 0 && !target.isBlank() && matches(about)) {
+            collector.start(markupStartLine, pendingLines);
+            if (collector.open()) {
+                blockDepth = depth;
+            }
+        }
+        if (selfClosing) {
+            if (blockDepth >= 0 && depth == blockDepth) {
+                closeBlock();
+            }
+        } else {
+            depth++;
+        }
+    }
+
+    private record SubjectAttributes(String about, String rdfId, String nodeId) {}
+
+    private void finishEndTag(String tag, long lineNo) {
+        depth = Math.max(0, depth - 1);
+        if (blockDepth >= 0 && depth == blockDepth) {
+            closeBlock();
+        }
+        if (index != null && depth == 1) {
+            index.closeBlock(lineNo);
+        } else if (index != null && depth == 0) {
+            index.footer(tag, lineNo);
+        }
+    }
+
+    private SubjectAttributes readAttributes(String tag) {
         String about = null;
         String rdfId = null;
         String nodeId = null;
@@ -214,22 +241,7 @@ public final class RdfXmlSubjectBlockReader {
                 nodeId = value;
             }
         }
-        if (index != null) {
-            indexTag(tag, selfClosing, about, rdfId, nodeId, lineNo);
-        }
-        if (about != null && blockDepth < 0 && !target.isBlank() && matches(about)) {
-            collector.start(markupStartLine, pendingLines);
-            if (collector.open()) {
-                blockDepth = depth;
-            }
-        }
-        if (selfClosing) {
-            if (blockDepth >= 0 && depth == blockDepth) {
-                closeBlock();
-            }
-        } else {
-            depth++;
-        }
+        return new SubjectAttributes(about, rdfId, nodeId);
     }
 
     private void indexTag(String tag, boolean selfClosing, String about, String rdfId, String nodeId, long lineNo) {

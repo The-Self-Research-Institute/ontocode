@@ -29,6 +29,8 @@ import java.util.Optional;
 @Service
 public class AssistantEditApplyService {
 
+    public static final String PROPOSAL_NOT_FOUND = "PROPOSAL_NOT_FOUND";
+
     public static final String PROJECT_RECOVERY_LOCKED = "PROJECT_RECOVERY_LOCKED";
     public static final String APPLY_OPERATION = "apply";
 
@@ -105,7 +107,7 @@ public class AssistantEditApplyService {
     public ApplyResult applyGroup(String sessionId, String serverGroupId, String userEmail) {
         Optional<AssistantEditGroupDocument> initial = groupRepository.findById(serverGroupId);
         if (initial.isEmpty() || !belongsTo(initial.get(), sessionId, userEmail)) {
-            ApplyResult rejected = errorResult("VALIDATION_FAILED", "Unknown or unauthorized proposal");
+            ApplyResult rejected = errorResult(PROPOSAL_NOT_FOUND, "Unknown or unauthorized proposal");
             audit(userEmail, null, sessionId, serverGroupId, rejected);
             return rejected;
         }
@@ -165,37 +167,15 @@ public class AssistantEditApplyService {
             throws IOException {
         AssistantEditGroupDocument group = groupRepository.findById(serverGroupId).orElse(null);
         if (group == null || !belongsTo(group, sessionId, userEmail)) {
-            return errorResult("VALIDATION_FAILED", "Unknown or unauthorized proposal");
+            return errorResult(PROPOSAL_NOT_FOUND, "Unknown or unauthorized proposal");
         }
 
-        switch (group.getStatus()) {
-            case APPLIED:
-                return idempotentReplay(group);
-            case DISCARDED:
-            case VALIDATION_FAILED:
-                return errorResult("VALIDATION_FAILED", "Proposal is not applicable");
-            case STALE:
-                return errorResult("STALE_GROUP", group.getStaleReason());
-            case CONFLICT:
-                return errorResult("CONFLICT", group.getStaleReason() != null
-                        ? group.getStaleReason() : "Document changed since this group was checked");
-            case RECOVERY_REQUIRED:
-                return errorResult("RECOVERY_REQUIRED", "An earlier attempt to apply this proposal failed partway "
-                        + "through, so it won't be applied again. Check the project's state before making further changes.");
-            case PENDING:
-                break;
+        ApplyResult rejected = rejectByStatus(group);
+        if (rejected == null) {
+            rejected = rejectIfProjectBlocked(group);
         }
-
-        if (recoveryLockService.isLocked(group.getProjectId())) {
-            return errorResult(PROJECT_RECOVERY_LOCKED, "This project is locked after a failed apply. Restore it "
-                    + "or clear the lock before applying more changes.");
-        }
-        Optional<AssistantApplyOperationDocument> unresolved = operationService.findUnresolvedForGroup(group.getId());
-        if (unresolved.isPresent()) {
-            log.warn("[Assistant] Refusing to start a second import for group {}: operation {} is still {}",
-                    group.getId(), unresolved.get().getId(), unresolved.get().getStatus());
-            return errorResult("RECOVERY_REQUIRED", "An earlier attempt to apply this proposal hasn't been resolved "
-                    + "yet, so it won't be started again. Check the project's state before making further changes.");
+        if (rejected != null) {
+            return rejected;
         }
 
         List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = toSpliceEdits(group);
@@ -219,43 +199,82 @@ public class AssistantEditApplyService {
             if (outcome.failure() != null) {
                 return outcome.failure();
             }
-            AssistantGraphWriter.Written reimportResult = outcome.written();
-
-            group.setStatus(AssistantEditGroupStatus.APPLIED);
-            group.setAppliedRevision(reimportResult.sourceVersion());
-            group.setAppliedAt(Instant.now());
-            group.setUpdatedAt(Instant.now());
-            groupRepository.save(group);
-
-            List<AssistantEditGroupDocument> siblings = new ArrayList<>(groupRepository.findByProjectIdAndTargetPathAndStatus(
-                    group.getProjectId(), group.getTargetPath(), AssistantEditGroupStatus.PENDING));
-            siblings.removeIf(sibling -> sibling.getId().equals(group.getId()));
-            List<AssistantEditGroupDocument> shiftedOrStale = remapService.remap(group, siblings);
-            List<AssistantEditGroupDocument> touched = reimportResult.cacheMatchesSubmittedContent()
-                    ? remapService.stampVerifiedPositions(siblings, shiftedOrStale, reimportResult.sourceVersion())
-                    : shiftedOrStale;
-            if (!touched.isEmpty()) {
-                groupRepository.saveAll(touched);
-            }
-            perf.mark("commitAndRemap");
-
-            List<RemappedGroupInfo> remappedInfo = new ArrayList<>();
-            for (AssistantEditGroupDocument sibling : siblings) {
-                boolean stale = sibling.getStatus() == AssistantEditGroupStatus.STALE;
-                remappedInfo.add(new RemappedGroupInfo(sibling.getId(), shiftedOrStale.contains(sibling), stale));
-            }
-
-            log.info("[Assistant] Applied group {} for project {}, revision {}, {} sibling group(s) shifted or stale",
-                    group.getId(), group.getProjectId(), reimportResult.sourceVersion(), shiftedOrStale.size());
-
-            return ApplyResult.builder().ok(true).applied(true)
-                    .newRevision(reimportResult.sourceVersion())
-                    .remappedPendingGroups(remappedInfo)
-                    .appliedRanges(AssistantEditGroupRemapService.appliedRanges(group))
-                    .build();
+            return commitApplied(group, outcome.written(), perf);
         } finally {
             Files.deleteIfExists(splicedFile);
         }
+    }
+
+    private ApplyResult rejectByStatus(AssistantEditGroupDocument group) {
+        switch (group.getStatus()) {
+            case APPLIED:
+                return idempotentReplay(group);
+            case DISCARDED:
+            case VALIDATION_FAILED:
+                return errorResult("VALIDATION_FAILED", "Proposal is not applicable");
+            case STALE:
+                return errorResult("STALE_GROUP", group.getStaleReason());
+            case CONFLICT:
+                return errorResult("CONFLICT", group.getStaleReason() != null
+                        ? group.getStaleReason() : "Document changed since this group was checked");
+            case RECOVERY_REQUIRED:
+                return errorResult("RECOVERY_REQUIRED", "An earlier attempt to apply this proposal failed partway "
+                        + "through, so it won't be applied again. Check the project's state before making further changes.");
+            case PENDING:
+                break;
+        }
+        return null;
+    }
+
+    private ApplyResult rejectIfProjectBlocked(AssistantEditGroupDocument group) {
+        if (recoveryLockService.isLocked(group.getProjectId())) {
+            return errorResult(PROJECT_RECOVERY_LOCKED, "This project is locked after a failed apply. Restore it "
+                    + "or clear the lock before applying more changes.");
+        }
+        Optional<AssistantApplyOperationDocument> unresolved = operationService.findUnresolvedForGroup(group.getId());
+        if (unresolved.isPresent()) {
+            log.warn("[Assistant] Refusing to start a second import for group {}: operation {} is still {}",
+                    group.getId(), unresolved.get().getId(), unresolved.get().getStatus());
+            return errorResult("RECOVERY_REQUIRED", "An earlier attempt to apply this proposal hasn't been resolved "
+                    + "yet, so it won't be started again. Check the project's state before making further changes.");
+        }
+        return null;
+    }
+
+    private ApplyResult commitApplied(AssistantEditGroupDocument group, AssistantGraphWriter.Written reimportResult,
+                                      PerfPhases perf) {
+        group.setStatus(AssistantEditGroupStatus.APPLIED);
+        group.setAppliedRevision(reimportResult.sourceVersion());
+        group.setAppliedAt(Instant.now());
+        group.setUpdatedAt(Instant.now());
+        groupRepository.save(group);
+
+        List<AssistantEditGroupDocument> siblings = new ArrayList<>(groupRepository.findByProjectIdAndTargetPathAndStatus(
+                group.getProjectId(), group.getTargetPath(), AssistantEditGroupStatus.PENDING));
+        siblings.removeIf(sibling -> sibling.getId().equals(group.getId()));
+        List<AssistantEditGroupDocument> shiftedOrStale = remapService.remap(group, siblings);
+        List<AssistantEditGroupDocument> touched = reimportResult.cacheMatchesSubmittedContent()
+                ? remapService.stampVerifiedPositions(siblings, shiftedOrStale, reimportResult.sourceVersion())
+                : shiftedOrStale;
+        if (!touched.isEmpty()) {
+            groupRepository.saveAll(touched);
+        }
+        perf.mark("commitAndRemap");
+
+        List<RemappedGroupInfo> remappedInfo = new ArrayList<>();
+        for (AssistantEditGroupDocument sibling : siblings) {
+            boolean stale = sibling.getStatus() == AssistantEditGroupStatus.STALE;
+            remappedInfo.add(new RemappedGroupInfo(sibling.getId(), shiftedOrStale.contains(sibling), stale));
+        }
+
+        log.info("[Assistant] Applied group {} for project {}, revision {}, {} sibling group(s) shifted or stale",
+                group.getId(), group.getProjectId(), reimportResult.sourceVersion(), shiftedOrStale.size());
+
+        return ApplyResult.builder().ok(true).applied(true)
+                .newRevision(reimportResult.sourceVersion())
+                .remappedPendingGroups(remappedInfo)
+                .appliedRanges(AssistantEditGroupRemapService.appliedRanges(group))
+                .build();
     }
 
     private void markConflict(AssistantEditGroupDocument group, String message) {

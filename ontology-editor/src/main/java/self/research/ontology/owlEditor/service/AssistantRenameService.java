@@ -64,19 +64,11 @@ public class AssistantRenameService {
     }
 
     public RenameDerivation derive(String projectId, EditOperation operation, int maxLines) {
-        if (operation == null || !RENAME_IDENTIFIER.equals(operation.type())) {
-            return RenameDerivation.refused("Unsupported operation type '" + (operation == null ? null : operation.type())
-                    + "'. The only supported operation is " + RENAME_IDENTIFIER + ".");
+        String operationProblem = operationProblem(operation);
+        if (operationProblem != null) {
+            return RenameDerivation.refused(operationProblem);
         }
         String targetPath = operation.targetPath();
-        if (targetPath == null || targetPath.isBlank()) {
-            return RenameDerivation.refused("The rename operation has no targetPath.");
-        }
-        if (!isSupportedFormat(targetPath)) {
-            return RenameDerivation.refused("Typed rename is only supported for " + SUPPORTED_FORMATS_TEXT
-                    + " documents; occurrences in " + targetPath + " can't be matched exactly, so no rename was "
-                    + "generated. Switch the Code View to one of the supported formats, or propose explicit edits.");
-        }
         try {
             Path file = storageManager.ensureCodeViewFile(projectId, targetPath);
             boolean rdfXml = isRdfXml(targetPath);
@@ -97,17 +89,9 @@ public class AssistantRenameService {
                 return RenameDerivation.refused("targetIdentifier and replacementIdentifier are the same IRI <"
                         + target.iri + ">.");
             }
-            Set<String> inGraph;
-            try {
-                inGraph = graphLookup.existing(projectId, List.of(replacement.iri));
-            } catch (Exception e) {
-                return RenameDerivation.refused("Could not confirm that <" + replacement.iri
-                        + "> is unused in the graph (" + e.getMessage() + "), so no rename was generated.");
-            }
-            if (!inGraph.isEmpty()) {
-                return RenameDerivation.refused("The replacement <" + replacement.iri
-                        + "> already exists in the graph. Renaming onto an existing identifier would merge two "
-                        + "entities, so no rename was generated.");
+            String graphProblem = replacementInGraphProblem(projectId, replacement.iri);
+            if (graphProblem != null) {
+                return RenameDerivation.refused(graphProblem);
             }
             Scan scan = rdfXml
                     ? scanRdfXml(file, target.iri, replacement.iri, maxLines)
@@ -120,16 +104,53 @@ public class AssistantRenameService {
                 return RenameDerivation.refused("<" + target.iri + "> does not occur in the " + targetPath
                         + " document, so there is nothing to rename.");
             }
-            return new RenameDerivation(true, "Found " + scan.occurrences + " occurrence"
-                    + (scan.occurrences == 1 ? "" : "s") + " of <" + target.iri + "> on " + scan.edits.size()
-                    + " line" + (scan.edits.size() == 1 ? "" : "s") + "; each is renamed to <" + replacement.iri + ">.",
-                    target.iri, replacement.iri, scan.edits, scan.occurrences);
+            return derived(scan, target.iri, replacement.iri);
         } catch (Exception e) {
             log.warn("[Assistant] Rename derivation failed for project {} targetPath {}: {}",
                     projectId, targetPath, e.getMessage());
             return RenameDerivation.refused("Could not read the " + targetPath + " document to derive the rename ("
                     + e.getMessage() + "), so no rename was generated.");
         }
+    }
+
+    private static RenameDerivation derived(Scan scan, String targetIri, String replacementIri) {
+        return new RenameDerivation(true, "Found " + scan.occurrences + " occurrence"
+                + (scan.occurrences == 1 ? "" : "s") + " of <" + targetIri + "> on " + scan.edits.size()
+                + " line" + (scan.edits.size() == 1 ? "" : "s") + "; each is renamed to <" + replacementIri + ">.",
+                targetIri, replacementIri, scan.edits, scan.occurrences);
+    }
+
+    private static String operationProblem(EditOperation operation) {
+        if (operation == null || !RENAME_IDENTIFIER.equals(operation.type())) {
+            return "Unsupported operation type '" + (operation == null ? null : operation.type())
+                    + "'. The only supported operation is " + RENAME_IDENTIFIER + ".";
+        }
+        String targetPath = operation.targetPath();
+        if (targetPath == null || targetPath.isBlank()) {
+            return "The rename operation has no targetPath.";
+        }
+        if (!isSupportedFormat(targetPath)) {
+            return "Typed rename is only supported for " + SUPPORTED_FORMATS_TEXT
+                    + " documents; occurrences in " + targetPath + " can't be matched exactly, so no rename was "
+                    + "generated. Switch the Code View to one of the supported formats, or propose explicit edits.";
+        }
+        return null;
+    }
+
+    private String replacementInGraphProblem(String projectId, String replacementIri) {
+        Set<String> inGraph;
+        try {
+            inGraph = graphLookup.existing(projectId, List.of(replacementIri));
+        } catch (Exception e) {
+            return "Could not confirm that <" + replacementIri
+                    + "> is unused in the graph (" + e.getMessage() + "), so no rename was generated.";
+        }
+        if (!inGraph.isEmpty()) {
+            return "The replacement <" + replacementIri
+                    + "> already exists in the graph. Renaming onto an existing identifier would merge two "
+                    + "entities, so no rename was generated.";
+        }
+        return null;
     }
 
     private static final class Declarations {
@@ -364,16 +385,9 @@ public class AssistantRenameService {
                     return scan;
                 }
                 if (scanner.atSafeBoundary()) {
-                    for (int k = 0; k < bufferedLines.size(); k++) {
-                        long current = firstBufferedLine + k;
-                        List<RdfXmlScanner.Occurrence> occurrences = pending.remove(current);
-                        if (occurrences == null) {
-                            continue;
-                        }
-                        if (!rewriteRdfXmlLine(scan, current, bufferedLines.get(k), occurrences, targetIri,
-                                replacementIri, maxLines)) {
-                            return scan;
-                        }
+                    if (!rewriteBufferedRdfXmlLines(scan, bufferedLines, firstBufferedLine, pending, targetIri,
+                            replacementIri, maxLines)) {
+                        return scan;
                     }
                     bufferedLines.clear();
                     bufferedChars = 0;
@@ -392,6 +406,23 @@ public class AssistantRenameService {
                     + firstBufferedLine + ", so no rename was generated.";
         }
         return scan;
+    }
+
+    private boolean rewriteBufferedRdfXmlLines(Scan scan, List<String> bufferedLines, long firstBufferedLine,
+                                               TreeMap<Long, List<RdfXmlScanner.Occurrence>> pending,
+                                               String targetIri, String replacementIri, int maxLines) {
+        for (int k = 0; k < bufferedLines.size(); k++) {
+            long current = firstBufferedLine + k;
+            List<RdfXmlScanner.Occurrence> occurrences = pending.remove(current);
+            if (occurrences == null) {
+                continue;
+            }
+            if (!rewriteRdfXmlLine(scan, current, bufferedLines.get(k), occurrences, targetIri,
+                    replacementIri, maxLines)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean rewriteRdfXmlLine(Scan scan, long lineNo, String line, List<RdfXmlScanner.Occurrence> occurrences,

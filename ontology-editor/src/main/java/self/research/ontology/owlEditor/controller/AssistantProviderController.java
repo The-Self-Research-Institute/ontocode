@@ -40,13 +40,13 @@ import java.util.Optional;
         methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class AssistantProviderController {
 
-    private static final int ENVELOPE_OVERHEAD_BYTES = 1024;
     static final int MAX_USAGE_BODY_BYTES = 8 * 1024;
 
     private final AssistantProviderProxyService proxyService;
     private final AssistantSessionService sessionService;
     private final AssistantUsageMetricsService usageMetricsService;
     private final ObjectMapper objectMapper;
+    private final ProviderCallGuard guard;
 
     public AssistantProviderController(AssistantProviderProxyService proxyService,
                                        AssistantSessionService sessionService,
@@ -56,6 +56,7 @@ public class AssistantProviderController {
         this.sessionService = sessionService;
         this.usageMetricsService = usageMetricsService;
         this.objectMapper = objectMapper;
+        this.guard = new ProviderCallGuard(proxyService, sessionService, objectMapper);
     }
 
     @GetMapping("/provider-config")
@@ -72,44 +73,11 @@ public class AssistantProviderController {
 
     @PostMapping("/sessions/{sessionId}/provider-call")
     public ResponseEntity<?> providerCall(@PathVariable String sessionId, HttpServletRequest httpRequest) {
-        Optional<String> email = JwtIdentityExtractor.extractEmail(httpRequest);
-        if (email.isEmpty()) {
-            return error(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Missing or invalid Authorization header");
+        ProviderCallGuard.Admitted admitted = guard.admit(sessionId, httpRequest);
+        if (admitted.rejected()) {
+            return admitted.rejection();
         }
-        String userEmail = email.get();
-        if (!proxyService.isManaged()) {
-            return error(HttpStatus.SERVICE_UNAVAILABLE, "PROVIDER_UNAVAILABLE",
-                    "Managed provider mode is not configured on this server");
-        }
-        if (sessionService.getActiveSession(sessionId, userEmail).isEmpty()) {
-            return error(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found or no longer active");
-        }
-        AssistantProviderRateLimiter.Decision decision = proxyService.tryAcquireRate(userEmail);
-        if (!decision.allowed()) {
-            return rateLimited(decision.retryAfterSeconds(), "Too many provider calls, try again shortly");
-        }
-
-        int limit = proxyService.getMaxRequestBytes() + ENVELOPE_OVERHEAD_BYTES;
-        if (httpRequest.getContentLengthLong() > limit) {
-            return error(HttpStatus.PAYLOAD_TOO_LARGE, "VALIDATION_FAILED", "request is larger than the allowed size");
-        }
-        JsonNode envelope;
-        try {
-            byte[] raw = readBounded(httpRequest.getInputStream(), limit);
-            if (raw == null) {
-                return error(HttpStatus.PAYLOAD_TOO_LARGE, "VALIDATION_FAILED",
-                        "request is larger than the allowed size");
-            }
-            envelope = objectMapper.readTree(raw);
-        } catch (IOException e) {
-            return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "body must be a JSON object with a request field");
-        }
-        JsonNode providerRequest = envelope == null ? null : envelope.get("request");
-        if (providerRequest == null || !providerRequest.isObject()) {
-            return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "body must be a JSON object with a request field");
-        }
-
-        ProviderCallResult result = proxyService.forward(providerRequest);
+        ProviderCallResult result = proxyService.forward(admitted.providerRequest());
         if (result.isError()) {
             if (result.status() == 429 && result.retryAfterSeconds() != null) {
                 return rateLimited(result.retryAfterSeconds(), result.message());
@@ -196,21 +164,10 @@ public class AssistantProviderController {
     }
 
     private static ResponseEntity<Map<String, Object>> error(HttpStatus status, String errorCode, String message) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("ok", false);
-        body.put("errorCode", errorCode);
-        body.put("message", message);
-        return ResponseEntity.status(status).body(body);
+        return ProviderCallGuard.error(status, errorCode, message);
     }
 
     private static ResponseEntity<Map<String, Object>> rateLimited(long retryAfterSeconds, String message) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("ok", false);
-        body.put("errorCode", "RATE_LIMITED");
-        body.put("message", message);
-        body.put("retryAfterSeconds", retryAfterSeconds);
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfterSeconds))
-                .body(body);
+        return ProviderCallGuard.rateLimited(retryAfterSeconds, message);
     }
 }

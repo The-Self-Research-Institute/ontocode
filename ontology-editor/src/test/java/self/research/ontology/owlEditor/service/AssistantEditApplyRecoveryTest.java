@@ -251,7 +251,7 @@ class AssistantEditApplyRecoveryTest extends AssistantEditApplyTestBase {
 
         AssistantAuditEvent event = auditedEvent();
         assertEquals("failed", event.outcome());
-        assertEquals("VALIDATION_FAILED", event.errorCode());
+        assertEquals("PROPOSAL_NOT_FOUND", event.errorCode());
         assertNull(event.projectId());
         assertNull(event.provider());
         assertNull(event.model());

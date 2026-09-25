@@ -56,7 +56,8 @@ public class AssistantEditController {
         return JwtIdentityExtractor.extractEmail(httpRequest)
                 .map(userEmail -> {
                     ApplyResult result = applyService.applyGroup(sessionId, serverGroupId, userEmail);
-                    return ResponseEntity.ok(toBody(result));
+                    int status = AssistantEditApplyService.PROPOSAL_NOT_FOUND.equals(result.getErrorCode()) ? 403 : 200;
+                    return ResponseEntity.status(status).body(toBody(result));
                 })
                 .orElseGet(AssistantEditController::unauthorized);
     }
