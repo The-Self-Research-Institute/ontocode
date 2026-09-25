@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
@@ -169,7 +170,7 @@ public class StorageManager {
         };
     }
 
-    private boolean requiresOwlApiFormat(String format) {
+    public boolean requiresOwlApiFormat(String format) {
         if (format == null) {
             return false;
         }
@@ -227,6 +228,41 @@ public class StorageManager {
 
         log.info("Exported ontology to: {} ({} bytes)", exportPath, Files.size(exportPath));
         return exportPath;
+    }
+
+    public String convertRdfXmlToOwlApiFormat(String rdfXmlContent, String format) throws IOException {
+        if (rdfXmlContent == null || rdfXmlContent.isBlank()) {
+            throw new IOException("No RDF/XML content to convert");
+        }
+
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyLoaderConfiguration loaderConfig = new OWLOntologyLoaderConfiguration()
+                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
+        manager.setOntologyLoaderConfiguration(loaderConfig);
+        OWLOntology ontology;
+        try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
+            ontology = manager.loadOntologyFromOntologyDocument(input);
+        } catch (OWLOntologyCreationException e) {
+            throw new IOException("Failed to parse ontology for conversion to " + format + ": " + e.getMessage(), e);
+        }
+
+        OWLDocumentFormat sourceFormat = manager.getOntologyFormat(ontology);
+        OWLDocumentFormat documentFormat = resolveOwlApiFormat(format);
+
+        if (sourceFormat != null && sourceFormat.isPrefixOWLDocumentFormat()
+                && documentFormat.isPrefixOWLDocumentFormat()) {
+            var sourcePrefixes = sourceFormat.asPrefixOWLDocumentFormat().getPrefixName2PrefixMap();
+            var targetPrefixes = documentFormat.asPrefixOWLDocumentFormat();
+            sourcePrefixes.forEach(targetPrefixes::setPrefix);
+        }
+
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        try {
+            manager.saveOntology(ontology, documentFormat, outputStream);
+        } catch (OWLOntologyStorageException e) {
+            throw new IOException("Failed to convert ontology to format: " + format + " — " + e.getMessage(), e);
+        }
+        return outputStream.toString(StandardCharsets.UTF_8);
     }
 
     private OWLDocumentFormat resolveOwlApiFormat(String format) {
@@ -431,6 +467,26 @@ public class StorageManager {
 
     private void bumpPublicGraphVersion(String projectId) {
         publicGraphVersions.put(projectId, graphVersionCounter.incrementAndGet());
+    }
+
+    private final ConcurrentHashMap<String, Long> draftGraphVersions = new ConcurrentHashMap<>();
+
+    private String draftVersionKey(String projectId, String userId) {
+        return projectId + "::" + userId;
+    }
+
+    public void bumpDraftGraphVersion(String projectId, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return;
+        }
+        draftGraphVersions.put(draftVersionKey(projectId, userId), graphVersionCounter.incrementAndGet());
+    }
+
+    public long getDraftGraphVersion(String projectId, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return 0L;
+        }
+        return draftGraphVersions.getOrDefault(draftVersionKey(projectId, userId), 0L);
     }
 
     /** Opaque version marker for the project's public-graph ontology content, handed to the

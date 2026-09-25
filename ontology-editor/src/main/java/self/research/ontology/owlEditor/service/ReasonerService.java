@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 import openllet.owlapi.OpenlletReasonerFactory;
@@ -20,6 +21,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 /**
  * Service for ontology reasoning operations.
@@ -54,6 +56,9 @@ public class ReasonerService {
     // separate hardcoded copy of the same constant, not read from the same field.
     @Value("${ontocode.reasoner.per-individual-timeout-ms:5000}")
     private long PER_INDIVIDUAL_TYPE_TIMEOUT_MS;
+
+    @Value("${ontocode.reasoner.save-consistency-timeout-ms:8000}")
+    private long SAVE_CONSISTENCY_TIMEOUT_MS;
     private final ExecutorService inferredTypesExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "reasoner-inferred-types-worker");
         t.setDaemon(true);
@@ -550,7 +555,130 @@ public class ReasonerService {
             log.error("Error getting reasoner stats", e);
             stats.put("error", e.getMessage());
         }
-        
+
         return stats;
     }
+
+    private static final String GENERIC_INCONSISTENCY_MESSAGE =
+        "Inconsistent: this change makes the ontology inconsistent.";
+
+    public static final class SaveConsistencyResult {
+        public final boolean consistent;
+        public final boolean timedOut;
+        public final String violationMessage;
+         public final String entity;
+
+        public final List<String> unsatisfiableClasses;
+
+        private SaveConsistencyResult(boolean consistent, boolean timedOut, String violationMessage, String entity,
+                List<String> unsatisfiableClasses) {
+            this.consistent = consistent;
+            this.timedOut = timedOut;
+            this.violationMessage = violationMessage;
+            this.entity = entity;
+            this.unsatisfiableClasses = unsatisfiableClasses;
+        }
+
+        static SaveConsistencyResult consistent(List<String> unsatisfiableClasses) {
+            return new SaveConsistencyResult(true, false, null, null, unsatisfiableClasses);
+        }
+
+        static SaveConsistencyResult timedOut() {
+            return new SaveConsistencyResult(true, true, null, null, Collections.emptyList());
+        }
+
+        static SaveConsistencyResult inconsistent(String message, String entity) {
+            return new SaveConsistencyResult(false, false, message, entity, Collections.emptyList());
+        }
+    }
+
+    public SaveConsistencyResult checkConsistencyForSave(OWLOntology ontology, ReasonerType type) {
+
+        SaveConsistencyResult illTyped = findIllTypedLiteralViolation(ontology);
+        if (illTyped != null) {
+            return illTyped;
+        }
+
+        long setupStart = System.currentTimeMillis();
+        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLReasoner reasoner = createReasoner(reasoningOntology, type);
+        long consistencyStart = System.currentTimeMillis();
+        CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(reasoner::isConsistent, inferredTypesExecutor);
+
+        boolean consistent;
+        try {
+            consistent = future.get(SAVE_CONSISTENCY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            log.info("[TIMING] Save-time reasoning: strip+create {} ms, isConsistent() {} ms",
+                    consistencyStart - setupStart, System.currentTimeMillis() - consistencyStart);
+        } catch (TimeoutException te) {
+            log.warn("Save-time consistency check timed out after {} ms; allowing save through unchecked", SAVE_CONSISTENCY_TIMEOUT_MS);
+            reasoner.interrupt();
+            future.whenComplete((r, ex) -> { try { reasoner.dispose(); } catch (Exception ignored) {} });
+            return SaveConsistencyResult.timedOut();
+        } catch (Exception e) {
+            log.warn("Save-time consistency check failed ({}); allowing save through unchecked", e.getMessage());
+            try { reasoner.dispose(); } catch (Exception ignored) {}
+            return SaveConsistencyResult.timedOut();
+        }
+
+        if (consistent) {
+
+            try { reasoner.dispose(); } catch (Exception ignored) {}
+            return SaveConsistencyResult.consistent(Collections.emptyList());
+        }
+
+        try { reasoner.dispose(); } catch (Exception ignored) {}
+     
+        return SaveConsistencyResult.inconsistent(GENERIC_INCONSISTENCY_MESSAGE, null);
+    }
+
+    public List<String> getUnsatisfiableClassesQuick(OWLOntology ontology, ReasonerType type) {
+        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLReasoner reasoner = createReasoner(reasoningOntology, type);
+        try {
+            if (!reasoner.isConsistent()) {
+                return Collections.emptyList();
+            }
+            Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
+            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            return bottomNode.getEntities().stream()
+                .filter(c -> !c.equals(df.getOWLNothing()))
+                .map(c -> c.getIRI().toString().replaceAll("^.*[#/]", ""))
+                .collect(Collectors.toList());
+        } finally {
+            try { reasoner.dispose(); } catch (Exception ignored) {}
+        }
+    }
+
+
+    private SaveConsistencyResult findIllTypedLiteralViolation(OWLOntology ontology) {
+        for (OWLDataPropertyAssertionAxiom axiom : ontology.getAxioms(AxiomType.DATA_PROPERTY_ASSERTION)) {
+            OWLLiteral literal = axiom.getObject();
+            IRI datatypeIri = literal.getDatatype().getIRI();
+            if (!org.semanticweb.owlapi.vocab.OWL2Datatype.isBuiltIn(datatypeIri)) {
+                continue;
+            }
+            org.semanticweb.owlapi.vocab.OWL2Datatype datatype = org.semanticweb.owlapi.vocab.OWL2Datatype.getDatatype(datatypeIri);
+            if (!datatype.isInLexicalSpace(literal.getLiteral())) {
+                String entity = axiom.getSubject().isNamed()
+                    ? axiom.getSubject().asOWLNamedIndividual().getIRI().toString().replaceAll("^.*[#/]", "")
+                    : null;
+                return SaveConsistencyResult.inconsistent(GENERIC_INCONSISTENCY_MESSAGE, entity);
+            }
+        }
+        return null;
+    }
+ private OWLOntology stripSwrlRules(OWLOntology ontology) {
+        Set<OWLAxiom> axioms = ontology.getAxioms().stream()
+            .filter(ax -> ax.getAxiomType() != AxiomType.SWRL_RULE)
+            .collect(Collectors.toSet());
+        try {
+            OWLOntologyManager mgr = OWLManager.createOWLOntologyManager();
+            return mgr.createOntology(axioms);
+        } catch (OWLOntologyCreationException e) {
+            log.warn("Failed to strip SWRL rules, falling back to original ontology", e);
+            return ontology;
+        }
+    }
+
 }

@@ -102,6 +102,12 @@ public class OntologyCrudController {
             }
             draftTrackingService.recordDrafts(projectId, userId, username, request.ops(), sessionId);
 
+            try {
+                historyService.recordGroupedMutations(projectId, userId, username, request.ops(), true);
+            } catch (Exception e) {
+                log.warn("[MUTATION] Failed to record draft mutation history for project {}: {}", projectId, e.getMessage());
+            }
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "draft", true,
@@ -127,17 +133,16 @@ public class OntologyCrudController {
                 final String finalUsername = username;
                 final List<OntologyMutationService.MutationOp> ops = request.ops();
                 CompletableFuture.runAsync(() -> {
+                    try {
+                        historyService.recordGroupedMutations(projectId, finalUserId, finalUsername, ops, false);
+                    } catch (Exception e) {
+                        log.warn("[MUTATION] Grouped history recording failed for project {}: {}", projectId, e.getMessage());
+                    }
                     for (OntologyMutationService.MutationOp op : ops) {
                         try {
-                            historyService.recordEdit(
-                                projectId, finalUserId, finalUsername,
-                                op.type(), op.iri(), op.label(),
-                                op.oldValue(), op.value(),
-                                op.type() + " operation", op.property()
-                            );
                             collaborativeEditService.broadcastMutation(projectId, op, finalUserId, finalUsername);
                         } catch (Exception e) {
-                            log.warn("[MUTATION] Async history/broadcast failed for op {}: {}", op.type(), e.getMessage());
+                            log.warn("[MUTATION] Async broadcast failed for op {}: {}", op.type(), e.getMessage());
                         }
                     }
                     log.info("[MUTATION] Recorded {} changes to GraphDB history (async)", ops.size());
