@@ -115,7 +115,8 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
                 // CALLER'S OWN DRAFT, never into public (403 here was the draft-editor pull bug).
                 boolean isDraftMutation = "true".equalsIgnoreCase(request.getParameter("draft"))
                         || "true".equalsIgnoreCase(request.getParameter("useDraft"));
-                boolean isDraftEndpoint = path.contains("/draft") || path.contains("/pull-from-public/");
+                boolean isDraftEndpoint = path.contains("/draft") || path.contains("/pull-from-public/")
+                        || path.contains("/rollback");
                 if (isDraftMutation || isDraftEndpoint) {
                     return true;
                 }

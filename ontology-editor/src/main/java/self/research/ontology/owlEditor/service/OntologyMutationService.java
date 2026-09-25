@@ -163,17 +163,25 @@ public class OntologyMutationService {
      * {@link SparqlDatasetService#execUpdate} via {@link OntologySpringCacheEvictionService}.
      */
     public void apply(String projectId, List<MutationOp> ops) {
-        apply(projectId, ops, false, null);
+        apply(projectId, ops, false, null, false);
     }
 
     /**
      * Apply mutations to the user's draft named graph (private editing — not visible to other users).
      */
     public void applyDraft(String projectId, String userId, List<MutationOp> ops) {
-        apply(projectId, ops, true, userId);
+        apply(projectId, ops, true, userId, false);
     }
 
-    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId) {
+    public void applyForRollback(String projectId, List<MutationOp> ops) {
+        apply(projectId, ops, false, null, true);
+    }
+
+    public void applyDraftForRollback(String projectId, String userId, List<MutationOp> ops) {
+        apply(projectId, ops, true, userId, true);
+    }
+
+    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId, boolean skipHistorySnapshot) {
         if (ops == null || ops.isEmpty()) {
             log.warn("[MUTATION] No operations to apply for project: {}", projectId);
             return;
@@ -198,8 +206,10 @@ public class OntologyMutationService {
         log.info("[MUTATION] Generated SPARQL (BEFORE graph injection):");
         log.info("[MUTATION] {}", sparql);
 
-        for (MutationOp op : ops) {
-            snapshotAxiomsBeforeDelete(projectId, op, userId);
+        if (!skipHistorySnapshot) {
+            for (MutationOp op : ops) {
+                snapshotAxiomsBeforeDelete(projectId, op, userId, draft);
+            }
         }
 
         try {
@@ -237,6 +247,7 @@ public class OntologyMutationService {
             if (draft) {
                 requireDraftCopyReady(projectId, userId);
                 datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
+                storageManager.bumpDraftGraphVersion(projectId, userId);
             } else {
                 datasetService.execUpdate(projectId, sparql);
                 if (mainGraphRevisionService != null) {
@@ -2223,7 +2234,7 @@ public class OntologyMutationService {
         return expression.contains(" ") && !expression.trim().startsWith("<") && !expression.trim().startsWith("_:");
     }
 
-    private void snapshotAxiomsBeforeDelete(String projectId, MutationOp op, String userId) {
+    private void snapshotAxiomsBeforeDelete(String projectId, MutationOp op, String userId, boolean draft) {
         if (historyService == null || op.iri() == null) return;
         String type = op.type();
         if (type == null || !type.startsWith("delete")) return;
@@ -2243,11 +2254,11 @@ public class OntologyMutationService {
                 if (predicate.equals("http://www.w3.org/2000/01/rdf-schema#subClassOf")) {
                     historyService.recordEdit(projectId, userId, effectiveUsername,
                             "removeSubClassOf", op.iri(), op.label(), object, null,
-                            "subClassOf changed via " + type, null);
+                            "subClassOf changed via " + type, null, null, draft);
                 } else {
                     historyService.recordEdit(projectId, userId, effectiveUsername,
                             "removeStatement", op.iri(), op.label(), object, null,
-                            "Property assertion changed via " + type + " (" + predicate + ")", predicate);
+                            "Property assertion changed via " + type + " (" + predicate + ")", predicate, null, draft);
                 }
             }
         } catch (Exception e) {

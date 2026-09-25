@@ -66,6 +66,28 @@ public class HistorySyncService {
                 builder.description((String) changeData.get("description"));
             }
 
+            if (changeData.containsKey("draft")) {
+                builder.draft(Boolean.TRUE.equals(changeData.get("draft")));
+            }
+
+            if (changeData.containsKey("subChanges")) {
+                Object raw = changeData.get("subChanges");
+                if (raw instanceof List<?> rawList) {
+                    List<HistoryChange.SubChange> subChanges = new java.util.ArrayList<>();
+                    for (Object entry : rawList) {
+                        if (entry instanceof Map<?, ?> m) {
+                            subChanges.add(new HistoryChange.SubChange(
+                                    (String) m.get("predicate"),
+                                    (String) m.get("oldValue"),
+                                    (String) m.get("newValue"),
+                                    (String) m.get("annotationProperty"),
+                                    "true".equals(m.get("addition"))));
+                        }
+                    }
+                    builder.subChanges(subChanges);
+                }
+            }
+
             if (changeData.containsKey("timestamp")) {
                 Object timestampObj = changeData.get("timestamp");
                 if (timestampObj instanceof Long) {

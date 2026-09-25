@@ -1227,6 +1227,11 @@ public class SparqlDatasetService {
         }
     }
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {
+        return exportDraftGraphContent(projectId, userId, rdfFormat, java.util.Map.of());
+    }
+
+    public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat,
+            java.util.Map<String, String> extraPrefixes) {
         String draftGraph = getDraftGraphUri(projectId, userId);
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
@@ -1241,10 +1246,20 @@ public class SparqlDatasetService {
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             org.eclipse.rdf4j.rio.RDFWriter writer = org.eclipse.rdf4j.rio.Rio.createWriter(rdfFormat, out);
             writer.startRDF();
+            java.util.Set<String> registeredPrefixes = new java.util.HashSet<>();
             writer.handleNamespace("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
             writer.handleNamespace("rdfs", "http://www.w3.org/2000/01/rdf-schema#");
             writer.handleNamespace("owl", "http://www.w3.org/2002/07/owl#");
             writer.handleNamespace("xsd", "http://www.w3.org/2001/XMLSchema#");
+            registeredPrefixes.add("rdf");
+            registeredPrefixes.add("rdfs");
+            registeredPrefixes.add("owl");
+            registeredPrefixes.add("xsd");
+            for (Map.Entry<String, String> entry : extraPrefixes.entrySet()) {
+                if (registeredPrefixes.add(entry.getKey())) {
+                    writer.handleNamespace(entry.getKey(), entry.getValue());
+                }
+            }
             for (org.eclipse.rdf4j.model.Statement st : statements) {
                 writer.handleStatement(st);
             }
