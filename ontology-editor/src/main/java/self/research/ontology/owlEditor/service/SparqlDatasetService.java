@@ -1776,7 +1776,7 @@ public class SparqlDatasetService {
                         public void handleNamespace(String prefix, String uri) {
                             // Optimized: Skip namespace handling - causes overhead for large imports
                             // GraphDB infers namespaces from data anyway
-                            if (prefix != null && !prefix.isBlank() && uri != null && !uri.isBlank()) {
+                            if (prefix != null && uri != null && !uri.isBlank()) {
                                 capturedNamespaces.putIfAbsent(prefix, uri);
                             }
                         }
@@ -2117,7 +2117,7 @@ public class SparqlDatasetService {
                 nsParser.setRDFHandler(new AbstractRDFHandler() {
                     @Override
                     public void handleNamespace(String prefix, String uri) {
-                        if (prefix != null && !prefix.isBlank() && uri != null && !uri.isBlank()) {
+                       if (prefix != null && uri != null && !uri.isBlank()) {
                             capturedNamespaces.putIfAbsent(prefix, uri);
                         }
                     }
@@ -2766,6 +2766,7 @@ public class SparqlDatasetService {
             // Post-process: strip GraphDB system xmlns declarations from RDF/XML output
             if (format == org.eclipse.rdf4j.rio.RDFFormat.RDFXML) {
                 result = stripSystemNamespaces(result);
+                result = stripPrefixesNotInProject(result, projectId);
             }
             log.info("[TIMING] exportDataset for project {}: {} ms ({} chars, format: {})",
                      projectId, elapsedMillis(exportStart), result.length(), format);
@@ -2843,6 +2844,78 @@ public class SparqlDatasetService {
         }
         return rdfXml;
     }
+
+    private String stripPrefixesNotInProject(String rdfXml, String projectId) {
+    if (projectMetadataService == null) {
+        log.warn("[PREFIX-STRIP] projectMetadataService is NULL for project {} — skipping", projectId);
+        return rdfXml;
+    }
+    Set<String> ownPrefixes = new java.util.HashSet<>();
+    try {
+        Map<String, Object> meta = projectMetadataService.readMeta(projectId).orElse(null);
+        if (meta == null) {
+            log.warn("[PREFIX-STRIP] No metadata found for project {} — skipping", projectId);
+            return rdfXml;
+        }
+        Object raw = meta.get("prefixes");
+        if (raw instanceof Map<?, ?> map) {
+            for (Object key : map.keySet()) {
+                ownPrefixes.add(String.valueOf(key));
+            }
+        } else if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> entry) {
+                    Object prefix = entry.get("prefix");
+                    if (prefix != null) {
+                        ownPrefixes.add(String.valueOf(prefix));
+                    }
+                }
+            }
+        } else {
+            log.warn("[PREFIX-STRIP] 'prefixes' field unrecognized type for project {} (was: {}) — skipping",
+                    projectId, raw == null ? "null" : raw.getClass());
+            return rdfXml;
+        }
+        log.info("[PREFIX-STRIP] project {} has {} own prefixes: {}", projectId, ownPrefixes.size(), ownPrefixes);
+    } catch (Exception e) {
+        log.warn("[PREFIX-STRIP] Exception loading prefixes for {}: {}", projectId, e.getMessage());
+        return rdfXml;
+    }
+    if (ownPrefixes.isEmpty()) {
+        log.warn("[PREFIX-STRIP] ownPrefixes empty for project {} — skipping", projectId);
+        return rdfXml;
+    }
+
+    java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("xmlns:([A-Za-z_][\\w.-]*)=\"[^\"]*\"").matcher(rdfXml);
+    Set<String> declared = new java.util.HashSet<>();
+    while (m.find()) {
+        declared.add(m.group(1));
+    }
+    log.info("[PREFIX-STRIP] project {} export declared {} xmlns prefixes before stripping", projectId, declared.size());
+
+    Set<String> normalizedOwn = new java.util.HashSet<>();
+    for (String p : ownPrefixes) {
+        normalizedOwn.add(p.endsWith(":") ? p.substring(0, p.length() - 1) : p);
+    }
+
+    int stripped = 0;
+    for (String prefix : declared) {
+        if (prefix.equals("rdf") || normalizedOwn.contains(prefix)) {
+            continue;
+        }
+        java.util.regex.Pattern usagePattern = java.util.regex.Pattern.compile(
+                "[<\\s\"']" + java.util.regex.Pattern.quote(prefix) + ":[A-Za-z_]");
+        if (usagePattern.matcher(rdfXml).find()) {
+            continue;
+        }
+        rdfXml = rdfXml.replaceAll(
+                "\\s+xmlns:" + java.util.regex.Pattern.quote(prefix) + "=\"[^\"]*\"", "");
+        stripped++;
+    }
+    log.info("[PREFIX-STRIP] project {} stripped {} prefixes, {} remain", projectId, stripped, declared.size() - stripped);
+    return rdfXml;
+}
 
     public RepositoryConnection getConnection() {
         return getRepository().getConnection();

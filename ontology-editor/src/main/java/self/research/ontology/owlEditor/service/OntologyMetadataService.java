@@ -84,6 +84,59 @@ public class OntologyMetadataService {
           FILTER NOT EXISTS { ?s a rdfs:Datatype }
         }
         """;
+    
+    private static final String CLASS_ASSERTION_COUNT_QUERY = """
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(*) AS ?count) WHERE {
+          ?s rdf:type ?o .
+          FILTER(isIRI(?o))
+          FILTER(?o NOT IN (
+            owl:Class, owl:ObjectProperty, owl:DatatypeProperty, owl:AnnotationProperty,
+            owl:NamedIndividual, owl:Ontology, owl:Restriction, owl:AllDisjointClasses,
+            owl:AllDisjointProperties, owl:AllDifferent, owl:NegativePropertyAssertion,
+            owl:FunctionalProperty, owl:InverseFunctionalProperty, owl:TransitiveProperty,
+            owl:SymmetricProperty, owl:AsymmetricProperty, owl:ReflexiveProperty,
+            owl:IrreflexiveProperty, rdfs:Datatype,
+            rdf:List, owl:Axiom
+          ))
+        }
+        """;
+    
+    private static final String ANNOTATION_ASSERTION_COUNT_QUERY = """
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(*) AS ?count) WHERE {
+          ?s ?annProp ?o .
+          FILTER(isLiteral(?o) || isIRI(?o))
+          {
+            ?annProp a owl:AnnotationProperty .
+          }
+          UNION
+          {
+            VALUES ?annProp {
+              rdfs:label rdfs:comment rdfs:seeAlso rdfs:isDefinedBy
+              owl:deprecated owl:versionInfo owl:backwardCompatibleWith owl:incompatibleWith owl:priorVersion
+            }
+          }
+          FILTER NOT EXISTS { ?annProp a owl:ObjectProperty }
+          FILTER NOT EXISTS { ?annProp a owl:DatatypeProperty }
+          FILTER(STRSTARTS(STR(?annProp), "http://www.w3.org/2003/11/swrl#") = false)
+          FILTER(?annProp NOT IN (
+            rdf:type, rdfs:subClassOf, rdfs:subPropertyOf, rdfs:domain, rdfs:range,
+            owl:equivalentClass, owl:disjointWith, owl:equivalentProperty, owl:inverseOf,
+            owl:onProperty, owl:someValuesFrom, owl:allValuesFrom, owl:hasValue, owl:onClass, owl:onDataRange,
+            owl:intersectionOf, owl:unionOf, owl:complementOf, owl:oneOf, owl:members, owl:distinctMembers,
+            rdf:first, rdf:rest, owl:imports, owl:versionIRI, owl:sameAs, owl:differentFrom,
+            owl:minCardinality, owl:maxCardinality, owl:cardinality,
+            owl:minQualifiedCardinality, owl:maxQualifiedCardinality, owl:qualifiedCardinality,
+            owl:propertyChainAxiom, owl:withRestrictions, owl:onDatatype,
+            owl:annotatedSource, owl:annotatedProperty, owl:annotatedTarget
+          ))
+        }
+        """;
 
     private static final String DATATYPE_USAGE_COUNT_QUERY = """
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -1085,8 +1138,10 @@ public class OntologyMetadataService {
             log.error("Error getting predicate counts for project {}", projectId, e);
         }
 
-        int domainCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#domain", 0);
-        int rangeCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#range", 0);
+        int objectDomainCount = getPropertyTypedPredicateCount(projectId, "rdfs:domain", "owl:ObjectProperty");
+        int objectRangeCount = getPropertyTypedPredicateCount(projectId, "rdfs:range", "owl:ObjectProperty");
+        int dataDomainCount = getPropertyTypedPredicateCount(projectId, "rdfs:domain", "owl:DatatypeProperty");
+        int dataRangeCount = getPropertyTypedPredicateCount(projectId, "rdfs:range", "owl:DatatypeProperty");
         int subPropCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#subPropertyOf", 0);
         int equivPropCount = predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#equivalentProperty", 0);
         int disjPropCount = predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#propertyDisjointWith", 0);
@@ -1099,19 +1154,19 @@ public class OntologyMetadataService {
         metrics.put("equivalentObjectPropertiesAxiomCount", equivPropCount);
         metrics.put("inverseObjectPropertiesAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#inverseOf", 0));
         metrics.put("disjointObjectPropertiesAxiomCount", disjPropCount);
-        metrics.put("objectPropertyDomainAxiomCount", domainCount);
-        metrics.put("objectPropertyRangeAxiomCount", rangeCount);
+        metrics.put("objectPropertyDomainAxiomCount", objectDomainCount);
+        metrics.put("objectPropertyRangeAxiomCount", objectRangeCount);
         metrics.put("subDataPropertyOfAxiomCount", subPropCount);
         metrics.put("equivalentDataPropertiesAxiomCount", equivPropCount);
         metrics.put("disjointDataPropertiesAxiomCount", disjPropCount);
-        metrics.put("dataPropertyDomainAxiomCount", domainCount);
-        metrics.put("dataPropertyRangeAxiomCount", rangeCount);
-        metrics.put("classAssertionAxiomCount", predCountMap.getOrDefault("http://www.w3.org/1999/02/22-rdf-syntax-ns#type", 0));
+        metrics.put("dataPropertyDomainAxiomCount", dataDomainCount);
+        metrics.put("dataPropertyRangeAxiomCount", dataRangeCount);
+        metrics.put("classAssertionAxiomCount", getClassAssertionCount(projectId));
         metrics.put("sameIndividualAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#sameAs", 0));
         metrics.put("differentIndividualsAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#differentFrom", 0));
         metrics.put("subPropertyChainOfAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#propertyChainAxiom", 0));
-        metrics.put("annotationPropertyDomainAxiomCount", domainCount);
-        metrics.put("annotationPropertyRangeAxiomCount", rangeCount);
+        metrics.put("annotationPropertyDomainAxiomCount", objectDomainCount + dataDomainCount);
+        metrics.put("annotationPropertyRangeAxiomCount", objectRangeCount + dataRangeCount);
         metrics.put("subAnnotationPropertyOfAxiomCount", subPropCount);
 
         // ── 3. Predicate-type join counts (single query) ──
@@ -1139,7 +1194,7 @@ public class OntologyMetadataService {
 
         metrics.put("objectPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#ObjectProperty", 0));
         metrics.put("dataPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#DatatypeProperty", 0));
-        metrics.put("annotationAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#AnnotationProperty", 0));
+        metrics.put("annotationAssertionAxiomCount", getAnnotationAssertionCount(projectId));
 
         // GCI count
         metrics.put("gciCount", getGCICount(projectId));
@@ -1179,8 +1234,10 @@ public class OntologyMetadataService {
             log.error("Error getting predicate counts (backfill) for project {}", projectId, e);
         }
 
-        int domainCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#domain", 0);
-        int rangeCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#range", 0);
+        int objectDomainCount = getPropertyTypedPredicateCount(projectId, "rdfs:domain", "owl:ObjectProperty");
+        int objectRangeCount = getPropertyTypedPredicateCount(projectId, "rdfs:range", "owl:ObjectProperty");
+        int dataDomainCount = getPropertyTypedPredicateCount(projectId, "rdfs:domain", "owl:DatatypeProperty");
+        int dataRangeCount = getPropertyTypedPredicateCount(projectId, "rdfs:range", "owl:DatatypeProperty");
         int subPropCount = predCountMap.getOrDefault("http://www.w3.org/2000/01/rdf-schema#subPropertyOf", 0);
         int equivPropCount = predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#equivalentProperty", 0);
         int disjPropCount = predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#propertyDisjointWith", 0);
@@ -1189,19 +1246,19 @@ public class OntologyMetadataService {
         metrics.put("equivalentObjectPropertiesAxiomCount", equivPropCount);
         metrics.put("inverseObjectPropertiesAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#inverseOf", 0));
         metrics.put("disjointObjectPropertiesAxiomCount", disjPropCount);
-        metrics.put("objectPropertyDomainAxiomCount", domainCount);
-        metrics.put("objectPropertyRangeAxiomCount", rangeCount);
+        metrics.put("objectPropertyDomainAxiomCount", objectDomainCount);
+        metrics.put("objectPropertyRangeAxiomCount", objectRangeCount);
         metrics.put("subDataPropertyOfAxiomCount", subPropCount);
         metrics.put("equivalentDataPropertiesAxiomCount", equivPropCount);
         metrics.put("disjointDataPropertiesAxiomCount", disjPropCount);
-        metrics.put("dataPropertyDomainAxiomCount", domainCount);
-        metrics.put("dataPropertyRangeAxiomCount", rangeCount);
-        metrics.put("classAssertionAxiomCount", predCountMap.getOrDefault("http://www.w3.org/1999/02/22-rdf-syntax-ns#type", 0));
+        metrics.put("dataPropertyDomainAxiomCount", dataDomainCount);
+        metrics.put("dataPropertyRangeAxiomCount", dataRangeCount);
+        metrics.put("classAssertionAxiomCount", getClassAssertionCount(projectId));
         metrics.put("sameIndividualAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#sameAs", 0));
         metrics.put("differentIndividualsAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#differentFrom", 0));
         metrics.put("subPropertyChainOfAxiomCount", predCountMap.getOrDefault("http://www.w3.org/2002/07/owl#propertyChainAxiom", 0));
-        metrics.put("annotationPropertyDomainAxiomCount", domainCount);
-        metrics.put("annotationPropertyRangeAxiomCount", rangeCount);
+        metrics.put("annotationPropertyDomainAxiomCount", objectDomainCount + dataDomainCount);
+        metrics.put("annotationPropertyRangeAxiomCount", objectRangeCount + dataRangeCount);
         metrics.put("subAnnotationPropertyOfAxiomCount", subPropCount);
 
         String predTypeCounts = PREFIXES + """
@@ -1228,7 +1285,7 @@ public class OntologyMetadataService {
 
         metrics.put("objectPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#ObjectProperty", 0));
         metrics.put("dataPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#DatatypeProperty", 0));
-        metrics.put("annotationAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#AnnotationProperty", 0));
+        metrics.put("annotationAssertionAxiomCount", getAnnotationAssertionCount(projectId));
 
         return metrics;
     }
@@ -1261,6 +1318,27 @@ public class OntologyMetadataService {
             }
         } catch (Exception e) {
             log.error("Error getting count for predicate " + predicate, e);
+        }
+        return 0;
+    }
+
+    private int getPropertyTypedPredicateCount(String projectId, String predicate, String propertyType) {
+        String query = PREFIXES + String.format("""
+            SELECT (COUNT(*) AS ?count) WHERE {
+              ?s %s ?o .
+              ?s a %s .
+            }
+            """, predicate, propertyType);
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, query);
+            if (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (sol.hasBinding("count")) {
+                    return Integer.parseInt(sol.getValue("count").stringValue());
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error getting {}-typed count for predicate {}", propertyType, predicate, e);
         }
         return 0;
     }
@@ -1388,6 +1466,36 @@ public class OntologyMetadataService {
         }
         return 0;
     }
+
+    private int getClassAssertionCount(String projectId) {
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, CLASS_ASSERTION_COUNT_QUERY);
+            if (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (sol.hasBinding("count")) {
+                    return Integer.parseInt(sol.getValue("count").stringValue());
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error getting class assertion count for project {}", projectId, e);
+        }
+        return 0;
+    }
+
+    private int getAnnotationAssertionCount(String projectId) {
+        try {
+            TupleQueryResult rs = datasetService.execSelect(projectId, ANNOTATION_ASSERTION_COUNT_QUERY);
+            if (rs.hasNext()) {
+                BindingSet sol = rs.next();
+                if (sol.hasBinding("count")) {
+                    return Integer.parseInt(sol.getValue("count").stringValue());
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error getting annotation assertion count for project {}", projectId, e);
+        }
+        return 0;
+    }
     /**
      * Get all prefixes
      */
@@ -1510,6 +1618,7 @@ public class OntologyMetadataService {
         
         prefixes.put(prefix, iri);
         meta.put("prefixes", prefixes);
+        meta.put("prefixCount", prefixes.size());
         projectMetadataService.writeMeta(projectId, meta);
 
         // 2. Also update in GraphDB (repository-wide)
@@ -1548,6 +1657,7 @@ public class OntologyMetadataService {
             if (prefixes.containsKey(prefix)) {
                 prefixes.remove(prefix);
                 meta.put("prefixes", prefixes);
+                meta.put("prefixCount", prefixes.size());
                 projectMetadataService.writeMeta(projectId, meta);
             }
         }
