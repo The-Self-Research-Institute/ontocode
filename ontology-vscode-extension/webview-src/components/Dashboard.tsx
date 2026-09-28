@@ -57,6 +57,7 @@ import {
   AlertTriangle,
   Monitor,
   Scale,
+  EyeOff,
 } from "lucide-react";
 import apiClient, { ApiError, getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -1593,6 +1594,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleViewOnlyAction = () => setShowProPromptType(isProjectViewerRole ? 'viewer' : 'edit');
   const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
+  const [metricViewMode, setMetricViewMode] = useState<Record<string, "used" | "available">>({});
+  const [hoveredMetricKey, setHoveredMetricKey] = useState<string | null>(null);
+  const [metricTooltipPos, setMetricTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const [isPlanExpired, setIsPlanExpired] = useState(false);
   const isCurrentWorkspaceOwner = user?.workspaceRole == null || normalizeRole(user?.workspaceRole ?? "") === "OWNER";
   const openFileIsPlanExpired = isPlanExpired && isCurrentWorkspaceOwner;
@@ -5234,7 +5238,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshPrefixes = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`));
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${encodeProjectId(projectId)}/prefixes`));
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
       setPrefixMappings(normalizePrefixMappings(data));
@@ -5661,6 +5665,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Refresh prefixes from server
       await refreshPrefixes();
+      void silentRefreshMetadata();
 
       notificationService.success(
         isEdit ? "Prefix Updated" : "Prefix Added",
@@ -5686,6 +5691,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Refresh from server
       await refreshPrefixes();
+      void silentRefreshMetadata();
 
       notificationService.success("Prefix Deleted", "Prefix deleted successfully.");
     } catch (error) {
@@ -11030,7 +11036,7 @@ const updateItemInState = useCallback(
         await ontologyMutationService.createClass(
           projectId,
           newIri,
-          name || "NewClass",
+           '',
           parentIri,
           user?.email || "anonymous",
           user?.username || "Anonymous",
@@ -11360,7 +11366,7 @@ const updateItemInState = useCallback(
           await ontologyMutationService.createClass(
             projectId,
             newIri,
-            name,
+             '',
             parentIri,
             user?.email || "anonymous",
             user?.username || "Anonymous",
@@ -16710,9 +16716,9 @@ const updateItemInState = useCallback(
                   title: "Assertion axioms",
                   data: {
                     "Class assertions": (metadata as any)?.classAssertionAxiomCount,
-                    "Object assertions": (metadata as any)?.objectPropertyAssertionCount,
-                    "Data assertions": (metadata as any)?.dataPropertyAssertionCount,
-                    "Annotation assertions": (metadata as any)?.annotationAssertionCount,
+                    "Object assertions": (metadata as any)?.objectPropertyAssertionAxiomCount,
+                    "Data assertions": (metadata as any)?.dataPropertyAssertionAxiomCount,
+                    "Annotation assertions": (metadata as any)?.annotationAssertionAxiomCount,
                   },
                 },
               ].map((metricSection) => (
@@ -16724,20 +16730,84 @@ const updateItemInState = useCallback(
                     {metricSection.title}
                   </h3>
                   <div className="space-y-1 text-xs">
-                    {Object.entries(metricSection.data).map(
-                      ([key, value]) =>
-                        (value ?? null) !== null && (
-                          <div key={key} className="flex justify-between items-center">
-                            <span style={{ color: "var(--text-primary)" }}>{key}</span>
-                            <span
-                              className="font-bold px-1.5 py-0.5 rounded"
-                              style={{ color: "var(--text-primary)", backgroundColor: "var(--surface-2)" }}
-                            >
-                              {Number(value).toLocaleString()}
-                            </span>
-                          </div>
-                        ),
-                    )}
+                    {Object.entries(metricSection.data).map(([key, value]) => {
+                      if ((value ?? null) === null) return null;
+
+                      const toggleableMetrics: Record<string, number> = {
+                        "Annotation property": annotationProperties.length,
+                        Datatype: datatypes.length,
+                      };
+                      const availableCount = toggleableMetrics[key];
+                      const mode = metricViewMode[key] || "used";
+                      const isToggleable = availableCount !== undefined;
+                      const displayValue = isToggleable && mode === "available" ? availableCount : value;
+                      const noun = key === "Datatype" ? "datatypes" : "properties";
+                      const tooltip = isToggleable
+                        ? mode === "used"
+                          ? `Showing ${noun} used in this file. Click to see all ${noun} available to pick from.`
+                          : `Showing all ${noun} available to pick from. Click to see only what's used in this file.`
+                        : undefined;
+                      const isHovered = hoveredMetricKey === key;
+
+                      return (
+                        <div key={key} className="flex justify-between items-center">
+                          <span style={{ color: "var(--text-primary)" }} className="flex items-center gap-1.5">
+                            {key}
+                            {isToggleable && (
+                              <div className="relative flex items-center">
+                                <button
+                                  onMouseEnter={(e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setMetricTooltipPos({ x: rect.left + rect.width / 2, y: rect.top });
+                                    setHoveredMetricKey(key);
+                                  }}
+                                  onMouseLeave={() => {
+                                    setHoveredMetricKey(null);
+                                    setMetricTooltipPos(null);
+                                  }}
+                                  onClick={() =>
+                                    setMetricViewMode((prev) => ({
+                                      ...prev,
+                                      [key]: mode === "used" ? "available" : "used",
+                                    }))
+                                  }
+                                  className="flex items-center justify-center w-5 h-5 rounded-full transition-colors"
+                                  style={{
+                                    color: mode === "available" ? "var(--accent)" : "var(--text-tertiary)",
+                                    backgroundColor: isHovered ? "var(--hover-overlay)" : "transparent",
+                                  }}
+                                >
+                                  {mode === "used" ? <Eye size={12} /> : <EyeOff size={12} />}
+                                </button>
+                                {isHovered && tooltip && metricTooltipPos && (
+                                  <div
+                                    className="fixed z-[9999] w-48 px-2.5 py-1.5 rounded-md text-[10px] leading-snug shadow-lg pointer-events-none"
+                                    style={{
+                                      left: Math.min(
+                                        Math.max(metricTooltipPos.x - 96, 8),
+                                        window.innerWidth - 192 - 8,
+                                      ),
+                                      top: metricTooltipPos.y - 8,
+                                      transform: "translateY(-100%)",
+                                      backgroundColor: "var(--text-primary)",
+                                      color: "var(--bg)",
+                                    }}
+                                  >
+                                    {tooltip}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </span>
+                          <span
+                            className="font-bold px-1.5 py-0.5 rounded"
+                            style={{ color: "var(--text-primary)", backgroundColor: "var(--surface-2)" }}
+                          >
+                            {Number(displayValue).toLocaleString()}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}

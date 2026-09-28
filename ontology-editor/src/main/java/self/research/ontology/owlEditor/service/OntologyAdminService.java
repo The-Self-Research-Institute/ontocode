@@ -223,32 +223,29 @@ public class OntologyAdminService {
     }
 
     public void updatePrefixes(String projectId, Map<String, String> prefixes) {
-        try (RepositoryConnection conn = datasetService.getConnection()) {
+        Map<String, Object> meta = new LinkedHashMap<>(metadataService.readMeta(projectId).orElseGet(LinkedHashMap::new));
+        Map<String, String> stored = new LinkedHashMap<>();
+        datasetService.getPrefixes(projectId)
+                .forEach((prefix, namespace) -> stored.put(prefix.substring(0, prefix.length() - 1), namespace));
 
-            for (Map.Entry<String, String> entry : prefixes.entrySet()) {
-                String prefix = entry.getKey();
-                if (prefix != null && prefix.endsWith(":")) {
-                    prefix = prefix.substring(0, prefix.length() - 1);
-                }
-
-                if (entry.getValue() == null || entry.getValue().isBlank()) {
-                    if (prefix != null) {
-                        conn.removeNamespace(prefix);
-                    }
-                }
+        for (Map.Entry<String, String> entry : prefixes.entrySet()) {
+            String prefix = entry.getKey();
+            if (prefix == null) {
+                continue;
             }
-
-            for (Map.Entry<String, String> entry : prefixes.entrySet()) {
-                String prefix = entry.getKey();
-                if (prefix != null && prefix.endsWith(":")) {
-                    prefix = prefix.substring(0, prefix.length() - 1);
-                }
-
-                if (entry.getValue() != null && !entry.getValue().isBlank()) {
-                    conn.setNamespace(prefix, entry.getValue());
-                }
+            if (prefix.endsWith(":")) {
+                prefix = prefix.substring(0, prefix.length() - 1);
+            }
+            if (entry.getValue() == null || entry.getValue().isBlank()) {
+                stored.remove(prefix);
+            } else {
+                stored.put(prefix, entry.getValue());
             }
         }
+
+        meta.put("prefixes", stored);
+        meta.put("prefixCount", stored.size());
+        metadataService.writeMeta(projectId, meta);
     }
 
     private void refreshMetadata(String projectId) {
