@@ -20,14 +20,15 @@ export const READ_CONTEXT_TOOL: ToolDefinition = {
               description:
                 "\"identifier\" looks up an entity by IRI. \"range\" reads raw lines. " +
                 "\"statement\" returns every statement block in which the entity is the subject, each with its exact line range " +
-                "(\"<startLine>-<lineCount>\"), which is the easiest way to get the text and range to edit.",
+                "(\"<startLine>-<lineCount>\", both 0-indexed, the same convention propose_edit's range uses), which is the " +
+                "easiest way to get the text and range to edit.",
             },
             value: {
               type: "string",
               description:
                 "For type \"identifier\": a full IRI. For type \"statement\": a full IRI or a prefixed name such as ex:Pizza. " +
-                "For type \"range\": \"<format>:<startLine>-<lineCount>\", e.g. \"turtle:100-50\" for 50 lines starting at line 100. " +
-                "format is one of turtle, rdfxml, manchester, functional.",
+                "For type \"range\": \"<format>:<startLine>-<lineCount>\", both 0-indexed, e.g. \"turtle:100-50\" for 50 lines " +
+                "starting at the 101st line. format is one of turtle, rdfxml, manchester, functional.",
             },
           },
         },
@@ -38,7 +39,8 @@ export const READ_CONTEXT_TOOL: ToolDefinition = {
         description:
           "\"definitions\" returns the declarations and axioms of the targets. " +
           "\"diagnostics\" returns the real parse errors and warnings the document currently has, each item's text starting with " +
-          "\"ERROR:\" or \"WARNING:\" and carrying the line range it applies to. \"references\" returns where the targets are used.",
+          "\"ERROR:\" or \"WARNING:\" and carrying the line range it applies to, 1-indexed (unlike \"statement\" and \"range\", " +
+          "which are 0-indexed). \"references\" returns where the targets are used.",
       },
     },
   },
