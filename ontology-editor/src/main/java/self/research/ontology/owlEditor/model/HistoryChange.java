@@ -72,15 +72,24 @@ public class HistoryChange {
 
     private boolean draft = false;
 
+    // Rollback tracking (whole-entry rollback)
+    private boolean reverted = false;
+    private String revertedAuditId;
+
     // Sync tracking
     private LocalDateTime syncedAt;
 
     public static class SubChange {
+        private String id;
         private String predicate;
         private String oldValue;
         private String newValue;
         private String annotationProperty;
         private boolean addition;
+
+        // Rollback tracking (granular rollback of this sub-change alone)
+        private boolean reverted;
+        private String revertedAuditId;
 
         public SubChange() {
         }
@@ -91,6 +100,30 @@ public class HistoryChange {
             this.newValue = newValue;
             this.annotationProperty = annotationProperty;
             this.addition = addition;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+
+        public boolean isReverted() {
+            return reverted;
+        }
+
+        public void setReverted(boolean reverted) {
+            this.reverted = reverted;
+        }
+
+        public String getRevertedAuditId() {
+            return revertedAuditId;
+        }
+
+        public void setRevertedAuditId(String revertedAuditId) {
+            this.revertedAuditId = revertedAuditId;
         }
 
         public String getPredicate() {
@@ -489,6 +522,22 @@ public class HistoryChange {
 
     public void setDraft(boolean draft) {
         this.draft = draft;
+    }
+
+    public boolean isReverted() {
+        return reverted;
+    }
+
+    public void setReverted(boolean reverted) {
+        this.reverted = reverted;
+    }
+
+    public String getRevertedAuditId() {
+        return revertedAuditId;
+    }
+
+    public void setRevertedAuditId(String revertedAuditId) {
+        this.revertedAuditId = revertedAuditId;
     }
 
     public LocalDateTime getSyncedAt() {

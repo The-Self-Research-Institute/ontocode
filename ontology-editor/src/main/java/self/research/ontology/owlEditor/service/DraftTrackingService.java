@@ -59,12 +59,28 @@ public class DraftTrackingService {
     private TopLevelClassCacheService topLevelClassCacheService;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ClassDetailCacheService classDetailCacheService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private EntityUsageIndexService entityUsageIndexService;
 
     /** Drop hierarchy caches after the public graph changes so the served tree is not stale. */
     private void invalidateHierarchyCaches(String projectId) {
+        // Must happen before markStale()'s async rebuild runs, or the rebuild trusts the
+        // stale on-disk ontology file instead of re-exporting from Fuseki — see
+        // OntologyMutationService.markDirtyAfterRawWrite() for the same ordering requirement
+        // on the single-mutation path.
+        datasetService.markProjectDirty(projectId);
         if (topLevelClassCacheService != null) topLevelClassCacheService.evict(projectId);
         if (hierarchyIndexService != null) hierarchyIndexService.markStale(projectId);
         if (classDetailCacheService != null) classDetailCacheService.dropAll(projectId);
+        if (entityUsageIndexService != null) {
+            entityUsageIndexService.dropAll(projectId);
+            entityUsageIndexService.scheduleBuild(projectId);
+        }
+        // A PR merge writes straight to the public graph without going through
+        // OntologyMutationService.apply()/execUpdate()'s normal cache-invalidation choke
+        // point, so the Code View cache and reasoner caches need an explicit bust here too.
+        mutationService.invalidatePublicCodeViewCache(projectId, false);
+        mutationService.invalidateReasonerCaches(projectId);
     }
 
     public DraftTrackingService(DraftChangeRepository draftRepository,
