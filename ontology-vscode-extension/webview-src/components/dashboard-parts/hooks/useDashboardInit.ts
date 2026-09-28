@@ -10,6 +10,7 @@ import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from ".
 import { syncService } from "../../../services/syncService";
 import { pluginLoader } from "../../../services/pluginLoader";
 import type { DashboardState } from "./useDashboardState";
+import { normalizePrefixMappings } from "../dashboardUtils";
 import {
   buildHierarchyTree,
   extractResponseData,
@@ -916,13 +917,7 @@ export function useDashboardInit(state: DashboardState) {
       const response = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}/prefixes`);
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
-      const list = Object.entries(data).map(([prefix, namespace]) => ({
-        // Ensure prefix has a colon for display if it's not empty
-        // If it's empty, it's the default namespace, show as ":"
-        prefix: prefix ? (prefix.endsWith(":") ? prefix : `${prefix}:`) : ":",
-        namespace: String(namespace),
-      }));
-      setPrefixMappings(list);
+      setPrefixMappings(normalizePrefixMappings(data));
     } catch (error) {
       console.error("[Dashboard] Failed to refresh prefixes:", error);
     }
