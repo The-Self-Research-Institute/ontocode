@@ -90,19 +90,8 @@ public class OwlParsingService {
                 
                 // Extract metadata for MongoDB
                 Map<String, Object> metadata = extractMetadata(projectId, ontology); //
-                saveMetadataToMongo(projectId, metadata); //
-                
-                // Register prefixes in GraphDB as well
-                if (metadata.containsKey("prefixes")) {
-                    Map<String, String> prefixes = (Map<String, String>) metadata.get("prefixes");
-                    log.info("Registering {} prefixes in GraphDB for project: {}", prefixes.size(), projectId);
-                    try {
-                        datasetService.setPrefixes(projectId, prefixes);
-                    } catch (Exception e) {
-                        log.warn("Failed to register prefixes in GraphDB: {}", e.getMessage());
-                    }
-                }
-                
+                saveMetadataToMongo(projectId, metadata); 
+
                 // Sync to Neo4j - TODO: Implement Neo4j sync service
                 // neo4jSyncService.syncOntologyToNeo4j(projectId, ontology);
                 

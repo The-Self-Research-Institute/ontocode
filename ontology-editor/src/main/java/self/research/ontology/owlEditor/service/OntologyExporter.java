@@ -75,8 +75,7 @@ final class OntologyExporter {
             return exportOntologyWithOwlApi(projectId, format);
         }
         RDFFormat rdfFormat = resolveLang(format);
-        boolean needsBufferedPath = rdfFormat == org.eclipse.rdf4j.rio.RDFFormat.RDFXML
-                || !citations.getCitationEntityMappings(projectId).isEmpty();
+        boolean needsBufferedPath = !citations.getCitationEntityMappings(projectId).isEmpty();
         if (needsBufferedPath) {
             return exportOntology(projectId, format);
         }
@@ -121,7 +120,7 @@ final class OntologyExporter {
         };
     }
 
-    private boolean requiresOwlApiFormat(String format) {
+    static boolean requiresOwlApiFormat(String format) {
         if (format == null) {
             return false;
         }
@@ -177,6 +176,35 @@ final class OntologyExporter {
 
         log.info("Exported ontology to: {} ({} bytes)", exportPath, Files.size(exportPath));
         return exportPath;
+    }
+
+    public String convertRdfXmlToOwlApiFormat(String rdfXmlContent, String format) throws IOException {
+        if (rdfXmlContent == null || rdfXmlContent.isBlank()) {
+            throw new IOException("No RDF/XML content to convert");
+        }
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        manager.setOntologyLoaderConfiguration(new OWLOntologyLoaderConfiguration()
+                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT));
+        OWLOntology ontology;
+        try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
+            ontology = manager.loadOntologyFromOntologyDocument(input);
+        } catch (OWLOntologyCreationException e) {
+            throw new IOException("Failed to parse ontology for conversion to " + format + ": " + e.getMessage(), e);
+        }
+        OWLDocumentFormat sourceFormat = manager.getOntologyFormat(ontology);
+        OWLDocumentFormat documentFormat = resolveOwlApiFormat(format);
+        if (sourceFormat != null && sourceFormat.isPrefixOWLDocumentFormat()
+                && documentFormat.isPrefixOWLDocumentFormat()) {
+            var targetPrefixes = documentFormat.asPrefixOWLDocumentFormat();
+            sourceFormat.asPrefixOWLDocumentFormat().getPrefixName2PrefixMap().forEach(targetPrefixes::setPrefix);
+        }
+        java.io.ByteArrayOutputStream outputStream = new java.io.ByteArrayOutputStream();
+        try {
+            manager.saveOntology(ontology, documentFormat, outputStream);
+        } catch (OWLOntologyStorageException e) {
+            throw new IOException("Failed to convert ontology to format: " + format + " — " + e.getMessage(), e);
+        }
+        return outputStream.toString(StandardCharsets.UTF_8);
     }
 
     private OWLDocumentFormat resolveOwlApiFormat(String format) {

@@ -1870,6 +1870,19 @@ public class ProjectImportService {
             if (cacheEvictionService != null) {
                 cacheEvictionService.evictForProject(projectId);
             }
+
+            owlParsingExecutor.execute(() -> {
+                    try {
+                        log.info("[Import {}] Post-sync metadata computation starting (OWLAPI-first backfill)", projectId);
+                        Map<String, Object> meta = indexService.computeMetadata(projectId);
+                        metadataService.writeMeta(projectId, meta);
+                        log.info("[Import {}] Post-sync metadata computation complete", projectId);
+                    } catch (Exception metaEx) {
+                        log.warn("[Import {}] Post-sync metadata computation failed (non-fatal): {}",
+                                projectId, metaEx.getMessage());
+                    }
+                });
+
             result.put("synced", true);
             return result;
         } catch (Exception e) {

@@ -63,11 +63,20 @@ final class GraphStatementOps {
     }
 
     static String export(RepositoryConnection conn, String graphUri, RDFFormat format) {
+        return export(conn, graphUri, format, Map.of());
+    }
+
+    static String export(RepositoryConnection conn, String graphUri, RDFFormat format, Map<String, String> extraPrefixes) {
         List<Statement> statements = read(conn, conn.getValueFactory().createIRI(graphUri));
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         RDFWriter writer = Rio.createWriter(format, out);
         writer.startRDF();
         EXPORT_PREFIXES.forEach(writer::handleNamespace);
+        extraPrefixes.forEach((prefix, namespace) -> {
+            if (!EXPORT_PREFIXES.containsKey(prefix)) {
+                writer.handleNamespace(prefix, namespace);
+            }
+        });
         statements.forEach(writer::handleStatement);
         writer.endRDF();
         return out.toString(StandardCharsets.UTF_8);

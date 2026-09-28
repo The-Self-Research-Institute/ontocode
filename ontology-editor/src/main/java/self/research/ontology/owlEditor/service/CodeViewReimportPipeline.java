@@ -50,6 +50,10 @@ public class CodeViewReimportPipeline {
     @Nullable
     private OntologyQueryService ontologyQueryService;
 
+    @Autowired(required = false)
+    @Nullable
+    private EditorReasonerCacheService editorReasonerCache;
+
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
@@ -97,6 +101,13 @@ public class CodeViewReimportPipeline {
             recordHistoryDiff(req, files);
 
             perf.mark("historyDiff");
+            if (req.draft()) {
+                invalidateAfterDraftReplaced(req.projectId(), req.userId());
+                perf.mark("invalidate");
+                completed = true;
+                return new ReimportResult(format, files.rdfFormat,
+                        storageManager.getDraftGraphVersion(req.projectId(), req.userId()), false);
+            }
             invalidateAfterGraphReplaced(req.projectId());
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
             perf.mark("invalidate");
@@ -252,7 +263,17 @@ public class CodeViewReimportPipeline {
         }
     }
 
+    private void invalidateAfterDraftReplaced(String projectId, String userId) {
+        invalidateDerivedCaches(projectId);
+        storageManager.bumpDraftGraphVersion(projectId, userId);
+    }
+
     private void invalidateAfterGraphReplaced(String projectId) {
+        invalidateDerivedCaches(projectId);
+        storageManager.clearCodeViewCache(projectId);
+    }
+
+    private void invalidateDerivedCaches(String projectId) {
         datasetService.markProjectDirty(projectId);
         if (ontologyCache != null) {
             ontologyCache.evict(projectId);
@@ -267,8 +288,9 @@ public class CodeViewReimportPipeline {
         if (ontologyQueryService != null) {
             ontologyQueryService.evictIndividualAndAnnotationPropertyCaches(projectId);
         }
-
-        storageManager.clearCodeViewCache(projectId);
+        if (editorReasonerCache != null) {
+            editorReasonerCache.invalidateOntology(projectId);
+        }
     }
 
     private Path convertToRdfXml(Path sourceFile) throws IOException {

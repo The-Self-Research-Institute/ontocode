@@ -139,6 +139,8 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
                 exportJobService,
                 codeViewReimportPipeline,
                 lockRegistry);
+        ReflectionTestUtils.setField(controller, "codeViewSaveValidator",
+                new self.research.ontology.owlEditor.service.CodeViewSaveValidator(null));
         ReflectionTestUtils.setField(controller, "ontologyCache", ontologyCache);
         ReflectionTestUtils.setField(controller, "hierarchyIndexService", hierarchyIndexService);
         ReflectionTestUtils.setField(controller, "ontologyQueryService", ontologyQueryService);

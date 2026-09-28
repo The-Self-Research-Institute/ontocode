@@ -50,6 +50,10 @@ import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline;
 import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
+import self.research.ontology.owlEditor.service.ReasonerType;
+import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.model.OWLOntology;
+import org.semanticweb.owlapi.model.OWLOntologyManager;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
@@ -126,6 +130,13 @@ public class ProjectLoadController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.lang.Nullable
     private self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler fusekiSyncScheduler;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.ReasonerService owlEditorReasonerService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private self.research.ontology.owlEditor.service.CodeViewSaveValidator codeViewSaveValidator;
 
     @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
@@ -1694,15 +1705,39 @@ public class ProjectLoadController {
                     case "turtle", "ttl" -> RDFFormat.TURTLE;
                     case "ntriples", "nt" -> RDFFormat.NTRIPLES;
                     case "rdfxml", "rdf", "owl", "xml" -> RDFFormat.RDFXML;
+                    case "jsonld" -> RDFFormat.JSONLD;
                     default -> null;
                 };
                 if (draftRdfFormat == null) {
+                    if (storageManager.requiresOwlApiFormat(format)) {
+                        try {
+                            String draftRdfXml = datasetService.exportDraftGraphContent(
+                                    projectId, userId, RDFFormat.RDFXML, extractKnownPrefixes(projectId));
+                            String converted = storageManager.convertRdfXmlToOwlApiFormat(draftRdfXml, format);
+                            return ResponseEntity.ok(Map.of(
+                                    "success", true,
+                                    "content", converted,
+                                    "format", format,
+                                    "projectId", projectId,
+                                    "cached", false,
+                                    "draft", true,
+                                    "sourceVersion", storageManager.getDraftGraphVersion(projectId, userId)
+                            ));
+                        } catch (Exception e) {
+                            log.error("Failed to convert draft content to format {} for project {}: {}",
+                                    format, projectId, e.getMessage());
+                            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                                    "success", false,
+                                    "error", "Failed to convert draft content to format " + format + ": " + e.getMessage()));
+                        }
+                    }
                     return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).body(Map.of(
                             "success", false,
                             "error", "Draft-mode content view does not yet support format: " + format));
                 }
                 String draftGraphUri = datasetService.getDraftGraphUri(projectId, userId);
-                String draftContent = datasetService.exportDraftGraphContent(projectId, userId, draftRdfFormat);
+                String draftContent = datasetService.exportDraftGraphContent(
+                        projectId, userId, draftRdfFormat, extractKnownPrefixes(projectId));
                 log.info("[CONTENT-DRAFT] project={} userId={} draftGraph={} contentLength={}",
                         projectId, userId, draftGraphUri, draftContent.length());
                 return ResponseEntity.ok(Map.of(
@@ -1711,7 +1746,8 @@ public class ProjectLoadController {
                         "format", format,
                         "projectId", projectId,
                         "cached", false,
-                        "draft", true
+                        "draft", true,
+                        "sourceVersion", storageManager.getDraftGraphVersion(projectId, userId)
                 ));
             }
 
@@ -1750,6 +1786,46 @@ public class ProjectLoadController {
                             "success", false,
                             "error", "Failed to get ontology content: " + e.getMessage()
                     ));
+        }
+    }
+
+    @GetMapping("/{projectId:.+}/unsatisfiable-classes-quick")
+    public ResponseEntity<Map<String, Object>> getUnsatisfiableClassesQuick(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId,
+            @RequestParam(required = false, defaultValue = "false") boolean draft) {
+        Map<String, Object> body = new java.util.HashMap<>();
+        if (owlEditorReasonerService == null) {
+            body.put("success", false);
+            body.put("unsatisfiableClasses", java.util.List.of());
+            return ResponseEntity.ok(body);
+        }
+        try {
+            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLOntology ontology;
+            if (draft && userId != null && !userId.isBlank()) {
+                String draftContent = datasetService.exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
+                try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
+                    ontology = manager.loadOntologyFromOntologyDocument(is);
+                }
+            } else {
+                Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
+                try (InputStream is = Files.newInputStream(exportPath)) {
+                    ontology = manager.loadOntologyFromOntologyDocument(is);
+                }
+            }
+            java.util.List<String> unsatisfiable =
+                    owlEditorReasonerService.getUnsatisfiableClassesQuick(ontology, ReasonerType.HERMIT);
+            body.put("success", true);
+            body.put("projectId", projectId);
+            body.put("unsatisfiableClasses", unsatisfiable);
+            return ResponseEntity.ok(body);
+        } catch (Exception e) {
+            log.warn("Unsatisfiable-classes-quick check failed for project {} (non-fatal, caller ignores): {}",
+                    projectId, e.getMessage());
+            body.put("success", false);
+            body.put("unsatisfiableClasses", java.util.List.of());
+            return ResponseEntity.ok(body);
         }
     }
 
@@ -1925,7 +2001,9 @@ public class ProjectLoadController {
             Object expectedVersionRaw = request.get("expectedSourceVersion");
             if (expectedVersionRaw instanceof Number expectedVersionNum) {
                 long expectedVersion = expectedVersionNum.longValue();
-                long currentVersion = storageManager.getPublicGraphVersion(projectId);
+                long currentVersion = draft
+                        ? storageManager.getDraftGraphVersion(projectId, userId)
+                        : storageManager.getPublicGraphVersion(projectId);
                 if (expectedVersion != currentVersion) {
                     log.warn("[CODE-VIEW-SAVE] Conflict for project {}: client expected version {} but current is {}",
                             projectId, expectedVersion, currentVersion);
@@ -1968,6 +2046,11 @@ public class ProjectLoadController {
             log.info("[CODE-VIEW-SAVE] Saving and syncing code view for project: {} in format: {}, size: {} bytes",
                      projectId, format, content.length());
 
+            Optional<Map<String, Object>> rejection = codeViewSaveValidator.validate(projectId, format, content);
+            if (rejection.isPresent()) {
+                return ResponseEntity.unprocessableEntity().body(rejection.get());
+            }
+
             String ext = storageManager.extensionFor(format);
             Path contentFile = Files.createTempFile("codeview-", "." + ext);
             Path oldContentFile = null;
@@ -2003,6 +2086,80 @@ public class ProjectLoadController {
                             "error", "Failed to save and sync code view: " + e.getMessage()
                     ));
         }
+    }
+
+    private Map<String, String> extractKnownPrefixes(String projectId) {
+        Map<String, String> fromOwlApiCache = extractPrefixesFromOwlApiCache(projectId);
+        if (!fromOwlApiCache.isEmpty()) {
+            return fromOwlApiCache;
+        }
+        try {
+            String cached = storageManager.getCodeViewCache(projectId, "rdfxml").orElse(null);
+            Map<String, String> fromCache = cached != null ? extractXmlnsFromRdfXml(cached) : Map.of();
+            if (!fromCache.isEmpty()) {
+                return fromCache;
+            }
+
+            Optional<Path> original = storageManager.findCurrentOntology(projectId);
+            if (original.isPresent()) {
+                String fileSource = new String(Files.readAllBytes(original.get()), StandardCharsets.UTF_8);
+                Map<String, String> fromFile = extractXmlnsFromRdfXml(fileSource);
+                if (!fromFile.isEmpty()) {
+                    return fromFile;
+                }
+            }
+
+            Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
+            String exportSource = new String(Files.readAllBytes(exportPath), StandardCharsets.UTF_8);
+            return extractXmlnsFromRdfXml(exportSource);
+        } catch (Exception e) {
+            log.warn("Could not extract known prefixes for project {} (draft content will use standard namespaces only): {}",
+                    projectId, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private Map<String, String> extractPrefixesFromOwlApiCache(String projectId) {
+        if (ontologyCache == null) {
+            return Map.of();
+        }
+        try {
+            Optional<self.research.ontology.owlEditor.cache.ProjectOntologyCache.CachedOntology> cachedOpt =
+                    ontologyCache.get(projectId);
+            if (cachedOpt.isEmpty()) {
+                return Map.of();
+            }
+            self.research.ontology.owlEditor.cache.ProjectOntologyCache.CachedOntology cached = cachedOpt.get();
+            org.semanticweb.owlapi.model.OWLDocumentFormat fmt = cached.manager().getOntologyFormat(cached.ontology());
+            if (!(fmt instanceof org.semanticweb.owlapi.formats.PrefixDocumentFormat prefixFormat)) {
+                return Map.of();
+            }
+            Map<String, String> prefixes = new java.util.HashMap<>();
+            prefixFormat.getPrefixName2PrefixMap().forEach((k, v) -> {
+                String key = k.endsWith(":") ? k.substring(0, k.length() - 1) : k;
+                if (!key.isEmpty()) {
+                    prefixes.put(key, v);
+                }
+            });
+            return prefixes;
+        } catch (Exception e) {
+            log.debug("Could not read prefixes from OWL API cache for project {}: {}", projectId, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private Map<String, String> extractXmlnsFromRdfXml(String source) {
+        int rootStart = source.indexOf("<rdf:RDF");
+        int rootTagEnd = rootStart >= 0 ? source.indexOf('>', rootStart) : -1;
+        String rootTag = rootTagEnd > 0 ? source.substring(rootStart, rootTagEnd) : "";
+        Map<String, String> prefixes = new java.util.HashMap<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("xmlns:([\\w.-]+)=\"([^\"]+)\"")
+                .matcher(rootTag);
+        while (m.find()) {
+            prefixes.put(m.group(1), m.group(2));
+        }
+        return prefixes;
     }
 
 

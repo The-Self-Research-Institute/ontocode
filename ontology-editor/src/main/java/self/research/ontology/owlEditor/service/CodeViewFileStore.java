@@ -101,6 +101,22 @@ final class CodeViewFileStore {
         }
     }
 
+    private final ConcurrentHashMap<String, Long> draftGraphVersions = new ConcurrentHashMap<>();
+
+    public void bumpDraftGraphVersion(String projectId, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return;
+        }
+        draftGraphVersions.put(projectId + "::" + userId, graphVersionCounter.incrementAndGet());
+    }
+
+    public long getDraftGraphVersion(String projectId, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return 0L;
+        }
+        return draftGraphVersions.getOrDefault(projectId + "::" + userId, 0L);
+    }
+
     public long getPublicGraphVersion(String projectId) {
         Long cached = publicGraphVersions.get(projectId);
         if (cached != null) {

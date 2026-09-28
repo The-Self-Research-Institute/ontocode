@@ -77,6 +77,15 @@ public class StorageManager {
     public String extensionFor(String format) {
         return OntologyExporter.extensionFor(format);
     }
+
+    public boolean requiresOwlApiFormat(String format) {
+        return OntologyExporter.requiresOwlApiFormat(format);
+    }
+
+    public String convertRdfXmlToOwlApiFormat(String rdfXmlContent, String format) throws IOException {
+        return exporter.convertRdfXmlToOwlApiFormat(rdfXmlContent, format);
+    }
+
     public List<String> listProjectIds() {
         if (!Files.exists(projectsRoot)) {
             return List.of();
@@ -201,6 +210,14 @@ public class StorageManager {
 
     public long getPublicGraphVersion(String projectId) {
         return codeViewFiles.getPublicGraphVersion(projectId);
+    }
+
+    public void bumpDraftGraphVersion(String projectId, String userId) {
+        codeViewFiles.bumpDraftGraphVersion(projectId, userId);
+    }
+
+    public long getDraftGraphVersion(String projectId, String userId) {
+        return codeViewFiles.getDraftGraphVersion(projectId, userId);
     }
 
     public void clearCodeViewCacheFormat(String projectId, String format) {

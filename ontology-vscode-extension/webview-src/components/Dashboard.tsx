@@ -57,6 +57,7 @@ import {
   AlertTriangle,
   Monitor,
   Scale,
+  EyeOff,
 } from "lucide-react";
 import apiClient, { ApiError, getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -1606,6 +1607,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleViewOnlyAction = () => setShowProPromptType(isProjectViewerRole ? 'viewer' : 'edit');
   const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
+  const [metricViewMode, setMetricViewMode] = useState<Record<string, "used" | "available">>({});
+  const [hoveredMetricKey, setHoveredMetricKey] = useState<string | null>(null);
+  const [metricTooltipPos, setMetricTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const [isPlanExpired, setIsPlanExpired] = useState(false);
   const isCurrentWorkspaceOwner = user?.workspaceRole == null || normalizeRole(user?.workspaceRole ?? "") === "OWNER";
   const openFileIsPlanExpired = isPlanExpired && isCurrentWorkspaceOwner;
@@ -2530,6 +2534,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   // warnings (e.g. an IRI outside the ontology's namespace), shown in a dockable
   // Problems panel rather than a modal, since the user needs to see the editor to fix them.
   const [codeViewLintIssues, setCodeViewLintIssues] = useState<LintIssue[]>([]);
+  const [codeViewLintIsPostSaveWarning, setCodeViewLintIsPostSaveWarning] = useState(false);
+  const acknowledgedUnsatisfiableRef = useRef<Set<string>>(new Set());
   const codeHighlighterRef = useRef<CodeHighlighterHandle>(null);
   const [citationJustInserted, setCitationJustInserted] = useState(false); // Track recent citation insertion for format refresh
   const [showCitationPicker, setShowCitationPicker] = useState(false);
@@ -5202,7 +5208,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const refreshPrefixes = async () => {
     if (!projectId) return;
     try {
-      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/ontology/prefixes/${encodeProjectId(projectId)}`));
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${encodeProjectId(projectId)}/prefixes`));
       const payload = response?.data || response;
       const data = payload?.data || payload || {};
       setPrefixMappings(normalizePrefixMappings(data));
@@ -5629,6 +5635,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Refresh prefixes from server
       await refreshPrefixes();
+      void silentRefreshMetadata();
 
       notificationService.success(
         isEdit ? "Prefix Updated" : "Prefix Added",
@@ -5654,6 +5661,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // Refresh from server
       await refreshPrefixes();
+      void silentRefreshMetadata();
 
       notificationService.success("Prefix Deleted", "Prefix deleted successfully.");
     } catch (error) {
@@ -10987,7 +10995,7 @@ const updateItemInState = useCallback(
         await ontologyMutationService.createClass(
           projectId,
           newIri,
-          name || "NewClass",
+           '',
           parentIri,
           user?.email || "anonymous",
           user?.username || "Anonymous",
@@ -11317,7 +11325,7 @@ const updateItemInState = useCallback(
           await ontologyMutationService.createClass(
             projectId,
             newIri,
-            name,
+             '',
             parentIri,
             user?.email || "anonymous",
             user?.username || "Anonymous",
@@ -12649,6 +12657,7 @@ const updateItemInState = useCallback(
       // Clear any previous syntax error / lint warnings when loading new content
       setCodeViewSyntaxError(null);
       setCodeViewLintIssues([]);
+      acknowledgedUnsatisfiableRef.current = new Set();
 
       // If clicking same format without force refresh/reload, just return (prevents unnecessary reloads)
       if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
@@ -12979,6 +12988,7 @@ const updateItemInState = useCallback(
         const issues = lintOntologyContent(content, codeViewFormat);
         if (issues.length > 0) {
           setCodeViewLintIssues(issues);
+          setCodeViewLintIsPostSaveWarning(false);
           lastCodeViewSaveContentRef.current = content;
           return;
         }
@@ -12989,6 +12999,7 @@ const updateItemInState = useCallback(
       // content that failed, even if the user keeps typing while the dialog is open.
       lastCodeViewSaveContentRef.current = content;
       setSavingCodeView(true);
+        notificationService.info("Saving…", "Checking consistency and syncing changes.");
       try {
         console.log(
           "[Dashboard] Saving code view content to backend, format:",
@@ -13020,6 +13031,21 @@ const updateItemInState = useCallback(
             console.warn("[Dashboard] code-view-save conflict:", conflictMsg);
             setCodeViewSaveConflict(true);
             setCodeViewSaveError(conflictMsg);
+            return;
+          }
+          if (syncError?.data?.errorType === "SYNTAX_ERROR") {
+            const syntaxMsg = syncError?.data?.error || "Invalid content — fix the highlighted error before saving.";
+            console.warn("[Dashboard] code-view-save rejected (syntax):", syntaxMsg);
+            setCodeViewSyntaxError(syntaxMsg);
+            notificationService.error("Syntax Error", "Fix the highlighted error before saving.");
+            return;
+          }
+          if (syncError?.data?.errorType === "INCONSISTENT_ONTOLOGY") {
+    
+            const inconsistentMsg = syncError?.data?.error || "Inconsistent: this change makes the ontology inconsistent.";
+            console.warn("[Dashboard] code-view-save rejected (inconsistent):", inconsistentMsg);
+            setCodeViewSaveConflict(false);
+            setCodeViewSaveError(inconsistentMsg);
             return;
           }
           const errMsg = syncError?.message || "Failed to reach the save endpoint";
@@ -13057,6 +13083,43 @@ const updateItemInState = useCallback(
           } catch {
             /* non-fatal */
           }
+          void (async () => {
+            try {
+              const followUpParams = new URLSearchParams({ userId: codeViewEffectiveUserId });
+              if (isDraftScopeActive()) {
+                followUpParams.set("draft", "true");
+              }
+              const result: any = await apiClient.get(
+                `/api/ontology/${projectId}/unsatisfiable-classes-quick?${followUpParams.toString()}`,
+              );
+              const unsatisfiableClasses: string[] = Array.isArray(result?.unsatisfiableClasses)
+                ? result.unsatisfiableClasses
+                : [];
+              const stillAcknowledged = new Set(
+                unsatisfiableClasses.filter((c) => acknowledgedUnsatisfiableRef.current.has(c)),
+              );
+              acknowledgedUnsatisfiableRef.current = stillAcknowledged;
+              const newlyUnsatisfiable = unsatisfiableClasses.filter((c) => !stillAcknowledged.has(c));
+              if (newlyUnsatisfiable.length > 0) {
+                newlyUnsatisfiable.forEach((c) => acknowledgedUnsatisfiableRef.current.add(c));
+                const contentLines = content.split("\n");
+                setCodeViewLintIsPostSaveWarning(true);
+                setCodeViewLintIssues(
+                  newlyUnsatisfiable.map((className) => {
+                    const idx = contentLines.findIndex((l) => l.includes(className));
+                    return {
+                      line: idx >= 0 ? idx + 1 : 1,
+                      severity: "warning",
+                      message: `${className} is unsatisfiable (equivalent to owl:Nothing) — it can never have any instances.`,
+                      iri: className,
+                    };
+                  }),
+                );
+              }
+            } catch {
+              /* non-fatal — this is a best-effort informational warning, not a save result */
+            }
+          })();
         } else {
           const errMsg = (response.error || "Failed to save content").replace(
             "Failed to save and sync code view: ",
@@ -15580,6 +15643,10 @@ const updateItemInState = useCallback(
                     issues={codeViewLintIssues}
                     onJumpToLine={(line) => codeHighlighterRef.current?.goToLine(line)}
                     onSaveAnyway={() => {
+                      if (codeViewLintIsPostSaveWarning) {
+                      setCodeViewLintIssues([]);
+                        return;
+                      }
                       const pending = lastCodeViewSaveContentRef.current;
                       setCodeViewLintIssues([]);
                       void handleSaveCodeContent(pending, true);
@@ -16605,9 +16672,9 @@ const updateItemInState = useCallback(
                   title: "Assertion axioms",
                   data: {
                     "Class assertions": (metadata as any)?.classAssertionAxiomCount,
-                    "Object assertions": (metadata as any)?.objectPropertyAssertionCount,
-                    "Data assertions": (metadata as any)?.dataPropertyAssertionCount,
-                    "Annotation assertions": (metadata as any)?.annotationAssertionCount,
+                    "Object assertions": (metadata as any)?.objectPropertyAssertionAxiomCount,
+                    "Data assertions": (metadata as any)?.dataPropertyAssertionAxiomCount,
+                    "Annotation assertions": (metadata as any)?.annotationAssertionAxiomCount,
                   },
                 },
               ].map((metricSection) => (
@@ -16619,20 +16686,84 @@ const updateItemInState = useCallback(
                     {metricSection.title}
                   </h3>
                   <div className="space-y-1 text-xs">
-                    {Object.entries(metricSection.data).map(
-                      ([key, value]) =>
-                        (value ?? null) !== null && (
-                          <div key={key} className="flex justify-between items-center">
-                            <span style={{ color: "var(--text-primary)" }}>{key}</span>
-                            <span
-                              className="font-bold px-1.5 py-0.5 rounded"
-                              style={{ color: "var(--text-primary)", backgroundColor: "var(--surface-2)" }}
-                            >
-                              {Number(value).toLocaleString()}
-                            </span>
-                          </div>
-                        ),
-                    )}
+                    {Object.entries(metricSection.data).map(([key, value]) => {
+                      if ((value ?? null) === null) return null;
+
+                      const toggleableMetrics: Record<string, number> = {
+                        "Annotation property": annotationProperties.length,
+                        Datatype: datatypes.length,
+                      };
+                      const availableCount = toggleableMetrics[key];
+                      const mode = metricViewMode[key] || "used";
+                      const isToggleable = availableCount !== undefined;
+                      const displayValue = isToggleable && mode === "available" ? availableCount : value;
+                      const noun = key === "Datatype" ? "datatypes" : "properties";
+                      const tooltip = isToggleable
+                        ? mode === "used"
+                          ? `Showing ${noun} used in this file. Click to see all ${noun} available to pick from.`
+                          : `Showing all ${noun} available to pick from. Click to see only what's used in this file.`
+                        : undefined;
+                      const isHovered = hoveredMetricKey === key;
+
+                      return (
+                        <div key={key} className="flex justify-between items-center">
+                          <span style={{ color: "var(--text-primary)" }} className="flex items-center gap-1.5">
+                            {key}
+                            {isToggleable && (
+                              <div className="relative flex items-center">
+                                <button
+                                  onMouseEnter={(e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setMetricTooltipPos({ x: rect.left + rect.width / 2, y: rect.top });
+                                    setHoveredMetricKey(key);
+                                  }}
+                                  onMouseLeave={() => {
+                                    setHoveredMetricKey(null);
+                                    setMetricTooltipPos(null);
+                                  }}
+                                  onClick={() =>
+                                    setMetricViewMode((prev) => ({
+                                      ...prev,
+                                      [key]: mode === "used" ? "available" : "used",
+                                    }))
+                                  }
+                                  className="flex items-center justify-center w-5 h-5 rounded-full transition-colors"
+                                  style={{
+                                    color: mode === "available" ? "var(--accent)" : "var(--text-tertiary)",
+                                    backgroundColor: isHovered ? "var(--hover-overlay)" : "transparent",
+                                  }}
+                                >
+                                  {mode === "used" ? <Eye size={12} /> : <EyeOff size={12} />}
+                                </button>
+                                {isHovered && tooltip && metricTooltipPos && (
+                                  <div
+                                    className="fixed z-[9999] w-48 px-2.5 py-1.5 rounded-md text-[10px] leading-snug shadow-lg pointer-events-none"
+                                    style={{
+                                      left: Math.min(
+                                        Math.max(metricTooltipPos.x - 96, 8),
+                                        window.innerWidth - 192 - 8,
+                                      ),
+                                      top: metricTooltipPos.y - 8,
+                                      transform: "translateY(-100%)",
+                                      backgroundColor: "var(--text-primary)",
+                                      color: "var(--bg)",
+                                    }}
+                                  >
+                                    {tooltip}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </span>
+                          <span
+                            className="font-bold px-1.5 py-0.5 rounded"
+                            style={{ color: "var(--text-primary)", backgroundColor: "var(--surface-2)" }}
+                          >
+                            {Number(displayValue).toLocaleString()}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
