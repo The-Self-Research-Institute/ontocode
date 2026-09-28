@@ -21,6 +21,7 @@ files:
   - services/**
   - scripts/**
   - "!scripts/prepare-resources.js"
+  - "!scripts/run-wack.ps1"
   # The built React SPA (produced by webview-src npm run build)
   - from: ../ontology-vscode-extension/webview-src/dist
     to: renderer/dist
@@ -36,6 +37,7 @@ extraResources:
     filter:
       - "**/*"
       - "!mongo-tmp/**"
+      - "!.jre-cache/**"
       - "!mongo-bits.zip"
       - "!mongo-win32.zip"
       - "!temurin-jre.zip"
@@ -67,6 +69,8 @@ appx:
   publisher: "CN=48F0ADC2-1FD0-4664-AD5E-C80F7D22F534"
   publisherDisplayName: Self Research
   applicationId: OntoCodeStudio
+  minVersion: 10.0.17763.0
+  maxVersionTested: 10.0.26100.0
   # capabilities defaults to ['runFullTrust'], required for Electron's child-process
   # spawning (bundled MongoDB + two JVMs) and normal file I/O — do not remove.
 

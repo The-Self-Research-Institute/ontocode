@@ -82,7 +82,7 @@ const REQUIRED_JRE_MAJOR = 21;
 
 function javaMajorVersion(javaBin) {
     try {
-        const out = execFileSync(javaBin, ['--version'], { encoding: 'utf8', timeout: 5000 });
+        const out = execFileSync(javaBin, ['--version'], { encoding: 'utf8', timeout: 30000 });
         const m = out.match(/(?:openjdk|java)\s+(\d+)/i);
         return m ? parseInt(m[1], 10) : null;
     } catch (_) {
@@ -92,6 +92,27 @@ function javaMajorVersion(javaBin) {
 
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); }
 
+function clearReadOnly(p) {
+    const stat = fs.lstatSync(p);
+    if (stat.isDirectory()) {
+        fs.readdirSync(p).forEach((entry) => clearReadOnly(path.join(p, entry)));
+    } else if (!stat.isSymbolicLink()) {
+        fs.chmodSync(p, 0o666);
+    }
+}
+
+function removeDir(dir) {
+    if (!fs.existsSync(dir)) return;
+    const options = { recursive: true, force: true, maxRetries: 10, retryDelay: 500 };
+    try {
+        fs.rmSync(dir, options);
+    } catch (err) {
+        if (err.code !== 'EPERM' && err.code !== 'EACCES') throw err;
+        clearReadOnly(dir);
+        fs.rmSync(dir, options);
+    }
+}
+
 function jreCacheDir(marker) { return path.join(JRE_CACHE_ROOT, marker); }
 
 function restoreJreFromCache(marker, destDir, javaBinRelPath) {
@@ -99,7 +120,7 @@ function restoreJreFromCache(marker, destDir, javaBinRelPath) {
     const cachedJavaBin = path.join(cacheDir, javaBinRelPath);
     if (!fs.existsSync(cachedJavaBin)) return false;
 
-    fs.rmSync(destDir, { recursive: true, force: true });
+    removeDir(destDir);
     fs.cpSync(cacheDir, destDir, { recursive: true });
     console.log(`  ✓  Restored ${marker} JRE from local cache (no download needed)`);
     return true;
@@ -108,7 +129,7 @@ function restoreJreFromCache(marker, destDir, javaBinRelPath) {
 function saveJreToCache(marker, srcDir) {
     try {
         const cacheDir = jreCacheDir(marker);
-        fs.rmSync(cacheDir, { recursive: true, force: true });
+        removeDir(cacheDir);
         ensureDir(JRE_CACHE_ROOT);
         fs.cpSync(srcDir, cacheDir, { recursive: true });
     } catch (err) {
@@ -374,6 +395,64 @@ async function downloadMongodLinuxArm64Ubuntu2204(cachedSrc, dest) {
     }
 }
 
+const MONGOD_VC_RUNTIME_DLLS = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll'];
+const IMAGE_FILE_MACHINE_AMD64 = 0x8664;
+
+function peMachine(file) {
+    const fd = fs.openSync(file, 'r');
+    try {
+        const dosHeader = Buffer.alloc(0x40);
+        fs.readSync(fd, dosHeader, 0, 0x40, 0);
+        const peHeader = Buffer.alloc(6);
+        fs.readSync(fd, peHeader, 0, 6, dosHeader.readUInt32LE(0x3c));
+        return peHeader.toString('latin1', 0, 4) === 'PE\0\0' ? peHeader.readUInt16LE(4) : null;
+    } catch (_) {
+        return null;
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
+function isX64Dll(file) {
+    return fs.existsSync(file) && peMachine(file) === IMAGE_FILE_MACHINE_AMD64;
+}
+
+function mongodRuntimeDllSources() {
+    const dirs = [
+        path.join(JRE_DIR, 'bin'),
+        path.join(JRE17_DIR, 'bin'),
+        path.join(jreCacheDir('win32-x64'), 'bin'),
+        path.join(jreCacheDir('swrl-win32-x64'), 'bin'),
+    ];
+    if (process.platform === 'win32' && process.arch === 'x64') {
+        dirs.push(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32'));
+    }
+    return dirs;
+}
+
+function mongodRuntimeDllsPresent() {
+    const dir = path.join(RESOURCES, 'mongodb', 'win32');
+    return MONGOD_VC_RUNTIME_DLLS.every((dll) => isX64Dll(path.join(dir, dll)));
+}
+
+function bundleMongodRuntimeDlls() {
+    console.log('\n[6/6] Visual C++ runtime for mongod.exe');
+    const destDir = path.join(RESOURCES, 'mongodb', 'win32');
+    ensureDir(destDir);
+    let allOk = true;
+    for (const dll of MONGOD_VC_RUNTIME_DLLS) {
+        const src = mongodRuntimeDllSources().map((dir) => path.join(dir, dll)).find(isX64Dll);
+        if (!src) {
+            console.error(`  ✗  No x64 ${dll} found (looked in the bundled JREs, the JRE cache and System32)`);
+            allOk = false;
+            continue;
+        }
+        fs.copyFileSync(src, path.join(destDir, dll));
+        console.log(`  ✓  ${dll} from ${path.dirname(src)}`);
+    }
+    return allOk;
+}
+
 function findFileRecursive(dir, name) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -403,10 +482,10 @@ async function bundleJre() {
         const major = javaMajorVersion(javaBin);
         if (major === null) {
             console.warn('  ⚠  Existing JRE unreadable — re-creating');
-            fs.rmSync(JRE_DIR, { recursive: true, force: true });
+            removeDir(JRE_DIR);
         } else if (major < REQUIRED_JRE_MAJOR) {
             console.warn(`  ⚠  Existing bundled JRE is Java ${major}, need >=${REQUIRED_JRE_MAJOR} — re-creating`);
-            fs.rmSync(JRE_DIR, { recursive: true, force: true });
+            removeDir(JRE_DIR);
         } else {
             console.log(`  ✓  Bundled JRE already present: Java ${major}`);
             return;
@@ -424,7 +503,7 @@ async function bundleJre() {
         fs.writeFileSync(JRE_ARCH_MARKER, expectedMarker);
         return;
     }
-    fs.rmSync(JRE_DIR, { recursive: true, force: true });
+    removeDir(JRE_DIR);
 
     if (!SKIP_JLINK && await tryJlink()) {
         ensureDir(JRE_DIR);
@@ -480,17 +559,17 @@ async function tryJlink() {
     }
 
     console.log(`  → Creating minimal JRE with jlink from ${jdkHome} (this takes ~30 s)…`);
-    fs.rmSync(JRE_DIR, { recursive: true, force: true });
+    removeDir(JRE_DIR);
     try {
         execSync(
-            `"${jlinkBin}" --add-modules ${JLINK_MODULES} --output "${JRE_DIR}" --strip-debug --no-man-pages --no-header-files --compress=2`,
+            `"${jlinkBin}" --add-modules ${JLINK_MODULES} --output "${JRE_DIR}" --strip-debug --no-man-pages --no-header-files --compress=2 --generate-cds-archive`,
             { stdio: 'inherit', timeout: 120_000 },
         );
         console.log('  ✓  Minimal JRE created via jlink (~60-80 MB)');
         return true;
     } catch (err) {
         console.warn(`  ⚠  jlink failed: ${err.message}`);
-        if (fs.existsSync(JRE_DIR)) fs.rmSync(JRE_DIR, { recursive: true, force: true });
+        if (fs.existsSync(JRE_DIR)) removeDir(JRE_DIR);
         return false;
     }
 }
@@ -506,10 +585,10 @@ async function bundleSwrlJre() {
         const major = javaMajorVersion(javaBin);
         if (major === null) {
             console.warn('  ⚠  Existing SWRL JRE unreadable — re-creating');
-            fs.rmSync(JRE17_DIR, { recursive: true, force: true });
+            removeDir(JRE17_DIR);
         } else if (major !== 17) {
             console.warn(`  ⚠  Existing bundled SWRL JRE is Java ${major}, need exactly 17 — re-creating`);
-            fs.rmSync(JRE17_DIR, { recursive: true, force: true });
+            removeDir(JRE17_DIR);
         } else {
             console.log(`  ✓  Bundled SWRL JRE already present: Java ${major}`);
             return;
@@ -526,7 +605,7 @@ async function bundleSwrlJre() {
         fs.writeFileSync(JRE17_ARCH_MARKER, expectedMarker);
         return;
     }
-    fs.rmSync(JRE17_DIR, { recursive: true, force: true });
+    removeDir(JRE17_DIR);
 
     if (!SKIP_JLINK) {
         const jdk17Home = findJdkHome(17);
@@ -540,7 +619,7 @@ async function bundleSwrlJre() {
                 console.log(`  → Creating SWRL's dedicated JDK 17 JRE with jlink from ${jdk17Home} (this takes ~30 s)…`);
                 try {
                     execSync(
-                        `"${jlinkBin}" --add-modules ${JLINK_MODULES} --output "${JRE17_DIR}" --strip-debug --no-man-pages --no-header-files --compress=2`,
+                        `"${jlinkBin}" --add-modules ${JLINK_MODULES} --output "${JRE17_DIR}" --strip-debug --no-man-pages --no-header-files --compress=2 --generate-cds-archive`,
                         { stdio: 'inherit', timeout: 120_000 },
                     );
                     console.log('  ✓  SWRL JDK 17 JRE created via jlink (~60-80 MB)');
@@ -548,7 +627,7 @@ async function bundleSwrlJre() {
                     return;
                 } catch (err) {
                     console.warn(`  ⚠  jlink failed for SWRL JRE: ${err.message}`);
-                    if (fs.existsSync(JRE17_DIR)) fs.rmSync(JRE17_DIR, { recursive: true, force: true });
+                    if (fs.existsSync(JRE17_DIR)) removeDir(JRE17_DIR);
                 }
             } else {
                 console.warn(`  ⚠  jlink not found under ${jdk17Home}`);
@@ -739,7 +818,16 @@ async function main() {
     await bundleJre();
     console.log('\n[5/5] SWRL JRE (dedicated JDK 17 — Drools/MVEL incompatible with JDK 21+)');
     await bundleSwrlJre();
+    if (TARGET_PLATFORM === 'win32') bundleMongodRuntimeDlls();
 
+    if (!requiredResourcesPresent()) {
+        console.error('\nERROR: Missing required files. Fix the warnings above before running electron-builder.\n');
+        process.exit(1);
+    }
+    console.log('\n✓  All required resources present — ready for: npm run dist\n');
+}
+
+function requiredResourcesPresent() {
     console.log('\n=== Summary ===');
     const checks = {
         'desktop.jar':       path.join(JARS_DIR, 'desktop.jar'),
@@ -753,14 +841,17 @@ async function main() {
         console.log(`  ${ok ? '✓' : '✗'}  ${label}`);
         if (!ok) allOk = false;
     }
+    if (TARGET_PLATFORM === 'win32') {
+        const dllsOk = mongodRuntimeDllsPresent();
+        console.log(`  ${dllsOk ? '✓' : '✗'}  mongod.exe VC++ runtime (${MONGOD_VC_RUNTIME_DLLS.join(', ')})`);
+        if (!dllsOk) allOk = false;
+    }
 
     const swrlJreOk = fs.existsSync(path.join(JRE17_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java'));
     console.log(`  ${swrlJreOk ? '✓' : '⚠'}  SWRL JRE (JDK 17)${swrlJreOk ? '' : ' — missing, SWRL reasoning will fail at runtime'}`);
-    if (!allOk) {
-        console.error('\nERROR: Missing required files. Fix the warnings above before running electron-builder.\n');
-        process.exit(1);
-    }
-    console.log('\n✓  All required resources present — ready for: npm run dist\n');
+    const swrlJarOk = fs.existsSync(path.join(JARS_DIR, 'swrl.jar'));
+    console.log(`  ${swrlJarOk ? '✓' : '⚠'}  swrl.jar${swrlJarOk ? '' : ' — missing, build it with: mvn package -pl ontology-swrl -DskipTests (JDK 17)'}`);
+    return allOk;
 }
 
 main().catch(err => { console.error(err); process.exit(1); });

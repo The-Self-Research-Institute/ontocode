@@ -249,6 +249,12 @@ function validateBackendBundles() {
 // install), so we only react to it AFTER a real start attempt fails with exactly this code.
 const MONGO_EXIT_NEED_DOWNGRADE = 62;
 
+const STATUS_DLL_NOT_FOUND = 0xC0000135;
+
+function isDllNotFound(code) {
+    return typeof code === 'number' && (code >>> 0) === STATUS_DLL_NOT_FOUND;
+}
+
 async function attemptStartMongo(dataDir) {
     const logFile = path.join(LOGS_DIR, 'mongo.log');
     const proc = spawnService('MongoDB', mongoBin(), [
@@ -261,7 +267,11 @@ async function attemptStartMongo(dataDir) {
 
     let onEarlyExit, onSpawnError, exitCode = null;
     const earlyDeath = new Promise((_, reject) => {
-        onEarlyExit = (code) => { exitCode = code; reject(new Error(`MongoDB exited with code ${code} before becoming ready`)); };
+        onEarlyExit = (code) => {
+            exitCode = code;
+            const reason = isDllNotFound(code) ? ' (a required Windows library is missing next to mongod.exe)' : '';
+            reject(new Error(`MongoDB exited with code ${code} before becoming ready${reason}`));
+        };
         onSpawnError = (err) => reject(new Error(`MongoDB failed to start: ${err.message}`));
         proc.once('exit', onEarlyExit);
         proc.once('error', onSpawnError);
@@ -386,6 +396,7 @@ async function startFuseki() {
         '-Xms256m',
         '-jar', jar,
         '--port', String(FUSEKI_PORT),
+        '--localhost',
         '--config', configFile,
     ];
 
@@ -555,6 +566,7 @@ async function startDesktop() {
 
     const springArgs = [
         `--server.port=${DESKTOP_PORT}`,
+        '--server.address=127.0.0.1',
         '--spring.profiles.active=desktop',
         `--spring.data.mongodb.uri=${mongoUri}`,
 
@@ -641,6 +653,7 @@ async function startSwrl() {
 
     const springArgs = [
         `--server.port=${SWRL_PORT}`,
+        '--server.address=127.0.0.1',
         '--spring.profiles.active=desktop',
         `--spring.data.mongodb.uri=${mongoUri}`,
         `--app.auth-service-url=http://127.0.0.1:${DESKTOP_PORT}`,
