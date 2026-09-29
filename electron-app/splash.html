@@ -298,7 +298,6 @@
 <div class="details-toggle" id="detailsToggle">Show details</div>
 <div class="log-area" id="log" style="display:none;"></div>
 <div class="actions">
-  <button class="action-btn" id="openLogs">Open logs folder</button>
   <button class="action-btn danger" id="quitBtn">Quit</button>
 </div>
 
@@ -431,7 +430,7 @@
     const ready = stepEls.ready.classList.contains('done');
     if (!ready && !slowShown && secs >= SLOW_AFTER_SECS) {
       slowShown = true;
-      showNote('This is taking longer than usual. The first start after installing can take a few minutes while antivirus scans the new files. If nothing moves for a long time, open the logs to see what it is doing, or quit and try again.', true);
+      showNote('This is taking longer than usual. The first start after installing can take a few minutes while antivirus scans the new files. If nothing moves for a long time, quit and try again.', true);
     }
   }, 1000);
   const TIPS = [
@@ -455,9 +454,6 @@
   document.getElementById('tipPrev').addEventListener('click', () => { tipPausedUntil = Date.now() + 20000; showTip(tipIndex - 1); });
   document.getElementById('tipNext').addEventListener('click', () => { tipPausedUntil = Date.now() + 20000; showTip(tipIndex + 1); });
   setInterval(() => { if (Date.now() > tipPausedUntil) showTip(tipIndex + 1); }, 8000);
-  document.getElementById('openLogs').addEventListener('click', () => {
-    if (window.splashBridge) window.splashBridge.openLogs();
-  });
   const quitBtn = document.getElementById('quitBtn');
   let quitArmed = false;
   quitBtn.addEventListener('click', () => {
