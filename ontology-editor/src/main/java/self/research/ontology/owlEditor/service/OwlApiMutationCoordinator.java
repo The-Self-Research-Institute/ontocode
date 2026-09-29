@@ -67,11 +67,13 @@ public class OwlApiMutationCoordinator {
               // (sync is deferred) — re-exporting from Fuseki here would regress it.
               datasetService.markProjectDirty(projectId);
             }
-            Map<String, Object> warm = desktopOntologyLoader.warmProject(projectId, 5_000);
-            if (!Boolean.TRUE.equals(warm.get("ready"))) {
-                log.warn("[OwlApiCoord] Rewarm after mutation not ready in time for {}: {}", projectId, warm);
+            if (desktopOntologyLoader != null) {
+                Map<String, Object> warm = desktopOntologyLoader.warmProject(projectId, 5_000);
+                if (!Boolean.TRUE.equals(warm.get("ready"))) {
+                    log.warn("[OwlApiCoord] Rewarm after mutation not ready in time for {}: {}", projectId, warm);
+                }
+            }
         }
-    }
     }
 
     /**

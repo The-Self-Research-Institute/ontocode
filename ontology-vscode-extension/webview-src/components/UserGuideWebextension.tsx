@@ -1253,8 +1253,8 @@ export const UserGuideWebextension: React.FC<UserGuideWebextensionProps> = ({ is
                         badges. The dialog closes automatically after 3 seconds
                       </li>
                       <li>
-                        <strong>Jira Integration:</strong> If enabled, your report is automatically created as a Jira
-                        ticket with all attachments uploaded
+                        <strong>OpenProject Integration:</strong> If enabled, your report is automatically created as
+                        an OpenProject work package with all attachments uploaded
                       </li>
                     </ul>
                   </div>
@@ -1292,8 +1292,8 @@ export const UserGuideWebextension: React.FC<UserGuideWebextensionProps> = ({ is
                   </h4>
                   <ul style={styles.list}>
                     <li>
-                      <strong>Offline Fallback:</strong> If the Jira connection is unavailable, your report is saved
-                      locally and the team is notified
+                      <strong>Offline Fallback:</strong> If the OpenProject connection is unavailable, your report is
+                      saved locally and the team is notified
                     </li>
                     <li>
                       <strong>Multiple Attachments:</strong> You can attach several files at once — screenshots, log

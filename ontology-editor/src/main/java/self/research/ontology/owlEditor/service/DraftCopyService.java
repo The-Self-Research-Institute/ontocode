@@ -39,6 +39,13 @@ public class DraftCopyService {
     ) {}
 
     public InitiateResult initiateCopy(String projectId, String userId) {
+        if (isReady(projectId, userId)) {
+            long existingRevision = getMainRevisionAtCopy(projectId, userId);
+            log.info("[DRAFT-COPY] Resuming existing ready draft session for project {} user {} (baseline revision {}) — not re-copying, would discard pending draft edits",
+                    projectId, userId, existingRevision);
+            return new InitiateResult(true, "Resumed existing draft session", -1, existingRevision);
+        }
+
         var stats = importQueueManager.getQueueStats();
         if (stats.getActiveProjectIds() != null && stats.getActiveProjectIds().contains(projectId)) {
             return new InitiateResult(false,
@@ -64,9 +71,15 @@ public class DraftCopyService {
         }
         sessionRepository.save(session);
 
-        datasetService.clearDraftGraph(projectId, userId);
-
-        executeGraphCopyAsync(projectId, userId);
+ try {
+            datasetService.clearDraftGraph(projectId, userId);
+            executeGraphCopyAsync(projectId, userId);
+        } catch (RuntimeException e) {
+            log.error("[DRAFT-COPY] Failed to initiate copy for project {} user {} — marking session FAILED",
+                    projectId, userId, e);
+            updateStatus(projectId, userId, DraftCopyStatus.FAILED);
+            throw e;
+        }
 
         log.info("[DRAFT-COPY] Initiated copy for project {} user {} — {} triples, revision {}",
                 projectId, userId, tripleCount, revision);

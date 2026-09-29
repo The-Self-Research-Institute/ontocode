@@ -2,12 +2,12 @@ package self.research.ontology.auth.controller;
 
 import com.mongodb.client.gridfs.model.GridFSFile;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
-import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.gridfs.GridFsResource;
@@ -23,6 +23,7 @@ import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.auth.service.DesktopDownloadService;
 
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.DigestInputStream;
@@ -104,7 +105,8 @@ public class DesktopDownloadController {
     public ResponseEntity<?> download(
             @PathVariable String platform,
             @RequestParam(required = false) String clientOs,
-            HttpServletRequest request) {
+            HttpServletRequest request,
+            HttpServletResponse response) {
         if ("info".equals(platform) || platform.startsWith("updates")) {
             return ResponseEntity.notFound().build();
         }
@@ -147,17 +149,58 @@ public class DesktopDownloadController {
                     .build();
             }
 
-            ResourceRegion region = ranges.get(0).toResourceRegion(resource);
-            return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                .contentType(MediaType.parseMediaType(contentType))
-                .body(region);
+            HttpRange range = ranges.get(0);
+            long start = range.getRangeStart(contentLength);
+            long end = range.getRangeEnd(contentLength);
+            if (start < 0 || end < start || end >= contentLength) {
+                response.setStatus(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE.value());
+                response.setHeader(HttpHeaders.CONTENT_RANGE, "bytes */" + contentLength);
+                return null;
+            }
+            long rangeLength = end - start + 1;
+
+            response.setStatus(HttpStatus.PARTIAL_CONTENT.value());
+            response.setHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"");
+            response.setHeader(HttpHeaders.ACCEPT_RANGES, "bytes");
+            response.setHeader(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + contentLength);
+            response.setContentLengthLong(rangeLength);
+            response.setContentType(contentType);
+
+            try (InputStream in = resource.getInputStream()) {
+                skipFully(in, start);
+                OutputStream out = response.getOutputStream();
+                byte[] buffer = new byte[8192];
+                long remaining = rangeLength;
+                while (remaining > 0) {
+                    int read = in.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+                    if (read < 0) break;
+                    out.write(buffer, 0, read);
+                    remaining -= read;
+                }
+                out.flush();
+            }
+            return null;
 
         } catch (Exception e) {
             log.error("Download failed for platform {}: {}", platform, e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Download failed: " + e.getMessage()));
+            if (!response.isCommitted()) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Download failed: " + e.getMessage()));
+            }
+            return null;
+        }
+    }
+
+    private static void skipFully(InputStream in, long toSkip) throws java.io.IOException {
+        while (toSkip > 0) {
+            long skipped = in.skip(toSkip);
+            if (skipped > 0) {
+                toSkip -= skipped;
+            } else if (in.read() < 0) {
+                break;
+            } else {
+                toSkip--;
+            }
         }
     }
 

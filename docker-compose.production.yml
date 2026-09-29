@@ -197,13 +197,12 @@ services:
         -DentityExpansionLimit=100000000
         -Djdk.xml.entityExpansionLimit=100000000
       EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
-      JIRA_ENABLED: ${JIRA_ENABLED:-true}
-      JIRA_CLOUD_URL: ${JIRA_CLOUD_URL:-https://coretopia.atlassian.net}
-      JIRA_USER_EMAIL: ${JIRA_USER_EMAIL:-uma@coretopia.com}
-      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
-      JIRA_PROJECT_KEY: ${JIRA_PROJECT_KEY:-TSRI}
-      JIRA_EPIC_KEY: ${JIRA_EPIC_KEY:-TSRI-103}
-      JIRA_ISSUE_TYPE: ${JIRA_ISSUE_TYPE:-Task}
+      OPENPROJECT_ENABLED: ${OPENPROJECT_ENABLED:-true}
+      OPENPROJECT_HOST: ${OPENPROJECT_HOST:-https://openproject.coretopia.com}
+      OPENPROJECT_API_KEY: ${OPENPROJECT_API_KEY:-}
+      OPENPROJECT_PROJECT_ID: ${OPENPROJECT_PROJECT_ID:-TSRI}
+      OPENPROJECT_PARENT_ID: ${OPENPROJECT_PARENT_ID:-TSRI-103}
+      OPENPROJECT_DEFAULT_TYPE: ${OPENPROJECT_DEFAULT_TYPE:-Task}
       # Multi-tenant: do NOT mirror whole graphs in editor RAM (was ~400 MB × 3 projects).
       # Hierarchy → Mongo snapshots; repeat reads → Caffeine; cold reads → Fuseki.
       ONTOCODE_MEMCACHE_ENABLED: ${ONTOCODE_MEMCACHE_ENABLED:-false}

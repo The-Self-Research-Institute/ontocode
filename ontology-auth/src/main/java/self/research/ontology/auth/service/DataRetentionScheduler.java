@@ -10,6 +10,8 @@ import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.FileMetadata;
+import self.research.ontology.auth.model.Project;
+import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.FileMetadataRepository;
 import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
@@ -26,6 +28,8 @@ public class DataRetentionScheduler {
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
     private final GridFsTemplate gridFsTemplate;
+    private final ProjectService projectService;
+    private final WorkspaceService workspaceService;
 
     @Value("${data.retention.purge.enabled:true}")
     private boolean purgeEnabled;
@@ -36,11 +40,15 @@ public class DataRetentionScheduler {
     public DataRetentionScheduler(FileMetadataRepository fileMetadataRepository,
                                    ProjectRepository projectRepository,
                                    WorkspaceRepository workspaceRepository,
-                                   GridFsTemplate gridFsTemplate) {
+                                   GridFsTemplate gridFsTemplate,
+                                   ProjectService projectService,
+                                   WorkspaceService workspaceService) {
         this.fileMetadataRepository = fileMetadataRepository;
         this.projectRepository = projectRepository;
         this.workspaceRepository = workspaceRepository;
         this.gridFsTemplate = gridFsTemplate;
+        this.projectService = projectService;
+        this.workspaceService = workspaceService;
     }
 
     @Scheduled(cron = "${data.retention.purge.cron:0 0 3 * * ?}")
@@ -63,10 +71,25 @@ public class DataRetentionScheduler {
         }
         fileMetadataRepository.deleteAll(filesToPurge);
 
-        long deletedProjects = projectRepository.deleteAllByIsDeletedTrueAndDeletedAtBefore(cutoff);
-        long deletedWorkspaces = workspaceRepository.deleteAllByIsDeletedTrueAndDeletedAtBefore(cutoff);
+        List<Project> projectsToPurge = projectRepository.findAllByIsDeletedTrueAndDeletedAtBefore(cutoff);
+        for (Project project : projectsToPurge) {
+            try {
+                projectService.purgeProjectData(project);
+            } catch (Exception e) {
+                log.warn("Could not purge project {} during retention purge: {}", project.getProjectId(), e.getMessage());
+            }
+        }
+
+        List<Workspace> workspacesToPurge = workspaceRepository.findAllByIsDeletedTrueAndDeletedAtBefore(cutoff);
+        for (Workspace workspace : workspacesToPurge) {
+            try {
+                workspaceService.purgeWorkspaceData(workspace);
+            } catch (Exception e) {
+                log.warn("Could not purge workspace {} during retention purge: {}", workspace.getWorkspaceId(), e.getMessage());
+            }
+        }
 
         log.info("Data retention purge complete: {} files, {} projects, {} workspaces removed (older than {} days)",
-                filesToPurge.size(), deletedProjects, deletedWorkspaces, retentionDays);
+                filesToPurge.size(), projectsToPurge.size(), workspacesToPurge.size(), retentionDays);
     }
 }

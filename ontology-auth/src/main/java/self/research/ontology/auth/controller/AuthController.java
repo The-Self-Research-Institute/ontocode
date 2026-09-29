@@ -815,8 +815,10 @@ public class AuthController {
             }
 
             for (Project project : projectRepository.findByMembers_UserId(userId)) {
-                project.removeMember(userId);
-                projectRepository.save(project);
+                if (!project.getOwnerId().equals(userId)) {
+                    project.removeMember(userId);
+                    projectRepository.save(project);
+                }
             }
 
             for (Workspace workspace : workspaceRepository.findByMembers_UserId(userId)) {

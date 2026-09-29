@@ -24,6 +24,7 @@ import org.eclipse.rdf4j.rio.helpers.BasicParserSettings;
 import org.eclipse.rdf4j.rio.helpers.StatementCollector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
@@ -134,8 +135,8 @@ public class SparqlDatasetService {
     // OWLAPI in-memory model (fast-open). Evicted here so EVERY write path —
     // including services that call execUpdate directly without going through
     // OntologyMutationService.apply() — invalidates the parsed model.
-    @Autowired(required = false)
-    private OwlApiMutationCoordinator mutationCoordinator;
+ @Autowired
+    private ObjectProvider<OwlApiMutationCoordinator> mutationCoordinatorProvider;
 
     @Autowired(required = false)
     private self.research.ontology.owlEditor.repository.ProjectRepository projectRepository;
@@ -310,6 +311,44 @@ public class SparqlDatasetService {
     }
 
    
+    private static final java.util.regex.Pattern XMLNS_DECLARATION_PATTERN =
+            java.util.regex.Pattern.compile("xmlns:?([a-zA-Z0-9_-]*)\\s*=\\s*\"([^\"]*)\"");
+
+    /**
+     * RDF4J's RDFXMLParser only fires handleNamespace() for a prefix once it's actually
+     * used to qualify an element/attribute that produces a triple — a prefix declared on
+     * the root <rdf:RDF> element but never referenced in the body (common for large
+     * ontologies that declare prefixes for related/imported vocabularies "just in case")
+     * is silently dropped from capturedNamespaces. Scanning the raw root element's own
+     * xmlns declarations directly recovers those too, so nothing declared in the source
+     * file is lost just because the ontology doesn't happen to use it (yet).
+     */
+    private void mergeDeclaredXmlnsPrefixes(Map<String, String> capturedNamespaces, byte[] headBytes, int length) {
+        if (headBytes == null || length <= 0) {
+            return;
+        }
+        try {
+            String head = new String(headBytes, 0, length, StandardCharsets.UTF_8);
+            int rootTagEnd = head.indexOf('>');
+            String rootTag = rootTagEnd >= 0 ? head.substring(0, rootTagEnd) : head;
+            java.util.regex.Matcher m = XMLNS_DECLARATION_PATTERN.matcher(rootTag);
+            int before = capturedNamespaces.size();
+            while (m.find()) {
+                String prefix = m.group(1) == null ? "" : m.group(1);
+                String uri = m.group(2);
+                if (uri != null && !uri.isBlank()) {
+                    capturedNamespaces.putIfAbsent(prefix, uri);
+                }
+            }
+            if (capturedNamespaces.size() > before) {
+                log.info("[NAMESPACES] Recovered {} declared-but-unused xmlns prefixes from the root element",
+                        capturedNamespaces.size() - before);
+            }
+        } catch (Exception e) {
+            log.debug("[NAMESPACES] Could not scan raw xmlns declarations: {}", e.getMessage());
+        }
+    }
+
     private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces) {
         if (capturedNamespaces.isEmpty()) {
             log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
@@ -513,13 +552,17 @@ public class SparqlDatasetService {
     }
 
     private ProjectGraphBinding resolveBindingForImport(String projectId, long fileSizeBytes) {
-        String graphUri = getGraphUri(projectId);
+        return resolveBindingForImport(projectId, fileSizeBytes, null);
+    }
+
+    private ProjectGraphBinding resolveBindingForImport(String projectId, long fileSizeBytes, String graphUriOverride) {
+        String graphUri = graphUriOverride != null ? graphUriOverride : getGraphUri(projectId);
         if (usesSharedGraphForImport(fileSizeBytes)) {
             log.info("[SharedGraph] File {} MB < {} MB limit — using shared dataset for project {}",
                     fileSizeBytes / (1024 * 1024), sharedGraphMaxFileMb, projectId);
             return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
         }
-        return resolveBinding(projectId, true);
+        return resolveBinding(projectId, true, graphUriOverride);
     }
 
     private String deriveFusekiBase() {
@@ -569,7 +612,11 @@ public class SparqlDatasetService {
     }
 
     private ProjectGraphBinding resolveBinding(String projectId, boolean createIfAbsent) {
-        String graphUri = getGraphUri(projectId);
+        return resolveBinding(projectId, createIfAbsent, null);
+    }
+
+    private ProjectGraphBinding resolveBinding(String projectId, boolean createIfAbsent, String graphUriOverride) {
+        String graphUri = graphUriOverride != null ? graphUriOverride : getGraphUri(projectId);
         if (projectId == null || projectId.isBlank()) {
             return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
         }
@@ -1226,33 +1273,115 @@ public class SparqlDatasetService {
     }
 
     /**
-     * Atomically publishes a copy-on-switch draft by moving the draft graph to main.
+     * Atomically publishes a copy-on-switch draft by replacing main's content with the draft's.
+     *
+     * <p>Deliberately NOT implemented as SPARQL {@code MOVE GRAPH}: the draft graph is always
+     * created by copying main (see {@link #copyMainGraphToDraft}), which preserves the store's
+     * internal blank-node identity rather than minting fresh ones. When the destination of a
+     * {@code MOVE} shares blank-node lineage with its source this way, Jena/Fuseki's native MOVE
+     * silently drops a fraction of the blank-node-anchored triples (reproduced directly against
+     * Fuseki outside the app, independent of this codebase — e.g. an 11-triple graph moved onto
+     * such an overlapping destination came out with only 6). The CLEAR+INSERT-WHERE+CLEAR
+     * sequence below is semantically equivalent to MOVE and was verified lossless in the same
+     * overlapping-blank-node scenario at full production scale.</p>
      */
     public void moveDraftToMain(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
-        String sparql = "MOVE GRAPH <" + draftGraph + "> TO <" + mainGraph + ">";
+        String sparql = "CLEAR GRAPH <" + mainGraph + "> ;\n"
+                + "INSERT { GRAPH <" + mainGraph + "> { ?s ?p ?o } } WHERE { GRAPH <" + draftGraph + "> { ?s ?p ?o } } ;\n"
+                + "CLEAR GRAPH <" + draftGraph + ">";
         long start = System.nanoTime();
         execUpdate(projectId, mainGraph, sparql);
         evictDraftReadyCache(projectId, userId);
-        log.info("[DRAFT-MOVE] MOVE GRAPH draft→main for project {} user {} in {}ms",
+        log.info("[DRAFT-MOVE] Published draft→main for project {} user {} in {}ms",
                 projectId, userId, elapsedMillis(start));
     }
 
-    /**
-     * Full copy of the main graph into the user's draft graph (copy-on-switch model).
-     * The draft graph must be cleared before calling this.
-     */
-    public void copyMainGraphToDraft(String projectId, String userId) {
+       public void copyMainGraphToDraft(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
-        String sparql = "INSERT { GRAPH <" + draftGraph + "> { ?s ?p ?o } } WHERE { GRAPH <" + mainGraph + "> { ?s ?p ?o } }";
         long start = System.nanoTime();
-        execUpdate(projectId, mainGraph, sparql);
-        log.info("[DRAFT-COPY] Copied main → draft for project {} user {} in {}ms",
-                projectId, userId, elapsedMillis(start));
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
+            org.eclipse.rdf4j.model.ValueFactory vf = conn.getValueFactory();
+            org.eclipse.rdf4j.model.IRI mainGraphIri = vf.createIRI(mainGraph);
+            org.eclipse.rdf4j.model.IRI draftGraphIri = vf.createIRI(draftGraph);
+
+            boolean autoCommit = conn.isAutoCommit();
+            if (autoCommit) {
+                conn.begin();
+            }
+            try {
+                java.util.List<org.eclipse.rdf4j.model.Statement> statements = new java.util.ArrayList<>();
+                try (org.eclipse.rdf4j.repository.RepositoryResult<org.eclipse.rdf4j.model.Statement> result =
+                        conn.getStatements(null, null, null, false, mainGraphIri)) {
+                    while (result.hasNext()) {
+                        statements.add(result.next());
+                    }
+                }
+                conn.add(statements, draftGraphIri);
+                if (autoCommit) {
+                    conn.commit();
+                }
+                log.info("[DRAFT-COPY] Copied {} triples main -> draft for project {} user {} in {}ms",
+                        statements.size(), projectId, userId, elapsedMillis(start));
+            } catch (Exception e) {
+                if (autoCommit) {
+                    conn.rollback();
+                }
+                throw e;
+            }
+        }
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
+    }
+    public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {
+        return exportDraftGraphContent(projectId, userId, rdfFormat, java.util.Map.of());
     }
 
+    public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat,
+            java.util.Map<String, String> extraPrefixes) {
+        String draftGraph = getDraftGraphUri(projectId, userId);
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
+            org.eclipse.rdf4j.model.IRI draftGraphIri = conn.getValueFactory().createIRI(draftGraph);
+            java.util.List<org.eclipse.rdf4j.model.Statement> statements = new java.util.ArrayList<>();
+            try (org.eclipse.rdf4j.repository.RepositoryResult<org.eclipse.rdf4j.model.Statement> result =
+                    conn.getStatements(null, null, null, false, draftGraphIri)) {
+                while (result.hasNext()) {
+                    statements.add(result.next());
+                }
+            }
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            org.eclipse.rdf4j.rio.RDFWriter writer = org.eclipse.rdf4j.rio.Rio.createWriter(rdfFormat, out);
+            writer.startRDF();
+            java.util.Set<String> registeredPrefixes = new java.util.HashSet<>();
+            writer.handleNamespace("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+            writer.handleNamespace("rdfs", "http://www.w3.org/2000/01/rdf-schema#");
+            writer.handleNamespace("owl", "http://www.w3.org/2002/07/owl#");
+            writer.handleNamespace("xsd", "http://www.w3.org/2001/XMLSchema#");
+            registeredPrefixes.add("rdf");
+            registeredPrefixes.add("rdfs");
+            registeredPrefixes.add("owl");
+            registeredPrefixes.add("xsd");
+            for (Map.Entry<String, String> entry : extraPrefixes.entrySet()) {
+                if (registeredPrefixes.add(entry.getKey())) {
+                    writer.handleNamespace(entry.getKey(), entry.getValue());
+                }
+            }
+            for (org.eclipse.rdf4j.model.Statement st : statements) {
+                writer.handleStatement(st);
+            }
+            writer.endRDF();
+            log.info("[DRAFT-EXPORT] Exported {} triples from draft graph for project {} user {}",
+                    statements.size(), projectId, userId);
+            return out.toString(java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to export draft graph: " + e.getMessage(), e);
+        }
+    }
     public long countDraftTriples(String projectId, String userId) {
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);
@@ -1409,6 +1538,7 @@ public class SparqlDatasetService {
                 conn.begin();
             }
 
+            boolean committed = false;
             try {
                 long updateExecStart = System.nanoTime();
                 Update update = conn.prepareUpdate(graphAwareUpdate);
@@ -1422,6 +1552,7 @@ public class SparqlDatasetService {
                     conn.commit();
                     commitMs = elapsedMillis(commitStart);
                 }
+                committed = true;
 
                 long totalMs = elapsedMillis(totalStart);
                 sparqlLog.info("[SPARQL] UPDATE project={} execTime={}ms commitTime={}ms totalTime={}ms connTime={}ms",
@@ -1442,6 +1573,7 @@ public class SparqlDatasetService {
                 invalidateDerivedCachesAfterUpdate(projectId);
 
                 List<OntologyMutationService.MutationOp> structuredOps = MutationContext.getAndClear();
+                OwlApiMutationCoordinator mutationCoordinator = mutationCoordinatorProvider.getIfAvailable();
                 if (mutationCoordinator != null) {
                     mutationCoordinator.afterMutation(projectId, structuredOps);
                 }
@@ -1453,9 +1585,19 @@ public class SparqlDatasetService {
                 }
 
             } catch (Exception e) {
-                if (autoCommit) {
-                    conn.rollback();
-                    log.error("[GRAPHDB] Transaction rolled back for project {}", projectId);
+                // Once commit() has succeeded, the write is already durable — the SPARQL update
+                // itself is not what's failing here, something in post-commit processing (cache
+                // invalidation, the OWLAPI coordinator) is. Rolling back at that point has nothing
+                // to roll back and only throws its own "no transaction active" error, which used
+                // to replace this one and hide the real cause. Only roll back pre-commit failures,
+                // and never let a failed rollback attempt mask the exception that triggered it.
+                if (autoCommit && !committed) {
+                    try {
+                        conn.rollback();
+                        log.error("[GRAPHDB] Transaction rolled back for project {}", projectId);
+                    } catch (Exception rollbackEx) {
+                        log.error("[GRAPHDB] Rollback also failed for project {}: {}", projectId, rollbackEx.getMessage());
+                    }
                 }
                 throw e;
             }
@@ -1491,10 +1633,6 @@ public class SparqlDatasetService {
         // Don't split by semicolon in this case as it's part of Turtle syntax
         if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
             if (operationsStr.toUpperCase().contains("USING ")) {
-                // Draft update: USING already present; wrap INSERT template with GRAPH instead of
-                // WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
-                // Close GRAPH and outer INSERT braces before WHERE (non-greedy .*? alone left USING
-                // attached to a malformed template for blank-node inserts).
                 operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\}\\s*)(WHERE)",
                         "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
                 log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
@@ -1616,13 +1754,23 @@ public class SparqlDatasetService {
                                 long fileSizeBytes,
                                 ImportOptions options,
                                 ProgressListener progressListener) {
+        bulkLoadChunked(projectId, inputStream, rdfFormat, fileSizeBytes, options, progressListener, null);
+    }
+
+    public void bulkLoadChunked(String projectId,
+                                InputStream inputStream,
+                                RDFFormat rdfFormat,
+                                long fileSizeBytes,
+                                ImportOptions options,
+                                ProgressListener progressListener,
+                                String targetGraphUriOverride) {
         long bulkLoadStart = System.nanoTime();
         int batchSize = resolveBatchSize(fileSizeBytes);
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
 
         try {
             long t0 = System.nanoTime();
-            ProjectGraphBinding binding = resolveBindingForImport(projectId, fileSizeBytes);
+            ProjectGraphBinding binding = resolveBindingForImport(projectId, fileSizeBytes, targetGraphUriOverride);
             Repository repo = binding.repository();
             String graphUri = binding.graphUri();
 
@@ -1800,12 +1948,16 @@ public class SparqlDatasetService {
 
                     log.info("Parsing RDF file...");
 
-                    // Preview first 500 bytes for debugging
-                    cleanedStream.mark(1024);
-                    byte[] preview = cleanedStream.readNBytes(500);
+                    // Preview head of the stream for debugging, and to recover any xmlns
+                    // declarations the parser itself won't report (see mergeDeclaredXmlnsPrefixes).
+                    final int headPreviewSize = 32768;
+                    cleanedStream.mark(headPreviewSize);
+                    byte[] preview = cleanedStream.readNBytes(headPreviewSize);
                     cleanedStream.reset();
-                    String previewStr = new String(preview, java.nio.charset.StandardCharsets.UTF_8);
+                    String previewStr = new String(preview, 0, Math.min(preview.length, 500),
+                            java.nio.charset.StandardCharsets.UTF_8);
                     log.info("Stream content preview (first 500 chars): {}", previewStr);
+                    mergeDeclaredXmlnsPrefixes(capturedNamespaces, preview, preview.length);
 
                     long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
@@ -2066,6 +2218,12 @@ public class SparqlDatasetService {
                     }
                 });
                 nsParser.parse(nsStream, "");
+                try (InputStream headStream = Files.newInputStream(sourceFile)) {
+                    byte[] head = headStream.readNBytes(32768);
+                    mergeDeclaredXmlnsPrefixes(capturedNamespaces, head, head.length);
+                } catch (Exception headEx) {
+                    log.debug("[NAMESPACES] Could not read file head for xmlns scan: {}", headEx.getMessage());
+                }
                 persistCapturedNamespaces(projectId, capturedNamespaces);
             } catch (Exception nsEx) {
                 log.warn("[NAMESPACES] Failed to extract/register namespaces after DirectUpload for project {}: {}",
@@ -3074,7 +3232,7 @@ public class SparqlDatasetService {
         }
 
         ProjectGraphBinding binding = resolveBinding(projectId, false);
-        String url = binding.namedGraphGspUrl();
+        String url = binding.gspBase() + "?graph=" + java.net.URLEncoder.encode(graphUri, StandardCharsets.UTF_8);
         String auth = "Basic " + java.util.Base64.getEncoder()
                 .encodeToString((fusekiAdminUser + ":" + fusekiAdminPassword).getBytes(StandardCharsets.UTF_8));
 

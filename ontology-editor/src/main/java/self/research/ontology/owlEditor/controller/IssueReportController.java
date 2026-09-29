@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.owlEditor.model.IssueReport;
 import self.research.ontology.owlEditor.service.IssueReportService;
-import self.research.ontology.owlEditor.service.JiraService;
+import self.research.ontology.owlEditor.service.OpenProjectService;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Base64;
@@ -131,14 +131,14 @@ public class IssueReportController {
             if (result.getIssueReportId() != null) {
                 response.put("issueReportId", result.getIssueReportId());
             }
-            if (result.getJiraIssueKey() != null) {
-                response.put("jiraIssueKey", result.getJiraIssueKey());
+            if (result.getIssueKey() != null) {
+                response.put("issueKey", result.getIssueKey());
             }
-            if (result.getJiraIssueUrl() != null) {
-                response.put("jiraIssueUrl", result.getJiraIssueUrl());
+            if (result.getIssueUrl() != null) {
+                response.put("issueUrl", result.getIssueUrl());
             }
-            if (result.getJiraFailureReason() != null) {
-                response.put("jiraFailureReason", result.getJiraFailureReason());
+            if (result.getTrackerFailureReason() != null) {
+                response.put("trackerFailureReason", result.getTrackerFailureReason());
             }
 
             if (result.isSuccess()) {
@@ -168,10 +168,10 @@ public class IssueReportController {
         }
     }
 
-    @GetMapping("/jira/validate")
-    public ResponseEntity<Map<String, Object>> validateJiraConnection() {
+    @GetMapping("/openproject/validate")
+    public ResponseEntity<Map<String, Object>> validateOpenProjectConnection() {
         try {
-            JiraService.JiraValidationResult result = issueReportService.validateJiraConnection();
+            OpenProjectService.OpenProjectValidationResult result = issueReportService.validateOpenProjectConnection();
 
             Map<String, Object> response = new HashMap<>();
             response.put("success", result.isSuccess());
@@ -183,7 +183,7 @@ public class IssueReportController {
             return ResponseEntity.ok(response);
 
         } catch (Exception e) {
-            log.error("Failed to validate Jira connection", e);
+            log.error("Failed to validate OpenProject connection", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of(
                     "success", false,

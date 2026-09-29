@@ -1,5 +1,17 @@
 import apiClient from './apiClient';
 
+export interface SubChange {
+  id: string;
+  predicate?: string;
+  oldValue?: string;
+  newValue?: string;
+  annotationProperty?: string;
+  addition: boolean;
+  reverted?: boolean;
+  revertedBy?: string;
+  revertedAt?: string;
+}
+
 export interface OntologyChange {
   id: string;
   projectId?: string;
@@ -18,6 +30,9 @@ export interface OntologyChange {
   comment?: string;
   sessionId?: string;
   reverted?: boolean;
+  revertedBy?: string;
+  revertedAt?: string;
+  subChanges?: SubChange[];
   status?: string;
   hasConflict?: boolean;
   commentCount?: number;
@@ -121,6 +136,33 @@ export const changeTrackingService = {
       };
     } catch (error) {
       console.error('[changeTrackingService] rollbackChange failed:', error);
+      return { success: false, error: 'Rollback request failed' };
+    }
+  },
+
+  async rollbackSubChange(
+    projectId: string,
+    changeId: string,
+    subChangeId: string,
+  ): Promise<{ success: boolean; error?: string; message?: string; alreadyReverted?: boolean; revertedBy?: string; revertedAt?: string; entityIRI?: string }> {
+    try {
+      const actor = resolveActor();
+      const response = await apiClient.post(
+        `/api/ontology/${encodeURIComponent(projectId)}/changes/${encodeURIComponent(changeId)}/subchanges/${encodeURIComponent(subChangeId)}/rollback`,
+        { userId: actor.userId, username: actor.username },
+      );
+      const data = response.data || response;
+      return {
+        success: data.success !== false,
+        error: data.error,
+        message: data.message,
+        alreadyReverted: data.alreadyReverted,
+        revertedBy: data.revertedBy,
+        revertedAt: data.revertedAt,
+        entityIRI: data.entityIRI,
+      };
+    } catch (error) {
+      console.error('[changeTrackingService] rollbackSubChange failed:', error);
       return { success: false, error: 'Rollback request failed' };
     }
   },

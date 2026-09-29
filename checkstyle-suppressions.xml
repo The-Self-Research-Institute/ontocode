@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<suppressions>
+    <suppress id="fileLengthController" files="^(?!.*[\\/]controller[\\/].*\.java$).*$"/>
+    <suppress id="fileLengthService" files="^(?!.*[\\/]service[\\/].*\.java$).*$"/>
+    <suppress id="fileLengthUtility" files="^(?!.*[\\/]util[\\/].*\.java$).*$"/>
+    <suppress id="fileLengthTest" files="^(?!.*(Test|Tests)\.java$).*$"/>
+    <suppress id="fileLengthDefault" files=".*[\\/](controller|service|util)[\\/].*\.java$"/>
+    <suppress id="fileLengthDefault" files=".*(Test|Tests)\.java$"/>
+</suppressions>
