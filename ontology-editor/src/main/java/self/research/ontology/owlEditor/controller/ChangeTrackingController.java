@@ -576,6 +576,9 @@ public class ChangeTrackingController {
                 if (request.get("userId") != null) userId = (String) request.get("userId");
                 if (request.get("username") != null) username = (String) request.get("username");
             }
+            String[] actingUser = resolveActingUser(httpRequest, userId, username);
+            userId = actingUser[0];
+            username = actingUser[1];
 
             String entityIRI = historyChange.getEntityIRI();
             if (entityIRI == null || entityIRI.trim().isEmpty() || "null".equalsIgnoreCase(entityIRI.trim())) {
@@ -678,9 +681,26 @@ public class ChangeTrackingController {
     }
 
     /**
-     * DRAFT_EDITOR users may only roll back changes in their own draft. Returns an error
-     * ResponseEntity if the requester is blocked, or null if the rollback may proceed.
+     * The acting user for the rollback audit trail (who gets recorded as "reverted by"). Prefers
+     * the authenticated JWT identity — the same source {@link #checkRollbackPermission} already
+     * trusts for the author check — over whatever userId/username the client sent in the request
+     * body, since the web app's plugin panel has never actually populated those fields (it reads
+     * a non-existent {@code window.vscodeUser} / an empty {@code localStorage['user']}, so every
+     * rollback was recorded as "Anonymous" regardless of who was actually logged in). Falls back
+     * to the request body only when there's no JWT (e.g. a system-triggered call).
      */
+    private String[] resolveActingUser(
+            jakarta.servlet.http.HttpServletRequest httpRequest, String fallbackUserId, String fallbackUsername) {
+        String authHeader = httpRequest != null ? httpRequest.getHeader("Authorization") : null;
+        String[] jwtClaims = self.research.ontology.owlEditor.config.JwtClaimUtils.extractPlanAndUserId(authHeader);
+        String jwtUserId = jwtClaims != null ? jwtClaims[1] : null;
+        String jwtEmail = self.research.ontology.owlEditor.config.JwtClaimUtils.extractEmail(authHeader);
+        return new String[]{
+                jwtUserId != null ? jwtUserId : fallbackUserId,
+                jwtEmail != null ? jwtEmail : fallbackUsername
+        };
+    }
+
     private ResponseEntity<Map<String, Object>> checkRollbackPermission(
             HistoryChange historyChange,
             String projectId,
@@ -691,18 +711,29 @@ public class ChangeTrackingController {
         String[] jwtClaims = self.research.ontology.owlEditor.config.JwtClaimUtils.extractPlanAndUserId(authHeader);
         String requesterId = jwtClaims != null ? jwtClaims[1] : null;
         String requesterEmail = self.research.ontology.owlEditor.config.JwtClaimUtils.extractEmail(authHeader);
-        if (requesterId != null && workspaceOwnershipService.isDraftEditorInProject(requesterId, projectId)
+        if (requesterId == null) {
+            return null;
+        }
+
+        if (workspaceOwnershipService.isViewerInProject(requesterId, projectId)
                 && !workspaceOwnershipService.isUserOwnerOfProject(requesterId, projectId)) {
-            String changeOwnerId = historyChange != null ? historyChange.getUserId() : null;
-            boolean ownsThisChange = historyChange != null && historyChange.isDraft()
-                    && changeOwnerId != null
+            log.debug("[ROLLBACK] Viewer {} blocked from rolling back change {}", requesterId, changeId);
+            return ResponseEntity.status(403).body(Map.of(
+                    "success", false,
+                    "error", "You do not have permission to roll back changes in this project."));
+        }
+
+        boolean stillDraft = historyChange != null && historyChange.isDraft();
+        if (stillDraft) {
+            String changeOwnerId = historyChange.getUserId();
+            boolean isAuthor = changeOwnerId != null
                     && (changeOwnerId.equals(requesterId) || changeOwnerId.equalsIgnoreCase(requesterEmail));
-            if (!ownsThisChange) {
-                log.debug("[ROLLBACK] DRAFT_EDITOR {} blocked from rolling back change {} (not their own draft change)",
+            if (!isAuthor) {
+                log.debug("[ROLLBACK] {} blocked from rolling back draft change {} (not the author)",
                         requesterId, changeId);
                 return ResponseEntity.status(403).body(Map.of(
                         "success", false,
-                        "error", "You can only roll back changes in your own draft."));
+                        "error", "Only the person who made this change can roll it back before it's merged."));
             }
         }
         return null;
@@ -779,8 +810,11 @@ public class ChangeTrackingController {
                 if (request.get("userId") != null) userId = (String) request.get("userId");
                 if (request.get("username") != null) username = (String) request.get("username");
             }
-            
-            log.info("[ROLLBACK] Final values - action: {}, entityIRI: {}, changeType: {}, entityLabel: {}", 
+            String[] actingUser = resolveActingUser(httpRequest, userId, username);
+            userId = actingUser[0];
+            username = actingUser[1];
+
+            log.info("[ROLLBACK] Final values - action: {}, entityIRI: {}, changeType: {}, entityLabel: {}",
                 action, entityIRI, changeType, entityLabel);
             log.info("[ROLLBACK] oldValue: '{}', newValue: '{}'", oldValue, newValue);
             
@@ -1236,7 +1270,20 @@ public class ChangeTrackingController {
                     }
                 }
             } else {
-                log.warn("[ROLLBACK] Generic property-assertion sub-change on predicate {} not yet supported — skipping", predicate);
+
+                String value = sc.isAddition() ? sc.getNewValue() : sc.getOldValue();
+                boolean looksLikeIri = value != null && (value.startsWith("http://") || value.startsWith("https://"));
+                if (value != null && !value.isEmpty() && !looksLikeIri) {
+                    if (sc.isAddition()) {
+                        mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                            "deleteAnnotation", entityIRI, null, null, predicate, value, null, null, null, null, null, null, null, null, null));
+                    } else {
+                        mutations.add(new self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp(
+                            "addAnnotation", entityIRI, null, null, predicate, value, null, null, null, null, null, null, null, null, null));
+                    }
+                } else {
+                    log.warn("[ROLLBACK] Generic property-assertion sub-change on predicate {} not yet supported — skipping", predicate);
+                }
             }
         }
     }

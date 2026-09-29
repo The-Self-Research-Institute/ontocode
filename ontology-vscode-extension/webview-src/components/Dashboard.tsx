@@ -13113,11 +13113,19 @@ const updateItemInState = useCallback(
             return;
           }
           if (syncError?.data?.errorType === "INCONSISTENT_ONTOLOGY") {
-    
+
             const inconsistentMsg = syncError?.data?.error || "Inconsistent: this change makes the ontology inconsistent.";
             console.warn("[Dashboard] code-view-save rejected (inconsistent):", inconsistentMsg);
             setCodeViewSaveConflict(false);
             setCodeViewSaveError(inconsistentMsg);
+            return;
+          }
+          if (syncError?.data?.errorType === "SUSPICIOUS_SIZE_REDUCTION") {
+            const sizeMsg = syncError?.data?.error
+              || "This save would delete most of the ontology — reload Code View to confirm you have the complete content before saving.";
+            console.warn("[Dashboard] code-view-save rejected (suspicious size reduction):", sizeMsg);
+            setCodeViewSaveConflict(false);
+            setCodeViewSaveError(sizeMsg);
             return;
           }
           const errMsg = syncError?.message || "Failed to reach the save endpoint";
@@ -19791,7 +19799,10 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           draftCount={draftCount}
           onPRApproved={() => {
             refreshOpenPRCount();
-            if (projectId) fetchData(projectId, false);
+            // forceRefresh: true — fetchData() otherwise skips the reload entirely when
+            // this same project is already loaded (the common case: you're looking at the
+            // project you just merged into), leaving the hierarchy/ontology data stale.
+            if (projectId) fetchData(projectId, false, undefined, true);
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}
         />

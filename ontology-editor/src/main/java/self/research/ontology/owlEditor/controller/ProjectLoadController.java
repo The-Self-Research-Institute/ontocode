@@ -2120,6 +2120,36 @@ public class ProjectLoadController {
                         + " — check for malformed elements (e.g. a property element combining rdf:resource with text content).");
                 return ResponseEntity.unprocessableEntity().body(body);
             }
+ if (oldBytes != null && oldBytes.length > 0) {
+                try {
+                    OWLOntologyManager oldOntologyManager = OWLManager.createOWLOntologyManager();
+                    OWLOntology oldOntology;
+                    try (InputStream oldStream = new ByteArrayInputStream(oldBytes)) {
+                        oldOntology = oldOntologyManager.loadOntologyFromOntologyDocument(oldStream);
+                    }
+                    int oldAxiomCount = oldOntology.getAxiomCount();
+                    int newAxiomCount = parsedForValidation.getAxiomCount();
+                    boolean confirmed = Boolean.TRUE.equals(request.get("confirmLargeReduction"));
+                    if (!confirmed && oldAxiomCount >= 20 && newAxiomCount < oldAxiomCount * 0.5) {
+                        int pctRemaining = (int) Math.round(100.0 * newAxiomCount / oldAxiomCount);
+                        log.warn("[CODE-VIEW-SAVE] Rejecting save for project {}: content would shrink from {} to {} axioms ({}% of current) — likely stale/partial content",
+                                projectId, oldAxiomCount, newAxiomCount, pctRemaining);
+                        Map<String, Object> body = new java.util.HashMap<>();
+                        body.put("success", false);
+                        body.put("errorType", "SUSPICIOUS_SIZE_REDUCTION");
+                        body.put("error", "This save would reduce the ontology from " + oldAxiomCount + " to " + newAxiomCount
+                                + " axioms (" + pctRemaining + "% of the current content). This usually means the editor"
+                                + " didn't have the full ontology loaded before saving — reload Code View to confirm you"
+                                + " have the complete content. If this large a deletion is intentional, resubmit with"
+                                + " confirmLargeReduction: true.");
+                        body.put("oldAxiomCount", oldAxiomCount);
+                        body.put("newAxiomCount", newAxiomCount);
+                        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+                    }
+                } catch (Exception oldParseEx) {
+                    log.debug("[CODE-VIEW-SAVE] Could not parse pre-save content for size-reduction check: {}", oldParseEx.getMessage());
+                }
+            }
 
             java.util.regex.Matcher iriAttrMatcher = IRI_ATTRIBUTE_PATTERN.matcher(content);
             while (iriAttrMatcher.find()) {
