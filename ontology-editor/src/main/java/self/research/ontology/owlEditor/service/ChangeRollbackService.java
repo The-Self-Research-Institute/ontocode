@@ -13,9 +13,7 @@ import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Plan;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 @Slf4j
@@ -40,7 +38,7 @@ public class ChangeRollbackService {
     static final String ENTRY = "ENTRY";
     static final String SUBCHANGE = "SUBCHANGE";
 
-    private record Request(String projectId, String direction, String level, String changeSetId, String changeId,
+    record Request(String projectId, String direction, String level, String changeSetId, String changeId,
                            String subChangeId, Actor actor, boolean dryRun, String undoAuditId,
                            List<String> auditChangeIds) {
         Request withUndoAudit(String auditId) {
@@ -54,9 +52,8 @@ public class ChangeRollbackService {
     private final RollbackGraphFacts facts;
     private final OntologyMutationService mutations;
     private final RollbackAuditRepository audits;
-    private final OntologyHistoryService history;
     private final ProjectWriteLockRegistry locks;
-    private final SimpMessagingTemplate messaging;
+    private final RollbackRecorder recorder;
 
     @Autowired
     public ChangeRollbackService(HistorySyncService historySync, RollbackMutationPlanner planner,
@@ -69,9 +66,8 @@ public class ChangeRollbackService {
         this.facts = facts;
         this.mutations = mutations;
         this.audits = audits;
-        this.history = history;
         this.locks = locks;
-        this.messaging = messaging;
+        this.recorder = new RollbackRecorder(audits, history, messaging);
     }
 
     public Result undoChangeSet(String projectId, String changeSetId, Actor actor, boolean dryRun) {
@@ -168,14 +164,14 @@ public class ChangeRollbackService {
             String message = applied.isEmpty() ? "Nothing to " + req.direction().toLowerCase() : null;
             return new Result(200, req.dryRun(), req.dryRun(), req.direction(), scopeId(req), applied, skipped, null, message);
         }
-        RollbackAudit audit = audits.save(newAudit(req, entries, skipped.size()));
+        RollbackAudit audit = recorder.saveAudit(req, entries, skipped.size());
         for (Work work : works) {
             if (!work.plan().isEmpty() || work.completesEntry()) {
                 applyWork(req, work, audit.getId());
             }
         }
-        String description = recordHistory(req, entries, applied, audit.getId());
-        broadcast(req, audit.getId(), entries, description);
+        String description = recorder.recordHistory(req, entries, applied, audit.getId());
+        recorder.broadcast(req, audit.getId(), entries, description);
         return new Result(200, true, false, req.direction(), scopeId(req), applied, skipped, audit.getId(), null);
     }
 
@@ -361,66 +357,6 @@ public class ChangeRollbackService {
 
     private boolean exists(Request req, HistoryChange entry) {
         return facts.entityExists(req.projectId(), entry.getEntityIRI(), entry.isDraft(), entry.getUserId());
-    }
-
-    private RollbackAudit newAudit(Request req, List<HistoryChange> entries, int skippedCount) {
-        RollbackAudit audit = new RollbackAudit();
-        audit.setProjectId(req.projectId());
-        audit.setChangeSetId(req.changeSetId());
-        audit.setDirection(req.direction());
-        audit.setHistoryChangeId(req.changeId());
-        audit.setSubChangeId(req.subChangeId());
-        audit.setChangeIds(entries.stream().map(HistoryChange::getId).toList());
-        audit.setSkippedCount(skippedCount);
-        if (entries.size() == 1) {
-            audit.setEntityIRI(entries.get(0).getEntityIRI());
-            audit.setEntityLabel(entries.get(0).getEntityLabel());
-        }
-        audit.setRevertedByUserId(req.actor().userId());
-        audit.setRevertedByUsername(req.actor().username());
-        return audit;
-    }
-
-    private String recordHistory(Request req, List<HistoryChange> entries, List<Item> applied, String auditId) {
-        HistoryChange first = entries.get(0);
-        String opType = (UNDO.equals(req.direction()) ? "ROLLBACK_" : "REDO_") + req.level();
-        String reverts = req.changeSetId() != null ? req.changeSetId() : first.getChangeSetId();
-        String label = entries.size() == 1 ? first.getEntityLabel() : null;
-        String description = RollbackDescriptions.describe(req.direction(), req.level(), applied, entries);
-        history.recordEdit(req.projectId(), req.actor().userId(), req.actor().username(), opType,
-                entries.size() == 1 ? first.getEntityIRI() : null, label, null, null, description,
-                null, null, first.isDraft(), ChangeOrigin.rollback(reverts, auditId));
-        return description;
-    }
-
-    private void broadcast(Request req, String auditId, List<HistoryChange> entries, String description) {
-        if (messaging == null) {
-            return;
-        }
-        Map<String, Object> event = new HashMap<>();
-        event.put("type", "ROLLBACK");
-        event.put("direction", req.direction());
-        event.put("projectId", req.projectId());
-        event.put("changeSetId", req.changeSetId());
-        event.put("changeId", req.changeId());
-        event.put("subChangeId", req.subChangeId());
-        event.put("auditId", auditId);
-        event.put("description", description);
-        if (entries.size() == 1) {
-            event.put("entityIRI", entries.get(0).getEntityIRI());
-            event.put("entityLabel", entries.get(0).getEntityLabel());
-        }
-        event.put("userId", req.actor().userId());
-        event.put("username", req.actor().username());
-        if (req.actor().userId() != null && req.actor().userId().contains("@")) {
-            event.put("userEmail", req.actor().userId());
-        }
-        event.put("timestamp", System.currentTimeMillis());
-        try {
-            messaging.convertAndSend("/topic/ontology/" + req.projectId(), event);
-        } catch (Exception e) {
-            log.warn("[ROLLBACK] Could not broadcast rollback event for project {}: {}", req.projectId(), e.getMessage());
-        }
     }
 
     private static boolean isRollbackEntry(HistoryChange entry) {

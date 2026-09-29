@@ -174,8 +174,8 @@ public class AssistantEditProposalService {
                 introducedByOperation, checks, perf);
         boolean passed = checks.stream().allMatch(CheckResult::passed);
 
-        List<EditEntry> editEntries = sortedEdits.stream().map(this::toEditEntry).toList();
-        List<DiffEntry> diff = toDiffEntries(sortedEdits);
+        List<EditEntry> editEntries = sortedEdits.stream().map(ProposedEdits::toEditEntry).toList();
+        List<DiffEntry> diff = ProposedEdits.toDiffEntries(sortedEdits);
 
         String summary = renameSummary != null ? renameSummary
                 : sortedEdits.size() + " edit" + (sortedEdits.size() == 1 ? "" : "s") + " on " + targetPath;
@@ -229,10 +229,10 @@ public class AssistantEditProposalService {
                 && sortedEdits.stream().map(EditInput::targetPath).distinct().count() <= 1;
         checks.add(new CheckResult("single_target_path", singleTargetPath || !hasEdits));
 
-        boolean rangeWellFormed = sortedEdits.stream().allMatch(this::isRangeWellFormed);
+        boolean rangeWellFormed = sortedEdits.stream().allMatch(ProposedEdits::isRangeWellFormed);
         checks.add(new CheckResult("range_well_formed", rangeWellFormed));
 
-        boolean noOverlap = sortedEdits.size() <= 1 || hasNoIntraGroupOverlap(sortedEdits);
+        boolean noOverlap = sortedEdits.size() <= 1 || ProposedEdits.hasNoIntraGroupOverlap(sortedEdits);
         checks.add(new CheckResult("no_intra_group_overlap", noOverlap));
 
         int maxEdits = derived ? maxRenameLines : maxEditsPerGroup;
@@ -240,9 +240,11 @@ public class AssistantEditProposalService {
                 && sortedEdits.stream().allMatch(e -> e.newText() != null && e.newText().length() <= maxEditBytes);
         checks.add(new CheckResult("size_limits", sizeOk));
 
+        String projectId = session.getProjectId();
         boolean liveMatch = singleTargetPath && rangeWellFormed
-                && (derived ? noOverlap && matchesLiveContentInOnePass(session.getProjectId(), targetPath, sortedEdits)
-                : sortedEdits.stream().allMatch(e -> matchesLiveContent(session.getProjectId(), e)));
+                && (derived ? noOverlap
+                        && ProposedEdits.matchesLiveContentInOnePass(storageManager, projectId, targetPath, sortedEdits)
+                : sortedEdits.stream().allMatch(e -> ProposedEdits.matchesLiveContent(storageManager, projectId, e)));
         checks.add(new CheckResult("original_text_matches_live", liveMatch));
 
         return hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
@@ -255,8 +257,8 @@ public class AssistantEditProposalService {
         List<EditInput> sortedEdits = proposedEdits;
         CheckResult syntax;
         if (structurallySound) {
-            AssistantEditSyntaxValidator.SyntaxResult result =
-                    syntaxValidator.check(session.getProjectId(), targetPath, toSpliceEdits(sortedEdits));
+            AssistantEditSyntaxValidator.SyntaxResult result = syntaxValidator.check(session.getProjectId(),
+                    targetPath, ProposedEdits.toSpliceEdits(sortedEdits));
             if (!result.valid() && !derived) {
                 SnappedInsert snapped = snapInsertToStatementBoundary(session.getProjectId(), targetPath, sortedEdits);
                 if (snapped != null) {
@@ -275,7 +277,7 @@ public class AssistantEditProposalService {
         CheckResult referenceCoverage = !structurallySound
                 ? new CheckResult("complete_reference_coverage", true)
                 : toCheckResult(referenceCoverageValidator.check(
-                        session.getProjectId(), targetPath, toCoverageEdits(sortedEdits)));
+                        session.getProjectId(), targetPath, ProposedEdits.toCoverageEdits(sortedEdits)));
         checks.add(referenceCoverage);
         perf.mark("referenceCoverage");
 
@@ -287,7 +289,7 @@ public class AssistantEditProposalService {
                     "Skipped because the edited document does not parse."));
         } else {
             checks.addAll(semanticValidator.check(session.getProjectId(), targetPath,
-                    toSemanticEdits(sortedEdits), introducedByOperation));
+                    ProposedEdits.toSemanticEdits(sortedEdits), introducedByOperation));
         }
 
         perf.mark("semantic");
@@ -312,7 +314,7 @@ public class AssistantEditProposalService {
                 .map(e -> new EditInput(e.targetPath(), new EditRange(boundary.getAsLong(), 0), e.originalText(),
                         e.newText()))
                 .toList();
-        if (!syntaxValidator.regionParses(projectId, targetPath, toSpliceEdits(moved))) {
+        if (!syntaxValidator.regionParses(projectId, targetPath, ProposedEdits.toSpliceEdits(moved))) {
             return null;
         }
         AssistantEditSyntaxValidator.SyntaxResult retry = new AssistantEditSyntaxValidator.SyntaxResult(true, null);
@@ -321,14 +323,6 @@ public class AssistantEditProposalService {
         return new SnappedInsert(moved, retry, new CheckResult(INSERTION_MOVED_CHECK, true,
                 "Moved from line " + (insertLine + 1) + " to line " + (boundary.getAsLong() + 1)
                         + " so it doesn't split a statement."));
-    }
-
-    private List<DiffEntry> toDiffEntries(List<EditInput> sortedEdits) {
-        return sortedEdits.stream()
-                .map(e -> new DiffEntry(e.targetPath(), e.originalText(), e.newText(),
-                        e.range() == null ? null : e.range().startLine(),
-                        e.range() == null ? null : e.range().lineCount()))
-                .toList();
     }
 
     private GroupProposalOutcome rejectGroup(AssistantSessionDocument session, EditGroupInput groupInput,
@@ -396,100 +390,6 @@ public class AssistantEditProposalService {
         } catch (Exception e) {
             log.warn("[Assistant] Could not audit {}: {}", event.operation(), e.getMessage());
         }
-    }
-
-    private boolean matchesLiveContentInOnePass(String projectId, String targetPath, List<EditInput> sortedEdits) {
-        List<CodeViewRangeMatcher.ExpectedRange> expected = sortedEdits.stream()
-                .map(e -> new CodeViewRangeMatcher.ExpectedRange(e.range().startLine(), e.range().lineCount(),
-                        e.originalText()))
-                .toList();
-        return new CodeViewRangeMatcher(storageManager).allMatch(projectId, targetPath, expected);
-    }
-
-    private boolean isRangeWellFormed(EditInput edit) {
-        if (edit.range() == null || edit.range().startLine() < 0 || edit.range().lineCount() < 0) {
-            return false;
-        }
-        if (edit.range().lineCount() == 0) {
-            return edit.originalText() == null || edit.originalText().isEmpty();
-        }
-        return true;
-    }
-
-    private boolean hasNoIntraGroupOverlap(List<EditInput> sortedEdits) {
-        for (int i = 0; i < sortedEdits.size() - 1; i++) {
-            if (sortedEdits.get(i).range() == null || sortedEdits.get(i + 1).range() == null) {
-                return false;
-            }
-            long thisEnd = sortedEdits.get(i).range().startLine() + sortedEdits.get(i).range().lineCount();
-            long nextStart = sortedEdits.get(i + 1).range().startLine();
-            if (thisEnd > nextStart) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean matchesLiveContent(String projectId, EditInput edit) {
-        if (edit.range().lineCount() == 0) {
-            return true;
-        }
-        try {
-            StorageManager.CodeViewPage page = storageManager.readCodeViewPage(
-                    projectId, edit.targetPath(), edit.range().startLine(), edit.range().lineCount());
-            return page.content().equals(edit.originalText());
-        } catch (Exception e) {
-            log.warn("[Assistant] Live-content check failed for {}:{}-{}: {}",
-                    edit.targetPath(), edit.range().startLine(), edit.range().lineCount(), e.getMessage());
-            return false;
-        }
-    }
-
-    private EditEntry toEditEntry(EditInput edit) {
-        long startLine = edit.range() != null ? edit.range().startLine() : 0;
-        int lineCount = edit.range() != null ? edit.range().lineCount() : 0;
-        int newTextLines = countLines(edit.newText());
-        int delta = newTextLines - lineCount;
-        return EditEntry.builder()
-                .startLine(startLine)
-                .lineCount(lineCount)
-                .originalText(edit.originalText())
-                .newText(edit.newText())
-                .lineDelta(delta)
-                .build();
-    }
-
-    private List<LineRangeSpliceWriter.SpliceEdit> toSpliceEdits(List<EditInput> sortedEdits) {
-        return sortedEdits.stream()
-                .map(e -> new LineRangeSpliceWriter.SpliceEdit(
-                        e.range() != null ? e.range().startLine() : 0,
-                        e.range() != null ? e.range().lineCount() : 0,
-                        e.newText()))
-                .toList();
-    }
-
-    private int countLines(String text) {
-        if (text == null || text.isEmpty()) {
-            return 0;
-        }
-        return text.split("\n", -1).length;
-    }
-
-    private List<AssistantEditReferenceCoverageValidator.CoverageEdit> toCoverageEdits(List<EditInput> sortedEdits) {
-        return sortedEdits.stream()
-                .map(e -> new AssistantEditReferenceCoverageValidator.CoverageEdit(
-                        e.range() != null ? e.range().startLine() : 0,
-                        e.range() != null ? e.range().lineCount() : 0,
-                        e.originalText(),
-                        e.newText()))
-                .toList();
-    }
-
-    private List<AssistantEditSemanticValidator.SemanticEdit> toSemanticEdits(List<EditInput> sortedEdits) {
-        return sortedEdits.stream()
-                .map(e -> new AssistantEditSemanticValidator.SemanticEdit(
-                        e.range().startLine(), e.range().lineCount(), e.originalText(), e.newText()))
-                .toList();
     }
 
     private CheckResult toCheckResult(AssistantEditReferenceCoverageValidator.CoverageResult result) {

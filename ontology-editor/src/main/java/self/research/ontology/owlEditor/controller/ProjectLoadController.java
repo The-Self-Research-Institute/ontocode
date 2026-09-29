@@ -28,7 +28,6 @@ import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.apache.commons.io.input.TeeInputStream;
 
-import java.util.Locale;
 
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.ImportOptions;
@@ -64,11 +63,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.zip.GZIPInputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -335,14 +331,14 @@ public class ProjectLoadController {
             Path original = projectDir.resolve("ontology.original.owl");
             Files.createDirectories(original.getParent());
             Path importRoot = original;
-            boolean ontologyPackage = isOntologyPackage(filename, contentType);
+            boolean ontologyPackage = UploadFileSupport.isOntologyPackage(filename, contentType);
 
             String gridfsFileId;
 
             if (ontologyPackage) {
                 Path packageZip = projectDir.resolve("ontology-package.zip");
                 Path libraryDir = projectDir.resolve("ontology-library");
-                deleteRecursively(libraryDir);
+                UploadFileSupport.deleteRecursively(libraryDir);
                 Files.createDirectories(libraryDir);
 
                 try (InputStream in = fileStream;
@@ -359,8 +355,8 @@ public class ProjectLoadController {
                     );
                 }
 
-                extractOntologyPackage(packageZip, libraryDir);
-                importRoot = selectPackageRootOntology(libraryDir, filename)
+                UploadFileSupport.extractOntologyPackage(packageZip, libraryDir);
+                importRoot = UploadFileSupport.selectPackageRootOntology(libraryDir, filename)
                         .orElseThrow(() -> new IOException("Ontology package must contain at least one ontology file (.owl, .rdf, .ttl, .n3, .nt, .xml, .jsonld)"));
                 Files.copy(importRoot, original, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 filename = importRoot.getFileName().toString();
@@ -436,12 +432,12 @@ public class ProjectLoadController {
             log.info("[ProjectLoadController] [TIMING] Metadata update: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             stepStart = System.nanoTime();
-            ImportOptions options = resolveImportOptions(importMode, partition);
+            ImportOptions options = UploadFileSupport.resolveImportOptions(importMode, partition);
             importWorkerDispatcher.dispatch(actualProjectId, importRoot, ownerEmail, filename, gridfsFileId, options);
             log.info("[ProjectLoadController] [TIMING] Import dispatch: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             stepStart = System.nanoTime();
-            RDFFormat format = detectFormat(importRoot);
+            RDFFormat format = UploadFileSupport.detectFormat(importRoot);
             log.info("[ProjectLoadController] [TIMING] Format detection: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             // Skip duplicate full-file streaming parse for large uploads; import already scans the file.
@@ -512,7 +508,7 @@ public class ProjectLoadController {
 
             // Verify integrity before writing — a corrupted chunk should be retried by the
             // client, not silently reassembled into a broken file.
-            String actualHash = sha256Hex(chunkBytes);
+            String actualHash = UploadFileSupport.sha256Hex(chunkBytes);
             if (!actualHash.equalsIgnoreCase(chunkHash)) {
                 log.warn("[ProjectLoadController] Chunk hash mismatch uploadId={} chunkIndex={}: expected={} actual={}",
                         uploadId, chunkIndex, chunkHash, actualHash);
@@ -585,7 +581,7 @@ public class ProjectLoadController {
                 }
             } finally {
                 chunkReassemblyInFlight.remove(uploadId);
-                deleteRecursively(chunkDir);
+                UploadFileSupport.deleteRecursively(chunkDir);
             }
         } catch (IOException e) {
             log.error("[ProjectLoadController] Chunk upload failed (IO) uploadId={} chunkIndex={}", uploadId, chunkIndex, e);
@@ -596,20 +592,6 @@ public class ProjectLoadController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error",
                             e.getMessage() != null ? e.getMessage() : "Unexpected chunk upload error"));
-        }
-    }
-
-    private static String sha256Hex(byte[] data) {
-        try {
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(data);
-            StringBuilder sb = new StringBuilder(hash.length * 2);
-            for (byte b : hash) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
         }
     }
 
@@ -626,7 +608,7 @@ public class ProjectLoadController {
                         if (ageMs > maxAgeMs && !chunkReassemblyInFlight.contains(dir.getFileName().toString())) {
                             log.info("[ProjectLoadController] Sweeping abandoned chunk upload: {} (age {} min)",
                                     dir.getFileName(), ageMs / 60000);
-                            deleteRecursively(dir);
+                            UploadFileSupport.deleteRecursively(dir);
                         }
                     } catch (IOException e) {
                         log.warn("[ProjectLoadController] Failed to check/sweep chunk upload dir {}: {}", dir, e.getMessage());
@@ -799,10 +781,10 @@ public class ProjectLoadController {
             ProjectStatus status = ProjectStatus.uploaded(fileName);
             metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, workspaceId, parentProjectId);
 
-            ImportOptions options = resolveImportOptions(importMode, partition);
+            ImportOptions options = UploadFileSupport.resolveImportOptions(importMode, partition);
             importWorkerDispatcher.dispatch(projectId, original, ownerEmail, fileName, gridfsId, options);
 
-            RDFFormat format = detectFormat(original);
+            RDFFormat format = UploadFileSupport.detectFormat(original);
             if (Files.size(original) <= 50L * 1024 * 1024) {
                 preparseService.preparse(original, projectId, format);
             } else {
@@ -860,222 +842,6 @@ public class ProjectLoadController {
         
         log.info("Generated copy filename: {} from original: {}", candidateFilename, originalFilename);
         return candidateFilename;
-    }
-
-    private boolean isOntologyPackage(String filename, String contentType) {
-        String lowerName = filename != null ? filename.toLowerCase(Locale.ROOT) : "";
-        String lowerContentType = contentType != null ? contentType.toLowerCase(Locale.ROOT) : "";
-        return lowerName.endsWith(".zip")
-                || lowerContentType.contains("zip")
-                || lowerContentType.contains("x-zip-compressed");
-    }
-
-    private void extractOntologyPackage(Path packageZip, Path targetDir) throws IOException {
-        Path normalizedTarget = targetDir.toAbsolutePath().normalize();
-        try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(packageZip))) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                Path destination = normalizedTarget.resolve(entry.getName()).normalize();
-                if (!destination.startsWith(normalizedTarget)) {
-                    throw new IOException("Unsafe ZIP entry outside target directory: " + entry.getName());
-                }
-                if (entry.isDirectory()) {
-                    Files.createDirectories(destination);
-                } else {
-                    Files.createDirectories(destination.getParent());
-                    Files.copy(zip, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                }
-                zip.closeEntry();
-            }
-        }
-    }
-
-    private Optional<Path> selectPackageRootOntology(Path libraryDir, String packageFilename) throws IOException {
-        String packageBaseName = packageFilename != null ? packageFilename : "";
-        int dot = packageBaseName.lastIndexOf('.');
-        if (dot > 0) {
-            packageBaseName = packageBaseName.substring(0, dot);
-        }
-        final String normalizedPackageBase = packageBaseName.toLowerCase(Locale.ROOT);
-
-        List<Path> candidates = new ArrayList<>();
-        try (java.util.stream.Stream<Path> stream = Files.walk(libraryDir, 8)) {
-            stream
-                    .filter(Files::isRegularFile)
-                    .filter(this::isOntologyDocumentFile)
-                    .forEach(candidates::add);
-        }
-        if (candidates.isEmpty()) {
-            return Optional.empty();
-        }
-
-        candidates.sort(Comparator
-                .comparingInt((Path path) -> scoreRootCandidate(libraryDir, path, normalizedPackageBase))
-                .thenComparing(path -> libraryDir.relativize(path).toString()));
-        return Optional.of(candidates.get(0));
-    }
-
-    private int scoreRootCandidate(Path libraryDir, Path path, String normalizedPackageBase) {
-        Path relative = libraryDir.relativize(path);
-        String fileName = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
-        String base = fileName;
-        int dot = base.lastIndexOf('.');
-        if (dot > 0) {
-            base = base.substring(0, dot);
-        }
-
-        if (!normalizedPackageBase.isBlank() && base.equals(normalizedPackageBase)) {
-            return 0;
-        }
-        if (relative.getNameCount() == 1 && (fileName.equals("root.owl") || fileName.equals("ontology.owl"))) {
-            return 1;
-        }
-        if (relative.getNameCount() == 1) {
-            return 2;
-        }
-        if (fileName.equals("root.owl") || fileName.equals("ontology.owl")) {
-            return 3;
-        }
-        return 4;
-    }
-
-    private boolean isOntologyDocumentFile(Path path) {
-        String name = path.getFileName() != null ? path.getFileName().toString().toLowerCase(Locale.ROOT) : "";
-        if (name.equals("catalog-v001.xml")) {
-            return false;
-        }
-        return name.endsWith(".owl")
-                || name.endsWith(".rdf")
-                || name.endsWith(".xml")
-                || name.endsWith(".ttl")
-                || name.endsWith(".n3")
-                || name.endsWith(".nt")
-                || name.endsWith(".jsonld")
-                || name.endsWith(".owlxml");
-    }
-
-    private void deleteRecursively(Path path) throws IOException {
-        if (path == null || !Files.exists(path)) {
-            return;
-        }
-        try (java.util.stream.Stream<Path> stream = Files.walk(path)) {
-            List<Path> paths = stream.sorted(Comparator.reverseOrder()).toList();
-            for (Path p : paths) {
-                Files.deleteIfExists(p);
-            }
-        }
-    }
-
-    private ImportOptions resolveImportOptions(String importMode, String partition) {
-        ImportOptions.ImportMode mode = ImportOptions.ImportMode.FULL;
-        if (importMode != null) {
-            switch (importMode.toLowerCase(Locale.ROOT)) {
-                case "incremental" -> mode = ImportOptions.ImportMode.INCREMENTAL;
-                case "diff" -> mode = ImportOptions.ImportMode.DIFF;
-                default -> mode = ImportOptions.ImportMode.FULL;
-            }
-        }
-
-        ImportOptions.PartitionStrategy strategy = ImportOptions.PartitionStrategy.NONE;
-        if (partition != null && partition.equalsIgnoreCase("namespace")) {
-            strategy = ImportOptions.PartitionStrategy.NAMESPACE;
-        }
-
-        return ImportOptions.builder()
-                .mode(mode)
-                .partitionStrategy(strategy)
-                .build();
-    }
-
-    private RDFFormat detectFormat(Path file) {
-        String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
-        
-        // Unambiguous extensions - trust the extension
-        if (fileName.endsWith(".ttl") || fileName.endsWith(".turtle")) {
-            return RDFFormat.TURTLE;
-        } else if (fileName.endsWith(".nt") || fileName.endsWith(".ntriples")) {
-            return RDFFormat.NTRIPLES;
-        } else if (fileName.endsWith(".jsonld")) {
-            return RDFFormat.JSONLD;
-        } else if (fileName.endsWith(".n3")) {
-            return RDFFormat.N3;
-        }
-        
-        // Ambiguous extensions (.owl, .rdf) - inspect content
-        if (fileName.endsWith(".owl") || fileName.endsWith(".rdf")) {
-            RDFFormat detectedFormat = detectFormatByContent(file);
-            if (detectedFormat != null) {
-                log.info("Detected format by content for {}: {}", fileName, detectedFormat);
-                return detectedFormat;
-            }
-        }
-        
-        // Default to RDF/XML
-        return RDFFormat.RDFXML;
-    }
-    
-    /**
-     * Detect RDF format by inspecting file content
-     * @param file The file to inspect
-     * @return Detected format or null if unable to detect
-     */
-    private RDFFormat detectFormatByContent(Path file) {
-        try {
-            // Read first 2KB to detect format
-            byte[] header = java.nio.file.Files.readAllBytes(file);
-            int readLength = Math.min(2048, header.length);
-            
-            // Skip UTF-8 BOM if present
-            int offset = 0;
-            if (header.length >= 3 && header[0] == (byte) 0xEF && 
-                header[1] == (byte) 0xBB && header[2] == (byte) 0xBF) {
-                offset = 3;
-            }
-            
-            // Skip leading whitespace
-            while (offset < readLength && (header[offset] == ' ' || header[offset] == '\t' || 
-                   header[offset] == '\n' || header[offset] == '\r')) {
-                offset++;
-            }
-            
-            String content = new String(header, offset, Math.min(readLength - offset, 1024), 
-                                       java.nio.charset.StandardCharsets.UTF_8);
-            String contentLower = content.toLowerCase(Locale.ROOT);
-            
-            // Check for XML markers
-            if (contentLower.startsWith("<?xml") || contentLower.contains("<rdf:rdf") || 
-                contentLower.contains("<owl:ontology") || contentLower.contains("<ontology")) {
-                log.info("Detected RDF/XML format (found XML markers)");
-                return RDFFormat.RDFXML;
-            }
-
-            // Check for Turtle/N3 markers
-            if (contentLower.startsWith("@prefix") || contentLower.startsWith("@base") ||
-                contentLower.contains("@prefix ") || contentLower.contains("@base ")) {
-                log.info("Detected Turtle format (found @prefix or @base directive)");
-                return RDFFormat.TURTLE;
-            }
-            
-            // Check for N-Triples (subject-predicate-object with full URIs)
-            if (content.matches("(?s)^\\s*<[^>]+>\\s+<[^>]+>\\s+.*")) {
-                log.info("Detected N-Triples format");
-                return RDFFormat.NTRIPLES;
-            }
-            
-            // Check for JSON-LD
-            if (contentLower.trim().startsWith("{") && contentLower.contains("@context")) {
-                log.info("Detected JSON-LD format");
-                return RDFFormat.JSONLD;
-            }
-            
-            // Unable to detect - return null to use default
-            log.warn("Unable to detect format by content, will use default");
-            return null;
-            
-        } catch (Exception e) {
-            log.warn("Failed to detect format by content: {}", e.getMessage());
-            return null;
-        }
     }
 
     @GetMapping("/status/{projectId:.+}")  // Allow slashes in path variable

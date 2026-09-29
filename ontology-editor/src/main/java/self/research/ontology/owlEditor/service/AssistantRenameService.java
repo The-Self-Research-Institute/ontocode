@@ -9,15 +9,12 @@ import java.io.BufferedReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 
 @Slf4j
 @Service
@@ -29,8 +26,6 @@ public class AssistantRenameService {
     private static final Set<String> TURTLE_FORMATS = Set.of("turtle", "ttl");
     private static final Set<String> NTRIPLES_FORMATS = Set.of("ntriples", "nt");
     private static final Set<String> RDFXML_FORMATS = Set.of("rdfxml", "xml", "owl");
-    private static final int MAX_BUFFERED_LINES = 10_000;
-    private static final long MAX_BUFFERED_CHARS = 8L * 1024 * 1024;
 
     private final StorageManager storageManager;
     private final AssistantGraphIdentifierLookup graphLookup;
@@ -93,8 +88,8 @@ public class AssistantRenameService {
             if (graphProblem != null) {
                 return RenameDerivation.refused(graphProblem);
             }
-            Scan scan = rdfXml
-                    ? scanRdfXml(file, target.iri, replacement.iri, maxLines)
+            RenameScan scan = rdfXml
+                    ? RdfXmlRenameScanner.scan(file, target.iri, replacement.iri, maxLines)
                     : scanTurtle(file, target.iri, replacement.iri, maxLines, NTRIPLES_FORMATS.contains(
                             targetPath.toLowerCase(Locale.ROOT)));
             if (scan.problem != null) {
@@ -113,7 +108,7 @@ public class AssistantRenameService {
         }
     }
 
-    private static RenameDerivation derived(Scan scan, String targetIri, String replacementIri) {
+    private static RenameDerivation derived(RenameScan scan, String targetIri, String replacementIri) {
         return new RenameDerivation(true, "Found " + scan.occurrences + " occurrence"
                 + (scan.occurrences == 1 ? "" : "s") + " of <" + targetIri + "> on " + scan.edits.size()
                 + " line" + (scan.edits.size() == 1 ? "" : "s") + "; each is renamed to <" + replacementIri + ">.",
@@ -159,12 +154,6 @@ public class AssistantRenameService {
     }
 
     private record IdentifierResolution(String iri, String error) {}
-
-    private static final class Scan {
-        final List<DerivedEdit> edits = new ArrayList<>();
-        int occurrences;
-        String problem;
-    }
 
     private Declarations readTurtleDeclarations(Path file) throws Exception {
         Declarations declarations = new Declarations();
@@ -223,13 +212,13 @@ public class AssistantRenameService {
             int colon = value.indexOf(':');
             String prefix = colon < 0 ? null : value.substring(0, colon);
             Set<String> namespaces = prefix == null ? null : declarations.prefixes.get(prefix);
-            if (namespaces != null && TurtleLineScanner.isValidPrefix(prefix)) {
+            if (namespaces != null && TurtleNames.isValidPrefix(prefix)) {
                 if (namespaces.size() > 1) {
                     return new IdentifierResolution(null, field + " '" + raw + "' uses the prefix '" + prefix
                             + ":', which the document binds to more than one namespace; give the full IRI instead.");
                 }
                 String local = value.substring(colon + 1);
-                if (!TurtleLineScanner.isSimpleLocalName(local)) {
+                if (!TurtleNames.isSimpleLocalName(local)) {
                     return new IdentifierResolution(null, field + " '" + raw
                             + "' is not a well-formed prefixed name; give the full IRI in angle brackets instead.");
                 }
@@ -267,14 +256,14 @@ public class AssistantRenameService {
         }
         String prefix = value.substring(0, colon);
         String rest = value.substring(colon + 1);
-        return TurtleLineScanner.isValidPrefix(prefix) && !rest.startsWith("//")
+        return TurtleNames.isValidPrefix(prefix) && !rest.startsWith("//")
                 && !prefix.equalsIgnoreCase("urn") && !prefix.equalsIgnoreCase("tag")
                 && !prefix.equalsIgnoreCase("mailto");
     }
 
-    private Scan scanTurtle(Path file, String targetIri, String replacementIri, int maxLines, boolean nTriples)
+    private RenameScan scanTurtle(Path file, String targetIri, String replacementIri, int maxLines, boolean nTriples)
             throws Exception {
-        Scan scan = new Scan();
+        RenameScan scan = new RenameScan();
         TurtleLineScanner scanner = new TurtleLineScanner();
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             String line;
@@ -313,7 +302,7 @@ public class AssistantRenameService {
                 }
                 if (rewritten != null) {
                     rewritten.append(line, copiedUpTo, line.length());
-                    if (!addEdit(scan, lineNo, line, rewritten.toString(), lineOccurrences, maxLines)) {
+                    if (!scan.addEdit(lineNo, line, rewritten.toString(), lineOccurrences, maxLines)) {
                         return scan;
                     }
                 }
@@ -328,7 +317,7 @@ public class AssistantRenameService {
             String namespace = namespaceOf(token);
             if (namespace != null && replacementIri.startsWith(namespace)) {
                 String local = replacementIri.substring(namespace.length());
-                if (TurtleLineScanner.isSimpleLocalName(local)) {
+                if (TurtleNames.isSimpleLocalName(local)) {
                     return token.prefix() + ":" + local;
                 }
             }
@@ -338,195 +327,11 @@ public class AssistantRenameService {
 
     private String namespaceOf(TurtleLineScanner.Token token) {
         String text = token.text();
-        String local = TurtleLineScanner.unescapeLocalName(text.substring(text.indexOf(':') + 1));
+        String local = TurtleNames.unescapeLocalName(text.substring(text.indexOf(':') + 1));
         String iri = token.iri();
         if (iri == null || !iri.endsWith(local)) {
             return null;
         }
         return iri.substring(0, iri.length() - local.length());
-    }
-
-    private boolean addEdit(Scan scan, long lineNo, String original, String rewritten, int occurrences, int maxLines) {
-        if (scan.edits.size() >= maxLines) {
-            scan.problem = "This rename touches more than " + maxLines + " lines, which is over the limit for one "
-                    + "derived rename group, so no rename was generated.";
-            return false;
-        }
-        scan.edits.add(new DerivedEdit(lineNo, original, rewritten));
-        scan.occurrences += occurrences;
-        return true;
-    }
-
-    private Scan scanRdfXml(Path file, String targetIri, String replacementIri, int maxLines) throws Exception {
-        Scan scan = new Scan();
-        TreeMap<Long, List<RdfXmlScanner.Occurrence>> pending = new TreeMap<>();
-        RdfXmlScanner scanner = new RdfXmlScanner(new RdfXmlScanner.Listener() {
-            @Override
-            public void occurrence(RdfXmlScanner.Occurrence occurrence) {
-                pending.computeIfAbsent(occurrence.line(), k -> new ArrayList<>()).add(occurrence);
-            }
-        });
-        List<String> bufferedLines = new ArrayList<>();
-        long bufferedChars = 0;
-        long firstBufferedLine = 0;
-        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            String line;
-            long lineNo = 0;
-            while ((line = reader.readLine()) != null) {
-                if (bufferedLines.isEmpty()) {
-                    firstBufferedLine = lineNo;
-                }
-                bufferedLines.add(line);
-                bufferedChars += line.length();
-                scanner.feed(lineNo, line);
-                if (scanner.unsupportedReason() != null) {
-                    scan.problem = "The rdfxml document can't be scanned exactly: " + scanner.unsupportedReason()
-                            + ", so no rename was generated.";
-                    return scan;
-                }
-                if (scanner.atSafeBoundary()) {
-                    if (!rewriteBufferedRdfXmlLines(scan, bufferedLines, firstBufferedLine, pending, targetIri,
-                            replacementIri, maxLines)) {
-                        return scan;
-                    }
-                    bufferedLines.clear();
-                    bufferedChars = 0;
-                    pending.clear();
-                } else if (bufferedLines.size() > MAX_BUFFERED_LINES || bufferedChars > MAX_BUFFERED_CHARS) {
-                    scan.problem = "The rdfxml document has a tag or declaration spanning more than "
-                            + MAX_BUFFERED_LINES + " lines starting at line " + firstBufferedLine
-                            + ", so no rename was generated.";
-                    return scan;
-                }
-                lineNo++;
-            }
-        }
-        if (!scanner.atSafeBoundary()) {
-            scan.problem = "The rdfxml document ends inside an unclosed tag or declaration that starts at line "
-                    + firstBufferedLine + ", so no rename was generated.";
-        }
-        return scan;
-    }
-
-    private boolean rewriteBufferedRdfXmlLines(Scan scan, List<String> bufferedLines, long firstBufferedLine,
-                                               TreeMap<Long, List<RdfXmlScanner.Occurrence>> pending,
-                                               String targetIri, String replacementIri, int maxLines) {
-        for (int k = 0; k < bufferedLines.size(); k++) {
-            long current = firstBufferedLine + k;
-            List<RdfXmlScanner.Occurrence> occurrences = pending.remove(current);
-            if (occurrences == null) {
-                continue;
-            }
-            if (!rewriteRdfXmlLine(scan, current, bufferedLines.get(k), occurrences, targetIri,
-                    replacementIri, maxLines)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean rewriteRdfXmlLine(Scan scan, long lineNo, String line, List<RdfXmlScanner.Occurrence> occurrences,
-                                      String targetIri, String replacementIri, int maxLines) {
-        List<RdfXmlScanner.Occurrence> matches = new ArrayList<>();
-        for (RdfXmlScanner.Occurrence occurrence : occurrences) {
-            if (!occurrence.resolvable()) {
-                if (occurrence.isName()) {
-                    continue;
-                }
-                scan.problem = "Line " + lineNo + " has the value \"" + occurrence.rawText() + "\", which can't be "
-                        + "resolved to a full IRI, so the occurrence set can't be derived exactly and no rename "
-                        + "was generated.";
-                return false;
-            }
-            if (replacementIri.equals(occurrence.iri())) {
-                scan.problem = "The replacement <" + replacementIri + "> already appears in the document at line "
-                        + lineNo + ", so no rename was generated.";
-                return false;
-            }
-            if (targetIri.equals(occurrence.iri())) {
-                if (occurrence.multiLine() || occurrence.end() > line.length()) {
-                    scan.problem = "An occurrence at line " + lineNo + " spans several lines, so no rename was "
-                            + "generated.";
-                    return false;
-                }
-                matches.add(occurrence);
-            }
-        }
-        if (matches.isEmpty()) {
-            return true;
-        }
-        matches.sort(Comparator.comparingInt(RdfXmlScanner.Occurrence::start));
-        StringBuilder rewritten = new StringBuilder(line.length() + 32);
-        int copiedUpTo = 0;
-        for (RdfXmlScanner.Occurrence occurrence : matches) {
-            String replacementText = renderRdfXml(occurrence, replacementIri);
-            if (replacementText == null) {
-                scan.problem = renderProblem(occurrence, lineNo, replacementIri);
-                return false;
-            }
-            rewritten.append(line, copiedUpTo, occurrence.start());
-            rewritten.append(replacementText);
-            copiedUpTo = occurrence.end();
-        }
-        rewritten.append(line, copiedUpTo, line.length());
-        return addEdit(scan, lineNo, line, rewritten.toString(), matches.size(), maxLines);
-    }
-
-    private String renderRdfXml(RdfXmlScanner.Occurrence occurrence, String replacementIri) {
-        switch (occurrence.kind()) {
-            case ABOUT, RESOURCE, DATATYPE, TYPE_VALUE -> {
-                return RdfXmlScanner.escapeAttribute(replacementIri, occurrence.quote());
-            }
-            case ID -> {
-                int hash = replacementIri.indexOf('#');
-                if (occurrence.base() == null || hash < 0) {
-                    return null;
-                }
-                String local = replacementIri.substring(hash + 1);
-                if (RdfXmlScanner.isNcName(local)
-                        && replacementIri.equals(TurtleLineScanner.resolveAgainst(occurrence.base(), "#" + local))) {
-                    return local;
-                }
-                return null;
-            }
-            default -> {
-                return renderQName(occurrence, replacementIri);
-            }
-        }
-    }
-
-    private String renderQName(RdfXmlScanner.Occurrence occurrence, String replacementIri) {
-        String raw = occurrence.rawText();
-        int colon = raw.indexOf(':');
-        String originalPrefix = colon < 0 ? "" : raw.substring(0, colon);
-        boolean element = occurrence.kind() == RdfXmlScanner.OccurrenceKind.ELEMENT_NAME;
-        List<String> candidates = new ArrayList<>();
-        candidates.add(originalPrefix);
-        occurrence.namespaces().keySet().stream().sorted().filter(p -> !p.equals(originalPrefix)).forEach(candidates::add);
-        for (String prefix : candidates) {
-            if (prefix.equals("xml") || (prefix.isEmpty() && !element)) {
-                continue;
-            }
-            String namespace = occurrence.namespaces().get(prefix);
-            if (namespace == null || namespace.isEmpty() || !replacementIri.startsWith(namespace)) {
-                continue;
-            }
-            String local = replacementIri.substring(namespace.length());
-            if (RdfXmlScanner.isNcName(local)) {
-                return prefix.isEmpty() ? local : prefix + ":" + local;
-            }
-        }
-        return null;
-    }
-
-    private String renderProblem(RdfXmlScanner.Occurrence occurrence, long lineNo, String replacementIri) {
-        if (occurrence.kind() == RdfXmlScanner.OccurrenceKind.ID) {
-            return "Line " + lineNo + " declares the target with rdf:ID, and <" + replacementIri + "> can't be "
-                    + "written as an rdf:ID against the document base, so no rename was generated.";
-        }
-        return "Line " + lineNo + " uses the target as an XML element or attribute name, and <" + replacementIri
-                + "> can't be written as a qualified name with the namespaces declared in this document, so no "
-                + "rename was generated. Declare a namespace for it first, or choose a replacement in an existing "
-                + "namespace.";
     }
 }

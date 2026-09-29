@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
-// A pass here means the whole spliced file parses; a failure only means the full parse has to decide.
 final class RegionSyntaxCheck {
 
     private RegionSyntaxCheck() {

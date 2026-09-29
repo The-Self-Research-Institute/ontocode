@@ -57,7 +57,7 @@ class DeleteListAxiomsSparqlTest {
 
     private void deleteClassB() {
         String iri = "http://example.org/B";
-        conn.prepareUpdate(QueryLanguage.SPARQL, PREFIXES + OntologyMutationService.buildDeleteListAxiomsSparql(iri) + ";\n"
+        conn.prepareUpdate(QueryLanguage.SPARQL, PREFIXES + ListAxiomCleanupSparql.deleteReferencing(iri) + ";\n"
                 + "DELETE { <" + iri + "> ?p ?o } WHERE { <" + iri + "> ?p ?o };\n"
                 + "DELETE { ?s ?p <" + iri + "> } WHERE { ?s ?p <" + iri + "> }").execute();
     }
@@ -82,7 +82,7 @@ class DeleteListAxiomsSparqlTest {
     void classesInNoListAreUnaffected() {
         String before = String.valueOf(conn.size());
         conn.prepareUpdate(QueryLanguage.SPARQL,
-                PREFIXES + OntologyMutationService.buildDeleteListAxiomsSparql("http://example.org/X")).execute();
+                PREFIXES + ListAxiomCleanupSparql.deleteReferencing("http://example.org/X")).execute();
         assertTrue(before.equals(String.valueOf(conn.size())));
     }
 }
