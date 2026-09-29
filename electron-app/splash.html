@@ -175,6 +175,75 @@
     -webkit-app-region: no-drag;
   }
   .details-toggle:hover { color: #64748b; }
+  .meta-row {
+    width: 420px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #64748b;
+    margin-bottom: 8px;
+    -webkit-app-region: no-drag;
+  }
+  .note {
+    width: 420px;
+    display: none;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #cbd5e1;
+    background: #172554;
+    border: 1px solid #1e3a8a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    -webkit-app-region: no-drag;
+  }
+  .note.slow { background: #422006; border-color: #92400e; color: #fde68a; }
+  .tip {
+    width: 420px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #94a3b8;
+    margin-bottom: 10px;
+    min-height: 36px;
+    -webkit-app-region: no-drag;
+  }
+  .tip-text { flex: 1; transition: opacity 0.25s ease; }
+  .tip-text.fade { opacity: 0; }
+  .tip-btn {
+    width: 22px;
+    height: 22px;
+    flex: none;
+    border-radius: 50%;
+    border: 1px solid #334155;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+  }
+  .tip-btn:hover { color: #e2e8f0; border-color: #64748b; }
+  .actions {
+    width: 420px;
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    -webkit-app-region: no-drag;
+  }
+  .action-btn {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #cbd5e1;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .action-btn:hover { background: #334155; }
+  .action-btn.danger:hover { background: #7f1d1d; border-color: #b91c1c; }
 </style>
 </head>
 <body>
@@ -219,9 +288,19 @@
 <div class="progress-track">
   <div class="progress-fill" id="bar"></div>
 </div>
-
+<div class="meta-row"><span id="phase">Starting up…</span><span id="elapsed">Elapsed 0:00</span></div>
+<div class="note" id="note"></div>
+<div class="tip">
+  <button class="tip-btn" id="tipPrev" aria-label="Previous tip">&#8249;</button>
+  <span class="tip-text" id="tipText"></span>
+  <button class="tip-btn" id="tipNext" aria-label="Next tip">&#8250;</button>
+</div>
 <div class="details-toggle" id="detailsToggle">Show details</div>
 <div class="log-area" id="log" style="display:none;"></div>
+<div class="actions">
+  <button class="action-btn" id="openLogs">Open logs folder</button>
+  <button class="action-btn danger" id="quitBtn">Quit</button>
+</div>
 
 <script>
   const logEl = document.getElementById('log');
@@ -325,10 +404,73 @@
       nudgeBackend();
       return;
     }
-    if (m.includes('desktop service ready on port')) { completeStep('backend'); activateStep('ready'); return; }
-
-    if (m.includes('routing proxy ready on port')) { completeStep('ready'); setProgress(100); return; }
+    if (m.includes('desktop service ready on port')) { completeStep('backend'); activateStep('ready'); hideNote(); setPhase('Opening your workspace…'); return; }
+    if (m.includes('routing proxy ready on port')) { completeStep('ready'); setProgress(100); setPhase('Ready'); return; }
   }
+  const noteEl = document.getElementById('note');
+  const phaseEl = document.getElementById('phase');
+  const elapsedEl = document.getElementById('elapsed');
+  const startedAt = Date.now();
+  const SLOW_AFTER_SECS = 150;
+  let slowShown = false;
+  function formatElapsed(secs) {
+    return Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+  }
+  function setPhase(text) { phaseEl.textContent = text; }
+  function showNote(text, slow) {
+    noteEl.textContent = text;
+    noteEl.classList.toggle('slow', Boolean(slow));
+    noteEl.style.display = 'block';
+  }
+  function hideNote() {
+    if (!slowShown) noteEl.style.display = 'none';
+  }
+  setInterval(() => {
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    elapsedEl.textContent = 'Elapsed ' + formatElapsed(secs);
+    const ready = stepEls.ready.classList.contains('done');
+    if (!ready && !slowShown && secs >= SLOW_AFTER_SECS) {
+      slowShown = true;
+      showNote('This is taking longer than usual. The first start after installing can take a few minutes while antivirus scans the new files. If nothing moves for a long time, open the logs to see what it is doing, or quit and try again.', true);
+    }
+  }, 1000);
+  const TIPS = [
+    'Your ontologies are stored on this computer; the editor runs its own private backend.',
+    'Code View lets you edit the ontology source (Turtle, RDF/XML) directly and syncs your changes back.',
+    'Ask AI proposes edits you review before they are applied, and each AI change set can be undone.',
+    'Every change is recorded in History, so you can review it or undo it later.',
+  ];
+  const tipTextEl = document.getElementById('tipText');
+  let tipIndex = Math.floor(Math.random() * TIPS.length);
+  let tipPausedUntil = 0;
+  function showTip(index) {
+    tipIndex = (index + TIPS.length) % TIPS.length;
+    tipTextEl.classList.add('fade');
+    setTimeout(() => {
+      tipTextEl.textContent = TIPS[tipIndex];
+      tipTextEl.classList.remove('fade');
+    }, 200);
+  }
+  tipTextEl.textContent = TIPS[tipIndex];
+  document.getElementById('tipPrev').addEventListener('click', () => { tipPausedUntil = Date.now() + 20000; showTip(tipIndex - 1); });
+  document.getElementById('tipNext').addEventListener('click', () => { tipPausedUntil = Date.now() + 20000; showTip(tipIndex + 1); });
+  setInterval(() => { if (Date.now() > tipPausedUntil) showTip(tipIndex + 1); }, 8000);
+  document.getElementById('openLogs').addEventListener('click', () => {
+    if (window.splashBridge) window.splashBridge.openLogs();
+  });
+  const quitBtn = document.getElementById('quitBtn');
+  let quitArmed = false;
+  quitBtn.addEventListener('click', () => {
+    if (!quitArmed) {
+      quitArmed = true;
+      quitBtn.textContent = 'Click again to quit';
+      setTimeout(() => { quitArmed = false; quitBtn.textContent = 'Quit'; }, 3000);
+      return;
+    }
+    quitBtn.disabled = true;
+    quitBtn.textContent = 'Quitting…';
+    if (window.splashBridge) window.splashBridge.quit();
+  });
 
   const toggleEl = document.getElementById('detailsToggle');
   toggleEl.addEventListener('click', () => {

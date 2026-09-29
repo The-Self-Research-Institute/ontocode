@@ -221,12 +221,13 @@ let splashWindow = null;
 let mainWindow   = null;
 let tray         = null;
 let servicesRunning = false;
+let startupCancelled = false;
 
 // ── Splash window ─────────────────────────────────────────────────────────────
 function createSplash() {
     splashWindow = new BrowserWindow({
         width:  560,
-        height: 380,
+        height: 620,
         frame:  false,
         resizable: false,
         center: true,
@@ -416,6 +417,10 @@ app.whenReady().then(async () => {
             await proxy.start(svcMgr.DESKTOP_PORT, svcMgr.SWRL_PORT);
             sendSplashLog('ok', `Routing proxy ready on port ${proxy.PROXY_PORT}`);
         } catch (err) {
+            if (startupCancelled) {
+                app.quit();
+                return;
+            }
             // Persist the real error regardless of whether the dialog below is ever seen —
             // closing the splash window drops BrowserWindow count to 0, which fires
             // 'window-all-closed' or delays enough for app.quit() to tear down the message
@@ -616,6 +621,12 @@ ipcMain.on('devtools:toggle', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.toggleDevTools();
     }
+});
+
+ipcMain.handle('splash:quit', async () => {
+    startupCancelled = true;
+    try { await svcMgr.stopAll(); } catch (_) {}
+    app.quit();
 });
 
 /** Open logs directory in file manager */
