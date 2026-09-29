@@ -12,6 +12,8 @@ import self.research.ontology.owlEditor.util.AssistantTokenEstimator;
 
 import java.io.IOException;
 import java.time.Duration;
+import self.research.ontology.owlEditor.util.SparqlSafety;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -214,9 +216,10 @@ public class AssistantContextToolService {
     }
 
     private Item resolveIdentifier(String projectId, String iri, String kind) {
+        String safe = SparqlSafety.safeIri(iri);
         String query = "definitions".equals(kind)
-                ? "SELECT ?p ?o WHERE { <" + iri + "> ?p ?o }"
-                : "SELECT ?s ?p WHERE { ?s ?p <" + iri + "> }";
+                ? "SELECT ?p ?o WHERE { <" + safe + "> ?p ?o }"
+                : "SELECT ?s ?p WHERE { ?s ?p <" + safe + "> }";
         SparqlDatasetService.CappedSparqlResult result =
                 datasetService.execSelectCapped(projectId, query, 10, 100, 50_000);
         if (result.capExceeded() != null) {

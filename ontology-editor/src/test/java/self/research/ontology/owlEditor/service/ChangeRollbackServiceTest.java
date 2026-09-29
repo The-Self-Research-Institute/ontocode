@@ -54,7 +54,6 @@ class ChangeRollbackServiceTest {
             audit.setId("audit-1");
             return audit;
         });
-        when(audits.findFirstByChangeSetIdAndDirectionOrderByRevertedAtDesc(anyString(), anyString())).thenReturn(Optional.empty());
         when(facts.entityExists(anyString(), anyString(), anyBoolean(), any())).thenReturn(true);
         service = new ChangeRollbackService(historySync, new RollbackMutationPlanner(), facts, mutations, audits, history,
                 new ProjectWriteLockRegistry(), null);
@@ -101,6 +100,104 @@ class ChangeRollbackServiceTest {
         verify(historySync).setEntryReverted("c2", true, "audit-1");
         verify(history).recordEdit(eq(P), eq("u@x.com"), eq("u@x.com"), eq("ROLLBACK_CHANGESET"), any(), any(),
                 any(), any(), anyString(), any(), any(), eq(false), any(ChangeOrigin.class));
+    }
+
+    @Test
+    void aFailureMidSetKeepsWhatWasUndoneRecordedAndReportsTheError() {
+        HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
+        HistoryChange modified = entry("c2", "addStatement", sub("s2", DISJOINT, "http://example.org/Other", true));
+        when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(modified, created));
+        presentUnlessChanged(Set.of());
+        org.mockito.Mockito.doThrow(new IllegalStateException("store offline")).when(mutations).applyForRollback(eq(P), any());
+
+        Result result = service.undoChangeSet(P, "set-1", ACTOR, false);
+
+        assertEquals(500, result.status());
+        assertFalse(result.ok());
+        assertEquals("audit-1", result.auditId());
+        assertEquals(1, result.applied().size());
+        assertTrue(result.message().contains("store offline"));
+        verify(historySync).setEntryReverted("c2", true, "audit-1");
+        verify(historySync, never()).setEntryReverted(eq("c1"), anyBoolean(), any());
+        verify(history).recordEdit(eq(P), anyString(), anyString(), eq("ROLLBACK_CHANGESET"), any(), any(),
+                any(), any(), anyString(), any(), any(), eq(false), any(ChangeOrigin.class));
+    }
+
+    @Test
+    void laterStepsOfASetSeeWhatEarlierUndoStepsChanged() {
+        HistoryChange created = entry("c1", "createClass");
+        HistoryChange deleted = entry("c2", "deleteClass");
+        when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(deleted, created));
+        java.util.concurrent.atomic.AtomicBoolean exists = new java.util.concurrent.atomic.AtomicBoolean(false);
+        when(facts.entityExists(anyString(), anyString(), anyBoolean(), any())).thenAnswer(inv -> exists.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            exists.set(true);
+            return null;
+        }).when(mutations).applyForRollback(eq(P), any());
+        presentUnlessChanged(Set.of());
+
+        Result result = service.undoChangeSet(P, "set-1", ACTOR, false);
+
+        assertTrue(result.ok());
+        assertTrue(result.skipped().isEmpty());
+        assertEquals(2, result.applied().size());
+        verify(historySync).setEntryReverted("c1", true, "audit-1");
+        verify(historySync).setEntryReverted("c2", true, "audit-1");
+    }
+
+    @Test
+    void redoWalksBackToAnEarlierUndoOnceTheLatestOneIsRedone() {
+        HistoryChange.SubChange first = sub("s1", DISJOINT, "http://example.org/A", true);
+        HistoryChange.SubChange second = sub("s2", COMMENT, "note", true);
+        second.setReverted(true);
+        second.setRevertedAuditId("undo-1");
+        HistoryChange modified = entry("c1", "addStatement", first, second);
+        RollbackAudit newest = new RollbackAudit();
+        newest.setId("undo-2");
+        RollbackAudit older = new RollbackAudit();
+        older.setId("undo-1");
+        when(audits.findByChangeSetIdAndDirectionOrderByRevertedAtDesc("set-1", "UNDO")).thenReturn(List.of(newest, older));
+        when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(modified));
+        when(facts.statementPresent(anyString(), anyString(), anyString(), anyString(), anyBoolean(), any())).thenReturn(false);
+
+        Result result = service.redoChangeSet(P, "set-1", ACTOR, false);
+
+        assertTrue(result.ok());
+        ArgumentCaptor<java.util.Collection<String>> handled = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(historySync).setSubChangesReverted(eq("c1"), handled.capture(), eq(false), eq(null));
+        assertEquals(Set.of("s2"), Set.copyOf(handled.getValue()));
+    }
+
+    @Test
+    void anEntryWithNothingLeftToUndoIsStillMarkedUndoneWhenItComesAfterAPlannedOne() {
+        HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
+        HistoryChange.SubChange gone = sub("s2", DISJOINT, "http://example.org/Other", true);
+        gone.setReverted(true);
+        HistoryChange leftover = entry("c2", "addStatement", gone);
+        when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(created, leftover));
+        presentUnlessChanged(Set.of());
+
+        Result result = service.undoChangeSet(P, "set-1", ACTOR, false);
+
+        assertTrue(result.ok());
+        verify(historySync).setEntryReverted("c1", true, "audit-1");
+        verify(historySync).setEntryReverted("c2", true, "audit-1");
+    }
+
+    @Test
+    void aFailureOnTheFirstStepLeavesNoAuditBehind() {
+        HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
+        when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(created));
+        presentUnlessChanged(Set.of());
+        org.mockito.Mockito.doThrow(new IllegalStateException("store offline")).when(mutations).applyForRollback(eq(P), any());
+
+        Result result = service.undoChangeSet(P, "set-1", ACTOR, false);
+
+        assertEquals(500, result.status());
+        assertEquals(null, result.auditId());
+        verify(audits).deleteById("audit-1");
+        verify(history, never()).recordEdit(anyString(), anyString(), anyString(), anyString(), any(), any(),
+                any(), any(), anyString(), any(), any(), anyBoolean(), any(ChangeOrigin.class));
     }
 
     @Test
@@ -200,7 +297,7 @@ class ChangeRollbackServiceTest {
         HistoryChange modified = entry("c2", "addStatement", byUndo, earlier);
         RollbackAudit last = new RollbackAudit();
         last.setId("undo-9");
-        when(audits.findFirstByChangeSetIdAndDirectionOrderByRevertedAtDesc("set-1", "UNDO")).thenReturn(Optional.of(last));
+        when(audits.findByChangeSetIdAndDirectionOrderByRevertedAtDesc("set-1", "UNDO")).thenReturn(List.of(last));
         when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(modified));
         when(facts.statementPresent(anyString(), anyString(), anyString(), anyString(), anyBoolean(), any())).thenReturn(false);
 
@@ -291,7 +388,7 @@ class ChangeRollbackServiceTest {
         HistoryChange created = entry("c1", "createClass", label, sub("s-kept", DISJOINT, "http://example.org/Other", true));
         RollbackAudit last = new RollbackAudit();
         last.setId("undo-9");
-        when(audits.findFirstByChangeSetIdAndDirectionOrderByRevertedAtDesc("set-1", "UNDO")).thenReturn(Optional.of(last));
+        when(audits.findByChangeSetIdAndDirectionOrderByRevertedAtDesc("set-1", "UNDO")).thenReturn(List.of(last));
         when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(created));
         when(facts.statementPresent(anyString(), anyString(), anyString(), anyString(), anyBoolean(), any())).thenReturn(false);
 

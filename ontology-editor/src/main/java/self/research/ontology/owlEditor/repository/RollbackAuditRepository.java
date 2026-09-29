@@ -14,5 +14,7 @@ public interface RollbackAuditRepository extends MongoRepository<RollbackAudit, 
 
     Optional<RollbackAudit> findFirstByChangeSetIdAndDirectionOrderByRevertedAtDesc(String changeSetId, String direction);
 
+    List<RollbackAudit> findByChangeSetIdAndDirectionOrderByRevertedAtDesc(String changeSetId, String direction);
+
     Optional<RollbackAudit> findByHistoryChangeIdAndSubChangeId(String historyChangeId, String subChangeId);
 }

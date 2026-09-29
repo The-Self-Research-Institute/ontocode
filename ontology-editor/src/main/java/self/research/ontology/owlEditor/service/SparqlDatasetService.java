@@ -1047,9 +1047,8 @@ public class SparqlDatasetService {
                                                 int maxRows, long maxBytesApprox) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
-            String scoped = sparqlQuery.replaceAll("(?i)\\bFROM\\s+<[^>]+>", " ")
-                    .replaceFirst("(?i)WHERE", buildFromClause(conn, projectId) + " WHERE");
-            CappedSparqlResult result = GraphStatementOps.selectCapped(conn, scoped, timeoutSeconds, maxRows, maxBytesApprox);
+            CappedSparqlResult result = GraphStatementOps.selectCapped(conn, sparqlQuery, scopeGraphUris(conn, projectId),
+                    timeoutSeconds, maxRows, maxBytesApprox);
             log.info("[GRAPHDB] capped SELECT project={} rows={} capExceeded={}", projectId, result.rows().size(), result.capExceeded());
             return result;
         } catch (Exception e) {
@@ -3227,14 +3226,17 @@ public class SparqlDatasetService {
         }
     }
 
-    private String buildFromClause(RepositoryConnection conn, String projectId) {
+    private List<String> scopeGraphUris(RepositoryConnection conn, String projectId) {
         String userId = SparqlQueryContext.getUserId();
         if (shouldScopeReadsToDraftCopy(projectId, userId)) {
-            return "FROM <" + getDraftGraphUri(projectId, userId) + ">";
+            return List.of(getDraftGraphUri(projectId, userId));
         }
-        List<String> graphs = getAllGraphUris(conn, projectId);
+        return getAllGraphUris(conn, projectId);
+    }
+
+    private String buildFromClause(RepositoryConnection conn, String projectId) {
         StringBuilder builder = new StringBuilder();
-        for (String g : graphs) {
+        for (String g : scopeGraphUris(conn, projectId)) {
             builder.append("FROM <").append(g).append("> ");
         }
         return builder.toString().trim();

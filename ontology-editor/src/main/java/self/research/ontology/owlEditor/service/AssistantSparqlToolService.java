@@ -13,14 +13,10 @@ import self.research.ontology.owlEditor.util.AssistantTokenEstimator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 @Slf4j
 @Service
 public class AssistantSparqlToolService {
-
-    private static final Pattern SELECT_ONLY =
-            Pattern.compile("(?is)^\\s*(PREFIX\\s+\\S*\\s+<[^>]*>\\s*)*SELECT\\b");
 
     private final AssistantSessionService sessionService;
     private final SparqlDatasetService datasetService;
@@ -32,6 +28,9 @@ public class AssistantSparqlToolService {
 
     @Value("${assistant.sparql.max-bytes:200000}")
     private long maxBytes;
+
+    @Value("${assistant.sparql.max-query-chars:20000}")
+    private int maxQueryChars = 20_000;
 
     @Value("${assistant.sparql.timeout-seconds:15}")
     private int timeoutSeconds;
@@ -57,9 +56,9 @@ public class AssistantSparqlToolService {
             return revisionStale();
         }
 
-        if (query == null || !SELECT_ONLY.matcher(query).find()) {
-            return SparqlToolResult.builder().ok(false).errorCode("NOT_SELECT_ONLY")
-                    .message("Only SELECT queries are allowed").build();
+        AssistantSparqlGuard.Verdict verdict = AssistantSparqlGuard.check(query, maxQueryChars);
+        if (!verdict.allowed()) {
+            return SparqlToolResult.builder().ok(false).errorCode(verdict.errorCode()).message(verdict.message()).build();
         }
 
         AssistantAdmissionLimiter.ToolAdmission admission =
@@ -117,7 +116,10 @@ public class AssistantSparqlToolService {
             String lower = msg.toLowerCase();
             String errorCode = (lower.contains("interrupt") || lower.contains("timeout")) ? "TIMEOUT" : "QUERY_ERROR";
             log.warn("[Assistant] run_sparql failed for session {}: {}", sessionId, msg);
-            return SparqlToolResult.builder().ok(false).errorCode(errorCode).message(msg).build();
+            String shown = "TIMEOUT".equals(errorCode)
+                    ? "The query timed out. Narrow it and try again."
+                    : "The query could not be executed. Check its syntax and try a simpler query.";
+            return SparqlToolResult.builder().ok(false).errorCode(errorCode).message(shown).build();
         }
     }
 

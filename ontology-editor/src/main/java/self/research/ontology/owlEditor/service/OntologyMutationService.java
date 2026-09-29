@@ -252,17 +252,21 @@ public class OntologyMutationService {
                 return;
             }
 
-            MutationContext.setOps(ops);
             long sparqlStart = System.currentTimeMillis();
-            if (draft) {
-                requireDraftCopyReady(projectId, userId);
-                datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
-                storageManager.bumpDraftGraphVersion(projectId, userId);
-            } else {
-                datasetService.execUpdate(projectId, sparql);
-                if (mainGraphRevisionService != null) {
-                    mainGraphRevisionService.incrementRevision(projectId);
+            MutationContext.setOps(ops);
+            try {
+                if (draft) {
+                    requireDraftCopyReady(projectId, userId);
+                    datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
+                    storageManager.bumpDraftGraphVersion(projectId, userId);
+                } else {
+                    datasetService.execUpdate(projectId, sparql);
+                    if (mainGraphRevisionService != null) {
+                        mainGraphRevisionService.incrementRevision(projectId);
+                    }
                 }
+            } finally {
+                MutationContext.getAndClear();
             }
             long sparqlDuration = System.currentTimeMillis() - sparqlStart;
             log.info("[MUTATION] SPARQL update completed in {}ms for project={}", sparqlDuration, projectId);

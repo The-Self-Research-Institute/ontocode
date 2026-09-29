@@ -3,6 +3,8 @@ package self.research.ontology.owlEditor.service;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.Value;
+import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
+import org.eclipse.rdf4j.query.impl.SimpleDataset;
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQuery;
 import org.eclipse.rdf4j.query.TupleQueryResult;
@@ -82,9 +84,13 @@ final class GraphStatementOps {
         return out.toString(StandardCharsets.UTF_8);
     }
 
-    static SparqlDatasetService.CappedSparqlResult selectCapped(RepositoryConnection conn, String scopedQuery,
-                                                                int timeoutSeconds, int maxRows, long maxBytesApprox) {
-        TupleQuery query = conn.prepareTupleQuery(scopedQuery);
+    static SparqlDatasetService.CappedSparqlResult selectCapped(RepositoryConnection conn, String queryText,
+                                                                List<String> graphUris, int timeoutSeconds, int maxRows,
+                                                                long maxBytesApprox) {
+        TupleQuery query = conn.prepareTupleQuery(queryText);
+        SimpleDataset dataset = new SimpleDataset();
+        graphUris.forEach(g -> dataset.addDefaultGraph(SimpleValueFactory.getInstance().createIRI(g)));
+        query.setDataset(dataset);
         query.setIncludeInferred(false);
         query.setMaxExecutionTime(timeoutSeconds);
         List<Map<String, String>> rows = new ArrayList<>();

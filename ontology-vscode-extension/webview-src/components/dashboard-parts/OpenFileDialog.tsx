@@ -60,15 +60,6 @@ export const OpenFileDialog = ({
   const primaryFiles = usingProjectFiles ? projectFiles || [] : myFiles;
   const secondaryFiles = usingProjectFiles ? [] : sharedFiles;
 
-  useEffect(() => {
-    if (usingProjectFiles) {
-      console.log("[OpenFileDialog] 🔄 projectFiles prop changed:", {
-        count: projectFiles?.length || 0,
-        files: projectFiles?.map((f) => f.filename),
-      });
-    }
-  }, [projectFiles, usingProjectFiles]);
-
   const handleOpenLocalFile = () => {
     if (!canOpenLocalFile || !window.vscode) {
       return;
@@ -196,10 +187,7 @@ export const OpenFileDialog = ({
             </div>
             {usingProjectFiles && onRefresh && (
               <button
-                onClick={() => {
-                  console.log("[OpenFileDialog] 🔄 Manual refresh clicked");
-                  onRefresh();
-                }}
+                onClick={onRefresh}
                 className="p-2 rounded-md border hover:bg-gray-50 transition-colors"
                 style={{
                   borderColor: "var(--color-border)",

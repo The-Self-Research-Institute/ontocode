@@ -13,7 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class StampedComputeCacheTest {
 
-    private final StampedComputeCache<Integer> cache = new StampedComputeCache<>();
+    private final java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000);
+    private final StampedComputeCache<Integer> cache = new StampedComputeCache<>(now::get);
 
     @Test
     void reusesValueWhileStampIsUnchanged() {
@@ -46,6 +47,20 @@ class StampedComputeCacheTest {
             return null;
         }, -1));
         assertEquals(-1, cache.get("p", "v1", calls::incrementAndGet, -1));
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void failureIsRetriedAfterTtlAndSuccessReplacesIt() {
+        AtomicInteger calls = new AtomicInteger();
+        assertEquals(-1, cache.get("p", "v1", () -> null, -1));
+        now.addAndGet(31_000);
+        assertEquals(7, cache.get("p", "v1", () -> {
+            calls.incrementAndGet();
+            return 7;
+        }, -1));
+        now.addAndGet(31_000);
+        assertEquals(7, cache.get("p", "v1", calls::incrementAndGet, -1));
         assertEquals(1, calls.get());
     }
 

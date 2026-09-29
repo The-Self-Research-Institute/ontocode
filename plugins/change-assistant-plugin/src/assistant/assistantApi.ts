@@ -14,20 +14,12 @@ function postJson(url: string, body: object): Promise<Response> {
 
 export async function fetchDraftList(projectId: string): Promise<any[] | null> {
   const base = apiBase();
-  console.log('[ChangeAssistant] Loading drafts for projectId:', projectId);
-  console.log('[ChangeAssistant] API_BASE_URL:', base);
   const response = await authFetch(`${base}/api/ontology/${projectId}/drafts/stats`);
-  console.log('[ChangeAssistant] Draft stats response status:', response.status);
   if (!response.ok) return null;
-  const data = await response.json();
-  console.log('[ChangeAssistant] Draft stats:', data);
   const draftsResponse = await authFetch(`${base}/api/ontology/${projectId}/drafts`);
-  console.log('[ChangeAssistant] Drafts response status:', draftsResponse.status);
   if (!draftsResponse.ok) return null;
   const draftsData = await draftsResponse.json();
-  console.log('[ChangeAssistant] Drafts data:', draftsData);
   if (!draftsData.drafts || !Array.isArray(draftsData.drafts)) return null;
-  console.log('[ChangeAssistant] Found', draftsData.drafts.length, 'drafts');
   return draftsData.drafts;
 }
 

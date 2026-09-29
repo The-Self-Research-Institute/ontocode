@@ -30,6 +30,8 @@ import java.util.Map;
         methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class AssistantEditController {
 
+    private static final int MAX_SUMMARY_CHARS = 500;
+
     private final AssistantEditProposalService proposalService;
     private final AssistantEditApplyService applyService;
 
@@ -54,7 +56,7 @@ public class AssistantEditController {
     public ResponseEntity<?> apply(@PathVariable String sessionId, @PathVariable String serverGroupId,
                                     @RequestBody(required = false) Map<String, Object> body,
                                     HttpServletRequest httpRequest) {
-        String summary = body != null && body.get("summary") instanceof String s ? s : null;
+        String summary = body != null && body.get("summary") instanceof String s ? truncate(s, MAX_SUMMARY_CHARS) : null;
         return JwtIdentityExtractor.extractEmail(httpRequest)
                 .map(userEmail -> {
                     ApplyResult result = applyService.applyGroup(sessionId, serverGroupId, userEmail, summary);
@@ -117,6 +119,10 @@ public class AssistantEditController {
                 ? List.of() : result.getRemappedPendingGroups());
         body.put("appliedRanges", result.getAppliedRanges() == null ? List.of() : result.getAppliedRanges());
         return body;
+    }
+
+    private static String truncate(String value, int max) {
+        return value.length() > max ? value.substring(0, max) : value;
     }
 
     private static ResponseEntity<Map<String, Object>> unauthorized() {

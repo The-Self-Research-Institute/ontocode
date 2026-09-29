@@ -140,44 +140,113 @@ public class ChangeRollbackService {
     }
 
     private Result runLocked(Request original) {
-        Request req = REDO.equals(original.direction()) && original.changeSetId() != null
-                && original.undoAuditId() == null
-                ? original.withUndoAudit(audits.findFirstByChangeSetIdAndDirectionOrderByRevertedAtDesc(
-                        original.changeSetId(), UNDO).map(RollbackAudit::getId).orElse(null))
-                : original;
-        List<HistoryChange> entries = load(req);
+        Request req = original;
+        List<HistoryChange> changeSet = null;
+        if (REDO.equals(original.direction()) && original.changeSetId() != null && original.undoAuditId() == null) {
+            changeSet = historySync.getChangeSet(original.projectId(), original.changeSetId());
+            req = original.withUndoAudit(pendingUndoAudit(changeSet, original.changeSetId()));
+        }
+        List<HistoryChange> entries = load(req, changeSet);
         if (entries.isEmpty()) {
             return new Result(404, false, req.dryRun(), req.direction(), scopeId(req), List.of(), List.of(), null,
                     "Change not found");
         }
-        List<Work> works = new ArrayList<>();
-        for (HistoryChange entry : entries) {
-            works.add(evaluate(req, entry));
-        }
+        return req.dryRun() ? preview(req, entries) : applyInOrder(req, entries);
+    }
+
+    private Result preview(Request req, List<HistoryChange> entries) {
         List<Item> applied = new ArrayList<>();
         List<Item> skipped = new ArrayList<>();
-        for (Work work : works) {
+        for (HistoryChange entry : entries) {
+            Work work = evaluate(req, entry);
             skipped.addAll(work.skipped());
             applied.addAll(appliedItems(work));
         }
-        if (req.dryRun() || applied.isEmpty()) {
-            String message = applied.isEmpty() ? "Nothing to " + req.direction().toLowerCase() : null;
-            return new Result(200, req.dryRun(), req.dryRun(), req.direction(), scopeId(req), applied, skipped, null, message);
-        }
-        RollbackAudit audit = recorder.saveAudit(req, entries, skipped.size());
-        for (Work work : works) {
-            if (!work.plan().isEmpty() || work.completesEntry()) {
+        String message = applied.isEmpty() ? "Nothing to " + req.direction().toLowerCase() : null;
+        return new Result(200, true, true, req.direction(), scopeId(req), applied, skipped, null, message);
+    }
+
+    private Result applyInOrder(Request req, List<HistoryChange> entries) {
+        List<Item> applied = new ArrayList<>();
+        List<Item> skipped = new ArrayList<>();
+        List<Work> done = new ArrayList<>();
+        List<Work> completions = new ArrayList<>();
+        RollbackAudit audit = null;
+        try {
+            for (HistoryChange entry : entries) {
+                Work work = evaluate(req, entry);
+                skipped.addAll(work.skipped());
+                if (work.plan().isEmpty()) {
+                    if (work.completesEntry()) {
+                        completions.add(work);
+                    }
+                    continue;
+                }
+                if (audit == null) {
+                    audit = recorder.saveAudit(req, entries, 0);
+                }
                 applyWork(req, work, audit.getId());
+                done.add(work);
+                applied.addAll(appliedItems(work));
             }
+            if (audit != null) {
+                for (Work pending : completions) {
+                    applyWork(req, pending, audit.getId());
+                }
+            }
+        } catch (RuntimeException e) {
+            return failedMidway(req, audit == null ? null : audit.getId(), done, skipped, e);
         }
+        if (audit == null) {
+            return new Result(200, false, false, req.direction(), scopeId(req), applied, skipped, null,
+                    "Nothing to " + req.direction().toLowerCase());
+        }
+        audit.setSkippedCount(skipped.size());
+        audits.save(audit);
         String description = recorder.recordHistory(req, entries, applied, audit.getId());
         recorder.broadcast(req, audit.getId(), entries, description);
         return new Result(200, true, false, req.direction(), scopeId(req), applied, skipped, audit.getId(), null);
     }
 
-    private List<HistoryChange> load(Request req) {
+    private String pendingUndoAudit(List<HistoryChange> entries, String changeSetId) {
+        List<RollbackAudit> undos = audits.findByChangeSetIdAndDirectionOrderByRevertedAtDesc(changeSetId, UNDO);
+        if (undos.isEmpty()) {
+            return null;
+        }
+        for (RollbackAudit undo : undos) {
+            boolean pending = entries.stream().anyMatch(entry ->
+                    (entry.isReverted() && undo.getId().equals(entry.getRevertedAuditId()))
+                            || !RollbackMutationPlanner.revertedBy(entry, undo.getId()).isEmpty());
+            if (pending) {
+                return undo.getId();
+            }
+        }
+        return undos.get(0).getId();
+    }
+
+    private Result failedMidway(Request req, String auditId, List<Work> done, List<Item> skipped, RuntimeException cause) {
+        log.error("[ROLLBACK] {} stopped part-way for project {}: {}", req.direction(), req.projectId(), cause.getMessage(), cause);
+        List<Item> partial = new ArrayList<>();
+        done.forEach(work -> partial.addAll(appliedItems(work)));
+        String keptAuditId = auditId;
+        if (done.isEmpty()) {
+            if (auditId != null) {
+                audits.deleteById(auditId);
+            }
+            keptAuditId = null;
+        } else {
+            List<HistoryChange> doneEntries = done.stream().map(Work::entry).toList();
+            String description = recorder.recordHistory(req, doneEntries, partial, auditId);
+            recorder.broadcast(req, auditId, doneEntries, description);
+        }
+        String message = "Stopped part-way: " + cause.getMessage() + (done.isEmpty() ? "" : " (" + done.size() + " step(s) were applied)");
+        return new Result(500, false, false, req.direction(), scopeId(req), partial, skipped, keptAuditId, message);
+    }
+
+    private List<HistoryChange> load(Request req, List<HistoryChange> preloadedChangeSet) {
         if (req.changeSetId() != null) {
-            List<HistoryChange> entries = new ArrayList<>(historySync.getChangeSet(req.projectId(), req.changeSetId()));
+            List<HistoryChange> entries = new ArrayList<>(preloadedChangeSet != null
+                    ? preloadedChangeSet : historySync.getChangeSet(req.projectId(), req.changeSetId()));
             if (REDO.equals(req.direction())) {
                 Collections.reverse(entries);
             }

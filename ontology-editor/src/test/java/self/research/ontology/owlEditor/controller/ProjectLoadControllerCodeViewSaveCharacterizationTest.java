@@ -45,6 +45,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -368,7 +369,8 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
         Map<String, Object> body = response.getBody();
         assertEquals(false, body.get("success"));
-        assertTrue(((String) body.get("error")).contains("GraphDB connection refused"));
+        assertTrue(((String) body.get("error")).contains("unexpected error"));
+        assertFalse(((String) body.get("error")).contains("GraphDB connection refused"));
         verify(storageManager, never()).clearCodeViewCache(any());
     }
 

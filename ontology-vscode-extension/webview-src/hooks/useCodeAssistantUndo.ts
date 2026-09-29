@@ -4,6 +4,7 @@ import { commitOutcome, previewOutcome, type GroupUndoState, type UndoOutcome } 
 import type { AppliedRange } from "../services/codeAssistantSession";
 import type { ReviewEntry } from "../components/codeAssistantChatEntries";
 import type { CodeAssistantEntries } from "./useCodeAssistantEntries";
+import { useCodeAssistantRollbackSync } from "./useCodeAssistantRollbackSync";
 
 export interface UndoOptions {
   chat: CodeAssistantEntries;
@@ -51,6 +52,7 @@ function afterRevert(options: UndoOptions, entry: ReviewEntry, groupId: string, 
 
 export function useCodeAssistantUndo(options: UndoOptions) {
   const { chat } = options;
+  useCodeAssistantRollbackSync(chat);
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const inFlightRef = useRef<Set<string>>(new Set());
