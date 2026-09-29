@@ -517,7 +517,8 @@ public class OntologyMutationService {
             // statements sequentially against progressively mutated state, so if it ran after
             // the direct-triple deletes below, the filler triple (e.g. owl:someValuesFrom <iri>)
             // it searches for would already be gone and it would find nothing to clean up.
-            return buildDeleteDanglingExpressionsSparql(op.iri(), CLASS_EXPR_FILLER_PREDICATES, CLASS_EXPR_ANCHOR_PREDICATES) + ";\n"
+            return buildDeleteListAxiomsSparql(op.iri()) + ";\n"
+                + buildDeleteDanglingExpressionsSparql(op.iri(), CLASS_EXPR_FILLER_PREDICATES, CLASS_EXPR_ANCHOR_PREDICATES) + ";\n"
                 + "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("addAnnotation")) {
@@ -635,7 +636,8 @@ public class OntologyMutationService {
                 + "<" + op.iri() + "> a <" + op.classIri() + "> .\n"
                 + "}";
         } else if (type.equals("deleteIndividual")) {
-            return "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
+            return buildDeleteListAxiomsSparql(op.iri()) + ";\n"
+                + "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("createObjectProperty")) {
             return createPropertySparql(op.iri(), op.label(), op.parent(), "owl:ObjectProperty");
@@ -645,13 +647,15 @@ public class OntologyMutationService {
             return createPropertySparql(op.iri(), op.label(), op.parent(), "owl:AnnotationProperty");
         } else if (type.equals("deleteObjectProperty")) {
             // Cleanup runs first — see the comment on deleteClass above for why.
-            return buildDeleteDanglingExpressionsSparql(op.iri(), "owl:onProperty", PROPERTY_EXPR_ANCHOR_PREDICATES) + ";\n"
+            return buildDeleteListAxiomsSparql(op.iri()) + ";\n"
+                + buildDeleteDanglingExpressionsSparql(op.iri(), "owl:onProperty", PROPERTY_EXPR_ANCHOR_PREDICATES) + ";\n"
                 + "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
         } else if (type.equals("deleteDataProperty")) {
             // Cleanup runs first — see the comment on deleteClass above for why.
-            return buildDeleteDanglingExpressionsSparql(op.iri(), "owl:onProperty", PROPERTY_EXPR_ANCHOR_PREDICATES) + ";\n"
+            return buildDeleteListAxiomsSparql(op.iri()) + ";\n"
+                + buildDeleteDanglingExpressionsSparql(op.iri(), "owl:onProperty", PROPERTY_EXPR_ANCHOR_PREDICATES) + ";\n"
                 + "DELETE { <" + op.iri() + "> ?p ?o } WHERE { <" + op.iri() + "> ?p ?o };\n"
                 + "DELETE { ?s <" + op.iri() + "> ?o } WHERE { ?s <" + op.iri() + "> ?o };\n"
                 + "DELETE { ?s ?p <" + op.iri() + "> } WHERE { ?s ?p <" + op.iri() + "> }";
@@ -2146,6 +2150,31 @@ public class OntologyMutationService {
               ?node ?p ?o .
             }
             """.formatted(fillerPredicates, iri, iri, anchorPredicates);
+    }
+
+    static String buildDeleteListAxiomsSparql(String iri) {
+        return """
+            DELETE { ?axiom ?ap ?ao . ?cell ?cp ?co . }
+            WHERE {
+              ?member rdf:first <%1$s> .
+              ?head rdf:rest* ?member .
+              ?axiom owl:members|owl:distinctMembers ?head .
+              FILTER(isBlank(?axiom))
+              ?axiom ?ap ?ao .
+              ?head rdf:rest* ?cell .
+              FILTER(isBlank(?cell))
+              ?cell ?cp ?co .
+            };
+            DELETE { ?owner ?lp ?head . ?cell ?cp ?co . }
+            WHERE {
+              ?member rdf:first <%1$s> .
+              ?head rdf:rest* ?member .
+              ?owner ?lp ?head .
+              FILTER(?lp IN (owl:disjointUnionOf, owl:hasKey, owl:propertyChainAxiom))
+              ?head rdf:rest* ?cell .
+              FILTER(isBlank(?cell))
+              ?cell ?cp ?co .
+            }""".formatted(iri);
     }
 
     private static final String CLASS_EXPR_FILLER_PREDICATES = "owl:someValuesFrom|owl:allValuesFrom|owl:hasValue|owl:onClass";

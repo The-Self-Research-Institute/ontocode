@@ -7,6 +7,7 @@ import { useCodeAssistantRecovery } from "./useCodeAssistantRecovery";
 import { useCodeAssistantEntries } from "./useCodeAssistantEntries";
 import { useCodeAssistantRun } from "./useCodeAssistantRun";
 import { useCodeAssistantApply } from "./useCodeAssistantApply";
+import { useCodeAssistantUndo } from "./useCodeAssistantUndo";
 import { getApiBaseUrl, resolveApplyBlock, type CodeAssistantAction } from "../components/codeAssistantPanelHelpers";
 import { getCachedProviderConfig, getProviderConfig, type ProviderConfig } from "../services/codeAssistantProviderConfig";
 import type { CodeAssistantPanelProps } from "../components/CodeAssistantPanel";
@@ -96,10 +97,11 @@ export function useCodeAssistantPanel(props: CodeAssistantPanelProps) {
     noteRecoveryProblem: recovery.noteRecoveryProblem,
     onApplySuccess: props.onApplySuccess,
   });
+  const undo = useCodeAssistantUndo({ chat, projectIdRef, onApplySuccess: props.onApplySuccess });
   usePanelLifecycle(mountedRef, run, user?.token, provider);
   return {
     user, logout, isFree, editLockedMessage, ...provider, action, setAction, input, setInput,
-    recovery, recoveryLocked, applyBlock, chat, run, apply,
+    recovery, recoveryLocked, applyBlock, chat, run, apply, undo,
   };
 }
 

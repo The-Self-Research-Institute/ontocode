@@ -57,6 +57,14 @@ export interface ContextEvent {
   isError: boolean;
 }
 
+const MAX_ARGUMENT_RETRIES = 1;
+
+interface ArgumentRetries {
+  left: number;
+  retried?: boolean;
+  firstExplanation?: string;
+}
+
 function stoppedByDeadEnd(reason: string, outcome: DispatchOutcome): LoopOutcome {
   return {
     kind: "stopped",
@@ -80,6 +88,7 @@ interface StepScope {
   signal?: AbortSignal;
   onContext?: (event: ContextEvent) => void;
   emit: (event: LoopStageEvent) => void;
+  argumentRetries: ArgumentRetries;
   resultFor: (call: ToolCallRequest, result: unknown, isError: boolean, revision?: number) => ToolResultForModel;
 }
 
@@ -93,11 +102,13 @@ function stepScope(
   onStage: (event: LoopStageEvent) => void,
   signal?: AbortSignal,
   onContext?: (event: ContextEvent) => void,
+  argumentRetries: ArgumentRetries = { left: 0 },
 ): StepScope {
   return {
     ctx,
     signal,
     onContext,
+    argumentRetries,
     emit: (event) => onStage({ ...event, step, maxSteps: MAX_LOOP_ITERATIONS }),
     resultFor: (call, result, isError, revision) => ({
       toolCallId: call.toolCallId,
@@ -109,9 +120,25 @@ function stepScope(
   };
 }
 
-async function runProposal(scope: StepScope, proposeCall: ToolCallRequest, explanation?: string): Promise<LoopOutcome> {
+function isInvalidArguments(result: unknown): boolean {
+  return typeof result === "object" && result !== null && (result as { error?: unknown }).error === "Invalid arguments";
+}
+
+async function runProposal(scope: StepScope, proposeCall: ToolCallRequest, explanation?: string): Promise<StepResult> {
   scope.emit({ stage: "calling-tool", detail: proposeCall.name });
   const outcome = await dispatchToolCall(scope.ctx, proposeCall.name, proposeCall.args, scope.signal);
+  if (outcome.isError && isInvalidArguments(outcome.result) && scope.argumentRetries.left > 0) {
+    scope.argumentRetries.left--;
+    if (!scope.argumentRetries.retried) {
+      scope.argumentRetries.retried = true;
+      scope.argumentRetries.firstExplanation = explanation;
+    }
+    return { results: [scope.resultFor(proposeCall, outcome.result, true)] };
+  }
+  return { outcome: proposalOutcome(scope, proposeCall, outcome, scope.argumentRetries.retried ? scope.argumentRetries.firstExplanation : explanation) };
+}
+
+function proposalOutcome(scope: StepScope, proposeCall: ToolCallRequest, outcome: DispatchOutcome, explanation?: string): LoopOutcome {
   if (outcome.isError || !outcome.proposeResult) {
     const detail = describeToolFailure(outcome.result);
     scope.emit({ stage: "stopped", detail: `${proposeCall.name} failed` });
@@ -152,7 +179,7 @@ async function handleToolCallsTurn(scope: StepScope, turn: ToolCallsTurn): Promi
   }
 
   if (hasPropose) {
-    return { outcome: await runProposal(scope, turn.calls[0], turn.text) };
+    return runProposal(scope, turn.calls[0], turn.text);
   }
 
   if (turn.calls.length > MAX_CALLS_PER_TURN) {
@@ -178,9 +205,10 @@ export async function runAssistantLoop(
   const managedCall = managedCallFor(ctx);
   const managedProvider = ctx.providerConfig?.managed ? ctx.providerConfig.provider : undefined;
   let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage, history, managedProvider);
+  const argumentRetries: ArgumentRetries = { left: MAX_ARGUMENT_RETRIES };
 
   for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
-    const scope = stepScope(ctx, i + 1, onStage, signal, onContext);
+    const scope = stepScope(ctx, i + 1, onStage, signal, onContext, argumentRetries);
     scope.emit({ stage: "calling-provider" });
     const onRetry = (attempt: number, maxAttempts: number, status: number) => {
       scope.emit({ stage: "calling-provider", detail: `Provider busy (HTTP ${status}) — retrying ${attempt}/${maxAttempts}...` });

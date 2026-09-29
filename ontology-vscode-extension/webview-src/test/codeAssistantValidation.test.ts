@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateAgainstSchema } from "../services/codeAssistantValidation";
+import { coerceJsonStrings, validateAgainstSchema } from "../services/codeAssistantValidation";
 import type { JsonSchema } from "../services/codeAssistantProviders";
 
 describe("validateAgainstSchema", () => {
@@ -100,5 +100,32 @@ describe("validateAgainstSchema", () => {
     const result = validateAgainstSchema(schema, invalid);
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toContain("value");
+  });
+});
+
+describe("coerceJsonStrings", () => {
+  const schema: JsonSchema = {
+    type: "object",
+    properties: {
+      groups: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { startLine: { type: "integer" }, text: { type: "string" } },
+        },
+      },
+    },
+  };
+
+  it("parses arrays and numbers that arrive as strings", () => {
+    const coerced = coerceJsonStrings(schema, { groups: '[{"startLine":"400","text":"42"}]' });
+    expect(coerced).toEqual({ groups: [{ startLine: 400, text: "42" }] });
+    expect(validateAgainstSchema(schema, coerced).valid).toBe(true);
+  });
+
+  it("leaves values alone when the string is not the expected shape", () => {
+    expect(coerceJsonStrings(schema, { groups: "not json" })).toEqual({ groups: "not json" });
+    expect(coerceJsonStrings(schema, { groups: '{"a":1}' })).toEqual({ groups: '{"a":1}' });
+    expect(coerceJsonStrings(schema, { groups: [{ startLine: "4.5" }] })).toEqual({ groups: [{ startLine: "4.5" }] });
   });
 });

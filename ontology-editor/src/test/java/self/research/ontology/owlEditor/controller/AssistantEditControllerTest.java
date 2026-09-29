@@ -82,17 +82,17 @@ class AssistantEditControllerTest {
 
     @Test
     void applyReturnsUnauthorizedWithoutBearerToken() {
-        ResponseEntity<?> response = controller.apply("s1", "g1", new MockHttpServletRequest());
+        ResponseEntity<?> response = controller.apply("s1", "g1", null, new MockHttpServletRequest());
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
     }
 
     @Test
     void applyReturnsOkEnvelopeOnSuccess() {
-        when(applyService.applyGroup(anyString(), anyString(), anyString())).thenReturn(
+        when(applyService.applyGroup(anyString(), anyString(), anyString(), any())).thenReturn(
                 ApplyResult.builder().ok(true).applied(true).newRevision(5L).remappedPendingGroups(List.of()).build());
 
-        ResponseEntity<?> response = controller.apply("s1", "g1", requestWithBearerToken());
+        ResponseEntity<?> response = controller.apply("s1", "g1", null, requestWithBearerToken());
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         @SuppressWarnings("unchecked")
@@ -103,10 +103,10 @@ class AssistantEditControllerTest {
 
     @Test
     void applyReturnsErrorEnvelopeOnFailure() {
-        when(applyService.applyGroup(anyString(), anyString(), anyString())).thenReturn(
+        when(applyService.applyGroup(anyString(), anyString(), anyString(), any())).thenReturn(
                 ApplyResult.builder().ok(false).errorCode("STALE_GROUP").message("stale").build());
 
-        ResponseEntity<?> response = controller.apply("s1", "g1", requestWithBearerToken());
+        ResponseEntity<?> response = controller.apply("s1", "g1", null, requestWithBearerToken());
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         @SuppressWarnings("unchecked")
@@ -117,10 +117,10 @@ class AssistantEditControllerTest {
 
     @Test
     void applyOfAnUnknownOrForeignProposalIsForbidden() {
-        when(applyService.applyGroup(anyString(), anyString(), anyString())).thenReturn(ApplyResult.builder().ok(false)
+        when(applyService.applyGroup(anyString(), anyString(), anyString(), any())).thenReturn(ApplyResult.builder().ok(false)
                 .errorCode(AssistantEditApplyService.PROPOSAL_NOT_FOUND).message("Unknown or unauthorized proposal").build());
 
-        ResponseEntity<?> response = controller.apply("s1", "g1", requestWithBearerToken());
+        ResponseEntity<?> response = controller.apply("s1", "g1", null, requestWithBearerToken());
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
         @SuppressWarnings("unchecked")
@@ -183,10 +183,10 @@ class AssistantEditControllerTest {
     @Test
     @SuppressWarnings("unchecked")
     void applyReplayWithoutARevisionDoesNotFail() {
-        when(applyService.applyGroup(anyString(), anyString(), anyString())).thenReturn(
+        when(applyService.applyGroup(anyString(), anyString(), anyString(), any())).thenReturn(
                 ApplyResult.builder().ok(true).applied(true).build());
 
-        ResponseEntity<?> response = controller.apply("s1", "g1", requestWithBearerToken());
+        ResponseEntity<?> response = controller.apply("s1", "g1", null, requestWithBearerToken());
 
         Map<String, Object> body = (Map<String, Object>) response.getBody();
         assertEquals(true, body.get("ok"));

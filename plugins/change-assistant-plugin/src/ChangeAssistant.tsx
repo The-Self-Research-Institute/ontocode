@@ -1,46 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   GitBranch, History, AlertTriangle, CheckCircle, XCircle, 
   Users, MessageSquare, GitMerge, Clock, Filter, Search,
-  GitCommit, Eye, ThumbsUp, ThumbsDown, Undo2, FileText, BarChart3,
+  GitCommit, ThumbsUp, ThumbsDown, FileText, BarChart3,
   Bell, Activity, Lightbulb, Edit3, Save, RefreshCw, Zap, Info, X
 } from 'lucide-react';
 import ChangeTimeline from './components/ChangeTimeline';
 import ChangeGraph from './components/ChangeGraph';
 import ConflictResolver from './components/ConflictResolver';
 import AuthorActivityChart from './components/AuthorActivityChart';
-
-/** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
-async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const hostFetch = (window as any).authenticatedFetch;
-  if (typeof hostFetch === 'function') {
-    return hostFetch(input, init);
-  }
-  const headers = new Headers(init?.headers);
-  const token = localStorage.getItem('authToken');
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  return fetch(input, { ...init, headers });
-}
+import ChangeSetList from './changeSets/ChangeSetList';
+import { AiInfo, ChangeSource, SourceFilter, SubChange } from './changeSets/types';
+import { authFetch } from './authFetch';
 
 // Change types
 type ChangeType = 'class' | 'property' | 'individual' | 'axiom' | 'annotation' | 'import';
 type ChangeAction = 'added' | 'deleted' | 'modified';
 type ChangeStatus = 'pending' | 'approved' | 'rejected' | 'conflicted' | 'draft';
-
-interface SubChangeDTO {
-  id: string;
-  predicate?: string;
-  oldValue?: string;
-  newValue?: string;
-  annotationProperty?: string;
-  addition: boolean;
-  reverted?: boolean;
-  revertedBy?: string;
-  revertedAt?: string;
-}
 
 interface OntologyChange {
   id: string;
@@ -62,10 +38,17 @@ interface OntologyChange {
   warnings?: ChangeWarning[];
   commentCount?: number;
   operationType?: string; // Original operation type for rollback (e.g., createObjectProperty, deleteDataProperty)
-  subChanges?: SubChangeDTO[];
+  subChanges?: SubChange[];
   reverted?: boolean;
   revertedBy?: string;
   revertedAt?: string;
+  changeSetId?: string | null;
+  source?: ChangeSource | null;
+  ai?: AiInfo | null;
+  revertsChangeSetId?: string | null;
+  revertedAuditId?: string;
+  revertedWithSet?: boolean;
+  rollbackAuditId?: string | null;
 }
 
 interface ChangeComment {
@@ -101,6 +84,23 @@ interface ChangeStats {
   warnings: number;
 }
 
+function humanizeAction(raw: string): string {
+  const words = /[a-z]/.test(raw) ? raw.replace(/([a-z])([A-Z])/g, '$1 $2') : raw.replace(/_/g, ' ');
+  const text = words.toLowerCase().trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'Modified';
+}
+
+function describeLive(detail: any): { action: string; entityLabel: string } {
+  if (detail.type === 'CHANGE_SET_APPLIED') {
+    return { action: detail.description || 'Saved changes', entityLabel: '' };
+  }
+  if (detail.type === 'ROLLBACK') {
+    const fallback = detail.direction === 'REDO' ? 'Redid a change' : 'Undid a change';
+    return { action: detail.description || fallback, entityLabel: detail.description ? '' : detail.entityLabel || '' };
+  }
+  return { action: humanizeAction(detail.type || 'modified'), entityLabel: detail.entityLabel || detail.iri || 'Unknown entity' };
+}
+
 interface LiveActivity {
   id: string;
   userId: string;
@@ -134,6 +134,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const [filterType, setFilterType] = useState<ChangeType | 'all'>('all');
   const [filterStatus, setFilterStatus] = useState<ChangeStatus | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   const [selectedChange, setSelectedChange] = useState<OntologyChange | null>(null);
   const [showCommentDialog, setShowCommentDialog] = useState(false);
   const [newComment, setNewComment] = useState('');
@@ -144,16 +145,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const [changeDetails, setChangeDetails] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-  
-  // Confirmation dialog state
-  const [confirmDialog, setConfirmDialog] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    details?: string[];
-    onConfirm: () => void;
-  }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
-  
+
   // Notification state
   const [notification, setNotification] = useState<{
     show: boolean;
@@ -161,20 +153,6 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     message: string;
   }>({ show: false, type: 'info', message: '' });
 
-  const [rollbackLoading, setRollbackLoading] = useState<string | null>(null);
-  const [rollbackError, setRollbackError] = useState<string | null>(null);
-  const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
-  const [subChangeRollbackLoading, setSubChangeRollbackLoading] = useState<string | null>(null);
-
-  const toggleExpanded = (changeId: string) => {
-    setExpandedChanges(prev => {
-      const next = new Set(prev);
-      if (next.has(changeId)) next.delete(changeId);
-      else next.add(changeId);
-      return next;
-    });
-  };
-  
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotification({ show: true, type, message });
     setTimeout(() => setNotification(prev => ({ ...prev, show: false })), 4000);
@@ -193,18 +171,17 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
 
   // Listen for remote edit events
   useEffect(() => {
-    const handleRemoteEdit = (event: CustomEvent) => {
+    const handleEdit = (event: CustomEvent, own: boolean) => {
       const detail = event.detail;
       if (detail && detail.projectId === projectId) {
         // Add to live activity
         const activity: LiveActivity = {
           id: `live-${Date.now()}`,
           userId: detail.userId || 'unknown',
-          username: detail.username || 'Someone',
-          action: detail.type || 'modified',
-          entityLabel: detail.entityLabel || detail.iri || 'Unknown entity',
+          username: own ? 'You' : detail.username || 'Someone',
+          ...describeLive(detail),
           timestamp: new Date(),
-          isCurrentUser: false
+          isCurrentUser: own
         };
         setLiveActivity(prev => [activity, ...prev.slice(0, 19)]);
         
@@ -213,8 +190,14 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       }
     };
 
-    window.addEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
-    return () => window.removeEventListener('remoteEditReceived', handleRemoteEdit as EventListener);
+    const handleRemoteEdit = (event: Event) => handleEdit(event as CustomEvent, false);
+    const handleOwnEdit = (event: Event) => handleEdit(event as CustomEvent, true);
+    window.addEventListener('remoteEditReceived', handleRemoteEdit);
+    window.addEventListener('ownEditReceived', handleOwnEdit);
+    return () => {
+      window.removeEventListener('remoteEditReceived', handleRemoteEdit);
+      window.removeEventListener('ownEditReceived', handleOwnEdit);
+    };
   }, [projectId]);
 
   const loadDraftChanges = async () => {
@@ -357,14 +340,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       // Use MongoDB as single source of truth for change tracking
       const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
       const url = `${apiBase}/api/ontology/${projectId}/changes/recent?count=100`;
-      console.log('[ChangeAssistant] Loading changes from MongoDB:', url);
-      
       const response = await authFetch(url);
       const data = await response.json();
-      
-      console.log('[ChangeAssistant] Response:', data);
-      console.log('[ChangeAssistant] Changes count:', data.changes?.length || 0);
-      
+
       if (!data.success) {
         console.error('[ChangeAssistant] Failed to load changes:', data.error);
         setIsLoading(false);
@@ -374,7 +352,6 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       // Convert MongoDB format to frontend format (single source - no sync needed)
       const parsedChanges = data.changes.map((change: any) => {
         // Preserve original operation type for accurate rollback
-        console.log(change,"change")
         const originalOperationType = change.changeType || change.operationType || '';
         const parsed = {
           id: change.id,
@@ -399,7 +376,14 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           subChanges: change.subChanges || [],
           reverted: change.reverted || false,
           revertedBy: change.revertedBy,
-          revertedAt: change.revertedAt
+          revertedAt: change.revertedAt,
+          changeSetId: change.changeSetId ?? null,
+          source: change.source ?? null,
+          ai: change.ai ?? null,
+          revertsChangeSetId: change.revertsChangeSetId ?? null,
+          revertedAuditId: change.revertedAuditId,
+          revertedWithSet: !!change.revertedWithSet,
+          rollbackAuditId: change.rollbackAuditId ?? null
         };
         return parsed;
       });
@@ -571,190 +555,6 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     }
   };
 
-  const rollbackChange = (changeId: string, change: OntologyChange) => {
-    // Show custom confirmation dialog
-    const details = [
-      `Entity: ${change.entityLabel}`,
-      `Action: ${change.action}`,
-    ];
-    if (change.oldValue) details.push(`Old Value: ${change.oldValue}`);
-    if (change.newValue) details.push(`New Value: ${change.newValue}`);
-    
-    setConfirmDialog({
-      isOpen: true,
-      title: 'Rollback Change',
-      message: 'Are you sure you want to rollback this change? This will revert the change and apply the inverse operation.',
-      details,
-      onConfirm: () => executeRollback(changeId, change)
-    });
-  };
-
-  const executeRollback = async (changeId: string, change: OntologyChange) => {
-    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-    setRollbackLoading(changeId);
-    setRollbackError(null);
-    
-    // Validate required fields
-    if (!change.entityUri) {
-      showNotification('Cannot rollback: Entity IRI is missing', 'error');
-      setRollbackLoading(null);
-      return;
-    }
-    
-    try {
-      const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-      // Use the original operation type for accurate rollback, fallback to generic type
-      const rollbackChangeType = change.operationType || change.type;
-      console.log('[Rollback] Executing rollback with:', {
-        changeId,
-        changeType: rollbackChangeType,
-        originalOperationType: change.operationType,
-        genericType: change.type,
-        action: change.action,
-        entityIRI: change.entityUri,
-        entityLabel: change.entityLabel
-      });
-      
-      // Get current user info
-      const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
-      const userId = currentUser?.email || 'anonymous';
-      const username = currentUser?.username || 'Anonymous';
-      
-      // Use a simpler endpoint that accepts changeId in the body instead of URL path
-      const response = await authFetch(`${apiBase}/api/ontology/${projectId}/changes/rollback`, { 
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          changeId: changeId,
-          changeType: rollbackChangeType,
-          action: change.action,
-          entityIRI: change.entityUri,
-          entityLabel: change.entityLabel,
-          oldValue: change.oldValue,
-          newValue: change.newValue,
-          userId: userId,
-          username: username
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        showNotification(data.message || 'Change rolled back successfully!', 'success');
-        
-        // Get current user info from window or local storage
-        const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
-        const username = currentUser?.username || 'Unknown User';
-        
-        // Use the entityIRI from the response if provided (updated after rollback), otherwise use original
-        const updatedEntityIRI = data.entityIRI || change.entityUri;
-        const updatedEntityLabel = data.entityLabel || change.oldValue || change.entityLabel; // Use old value as new label for annotation changes
-        
-        console.log('[Rollback] Entity info after rollback:', {
-          originalEntityIRI: change.entityUri,
-          updatedEntityIRI: updatedEntityIRI,
-          originalLabel: change.entityLabel,
-          updatedLabel: updatedEntityLabel,
-          oldValue: change.newValue,
-          newValue: change.oldValue
-        });
-        
-        // Dispatch event to notify other components about the rollback
-        window.dispatchEvent(new CustomEvent('ontologyRollback', {
-          detail: {
-            projectId,
-            changeId,
-            entityIRI: updatedEntityIRI, // Use potentially updated IRI from backend
-            entityLabel: updatedEntityLabel, // Use updated label (reverted to old value)
-            action: change.action,
-            entityType: change.type, // Include entity type for proper refresh
-            username: username, // Who performed the rollback
-            originalAuthor: change.author, // Who made the original change
-            oldValue: change.newValue, // What we're rolling back FROM (was the new value)
-            newValue: change.oldValue, // What we're rolling back TO (the original old value)
-            success: true
-          }
-        }));
-        
-        // Increase delay to allow GraphDB to fully process the change before refreshing
-        setTimeout(() => {
-          loadChanges();
-          loadDraftChanges();
-        }, 1200);
-      } else {
-        setRollbackError(data.error || 'Failed to rollback change');
-        showNotification('Failed to rollback: ' + (data.error || 'Unknown error'), 'error');
-      }
-    } catch (error) {
-      console.error('Failed to rollback change:', error);
-      setRollbackError('Network error occurred');
-      showNotification('Failed to rollback: Network error', 'error');
-    } finally {
-      setRollbackLoading(null);
-    }
-  };
-
-  const executeSubChangeRollback = async (changeId: string, subChange: SubChangeDTO) => {
-    const loadingKey = `${changeId}:${subChange.id}`;
-    setSubChangeRollbackLoading(loadingKey);
-    setRollbackError(null);
-
-    try {
-      const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
-      const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
-      const userId = currentUser?.email || 'anonymous';
-      const username = currentUser?.username || 'Anonymous';
-
-      const response = await authFetch(
-        `${apiBase}/api/ontology/${projectId}/changes/${encodeURIComponent(changeId)}/subchanges/${encodeURIComponent(subChange.id)}/rollback`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, username })
-        }
-      );
-
-      const data = await response.json();
-
-      if (data.success) {
-        showNotification(
-          data.alreadyReverted ? 'Already reverted' : (data.message || 'Sub-change rolled back successfully!'),
-          data.alreadyReverted ? 'info' : 'success'
-        );
-
-        window.dispatchEvent(new CustomEvent('ontologyRollback', {
-          detail: {
-            projectId,
-            changeId,
-            subChangeId: subChange.id,
-            entityIRI: data.entityIRI,
-            action: subChange.addition ? 'added' : 'deleted',
-            username,
-            oldValue: subChange.newValue,
-            newValue: subChange.oldValue,
-            success: true
-          }
-        }));
-
-        setTimeout(() => {
-          loadChanges();
-          loadDraftChanges();
-        }, 1200);
-      } else {
-        setRollbackError(data.error || 'Failed to rollback sub-change');
-        showNotification('Failed to rollback: ' + (data.error || 'Unknown error'), 'error');
-      }
-    } catch (error) {
-      console.error('Failed to rollback sub-change:', error);
-      setRollbackError('Network error occurred');
-      showNotification('Failed to rollback: Network error', 'error');
-    } finally {
-      setSubChangeRollbackLoading(null);
-    }
-  };
-
   const addComment = async () => {
     if (!selectedChange || !newComment.trim()) return;
     
@@ -812,6 +612,24 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     return true;
   });
 
+  const typeFilteredChanges = useMemo(() => changes.filter(change =>
+    (filterType === 'all' || change.type === filterType) &&
+    (filterStatus === 'all' || change.status === filterStatus)
+  ), [changes, filterType, filterStatus]);
+
+  const refreshAfterRollback = () => {
+    setTimeout(() => {
+      loadChanges();
+      loadDraftChanges();
+    }, 1200);
+  };
+
+  const openChangeDetails = (changeId: string) => {
+    const change = changes.find(c => c.id === changeId);
+    if (change) setSelectedChange(change);
+    loadChangeDetails(changeId);
+  };
+
   const getChangeIcon = (type: ChangeType) => {
     switch (type) {
       case 'class': return '🔷';
@@ -829,15 +647,6 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       case 'added': return 'text-green-600';
       case 'deleted': return 'text-red-600';
       case 'modified': return 'text-blue-600';
-    }
-  };
-
-  const getStatusIcon = (status: ChangeStatus) => {
-    switch (status) {
-      case 'approved': return <CheckCircle className="w-4 h-4 text-green-600" />;
-      case 'rejected': return <XCircle className="w-4 h-4 text-red-600" />;
-      case 'conflicted': return <AlertTriangle className="w-4 h-4 text-orange-600" />;
-      case 'pending': return <Clock className="w-4 h-4 text-gray-600" />;
     }
   };
 
@@ -937,6 +746,17 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
               <option value="rejected">Rejected</option>
               <option value="conflicted">Conflicted</option>
             </select>
+
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
+              className="flex-1 px-2 py-1 border rounded text-sm"
+              aria-label="Source"
+            >
+              <option value="all">All sources</option>
+              <option value="AI">AI edits</option>
+              <option value="MANUAL">Manual edits</option>
+            </select>
           </div>
         </div>
       </div>
@@ -985,14 +805,14 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
             <div className="flex items-center gap-2 mb-4">
               <Activity className="w-5 h-5 text-green-500" />
               <h3 className="font-medium">Live Activity</h3>
-              <span className="text-xs text-gray-500">Real-time updates from collaborators</span>
+              <span className="text-xs text-gray-500">Real-time updates from you and collaborators</span>
             </div>
             
             {liveActivity.length === 0 ? (
               <div className="text-center py-12 text-gray-500">
                 <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
                 <p className="font-medium">No recent activity</p>
-                <p className="text-sm mt-1">Live updates will appear here as collaborators make changes</p>
+                <p className="text-sm mt-1">Your changes and your collaborators' changes appear here as they happen</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -1014,8 +834,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                         <span className="text-xs text-gray-500">{getRelativeTime(activity.timestamp)}</span>
                       </div>
                       <p className="text-sm text-gray-700">
-                        <span className="capitalize">{activity.action.replace(/([A-Z])/g, ' $1').trim()}</span>
-                        {' '}<span className="font-medium">{activity.entityLabel}</span>
+                        <span>{activity.action}</span>
+                        {activity.entityLabel && <>{' '}<span className="font-medium">{activity.entityLabel}</span></>}
                       </p>
                     </div>
                     <Zap className="w-4 h-4 text-yellow-500" />
@@ -1156,264 +976,14 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
         )}
 
         {activeTab === 'changes' && (
-          <div className="space-y-2">
-            {filteredChanges.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p>No changes found</p>
-              </div>
-            ) : (
-              filteredChanges.map(change => (
-                <div
-                  key={change.id}
-                  className={`border rounded-lg p-3 hover:shadow-md transition-shadow ${
-                    change.status === 'conflicted' ? 'border-orange-300 bg-orange-50' : ''
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-start gap-2 flex-1">
-                      <span className="text-2xl">{getChangeIcon(change.type)}</span>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{change.entityLabel}</span>
-                          <span className={`text-sm ${getActionColor(change.action)}`}>
-                            {change.action}
-                          </span>
-                          {getStatusIcon(change.status)}
-                        </div>
-                        <p className="text-sm text-gray-600 mt-1">{change.description}</p>
-                        <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                          <span className="flex items-center gap-1">
-                            <Users className="w-3 h-3" />
-                            {change.author}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {change.timestamp.toLocaleString()}
-                          </span>
-                          {change.branch && (
-                            <span className="flex items-center gap-1">
-                              <GitBranch className="w-3 h-3" />
-                              {change.branch}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Conflict Info */}
-                  {change.conflicts && change.conflicts.length > 0 && (
-                    <div className="mt-2 p-2 bg-orange-100 rounded border border-orange-200">
-                      <div className="flex items-center gap-2 text-orange-700 font-medium text-sm mb-1">
-                        <AlertTriangle className="w-4 h-4" />
-                        Conflicts Detected
-                      </div>
-                      {change.conflicts.map((conflict, idx) => (
-                        <div key={idx} className="text-xs text-orange-600 ml-6">
-                          {conflict.description}
-                          {conflict.suggestedResolution && (
-                            <div className="mt-1">
-                              <button
-                                onClick={() => resolveConflict(change.id, conflict.suggestedResolution!)}
-                                className="text-orange-700 underline hover:text-orange-800"
-                              >
-                                Apply suggested resolution
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Diff View for modifications */}
-                  {(change.oldValue || change.newValue) && (
-                    <div className="mt-3 p-3 bg-gray-50 rounded-lg border">
-                      <div className="text-xs text-gray-500 mb-2 font-medium flex items-center gap-1">
-                        <GitBranch className="w-3 h-3" />
-                        Value Change:
-                      </div>
-                      {change.action === 'modified' ? (
-                        <div className="space-y-2">
-                          {change.oldValue && (
-                            <div className="flex items-start gap-2">
-                              <span className="text-xs text-red-500 font-medium w-16">Before:</span>
-                              <div className="flex-1 px-2 py-1 bg-red-50 text-red-700 rounded text-sm font-mono border border-red-200">
-                                <span className="line-through">{change.oldValue}</span>
-                              </div>
-                            </div>
-                          )}
-                          {change.newValue && (
-                            <div className="flex items-start gap-2">
-                              <span className="text-xs text-green-500 font-medium w-16">After:</span>
-                              <div className="flex-1 px-2 py-1 bg-green-50 text-green-700 rounded text-sm font-mono border border-green-200">
-                                {change.newValue}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ) : change.action === 'added' && change.newValue ? (
-                        <div className="flex items-start gap-2">
-                          <span className="text-xs text-green-500 font-medium w-16">Added:</span>
-                          <div className="flex-1 px-2 py-1 bg-green-50 text-green-700 rounded text-sm font-mono border border-green-200">
-                            {change.newValue}
-                          </div>
-                        </div>
-                      ) : change.action === 'deleted' && change.oldValue ? (
-                        <div className="flex items-start gap-2">
-                          <span className="text-xs text-red-500 font-medium w-16">Deleted:</span>
-                          <div className="flex-1 px-2 py-1 bg-red-50 text-red-700 rounded text-sm font-mono border border-red-200 line-through">
-                            {change.oldValue}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-xs font-mono">
-                          {change.oldValue && (
-                            <div className="bg-red-50 text-red-700 p-2 rounded">
-                              <span className="text-red-500">- </span>{change.oldValue}
-                            </div>
-                          )}
-                          {change.newValue && (
-                            <div className="bg-green-50 text-green-700 p-2 rounded mt-1">
-                              <span className="text-green-500">+ </span>{change.newValue}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Comments */}
-                  {change.comments.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {change.comments.map(comment => (
-                        <div key={comment.id} className="text-xs bg-gray-50 p-2 rounded">
-                          <div className="flex items-center gap-2 text-gray-600 mb-1">
-                            <MessageSquare className="w-3 h-3" />
-                            <span className="font-medium">{comment.author}</span>
-                            <span>{comment.timestamp.toLocaleString()}</span>
-                          </div>
-                          <p className="text-gray-700 ml-5">{comment.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Action Buttons */}
-                  <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={() => {
-                        setSelectedChange(change);
-                        loadChangeDetails(change.id);
-                      }}
-                      className="flex items-center gap-1 px-3 py-1 text-sm border rounded hover:bg-gray-50"
-                    >
-                      <MessageSquare className="w-3 h-3" />
-                      Comment
-                      {(change.commentCount || 0) > 0 && (
-                        <span className="px-1.5 py-0.5 text-xs bg-purple-100 text-purple-600 rounded-full">
-                          {change.commentCount}
-                        </span>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => rollbackChange(change.id, change)}
-                      disabled={rollbackLoading === change.id || !change.entityUri || change.reverted}
-                      title={change.reverted ? 'Already reverted' : (!change.entityUri ? 'Cannot rollback: Entity IRI is missing' : 'Rollback this change')}
-                      className={`flex items-center gap-1 px-3 py-1 text-sm border border-orange-600 text-orange-600 rounded hover:bg-orange-50 ${
-                        (rollbackLoading === change.id || !change.entityUri || change.reverted) ? 'opacity-50 cursor-not-allowed' : ''
-                      }`}
-                    >
-                      {rollbackLoading === change.id ? (
-                        <>
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                          Rolling back...
-                        </>
-                      ) : (
-                        <>
-                          <Undo2 className="w-3 h-3" />
-                          Rollback
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setSelectedChange(change);
-                        loadChangeDetails(change.id);
-                      }}
-                      className="flex items-center gap-1 px-3 py-1 text-sm border rounded hover:bg-gray-50"
-                    >
-                      <Eye className="w-3 h-3" />
-                      Details
-                    </button>
-                    {change.subChanges && change.subChanges.length > 0 && (
-                      <button
-                        onClick={() => toggleExpanded(change.id)}
-                        className="flex items-center gap-1 px-3 py-1 text-sm border rounded hover:bg-gray-50 ml-auto"
-                      >
-                        {expandedChanges.has(change.id) ? 'Hide' : 'Show'} {change.subChanges.length} sub-change{change.subChanges.length > 1 ? 's' : ''}
-                      </button>
-                    )}
-                  </div>
-
-                  {change.reverted && (
-                    <div className="mt-2 text-xs text-gray-500">
-                      Reverted{change.revertedBy ? ` by ${change.revertedBy}` : ''}{change.revertedAt ? ` · ${new Date(change.revertedAt).toLocaleString()}` : ''}
-                    </div>
-                  )}
-
-                  {/* Sub-changes: each independently rollback-able */}
-                  {change.subChanges && change.subChanges.length > 0 && expandedChanges.has(change.id) && (
-                    <div className="mt-3 ml-6 space-y-2 border-l-2 border-gray-200 pl-3">
-                      {change.subChanges.map(sc => {
-                        const loadingKey = `${change.id}:${sc.id}`;
-                        const label = sc.predicate || sc.annotationProperty || 'sub-change';
-                        return (
-                          <div key={sc.id} className="border rounded p-2 bg-gray-50">
-                            <div className="flex items-center justify-between">
-                              <div className="text-sm">
-                                <span className="font-medium">{label}</span>
-                                <span className={`ml-2 text-xs ${sc.addition ? 'text-green-600' : 'text-red-600'}`}>
-                                  {sc.addition ? 'added' : 'removed'}
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => executeSubChangeRollback(change.id, sc)}
-                                disabled={subChangeRollbackLoading === loadingKey || sc.reverted || change.reverted}
-                                title={(sc.reverted || change.reverted) ? 'Already reverted' : 'Rollback this sub-change'}
-                                className={`flex items-center gap-1 px-2 py-1 text-xs border border-orange-600 text-orange-600 rounded hover:bg-orange-50 ${
-                                  (subChangeRollbackLoading === loadingKey || sc.reverted || change.reverted) ? 'opacity-50 cursor-not-allowed' : ''
-                                }`}
-                              >
-                                {subChangeRollbackLoading === loadingKey ? (
-                                  <RefreshCw className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Undo2 className="w-3 h-3" />
-                                )}
-                                Rollback
-                              </button>
-                            </div>
-                            {(sc.oldValue || sc.newValue) && (
-                              <div className="text-xs font-mono mt-1 text-gray-600">
-                                {sc.oldValue && <span className="line-through mr-2">{sc.oldValue}</span>}
-                                {sc.newValue && <span>{sc.newValue}</span>}
-                              </div>
-                            )}
-                            {sc.reverted && (
-                              <div className="mt-1 text-xs text-gray-500">
-                                Reverted{sc.revertedBy ? ` by ${sc.revertedBy}` : ''}{sc.revertedAt ? ` · ${new Date(sc.revertedAt).toLocaleString()}` : ''}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
+          <ChangeSetList
+            projectId={projectId}
+            entries={typeFilteredChanges}
+            searchQuery={searchQuery}
+            sourceFilter={sourceFilter}
+            onChanged={refreshAfterRollback}
+            onOpenDetails={openChangeDetails}
+          />
         )}
 
         {activeTab === 'conflicts' && (
@@ -1613,36 +1183,6 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           >
             <X size={16} />
           </button> */}
-        </div>
-      )}
-
-      {/* Confirmation Dialog */}
-      {confirmDialog.isOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-4 w-96 shadow-xl">
-            <h3 className="font-medium mb-3 flex items-center gap-2">
-              <AlertTriangle size={20} className="text-amber-500" />
-              {confirmDialog.title}
-            </h3>
-            <p className="text-sm text-gray-600 mb-4 whitespace-pre-line">{confirmDialog.message}</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  confirmDialog.onConfirm();
-                  setConfirmDialog({ isOpen: false, title: '', message: '', onConfirm: () => {} });
-                }}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-              >
-                Confirm Rollback
-              </button>
-              <button
-                onClick={() => setConfirmDialog({ isOpen: false, title: '', message: '', onConfirm: () => {} })}
-                className="px-4 py-2 border rounded hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
         </div>
       )}
 

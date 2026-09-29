@@ -105,6 +105,10 @@ public class AssistantEditApplyService {
     }
 
     public ApplyResult applyGroup(String sessionId, String serverGroupId, String userEmail) {
+        return applyGroup(sessionId, serverGroupId, userEmail, null);
+    }
+
+    public ApplyResult applyGroup(String sessionId, String serverGroupId, String userEmail, String summary) {
         Optional<AssistantEditGroupDocument> initial = groupRepository.findById(serverGroupId);
         if (initial.isEmpty() || !belongsTo(initial.get(), sessionId, userEmail)) {
             ApplyResult rejected = errorResult(PROPOSAL_NOT_FOUND, "Unknown or unauthorized proposal");
@@ -122,7 +126,7 @@ public class AssistantEditApplyService {
                 lockAcquiredAt[0] = System.nanoTime();
                 perf.add("lockWait", (lockAcquiredAt[0] - lockRequestedAt) / 1_000_000);
                 try {
-                    return applyLocked(sessionId, serverGroupId, userEmail, perf);
+                    return applyLocked(sessionId, serverGroupId, userEmail, perf, summary);
                 } finally {
                     perf.add("lockHeld", (System.nanoTime() - lockAcquiredAt[0]) / 1_000_000);
                 }
@@ -144,10 +148,7 @@ public class AssistantEditApplyService {
             return;
         }
         try {
-            Optional<AssistantSessionDocument> session = sessionRepository != null && sessionId != null
-                    ? sessionRepository.findById(sessionId)
-                            .filter(found -> userEmail != null && userEmail.equals(found.getUserEmail()))
-                    : Optional.empty();
+            Optional<AssistantSessionDocument> session = ownSession(sessionId, userEmail);
             String provider = session.map(AssistantSessionDocument::getProvider).orElse(null);
             String model = session.map(AssistantSessionDocument::getModel).orElse(null);
             auditService.record(new AssistantAuditService.AssistantAuditEvent(userEmail, projectId, sessionId,
@@ -158,12 +159,26 @@ public class AssistantEditApplyService {
         }
     }
 
+    private Optional<AssistantSessionDocument> ownSession(String sessionId, String userEmail) {
+        return sessionRepository != null && sessionId != null
+                ? sessionRepository.findById(sessionId)
+                        .filter(found -> userEmail != null && userEmail.equals(found.getUserEmail()))
+                : Optional.empty();
+    }
+
+    private ChangeOrigin aiOrigin(AssistantEditGroupDocument group, String userEmail, String summary) {
+        Optional<AssistantSessionDocument> session = ownSession(group.getSessionId(), userEmail);
+        return ChangeOrigin.ai(group.getId(), session.map(AssistantSessionDocument::getProvider).orElse(null),
+                session.map(AssistantSessionDocument::getModel).orElse(null), group.getSessionId(), summary);
+    }
+
     private static boolean belongsTo(AssistantEditGroupDocument group, String sessionId, String userEmail) {
         return userEmail != null && userEmail.equals(group.getUserEmail())
                 && sessionId != null && sessionId.equals(group.getSessionId());
     }
 
-    private ApplyResult applyLocked(String sessionId, String serverGroupId, String userEmail, PerfPhases perf)
+    private ApplyResult applyLocked(String sessionId, String serverGroupId, String userEmail, PerfPhases perf,
+                                    String summary)
             throws IOException {
         AssistantEditGroupDocument group = groupRepository.findById(serverGroupId).orElse(null);
         if (group == null || !belongsTo(group, sessionId, userEmail)) {
@@ -195,7 +210,7 @@ public class AssistantEditApplyService {
 
         try {
             AssistantGraphWriter.Outcome outcome = graphWriter.write(group, sourceFile, splicedFile, userEmail,
-                    triplePatchEnabled, perf);
+                    triplePatchEnabled, perf, aiOrigin(group, userEmail, summary));
             if (outcome.failure() != null) {
                 return outcome.failure();
             }

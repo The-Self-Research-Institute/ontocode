@@ -1,7 +1,7 @@
 import React from "react";
 import { AlertCircle, Copy, Check } from "lucide-react";
 import { CodeAssistantContextUsed } from "./CodeAssistantContextUsed";
-import { CodeAssistantReviewGroups } from "./CodeAssistantReviewGroups";
+import { CodeAssistantReviewGroups, type GroupUndoHandlers } from "./CodeAssistantReviewGroups";
 import { CodeAssistantDeadEndNotice } from "./CodeAssistantDeadEndNotice";
 import { CodeAssistantMarkdown } from "./CodeAssistantMarkdown";
 import { ACTIONS, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
@@ -15,6 +15,7 @@ export interface ReviewHandlers {
   applyBusy: boolean;
   applyBlockedReason: string | null;
   showInCodeViewFor: (entry: ReviewEntry) => ((format: string, startLine: number) => void) | undefined;
+  undoFor?: (entry: ReviewEntry) => GroupUndoHandlers | undefined;
 }
 
 interface TranscriptEntryProps {
@@ -52,6 +53,8 @@ const ReviewCard: React.FC<{ entry: ReviewEntry; review: ReviewHandlers }> = ({ 
       applyBusy={review.applyBusy}
       applyBlockedReason={review.applyBlockedReason}
       onShowInCodeView={review.showInCodeViewFor(entry)}
+      undoStates={entry.undo}
+      undoHandlers={review.undoFor?.(entry)}
     />
     <CodeAssistantContextUsed events={entry.contextUsed} usage={entry.usage} />
   </div>

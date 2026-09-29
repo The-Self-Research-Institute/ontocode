@@ -75,6 +75,14 @@ public class OntologyHistoryService {
                           String operationType, String entityIRI, String entityLabel,
                           String oldValue, String newValue, String description, String annotationProperty,
                           List<Map<String, String>> subChanges, boolean draft) {
+        recordEdit(projectId, userId, username, operationType, entityIRI, entityLabel,
+                oldValue, newValue, description, annotationProperty, subChanges, draft, null);
+    }
+
+    public void recordEdit(String projectId, String userId, String username,
+                          String operationType, String entityIRI, String entityLabel,
+                          String oldValue, String newValue, String description, String annotationProperty,
+                          List<Map<String, String>> subChanges, boolean draft, ChangeOrigin origin) {
 
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
         String editId = UUID.randomUUID().toString();
@@ -96,6 +104,13 @@ public class OntologyHistoryService {
             if (annotationProperty != null) changeData.put("annotationProperty", annotationProperty);
             if (subChanges != null && !subChanges.isEmpty()) changeData.put("subChanges", subChanges);
             changeData.put("draft", draft);
+            if (origin != null) {
+                changeData.put("changeSetId", origin.changeSetId());
+                changeData.put("source", origin.source());
+                if (origin.ai() != null) changeData.put("ai", origin.ai());
+                if (origin.revertsChangeSetId() != null) changeData.put("revertsChangeSetId", origin.revertsChangeSetId());
+                if (origin.rollbackAuditId() != null) changeData.put("rollbackAuditId", origin.rollbackAuditId());
+            }
 
             String entityType = determineEntityType(operationType);
             changeData.put("entityType", entityType);

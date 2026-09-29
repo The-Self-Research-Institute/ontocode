@@ -1,4 +1,4 @@
-import { validateAgainstSchema } from "./codeAssistantValidation";
+import { coerceJsonStrings, validateAgainstSchema } from "./codeAssistantValidation";
 import type { ProviderConfig } from "./codeAssistantProviderConfig";
 import { ASSISTANT_TOOLS } from "./codeAssistantLoopTools";
 import {
@@ -138,7 +138,8 @@ export async function dispatchToolCall(
     return { result: { error: `Unknown tool "${name}".` }, isError: true };
   }
 
-  const validation = validateAgainstSchema(tool.parameters, args);
+  const coercedArgs = coerceJsonStrings(tool.parameters, args) as Record<string, unknown>;
+  const validation = validateAgainstSchema(tool.parameters, coercedArgs);
   if (!validation.valid) {
     return { result: { error: "Invalid arguments", details: validation.errors }, isError: true };
   }
@@ -146,7 +147,7 @@ export async function dispatchToolCall(
   const dispatcher = Object.prototype.hasOwnProperty.call(DISPATCHERS, name) ? DISPATCHERS[name] : undefined;
   if (!dispatcher) return { result: { error: `Tool "${name}" has no dispatcher.` }, isError: true };
   try {
-    return await dispatcher(ctx, args, signal);
+    return await dispatcher(ctx, coercedArgs, signal);
   } catch (e) {
     return toolErrorOutcome(e);
   }

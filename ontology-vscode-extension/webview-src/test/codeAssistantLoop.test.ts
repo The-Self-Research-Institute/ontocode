@@ -563,3 +563,83 @@ describe("runAssistantLoop — managed provider", () => {
     expect(next.mock.calls[0][4]).toBeUndefined();
   });
 });
+
+describe("runAssistantLoop — malformed proposals", () => {
+  const edits = [{ targetPath: "turtle", range: { startLine: 400, lineCount: 0 }, originalText: "", newText: ":A a owl:Class ." }];
+
+  function proposeCall(id: string, groups: unknown) {
+    return { toolCallId: id, name: "propose_edit", args: { groups } };
+  }
+
+  it("accepts groups sent as a JSON string without another model call", async () => {
+    stubConversation();
+    const nextTurn = vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({
+      turn: { kind: "tool_calls", calls: [proposeCall("p1", JSON.stringify([{ edits }]))] },
+      advance: vi.fn(),
+    });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(409, { ok: false, errorCode: "REVISION_STALE", message: "moved on" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    expect(nextTurn).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(Array.isArray(body.groups)).toBe(true);
+    expect(body.groups[0].edits[0].range.startLine).toBe(400);
+  });
+
+  it("keeps the explanation from the first attempt after the model fixes its arguments", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({
+        turn: { kind: "tool_calls", text: "Adding 5 pizza classes after PizzaSize.", calls: [proposeCall("p1", "not json")] },
+        advance: advanceSpy,
+      })
+      .mockResolvedValueOnce({
+        turn: { kind: "tool_calls", text: "Let me fix the JSON structure:", calls: [proposeCall("p2", [{ edits }])] },
+        advance: advanceSpy,
+      });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, groups: [] })));
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    expect(outcome).toMatchObject({ kind: "propose", explanation: "Adding 5 pizza classes after PizzaSize." });
+  });
+
+  it("never uses the repair turn's text as the explanation", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [proposeCall("p1", "not json")] }, advance: advanceSpy })
+      .mockResolvedValueOnce({
+        turn: { kind: "tool_calls", text: "Let me fix the JSON structure:", calls: [proposeCall("p2", [{ edits }])] },
+        advance: advanceSpy,
+      });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, groups: [] })));
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    expect(outcome.kind).toBe("propose");
+    if (outcome.kind === "propose") expect(outcome.explanation).toBeUndefined();
+  });
+
+  it("gives the model one chance to fix invalid proposal arguments, then stops", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [proposeCall("p1", "not json")] }, advance: advanceSpy })
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [proposeCall("p2", "still not json")] }, advance: advanceSpy });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "hi", vi.fn());
+
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    const [results] = advanceSpy.mock.calls[0] as [Array<{ isError: boolean; result: unknown }>];
+    expect(results[0].isError).toBe(true);
+    expect(JSON.stringify(results[0].result)).toContain("Invalid arguments");
+    expect(outcome.kind).toBe("stopped");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

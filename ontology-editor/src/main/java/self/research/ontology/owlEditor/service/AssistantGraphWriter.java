@@ -38,13 +38,18 @@ final class AssistantGraphWriter {
 
     Outcome write(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile, String userEmail,
                   boolean patchEnabled, PerfPhases perf) {
+        return write(group, sourceFile, splicedFile, userEmail, patchEnabled, perf, null);
+    }
+
+    Outcome write(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile, String userEmail,
+                  boolean patchEnabled, PerfPhases perf, ChangeOrigin origin) {
         if (patchEnabled) {
-            Optional<Written> patched = tryPatch(group, sourceFile, splicedFile, userEmail, perf);
+            Optional<Written> patched = tryPatch(group, sourceFile, splicedFile, userEmail, perf, origin);
             if (patched.isPresent()) {
                 return new Outcome(patched.get(), null);
             }
         }
-        return reimport(group, splicedFile, userEmail, perf);
+        return reimport(group, splicedFile, userEmail, perf, origin);
     }
 
     private static void seedIndex(Path cacheFile, TriplePatchPlanner.TriplePatch patch) {
@@ -56,7 +61,7 @@ final class AssistantGraphWriter {
     }
 
     private Optional<Written> tryPatch(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile,
-                                       String userEmail, PerfPhases perf) {
+                                       String userEmail, PerfPhases perf, ChangeOrigin origin) {
         String projectId = group.getProjectId();
         Optional<TriplePatchPlanner.TriplePatch> plan;
         try {
@@ -88,7 +93,7 @@ final class AssistantGraphWriter {
             Model added = new LinkedHashModel(patch.added());
             added.addAll(patch.insertedTrees());
             long version = reimportPipeline.finishPatch(projectId, group.getTargetPath(), splicedFile, userEmail,
-                    userEmail, removed, added);
+                    userEmail, removed, added, origin);
             operationService.markCommitted(operation);
             seedIndex(sourceFile, patch);
             perf.mark("patchFinish");
@@ -103,7 +108,8 @@ final class AssistantGraphWriter {
         }
     }
 
-    private Outcome reimport(AssistantEditGroupDocument group, Path splicedFile, String userEmail, PerfPhases perf) {
+    private Outcome reimport(AssistantEditGroupDocument group, Path splicedFile, String userEmail, PerfPhases perf,
+                             ChangeOrigin origin) {
         AssistantApplyOperationDocument operation;
         try {
             operation = operationService.prepare(group, userEmail);
@@ -120,7 +126,7 @@ final class AssistantGraphWriter {
         try {
             result = reimportPipeline.reimport(new CodeViewReimportPipeline.ReimportRequest(
                     group.getProjectId(), group.getTargetPath(), splicedFile, false,
-                    userEmail, userEmail, null, operationService.snapshotOf(operation), true));
+                    userEmail, userEmail, null, operationService.snapshotOf(operation), true, origin));
         } catch (Exception reimportEx) {
             perf.mark("reimportFailed");
             ApplyResult failed = failureHandler.handle(group, operation, reimportEx);

@@ -162,14 +162,15 @@ export async function applyEditGroup(
   sessionId: string,
   serverGroupId: string,
   signal?: AbortSignal,
-  options: IdempotentCallOptions = {},
+  options: IdempotentCallOptions & { summary?: string } = {},
 ): Promise<ApplyResult> {
   const path = `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/groups/${encodeURIComponent(serverGroupId)}/apply`;
   const key = options.idempotencyKey ?? newIdempotencyKey();
+  const body = options.summary ? { summary: options.summary } : {};
   const deadline = Date.now() + APPLY_IN_FLIGHT_MAX_WAIT_MS;
   for (;;) {
     try {
-      return await postJson<ApplyResult>(apiBaseUrl, path, token, {}, signal, key);
+      return await postJson<ApplyResult>(apiBaseUrl, path, token, body, signal, key);
     } catch (e) {
       if (!isApplyStillRunning(e) || Date.now() >= deadline || signal?.aborted) throw e;
       await delay(APPLY_IN_FLIGHT_POLL_MS, signal);

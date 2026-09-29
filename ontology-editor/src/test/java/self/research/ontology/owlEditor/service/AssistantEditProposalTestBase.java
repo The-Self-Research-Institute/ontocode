@@ -82,7 +82,8 @@ abstract class AssistantEditProposalTestBase {
         AssistantGraphIdentifierLookup lookup = new AssistantGraphIdentifierLookup(datasetService);
         proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager,
                 syntaxValidator, referenceCoverageValidator, new AssistantRenameService(storageManager, lookup),
-                new AssistantEditSemanticValidator(storageManager, lookup), auditService, new ProjectWriteLockRegistry());
+                new AssistantEditSemanticValidator(storageManager, lookup), auditService, new ProjectWriteLockRegistry(),
+                new AssistantInsertionSnapper(storageManager));
         graph = FakeAssistantGraph.installOn(datasetService);
         graph.everythingExists = true;
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);

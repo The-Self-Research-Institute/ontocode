@@ -3,8 +3,17 @@ import { Loader2, AlertCircle } from "lucide-react";
 import type { ProposedEditGroupResult } from "../services/codeAssistantSession";
 import type { GroupDecision } from "../services/codeAssistantApplyQueue";
 import { ReviewGroupCard } from "./CodeAssistantReviewGroupCard";
+import type { GroupUndoState } from "../services/codeAssistantUndo";
 
 export type { GroupDecision };
+
+export interface GroupUndoHandlers {
+  onRequest: (serverGroupId: string) => void;
+  onConfirm: (serverGroupId: string) => void;
+  onCancel: (serverGroupId: string) => void;
+}
+
+const APPLY_IN_PROGRESS_REASON = "Wait for the current apply to finish.";
 
 export interface ApplyAllRunState {
   running: boolean;
@@ -26,6 +35,8 @@ interface CodeAssistantReviewGroupsProps {
   applyBlockedReason?: string | null;
   applyBusy?: boolean;
   onShowInCodeView?: (format: string, startLine: number) => void;
+  undoStates?: Record<string, GroupUndoState>;
+  undoHandlers?: GroupUndoHandlers;
 }
 
 const ReviewGroupsHeader: React.FC<{
@@ -72,6 +83,22 @@ const ApplyAllProgress: React.FC<{ run: ApplyAllRunState; onCancelApplyAll?: () 
   </div>
 );
 
+function undoBinding(
+  serverGroupId: string,
+  handlers: GroupUndoHandlers | undefined,
+  states: Record<string, GroupUndoState> | undefined,
+  disabledReason: string | null,
+) {
+  if (!handlers) return undefined;
+  return {
+    state: states?.[serverGroupId],
+    disabledReason,
+    onRequest: () => handlers.onRequest(serverGroupId),
+    onConfirm: () => handlers.onConfirm(serverGroupId),
+    onCancel: () => handlers.onCancel(serverGroupId),
+  };
+}
+
 export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps> = ({
   groups,
   decisions,
@@ -85,11 +112,14 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
   applyBlockedReason,
   applyBusy = false,
   onShowInCodeView,
+  undoStates,
+  undoHandlers,
 }) => {
   const pendingCount = groups.filter((g) => (decisions[g.serverGroupId] ?? "pending") === "pending" && g.validation.passed).length;
   const isApplyingAny = groups.some((g) => decisions[g.serverGroupId] === "applying");
   const running = applyAllRun?.running === true;
   const applyLocked = Boolean(applyBlockedReason) || running || isApplyingAny || applyBusy;
+  const undoDisabledReason = applyBlockedReason || (applyLocked ? APPLY_IN_PROGRESS_REASON : null);
 
   return (
     <div className="space-y-4">
@@ -117,6 +147,7 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
           applyBlockedReason={applyBlockedReason}
           onApply={onApply}
           onSkip={onSkip}
+          undo={undoBinding(group.serverGroupId, undoHandlers, undoStates, undoDisabledReason)}
         />
       ))}
     </div>

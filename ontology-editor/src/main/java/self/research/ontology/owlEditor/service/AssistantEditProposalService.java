@@ -24,6 +24,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -34,6 +35,7 @@ public class AssistantEditProposalService {
 
     public static final String PROPOSE_OPERATION = "edit_propose";
     public static final String RENAME_CHECK = "rename_occurrences_complete";
+    public static final String INSERTION_MOVED_CHECK = "insertion_moved_to_statement_boundary";
 
     private static final int MAX_AUDIT_DETAIL_CHARS = 500;
 
@@ -46,6 +48,7 @@ public class AssistantEditProposalService {
     private final AssistantEditSemanticValidator semanticValidator;
     private final ProjectWriteLockRegistry lockRegistry;
     private final AssistantAuditService auditService;
+    private final AssistantInsertionSnapper insertionSnapper;
 
     @Value("${assistant.propose.max-edit-bytes:200000}")
     private int maxEditBytes;
@@ -70,7 +73,8 @@ public class AssistantEditProposalService {
                                          AssistantRenameService renameService,
                                          AssistantEditSemanticValidator semanticValidator,
                                          AssistantAuditService auditService,
-                                         ProjectWriteLockRegistry lockRegistry) {
+                                         ProjectWriteLockRegistry lockRegistry,
+                                         AssistantInsertionSnapper insertionSnapper) {
         this.sessionService = sessionService;
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
@@ -80,6 +84,7 @@ public class AssistantEditProposalService {
         this.semanticValidator = semanticValidator;
         this.auditService = auditService;
         this.lockRegistry = lockRegistry;
+        this.insertionSnapper = insertionSnapper;
     }
 
     public ProposeEditResult propose(String sessionId, String userEmail, List<EditGroupInput> groups) {
@@ -165,7 +170,8 @@ public class AssistantEditProposalService {
 
         boolean structurallySound = addStructuralChecks(session, targetPath, sortedEdits, derived, checks);
         perf.mark("structuralAndLiveMatch");
-        addContentChecks(session, targetPath, sortedEdits, structurallySound, introducedByOperation, checks, perf);
+        sortedEdits = addContentChecks(session, targetPath, sortedEdits, structurallySound, derived,
+                introducedByOperation, checks, perf);
         boolean passed = checks.stream().allMatch(CheckResult::passed);
 
         List<EditEntry> editEntries = sortedEdits.stream().map(this::toEditEntry).toList();
@@ -242,13 +248,23 @@ public class AssistantEditProposalService {
         return hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
     }
 
-    private void addContentChecks(AssistantSessionDocument session, String targetPath, List<EditInput> sortedEdits,
-                                  boolean structurallySound, Set<String> introducedByOperation,
-                                  List<CheckResult> checks, PerfPhases perf) {
+    private List<EditInput> addContentChecks(AssistantSessionDocument session, String targetPath,
+                                             List<EditInput> proposedEdits, boolean structurallySound,
+                                             boolean derived, Set<String> introducedByOperation,
+                                             List<CheckResult> checks, PerfPhases perf) {
+        List<EditInput> sortedEdits = proposedEdits;
         CheckResult syntax;
         if (structurallySound) {
             AssistantEditSyntaxValidator.SyntaxResult result =
                     syntaxValidator.check(session.getProjectId(), targetPath, toSpliceEdits(sortedEdits));
+            if (!result.valid() && !derived) {
+                SnappedInsert snapped = snapInsertToStatementBoundary(session.getProjectId(), targetPath, sortedEdits);
+                if (snapped != null) {
+                    sortedEdits = snapped.edits();
+                    result = snapped.syntax();
+                    checks.add(snapped.note());
+                }
+            }
             syntax = new CheckResult("syntax_valid", result.valid(), result.detail());
         } else {
             syntax = new CheckResult("syntax_valid", true);
@@ -275,6 +291,36 @@ public class AssistantEditProposalService {
         }
 
         perf.mark("semantic");
+        return sortedEdits;
+    }
+
+    private record SnappedInsert(List<EditInput> edits, AssistantEditSyntaxValidator.SyntaxResult syntax,
+                                 CheckResult note) {}
+
+    private SnappedInsert snapInsertToStatementBoundary(String projectId, String targetPath, List<EditInput> edits) {
+        long insertLine = edits.get(0).range().startLine();
+        boolean singleInsertPoint = edits.stream()
+                .allMatch(e -> e.range().lineCount() == 0 && e.range().startLine() == insertLine);
+        if (!singleInsertPoint || !insertionSnapper.supports(targetPath)) {
+            return null;
+        }
+        OptionalLong boundary = insertionSnapper.nextStatementBoundary(projectId, targetPath, insertLine);
+        if (boundary.isEmpty()) {
+            return null;
+        }
+        List<EditInput> moved = edits.stream()
+                .map(e -> new EditInput(e.targetPath(), new EditRange(boundary.getAsLong(), 0), e.originalText(),
+                        e.newText()))
+                .toList();
+        if (!syntaxValidator.regionParses(projectId, targetPath, toSpliceEdits(moved))) {
+            return null;
+        }
+        AssistantEditSyntaxValidator.SyntaxResult retry = new AssistantEditSyntaxValidator.SyntaxResult(true, null);
+        log.info("[Assistant] Moved insertion in {} from line {} to {} to avoid splitting a statement",
+                targetPath, insertLine + 1, boundary.getAsLong() + 1);
+        return new SnappedInsert(moved, retry, new CheckResult(INSERTION_MOVED_CHECK, true,
+                "Moved from line " + (insertLine + 1) + " to line " + (boundary.getAsLong() + 1)
+                        + " so it doesn't split a statement."));
     }
 
     private List<DiffEntry> toDiffEntries(List<EditInput> sortedEdits) {

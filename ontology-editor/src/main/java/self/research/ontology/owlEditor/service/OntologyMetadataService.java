@@ -1461,16 +1461,55 @@ public class OntologyMetadataService {
 
      private record OwlApiAxiomCounts(int total, int logical, int declarations) {}
 
+    private record StampedCounts(String stamp, OwlApiAxiomCounts counts) {}
+
+    private final Map<String, StampedCounts> owlCountsByProject = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, java.util.concurrent.CompletableFuture<StampedCounts>> owlCountsInFlight =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private OwlApiAxiomCounts getOwlApiAxiomCounts(String projectId) {
+        String stamp = projectMetadataService.versionStamp(projectId);
+        StampedCounts cached = owlCountsByProject.get(projectId);
+        if (stamp != null && cached != null && stamp.equals(cached.stamp())) {
+            return cached.counts();
+        }
+        java.util.concurrent.CompletableFuture<StampedCounts> mine = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.CompletableFuture<StampedCounts> running = owlCountsInFlight.putIfAbsent(projectId, mine);
+        if (running != null) {
+            StampedCounts shared = running.join();
+            if (shared != null && stamp != null && stamp.equals(shared.stamp())) {
+                return shared.counts();
+            }
+            OwlApiAxiomCounts fresh = computeOwlApiAxiomCounts(projectId);
+            return fresh != null ? fresh : new OwlApiAxiomCounts(0, 0, 0);
+        }
+        StampedCounts result = null;
+        try {
+            OwlApiAxiomCounts fresh = computeOwlApiAxiomCounts(projectId);
+            result = new StampedCounts(stamp, fresh != null ? fresh : new OwlApiAxiomCounts(0, 0, 0));
+            if (stamp != null) {
+                owlCountsByProject.put(projectId, result);
+            }
+            return result.counts();
+        } finally {
+            mine.complete(result);
+            owlCountsInFlight.remove(projectId, mine);
+        }
+    }
+
+    private OwlApiAxiomCounts computeOwlApiAxiomCounts(String projectId) {
+        long started = System.nanoTime();
         try {
             OWLOntology ont = manchesterExpressionService.loadFreshOntology(projectId);
             int total = ont.getAxiomCount(Imports.INCLUDED);
             int logical = ont.getLogicalAxiomCount(Imports.INCLUDED);
             int declarations = ont.getAxiomCount(AxiomType.DECLARATION, Imports.INCLUDED);
+            log.info("[PERF] OWLAPI axiom counts for project {} computed in {}ms", projectId,
+                    (System.nanoTime() - started) / 1_000_000);
             return new OwlApiAxiomCounts(total, logical, declarations);
         } catch (Exception e) {
             log.error("Error computing OWLAPI axiom counts for project {}", projectId, e);
-            return new OwlApiAxiomCounts(0, 0, 0);
+            return null;
         }
     }
 

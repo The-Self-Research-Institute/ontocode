@@ -65,7 +65,7 @@ final class OntologyExporter {
             content = citations.repositionCitations(content, citationMappings, format);
         }
         
-        Files.writeString(exportPath, content);
+        AtomicFileWrite.writeString(exportPath, content);
         log.info("Exported ontology to: {}", exportPath);
         return exportPath;
     }
@@ -83,9 +83,7 @@ final class OntologyExporter {
         String extension = extensionFor(format);
         Path exportPath = projectDirs.apply(projectId).resolve("ontology.original." + extension);
         Files.createDirectories(exportPath.getParent());
-        try (OutputStream out = Files.newOutputStream(exportPath)) {
-            datasetService.exportDatasetToStream(projectId, rdfFormat, out);
-        }
+        AtomicFileWrite.write(exportPath, out -> datasetService.exportDatasetToStream(projectId, rdfFormat, out));
         log.info("Exported ontology (streamed) to: {} ({} bytes)", exportPath, Files.size(exportPath));
         return exportPath;
     }
@@ -167,12 +165,14 @@ final class OntologyExporter {
             log.info("Copied {} prefix mappings to {} format", sourcePrefixes.size(), format);
         }
 
-        try (OutputStream outputStream = Files.newOutputStream(exportPath)) {
-            manager.saveOntology(ontology, documentFormat, outputStream);
-        } catch (OWLOntologyStorageException e) {
-            log.error("OWL API failed to save ontology in {} format for project {}: {}", format, projectId, e.getMessage());
-            throw new IOException("Failed to export ontology in format: " + format + " — " + e.getMessage(), e);
-        }
+        AtomicFileWrite.write(exportPath, outputStream -> {
+            try {
+                manager.saveOntology(ontology, documentFormat, outputStream);
+            } catch (OWLOntologyStorageException e) {
+                log.error("OWL API failed to save ontology in {} format for project {}: {}", format, projectId, e.getMessage());
+                throw new IOException("Failed to export ontology in format: " + format + " — " + e.getMessage(), e);
+            }
+        });
 
         log.info("Exported ontology to: {} ({} bytes)", exportPath, Files.size(exportPath));
         return exportPath;

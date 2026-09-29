@@ -3,6 +3,7 @@ import type { ContextEvent } from "../services/codeAssistantLoop";
 import type { ProviderUsage } from "../services/codeAssistantProviders";
 import type { AppliedRange, ProposedEditGroupResult } from "../services/codeAssistantSession";
 import type { DeadEnd } from "../services/codeAssistantDeadEnd";
+import { sanitizeUndoStates, type GroupUndoState } from "../services/codeAssistantUndo";
 import type { ApplyAllRunState, GroupDecision } from "./CodeAssistantReviewGroups";
 
 export type ChatEntry =
@@ -23,6 +24,7 @@ export type ChatEntry =
       usage?: ProviderUsage[];
       applyAllRun?: ApplyAllRunState | null;
       applyAllSummary?: string | null;
+      undo?: Record<string, GroupUndoState>;
     }
   | {
       id: string;
@@ -54,9 +56,11 @@ export function sanitizeEntryForStorage(entry: ChatEntry): ChatEntry {
   if (entry.role !== "assistant" || entry.kind !== "review") return entry;
   const decisions = entry.decisions;
   const hasStuckApplying = Object.values(decisions).some((d) => d === "applying");
-  if (!entry.applyAllRun && !hasStuckApplying) return entry;
+  const undo = sanitizeUndoStates(entry.undo);
+  if (!entry.applyAllRun && !hasStuckApplying && undo === entry.undo) return entry;
   return {
     ...entry,
+    undo,
     applyAllRun: null,
     decisions: hasStuckApplying
       ? Object.fromEntries(Object.entries(decisions).map(([id, d]) => [id, d === "applying" ? "pending" : d]))

@@ -11,7 +11,8 @@ import { useCodeAssistantPanel, type CodeAssistantPanelController } from "../hoo
 import type { AppliedRange } from "../services/codeAssistantSession";
 import { clearStoredChatEntries, type CodeAssistantAction } from "./codeAssistantPanelHelpers";
 import type { EditorSelectionContext } from "./codeSelection";
-import type { PromptToRetry } from "./codeAssistantChatEntries";
+import type { PromptToRetry, ReviewEntry } from "./codeAssistantChatEntries";
+import type { GroupUndoHandlers } from "./CodeAssistantReviewGroups";
 import { SelectionChip } from "./CodeAssistantSelectionChip";
 
 export type { CodeAssistantAction };
@@ -97,6 +98,16 @@ function buildReviewHandlers(c: PanelController, props: CodeAssistantPanelProps)
     applyBlockedReason: c.applyBlock?.message ?? null,
     showInCodeViewFor: (entry) =>
       props.onShowInCodeView && (!entry.projectId || entry.projectId === props.projectId) ? props.onShowInCodeView : undefined,
+    undoFor: (entry) => undoHandlersFor(c, props.projectId, entry),
+  };
+}
+
+function undoHandlersFor(c: PanelController, projectId: string | undefined, entry: ReviewEntry): GroupUndoHandlers | undefined {
+  if (c.isFree || !projectId || (entry.projectId && entry.projectId !== projectId)) return undefined;
+  return {
+    onRequest: (groupId) => void c.undo.requestPreview(entry.id, groupId),
+    onConfirm: (groupId) => void c.undo.confirm(entry.id, groupId),
+    onCancel: (groupId) => c.undo.cancel(entry.id, groupId),
   };
 }
 

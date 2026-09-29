@@ -8758,6 +8758,11 @@ const updateItemInState = useCallback(
           fetchData(projectId, false);
           break;
 
+        case "ROLLBACK":
+        case "CHANGE_SET_APPLIED":
+          fetchData(projectId, false);
+          break;
+
         // Handle change reverts - need full refresh
         case "CHANGE_REVERTED":
           console.log("[Dashboard] ⏪ Change reverted, refreshing all data");
@@ -8992,7 +8997,7 @@ const updateItemInState = useCallback(
       handleRefreshDatatypes();
 
       // Build notification message with value changes if available
-      let message = `${rollbackUser} rolled back change by ${originalAuthor}`;
+      let message = `${rollbackUser} ${detail.direction === "REDO" ? "redid" : detail.direction === "UNDO" ? "undid" : "rolled back"} change by ${originalAuthor}`;
       if (oldValue && newValue) {
         message += ` (from "${oldValue}" back to "${newValue}")`;
       } else if (newValue) {

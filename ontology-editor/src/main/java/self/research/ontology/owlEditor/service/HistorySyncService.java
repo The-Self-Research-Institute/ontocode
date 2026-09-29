@@ -2,6 +2,10 @@ package self.research.ontology.owlEditor.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
@@ -9,6 +13,7 @@ import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -19,6 +24,7 @@ import java.util.UUID;
 public class HistorySyncService {
 
     private final HistoryChangeRepository historyChangeRepository;
+    private final MongoTemplate mongoTemplate;
     private final OntologyHistoryService historyService;
 
     public void syncChange(String projectId, String editId, Map<String, Object> changeData) {
@@ -69,6 +75,7 @@ public class HistorySyncService {
             if (changeData.containsKey("draft")) {
                 builder.draft(Boolean.TRUE.equals(changeData.get("draft")));
             }
+            applyChangeSetFields(builder, changeData);
 
             if (changeData.containsKey("subChanges")) {
                 Object raw = changeData.get("subChanges");
@@ -137,8 +144,77 @@ public class HistorySyncService {
         return historyChangeRepository.findByProjectIdAndStatusOrderByTimestampDesc(projectId, status);
     }
 
+    private static void applyChangeSetFields(HistoryChange.Builder builder, Map<String, Object> changeData) {
+        if (changeData.get("changeSetId") instanceof String changeSetId) {
+            builder.changeSetId(changeSetId);
+        }
+        if (changeData.get("source") instanceof String source) {
+            builder.source(source);
+        }
+        if (changeData.get("ai") instanceof HistoryChange.AiInfo ai) {
+            builder.ai(ai);
+        }
+        if (changeData.get("revertsChangeSetId") instanceof String reverts) {
+            builder.metadata("revertsChangeSetId", reverts);
+        }
+        if (changeData.get("rollbackAuditId") instanceof String rollbackAuditId) {
+            builder.metadata("rollbackAuditId", rollbackAuditId);
+        }
+    }
+
     public void save(HistoryChange change) {
         historyChangeRepository.save(change);
+    }
+
+    public List<HistoryChange> getChangeSet(String projectId, String changeSetId) {
+        return historyChangeRepository.findByProjectIdAndChangeSetIdOrderByTimestampDesc(projectId, changeSetId);
+    }
+
+    public void setEntryReverted(String changeId, boolean reverted, String auditId) {
+        mongoTemplate.updateFirst(
+                Query.query(
+                        Criteria.where("_id").is(changeId)),
+                new Update()
+                        .set("reverted", reverted).set("revertedAuditId", auditId),
+                HistoryChange.class);
+    }
+
+    public void setSubChangesReverted(String changeId, Collection<String> subChangeIds, boolean reverted,
+                                      String auditId) {
+        if (subChangeIds == null || subChangeIds.isEmpty()) {
+            return;
+        }
+        mongoTemplate.updateFirst(
+                Query.query(
+                        Criteria.where("_id").is(changeId)),
+                new Update()
+                        .set("subChanges.$[sc].reverted", reverted)
+                        .set("subChanges.$[sc].revertedAuditId", auditId)
+                        .filterArray(Criteria.where("sc._id").in(subChangeIds)),
+                HistoryChange.class);
+    }
+
+    public int backfillSubChangeIds() {
+        int updated = 0;
+        Query missing = Query.query(
+                Criteria.where("subChanges").elemMatch(
+                        Criteria.where("id").exists(false)));
+        for (HistoryChange change : mongoTemplate.find(missing, HistoryChange.class)) {
+            List<HistoryChange.SubChange> subChanges = change.getSubChanges();
+            for (int i = 0; i < subChanges.size(); i++) {
+                if (subChanges.get(i).getId() != null) {
+                    continue;
+                }
+                Query exact = Query.query(
+                        Criteria.where("_id").is(change.getId())
+                                .and("subChanges." + i + ".id").exists(false));
+                updated += (int) mongoTemplate.updateFirst(exact,
+                        new Update()
+                                .set("subChanges." + i + ".id", UUID.randomUUID().toString()),
+                        HistoryChange.class).getModifiedCount();
+            }
+        }
+        return updated;
     }
 
     public HistoryChange getHistoryChange(String changeId) {

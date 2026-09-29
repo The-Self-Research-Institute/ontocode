@@ -110,6 +110,34 @@ describe("review summaries in history", () => {
     expect(history[1].text).toContain("group 2 (turtle");
     expect(history[1].text).toContain("is skipped");
   });
+
+  it("warns the model that line numbers moved after an applied insert", () => {
+    const history = buildConversationHistory([
+      { role: "user", text: "add two classes" },
+      {
+        role: "assistant",
+        kind: "review",
+        groups: [{ serverGroupId: "g1", diff: [{ targetPath: "turtle", before: "", after: "ex:A a owl:Class .\n\nex:B a owl:Class .", startLine: 397 }] }],
+        decisions: { g1: "applied" },
+      },
+      { role: "user", text: "add more" },
+    ]);
+    expect(history[1].text).toContain("net +3 lines");
+    expect(history[1].text).toContain("Call read_context again");
+  });
+
+  it("adds no stale-line note when nothing was applied", () => {
+    const history = buildConversationHistory([
+      { role: "user", text: "add a class" },
+      {
+        role: "assistant",
+        kind: "review",
+        groups: [{ serverGroupId: "g1", diff: [{ targetPath: "turtle", before: "", after: "ex:A a owl:Class .", startLine: 3 }] }],
+        decisions: { g1: "skipped" },
+      },
+    ]);
+    expect(history[1].text).not.toContain("stale");
+  });
 });
 
 describe("compactEntryForStorage", () => {

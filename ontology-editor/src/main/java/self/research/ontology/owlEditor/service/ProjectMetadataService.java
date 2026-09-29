@@ -197,6 +197,12 @@ public class ProjectMetadataService {
                 .orElse(null);
     }
 
+    public String versionStamp(String projectId) {
+        return projectRepository.findById(projectId)
+                .map(doc -> (doc.getMutationVersion() != null ? doc.getMutationVersion() : 0L) + "@" + doc.getUpdatedAt())
+                .orElse(null);
+    }
+
     public long getMutationVersion(String projectId) {
         return projectRepository.findById(projectId)
                 .map(ProjectDocument::getMutationVersion)

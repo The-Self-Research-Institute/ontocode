@@ -54,6 +54,10 @@ public class CodeViewReimportPipeline {
     @Nullable
     private EditorReasonerCacheService editorReasonerCache;
 
+    @Autowired(required = false)
+    @Nullable
+    private ChangeSetBroadcaster changeSetBroadcaster;
+
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
@@ -70,7 +74,14 @@ public class CodeViewReimportPipeline {
 
     public record ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
                                    String userId, String username, String targetGraphOverride,
-                                   Path oldContentFileForDiff, boolean skipSanitization) {}
+                                   Path oldContentFileForDiff, boolean skipSanitization, ChangeOrigin origin) {
+        public ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
+                               String userId, String username, String targetGraphOverride,
+                               Path oldContentFileForDiff, boolean skipSanitization) {
+            this(projectId, format, contentFile, draft, userId, username, targetGraphOverride,
+                    oldContentFileForDiff, skipSanitization, null);
+        }
+    }
 
     public record ReimportResult(String format, RDFFormat rdfFormat, long sourceVersion,
                                  boolean cacheMatchesSubmittedContent) {
@@ -98,7 +109,7 @@ public class CodeViewReimportPipeline {
             invalidateReasonerCaches(req.projectId());
 
             perf.mark("graphImport");
-            recordHistoryDiff(req, files);
+            ChangeOrigin origin = recordHistoryDiff(req, files);
 
             perf.mark("historyDiff");
             if (req.draft()) {
@@ -120,6 +131,7 @@ public class CodeViewReimportPipeline {
             perf.mark("cacheWrite");
 
             completed = true;
+            announce(req.projectId(), req.userId(), req.username(), origin);
             boolean cacheMatches = !files.reserializedOnRetry && (isOwlApiFormat || req.skipSanitization());
             return new ReimportResult(format, files.rdfFormat, storageManager.getPublicGraphVersion(req.projectId()),
                     cacheMatches);
@@ -206,17 +218,27 @@ public class CodeViewReimportPipeline {
         }
     }
 
-    private void recordHistoryDiff(ReimportRequest req, ReimportFiles files) {
+    private ChangeOrigin recordHistoryDiff(ReimportRequest req, ReimportFiles files) {
         if (req.oldContentFileForDiff() == null) {
-            return;
+            return null;
         }
+        ChangeOrigin origin = req.origin() != null ? req.origin() : ChangeOrigin.manual();
         try {
             Model oldModel = parseToModel(req.oldContentFileForDiff(), RdfFiles.snapshotFormat(req.oldContentFileForDiff()));
             Model newModel = parseToModel(files.importSourceFile, files.rdfFormat);
             historyRecorder.record(req.projectId(), CodeViewHistoryRecorder.effectiveUserId(req.userId(), desktopMode),
-                    CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft());
+                    CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft(), origin);
+            return origin;
         } catch (Exception diffEx) {
             log.warn("[CODE-VIEW-SAVE] Failed to record change history diff (save itself succeeded): {}", diffEx.getMessage());
+            return null;
+        }
+    }
+
+    private void announce(String projectId, String userId, String username, ChangeOrigin origin) {
+        if (changeSetBroadcaster != null && origin != null) {
+            changeSetBroadcaster.changeSetApplied(projectId, CodeViewHistoryRecorder.effectiveUserId(userId, desktopMode),
+                    CodeViewHistoryRecorder.effectiveUsername(username), origin);
         }
     }
 
@@ -235,15 +257,26 @@ public class CodeViewReimportPipeline {
 
     public long finishPatch(String projectId, String format, Path patchedFile, String userId, String username,
                             Model removed, Model added) throws IOException {
+        return finishPatch(projectId, format, patchedFile, userId, username, removed, added, null);
+    }
+
+    public long finishPatch(String projectId, String format, Path patchedFile, String userId, String username,
+                            Model removed, Model added, ChangeOrigin origin) throws IOException {
         invalidateReasonerCaches(projectId);
+        ChangeOrigin resolved = origin != null ? origin : ChangeOrigin.manual();
+        boolean recorded = false;
         try {
             historyRecorder.record(projectId, CodeViewHistoryRecorder.effectiveUserId(userId, desktopMode),
-                    CodeViewHistoryRecorder.effectiveUsername(username), removed, added, false);
+                    CodeViewHistoryRecorder.effectiveUsername(username), removed, added, false, resolved);
+            recorded = true;
         } catch (Exception diffEx) {
             log.warn("[CODE-VIEW-SAVE] Failed to record change history for a patched apply: {}", diffEx.getMessage());
         }
         invalidateAfterGraphReplaced(projectId);
         storageManager.storeCodeViewCacheFile(projectId, format, patchedFile);
+        if (recorded) {
+            announce(projectId, userId, username, resolved);
+        }
         return storageManager.getPublicGraphVersion(projectId);
     }
 

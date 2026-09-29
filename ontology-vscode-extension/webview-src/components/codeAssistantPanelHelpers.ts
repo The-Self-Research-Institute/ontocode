@@ -41,6 +41,7 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
       ? [
           "The user wants a concrete edit. For the exact text and line range of an entity, call read_context with a \"statement\" target (its full IRI or prefixed name), then call propose_edit with grouped, dependent replacements.",
           "To rename an identifier, call propose_rename instead of editing each occurrence yourself.",
+          "Insert new statements only between complete statements (after a line ending in \" .\"), never inside one.",
           "Never claim an edit was applied — applying is a separate human-approved step.",
         ].join(" ")
       : "This session cannot propose or apply edits — propose_edit and propose_rename will always be rejected. Answer the question directly. If the user is actually asking for a change, tell them to switch to Local edit mode and ask again there.";
@@ -78,7 +79,19 @@ export function summarizeReviewForHistory(entry: HistoryEntryLike): string {
     const change = edit ? `: "${firstLine(edit.before)}" -> "${firstLine(edit.after)}"` : "";
     return `group ${index + 1} (${where}${change}) is ${decision}`;
   });
-  return `I proposed ${groups.length} change group${groups.length === 1 ? "" : "s"} for review. ${parts.join("; ")}.`;
+  const summary = `I proposed ${groups.length} change group${groups.length === 1 ? "" : "s"} for review. ${parts.join("; ")}.`;
+  const applied = groups.filter((group) => entry.decisions?.[group.serverGroupId] === "applied");
+  if (applied.length === 0) return summary;
+  const shift = applied.reduce(
+    (total, group) => total + group.diff.reduce((sum, edit) => sum + countLines(edit.after) - countLines(edit.before), 0),
+    0,
+  );
+  const net = shift === 0 ? "" : ` (net ${shift > 0 ? "+" : ""}${shift} lines)`;
+  return `${summary} The document changed after that${net}, so line numbers from before are stale. Call read_context again before proposing more edits.`;
+}
+
+function countLines(text: string): number {
+  return text.length === 0 ? 0 : text.split("\n").length;
 }
 
 export const MAX_HISTORY_TURNS = 30;

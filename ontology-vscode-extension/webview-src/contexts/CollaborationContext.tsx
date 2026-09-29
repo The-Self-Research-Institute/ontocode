@@ -245,6 +245,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
       const userId = user?.userId || user?.username || "";
       const username = user?.username || "";
+      const userEmail = user?.email || "";
 
       const METADATA_EVENT_TYPES = new Set([
         "ONTOLOGY_ANNOTATION_ADDED", "ONTOLOGY_ANNOTATION_MODIFIED", "ONTOLOGY_ANNOTATION_DELETED",
@@ -255,7 +256,11 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         try {
           const edit = JSON.parse(msg.body);
 
-          if (edit.userId === userId && !METADATA_EVENT_TYPES.has(edit.type)) return;
+          const ownEdit = edit.userId === userId || (!!userEmail && edit.userEmail === userEmail);
+          if (ownEdit && !METADATA_EVENT_TYPES.has(edit.type)) {
+            window.dispatchEvent(new CustomEvent("ownEditReceived", { detail: edit }));
+            return;
+          }
           handleRemoteEdit(edit);
         } catch (e) {
           console.error("[CollaborationContext] Edit parse error:", e);
@@ -556,6 +561,9 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       SWRL_RULE_MODIFIED: "modified a SWRL rule",
       SWRL_RULE_DELETED: "deleted a SWRL rule",
     };
+    if ((operationType === "ROLLBACK" || operationType === "CHANGE_SET_APPLIED") && typeof edit?.description === "string" && edit.description) {
+      return edit.description.charAt(0).toLowerCase() + edit.description.slice(1);
+    }
     const base = actionMap[operationType] || "made a change";
 
     if (operationType === "CLASS_DELETED" || operationType === "CLASS_ADDED" || operationType === "CLASS_RENAMED") {

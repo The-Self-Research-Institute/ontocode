@@ -50,3 +50,34 @@ export function validateAgainstSchema(schema: JsonSchema, value: unknown, path =
 
   return { valid: errors.length === 0, errors };
 }
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+export function coerceJsonStrings(schema: JsonSchema, value: unknown): unknown {
+  let current = value;
+  if (typeof current === "string" && (schema.type === "array" || schema.type === "object")) {
+    const parsed = parseJson(current.trim());
+    if (typeMatches(parsed, schema.type)) current = parsed;
+  } else if (typeof current === "string" && (schema.type === "integer" || schema.type === "number")) {
+    const trimmed = current.trim();
+    if (/^-?\d+(\.\d+)?$/.test(trimmed) && typeMatches(Number(trimmed), schema.type)) current = Number(trimmed);
+  }
+  if (schema.type === "array" && Array.isArray(current) && schema.items) {
+    const items = schema.items as JsonSchema;
+    return current.map((item) => coerceJsonStrings(items, item));
+  }
+  if (schema.type === "object" && typeMatches(current, "object") && schema.properties) {
+    const obj = { ...(current as Record<string, unknown>) };
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      if (key in obj) obj[key] = coerceJsonStrings(propSchema, obj[key]);
+    }
+    return obj;
+  }
+  return current;
+}

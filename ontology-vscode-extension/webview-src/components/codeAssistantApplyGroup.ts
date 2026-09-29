@@ -1,6 +1,7 @@
 import { applyEditGroup } from "../services/codeAssistantSession";
 import { applyRemapResult, classifyApplyFailure, type ApplyOneResult } from "../services/codeAssistantApplyQueue";
 import { errorSignalFrom, parseHttpStatus } from "../services/codeAssistantDeadEnd";
+import { toApplySummary } from "../services/codeAssistantApplySummary";
 import { getApiBaseUrl, toFriendlyErrorMessage } from "./codeAssistantPanelHelpers";
 import type { AppliedChanges } from "./codeAssistantChatEntries";
 import type { CodeAssistantEntries } from "../hooks/useCodeAssistantEntries";
@@ -37,7 +38,8 @@ export async function applyReviewGroup(
   });
   const applyStartedAt = performance.now();
   try {
-    const result = await applyEditGroup(getApiBaseUrl(), deps.token, sessionId, serverGroupId);
+    const summary = toApplySummary(reviewEntry?.explanation);
+    const result = await applyEditGroup(getApiBaseUrl(), deps.token, sessionId, serverGroupId, undefined, { summary });
     console.log(
       `[CodeAssistant] [PERF] apply group=${serverGroupId} response=${Math.round(performance.now() - applyStartedAt)}ms ` +
         `siblings=${result.remappedPendingGroups?.length ?? 0}`,

@@ -3,7 +3,8 @@ import { Loader2, CheckCircle, AlertCircle, ShieldAlert } from "lucide-react";
 import type { ProposedEditGroupResult } from "../services/codeAssistantSession";
 import type { GroupDecision } from "../services/codeAssistantApplyQueue";
 import { CodeAssistantDiffEntry } from "./CodeAssistantDiffEntry";
-import { CodeAssistantFailedChecks } from "./CodeAssistantFailedChecks";
+import { CodeAssistantCheckNotes, CodeAssistantFailedChecks } from "./CodeAssistantFailedChecks";
+import { CodeAssistantUndoControls, type UndoControlsProps } from "./CodeAssistantUndoControls";
 
 const PendingGroupActions: React.FC<{
   serverGroupId: string;
@@ -84,10 +85,15 @@ type GroupCardProps = Omit<React.ComponentProps<typeof PendingGroupActions>, "se
   decision: GroupDecision;
   error?: string;
   onShowInCodeView?: (format: string, startLine: number) => void;
+  undo?: UndoControlsProps;
 };
 
-export const ReviewGroupCard: React.FC<GroupCardProps> = ({ group, decision, error, onShowInCodeView, ...actions }) => (
-  <div className="border-2 border-gray-200 rounded-lg p-4 space-y-2">
+const GroupBody: React.FC<{ group: ProposedEditGroupResult; dimmed: boolean; onShowInCodeView?: GroupCardProps["onShowInCodeView"] }> = ({
+  group,
+  dimmed,
+  onShowInCodeView,
+}) => (
+  <div className={dimmed ? "space-y-2 opacity-50" : "space-y-2"}>
     {!group.validation.passed && (
       <div className="space-y-1">
         <div className="flex items-center gap-2 text-red-700 text-xs font-semibold">
@@ -97,14 +103,25 @@ export const ReviewGroupCard: React.FC<GroupCardProps> = ({ group, decision, err
         <CodeAssistantFailedChecks checks={group.validation.checks} />
       </div>
     )}
+    {group.validation.passed && <CodeAssistantCheckNotes checks={group.validation.checks} />}
     {group.diff.map((d, i) => (
       <CodeAssistantDiffEntry key={i} entry={d} onShowInCodeView={onShowInCodeView} />
     ))}
-    <div className="flex flex-wrap items-center gap-2 pt-1">
-      {decision === "pending" && group.validation.passed && (
-        <PendingGroupActions serverGroupId={group.serverGroupId} error={error} {...actions} />
-      )}
-      <DecisionStatus decision={decision} error={error} />
-    </div>
   </div>
 );
+
+export const ReviewGroupCard: React.FC<GroupCardProps> = ({ group, decision, error, onShowInCodeView, undo, ...actions }) => {
+  const undone = decision === "applied" && undo?.state?.undone === true;
+  return (
+    <div className="border-2 border-gray-200 rounded-lg p-4 space-y-2" data-undone={undone ? "true" : undefined}>
+      <GroupBody group={group} dimmed={undone} onShowInCodeView={onShowInCodeView} />
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        {decision === "pending" && group.validation.passed && (
+          <PendingGroupActions serverGroupId={group.serverGroupId} error={error} {...actions} />
+        )}
+        {!undone && <DecisionStatus decision={decision} error={error} />}
+        {decision === "applied" && undo && <CodeAssistantUndoControls {...undo} />}
+      </div>
+    </div>
+  );
+};

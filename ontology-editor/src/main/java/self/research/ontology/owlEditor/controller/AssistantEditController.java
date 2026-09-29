@@ -52,10 +52,12 @@ public class AssistantEditController {
 
     @PostMapping("/groups/{serverGroupId}/apply")
     public ResponseEntity<?> apply(@PathVariable String sessionId, @PathVariable String serverGroupId,
+                                    @RequestBody(required = false) Map<String, Object> body,
                                     HttpServletRequest httpRequest) {
+        String summary = body != null && body.get("summary") instanceof String s ? s : null;
         return JwtIdentityExtractor.extractEmail(httpRequest)
                 .map(userEmail -> {
-                    ApplyResult result = applyService.applyGroup(sessionId, serverGroupId, userEmail);
+                    ApplyResult result = applyService.applyGroup(sessionId, serverGroupId, userEmail, summary);
                     int status = AssistantEditApplyService.PROPOSAL_NOT_FOUND.equals(result.getErrorCode()) ? 403 : 200;
                     return ResponseEntity.status(status).body(toBody(result));
                 })

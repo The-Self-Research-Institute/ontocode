@@ -299,6 +299,34 @@ describe("applyEditGroup", () => {
     await applyEditGroup("http://api", "token", "s1", "g1");
 
     expect(fetchSpy.mock.calls[0][1].headers["Idempotency-Key"]).toBeTruthy();
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({});
+  });
+
+  it("sends the change summary in the body", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(response(200, { ok: true, applied: true, newRevision: 3 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await applyEditGroup("http://api", "token", "s1", "g1", undefined, { summary: "Rename A to B" });
+
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({ summary: "Rename A to B" });
+  });
+
+  it("keeps the same summary body while waiting on a long apply", async () => {
+    vi.useFakeTimers();
+    try {
+      const inFlight = response(409, { ok: false, errorCode: "IDEMPOTENCY_KEY_REUSED", message: "still being processed" });
+      const fetchSpy = vi.fn().mockResolvedValueOnce(inFlight).mockResolvedValueOnce(response(200, { ok: true, applied: true, newRevision: 4 }));
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const pending = applyEditGroup("http://api", "token", "s1", "g1", undefined, { idempotencyKey: "k", summary: "Add label" });
+      await vi.runAllTimersAsync();
+      await pending;
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(fetchSpy.mock.calls.map((c) => JSON.parse(c[1].body))).toEqual([{ summary: "Add label" }, { summary: "Add label" }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps waiting with the same key while a long apply is still running", async () => {

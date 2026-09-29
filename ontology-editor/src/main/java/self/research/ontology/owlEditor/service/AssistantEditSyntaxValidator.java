@@ -71,6 +71,15 @@ public class AssistantEditSyntaxValidator {
         }
     }
 
+    public boolean regionParses(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits) {
+        try {
+            return isRdf4jParseable(targetPath)
+                    && RegionSyntaxCheck.parses(storageManager.ensureCodeViewFile(projectId, targetPath), targetPath, edits);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public boolean isRdf4jParseable(String format) {
         String lower = format.toLowerCase(Locale.ROOT);
         return !(lower.equals("owlxml") || lower.equals("manchester") || lower.equals("manchestersyntax")

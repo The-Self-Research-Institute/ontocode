@@ -18,7 +18,10 @@ const CHECK_LABELS: Record<string, string> = {
   references_resolve: "Referenced names exist in the ontology",
   no_conflicting_declaration: "No conflicting declaration",
   rename_occurrences_complete: "The rename covers every occurrence",
+  insertion_moved_to_statement_boundary: "Insertion point adjusted",
 };
+
+export const INSERTION_MOVED_CHECK = "insertion_moved_to_statement_boundary";
 
 export function checkLabel(name: string): string {
   return CHECK_LABELS[name] ?? name.replace(/_/g, " ");
@@ -34,6 +37,18 @@ export const CodeAssistantFailedChecks: React.FC<{ checks: Check[] }> = ({ check
           <span className="font-semibold">{checkLabel(check.name)}</span>
           {check.detail ? `: ${check.detail}` : ""}
         </li>
+      ))}
+    </ul>
+  );
+};
+
+export const CodeAssistantCheckNotes: React.FC<{ checks: Check[] }> = ({ checks }) => {
+  const notes = checks.filter((c) => c.passed && c.name === INSERTION_MOVED_CHECK && c.detail);
+  if (notes.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-xs text-gray-600" aria-label="Adjustments">
+      {notes.map((check) => (
+        <li key={check.name}>{check.detail}</li>
       ))}
     </ul>
   );

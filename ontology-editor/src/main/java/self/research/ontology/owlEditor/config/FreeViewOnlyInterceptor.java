@@ -141,7 +141,7 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
                 boolean isDraftMutation = "true".equalsIgnoreCase(request.getParameter("draft"))
                         || "true".equalsIgnoreCase(request.getParameter("useDraft"));
                 boolean isDraftEndpoint = path.contains("/draft") || path.contains("/pull-from-public/")
-                        || path.contains("/rollback");
+                        || path.contains("/rollback") || path.contains("/change-sets/") || path.contains("/undos/");
                 if ((isDraftMutation || isDraftEndpoint) && !isCodeAssistantWrite(path)) {
                     return true;
                 }

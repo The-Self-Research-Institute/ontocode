@@ -43,14 +43,19 @@ final class CodeViewHistoryRecorder {
         return username != null && !username.isBlank() ? username : "System";
     }
 
-    private record Actor(String projectId, String userId, String username, boolean draft) {}
+    private record Actor(String projectId, String userId, String username, boolean draft, ChangeOrigin origin) {}
 
     private record SubjectDiff(List<Statement> added, List<Statement> removed) {}
 
     private record TypeChange(String createOp, Statement createType, String deleteOp, Statement deleteType) {}
 
     void record(String projectId, String userId, String username, Model oldModel, Model newModel, boolean draft) {
-        Actor actor = new Actor(projectId, userId, username, draft);
+        record(projectId, userId, username, oldModel, newModel, draft, null);
+    }
+
+    void record(String projectId, String userId, String username, Model oldModel, Model newModel, boolean draft,
+                ChangeOrigin origin) {
+        Actor actor = new Actor(projectId, userId, username, draft, origin != null ? origin : ChangeOrigin.manual());
         Set<Statement> added = new LinkedHashSet<>(newModel);
         added.removeAll(oldModel);
         Set<Statement> removed = new LinkedHashSet<>(oldModel);
@@ -63,7 +68,7 @@ final class CodeViewHistoryRecorder {
                     "bulkPopulation", null, null, null, null,
                     "Code View save added/changed " + namedChangeCount
                             + " statements — logged as a single bulk entry rather than one per statement",
-                    null, null, draft);
+                    null, null, draft, actor.origin());
             log.info("[CODE-VIEW-SAVE] Skipped per-triple change logging for bulk save ({} named changes)", namedChangeCount);
             return;
         }
@@ -79,7 +84,7 @@ final class CodeViewHistoryRecorder {
                     "codeViewStructuralEdit", null, null, null, null,
                     "Code View save modified " + structuralChanges
                             + " structural axiom(s) (restrictions, unions, SWRL rules, disjoint-class lists, etc.)",
-                    null, null, draft);
+                    null, null, draft, actor.origin());
         }
         if (draftOps != null && !draftOps.isEmpty()) {
             draftTrackingService.recordDrafts(projectId, userId, username, draftOps, UUID.randomUUID().toString());
@@ -137,7 +142,7 @@ final class CodeViewHistoryRecorder {
             return;
         }
         historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), opType,
-                subject.stringValue(), label, null, null, description, null, subChanges, actor.draft());
+                subject.stringValue(), label, null, null, description, null, subChanges, actor.draft(), actor.origin());
     }
 
     private TypeChange typeChange(SubjectDiff diff) {
