@@ -120,7 +120,7 @@ public class OntologyMutationService {
      * a merge, so anything real missing from that stale text is silently destroyed. Draft
      * mutations don't touch the public graph, so they must not evict this cache.
      */
-    private void invalidatePublicCodeViewCache(String projectId, boolean draft) {
+    public void invalidatePublicCodeViewCache(String projectId, boolean draft) {
         if (!draft) {
             storageManager.clearCodeViewCache(projectId);
         }
@@ -163,17 +163,25 @@ public class OntologyMutationService {
      * {@link SparqlDatasetService#execUpdate} via {@link OntologySpringCacheEvictionService}.
      */
     public void apply(String projectId, List<MutationOp> ops) {
-        apply(projectId, ops, false, null);
+        apply(projectId, ops, false, null, false);
     }
 
     /**
      * Apply mutations to the user's draft named graph (private editing — not visible to other users).
      */
     public void applyDraft(String projectId, String userId, List<MutationOp> ops) {
-        apply(projectId, ops, true, userId);
+        apply(projectId, ops, true, userId, false);
     }
 
-    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId) {
+    public void applyForRollback(String projectId, List<MutationOp> ops) {
+        apply(projectId, ops, false, null, true);
+    }
+
+    public void applyDraftForRollback(String projectId, String userId, List<MutationOp> ops) {
+        apply(projectId, ops, true, userId, true);
+    }
+
+    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId, boolean skipHistorySnapshot) {
         if (ops == null || ops.isEmpty()) {
             log.warn("[MUTATION] No operations to apply for project: {}", projectId);
             return;
@@ -198,8 +206,19 @@ public class OntologyMutationService {
         log.info("[MUTATION] Generated SPARQL (BEFORE graph injection):");
         log.info("[MUTATION] {}", sparql);
 
+        if (!skipHistorySnapshot) {
+            for (MutationOp op : ops) {
+                snapshotAxiomsBeforeDelete(projectId, op, userId, draft);
+            }
+        }
+
+        // Entities that only appear as the *object* of a triple being deleted (e.g. the other
+        // side of a disjointWith/equivalentClass relationship) won't be in op.iri()/parent()/
+        // target()/classIri() — collect them here, before the delete runs, so their cached
+        // detail views get invalidated too instead of going stale.
+        java.util.Set<String> reverseReferenceIris = new java.util.LinkedHashSet<>();
         for (MutationOp op : ops) {
-            snapshotAxiomsBeforeDelete(projectId, op, userId);
+            reverseReferenceIris.addAll(collectReverseReferenceIris(projectId, op));
         }
 
         try {
@@ -216,8 +235,9 @@ public class OntologyMutationService {
                     hierarchyIndexService.markStale(projectId);
                 }
                 if (entityUsageIndexService != null || classDetailCacheService != null) {
-                    List<String> affectedIris = ops.stream()
-                        .flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri()))
+                    List<String> affectedIris = Stream.concat(
+                            ops.stream().flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri())),
+                            reverseReferenceIris.stream())
                         .filter(Objects::nonNull)
                         .distinct()
                         .toList();
@@ -237,6 +257,7 @@ public class OntologyMutationService {
             if (draft) {
                 requireDraftCopyReady(projectId, userId);
                 datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
+                storageManager.bumpDraftGraphVersion(projectId, userId);
             } else {
                 datasetService.execUpdate(projectId, sparql);
                 if (mainGraphRevisionService != null) {
@@ -257,8 +278,9 @@ public class OntologyMutationService {
                 hierarchyIndexService.markStale(projectId);
             }
             if (entityUsageIndexService != null || classDetailCacheService != null) {
-                List<String> affectedIris = ops.stream()
-                    .flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri()))
+                List<String> affectedIris = Stream.concat(
+                        ops.stream().flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri())),
+                        reverseReferenceIris.stream())
                     .filter(Objects::nonNull)
                     .distinct()
                     .toList();
@@ -2223,7 +2245,7 @@ public class OntologyMutationService {
         return expression.contains(" ") && !expression.trim().startsWith("<") && !expression.trim().startsWith("_:");
     }
 
-    private void snapshotAxiomsBeforeDelete(String projectId, MutationOp op, String userId) {
+    private void snapshotAxiomsBeforeDelete(String projectId, MutationOp op, String userId, boolean draft) {
         if (historyService == null || op.iri() == null) return;
         String type = op.type();
         if (type == null || !type.startsWith("delete")) return;
@@ -2243,16 +2265,51 @@ public class OntologyMutationService {
                 if (predicate.equals("http://www.w3.org/2000/01/rdf-schema#subClassOf")) {
                     historyService.recordEdit(projectId, userId, effectiveUsername,
                             "removeSubClassOf", op.iri(), op.label(), object, null,
-                            "subClassOf changed via " + type, null);
+                            "subClassOf changed via " + type, null, null, draft);
                 } else {
                     historyService.recordEdit(projectId, userId, effectiveUsername,
                             "removeStatement", op.iri(), op.label(), object, null,
-                            "Property assertion changed via " + type + " (" + predicate + ")", predicate);
+                            "Property assertion changed via " + type + " (" + predicate + ")", predicate, null, draft);
                 }
             }
         } catch (Exception e) {
             log.warn("[MUTATION] Could not snapshot axioms before delete for {}: {}", op.iri(), e.getMessage());
         }
+    }
+
+    /**
+     * Before a delete-type mutation runs, find every other entity referenced as the *object* of
+     * one of this entity's own triples (e.g. the other side of a disjointWith/equivalentClass
+     * relationship). Those entities' cached detail views need invalidating too — they're not the
+     * subject of the mutation, so op.iri()/parent()/target()/classIri() never surface them, and
+     * once the delete runs the triple is gone, so this has to run *before* it.
+     */
+    private java.util.List<String> collectReverseReferenceIris(String projectId, MutationOp op) {
+        String type = op.type();
+        if (type == null || !type.startsWith("delete") || op.iri() == null) {
+            return java.util.List.of();
+        }
+
+        java.util.List<String> result = new java.util.ArrayList<>();
+        String query = PREFIXES + """
+            SELECT ?p ?o WHERE { <%s> ?p ?o }
+            """.formatted(op.iri());
+        try (TupleQueryResult tqr = datasetService.execSelect(projectId, query)) {
+            while (tqr.hasNext()) {
+                BindingSet bs = tqr.next();
+                String predicate = bs.getValue("p").stringValue();
+                if (predicate.equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")) {
+                    continue;
+                }
+                org.eclipse.rdf4j.model.Value object = bs.getValue("o");
+                if (object instanceof org.eclipse.rdf4j.model.IRI) {
+                    result.add(object.stringValue());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[MUTATION] Could not collect reverse-reference IRIs for {}: {}", op.iri(), e.getMessage());
+        }
+        return result;
     }
 
     private String resolveEntity(String projectId, String name) {

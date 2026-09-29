@@ -2564,6 +2564,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   // warnings (e.g. an IRI outside the ontology's namespace), shown in a dockable
   // Problems panel rather than a modal, since the user needs to see the editor to fix them.
   const [codeViewLintIssues, setCodeViewLintIssues] = useState<LintIssue[]>([]);
+  const [codeViewLintIsPostSaveWarning, setCodeViewLintIsPostSaveWarning] = useState(false);
+  const acknowledgedUnsatisfiableRef = useRef<Set<string>>(new Set());
   const codeHighlighterRef = useRef<CodeHighlighterHandle>(null);
   const [citationJustInserted, setCitationJustInserted] = useState(false); // Track recent citation insertion for format refresh
   const [showCitationPicker, setShowCitationPicker] = useState(false);
@@ -12694,6 +12696,7 @@ const updateItemInState = useCallback(
       // Clear any previous syntax error / lint warnings when loading new content
       setCodeViewSyntaxError(null);
       setCodeViewLintIssues([]);
+      acknowledgedUnsatisfiableRef.current = new Set();
 
       // If clicking same format without force refresh/reload, just return (prevents unnecessary reloads)
       if (format === codeViewFormat && !forceRefresh && !forceReload && codeViewContent) {
@@ -13057,6 +13060,7 @@ const updateItemInState = useCallback(
         const issues = lintOntologyContent(content, codeViewFormat);
         if (issues.length > 0) {
           setCodeViewLintIssues(issues);
+          setCodeViewLintIsPostSaveWarning(false);
           lastCodeViewSaveContentRef.current = content;
           return;
         }
@@ -13067,6 +13071,7 @@ const updateItemInState = useCallback(
       // content that failed, even if the user keeps typing while the dialog is open.
       lastCodeViewSaveContentRef.current = content;
       setSavingCodeView(true);
+        notificationService.info("Saving…", "Checking consistency and syncing changes.");
       try {
         console.log(
           "[Dashboard] Saving code view content to backend, format:",
@@ -13098,6 +13103,29 @@ const updateItemInState = useCallback(
             console.warn("[Dashboard] code-view-save conflict:", conflictMsg);
             setCodeViewSaveConflict(true);
             setCodeViewSaveError(conflictMsg);
+            return;
+          }
+          if (syncError?.data?.errorType === "SYNTAX_ERROR") {
+            const syntaxMsg = syncError?.data?.error || "Invalid content — fix the highlighted error before saving.";
+            console.warn("[Dashboard] code-view-save rejected (syntax):", syntaxMsg);
+            setCodeViewSyntaxError(syntaxMsg);
+            notificationService.error("Syntax Error", "Fix the highlighted error before saving.");
+            return;
+          }
+          if (syncError?.data?.errorType === "INCONSISTENT_ONTOLOGY") {
+
+            const inconsistentMsg = syncError?.data?.error || "Inconsistent: this change makes the ontology inconsistent.";
+            console.warn("[Dashboard] code-view-save rejected (inconsistent):", inconsistentMsg);
+            setCodeViewSaveConflict(false);
+            setCodeViewSaveError(inconsistentMsg);
+            return;
+          }
+          if (syncError?.data?.errorType === "SUSPICIOUS_SIZE_REDUCTION") {
+            const sizeMsg = syncError?.data?.error
+              || "This save would delete most of the ontology — reload Code View to confirm you have the complete content before saving.";
+            console.warn("[Dashboard] code-view-save rejected (suspicious size reduction):", sizeMsg);
+            setCodeViewSaveConflict(false);
+            setCodeViewSaveError(sizeMsg);
             return;
           }
           const errMsg = syncError?.message || "Failed to reach the save endpoint";
@@ -13135,6 +13163,43 @@ const updateItemInState = useCallback(
           } catch {
             /* non-fatal */
           }
+          void (async () => {
+            try {
+              const followUpParams = new URLSearchParams({ userId: codeViewEffectiveUserId });
+              if (isDraftScopeActive()) {
+                followUpParams.set("draft", "true");
+              }
+              const result: any = await apiClient.get(
+                `/api/ontology/${projectId}/unsatisfiable-classes-quick?${followUpParams.toString()}`,
+              );
+              const unsatisfiableClasses: string[] = Array.isArray(result?.unsatisfiableClasses)
+                ? result.unsatisfiableClasses
+                : [];
+              const stillAcknowledged = new Set(
+                unsatisfiableClasses.filter((c) => acknowledgedUnsatisfiableRef.current.has(c)),
+              );
+              acknowledgedUnsatisfiableRef.current = stillAcknowledged;
+              const newlyUnsatisfiable = unsatisfiableClasses.filter((c) => !stillAcknowledged.has(c));
+              if (newlyUnsatisfiable.length > 0) {
+                newlyUnsatisfiable.forEach((c) => acknowledgedUnsatisfiableRef.current.add(c));
+                const contentLines = content.split("\n");
+                setCodeViewLintIsPostSaveWarning(true);
+                setCodeViewLintIssues(
+                  newlyUnsatisfiable.map((className) => {
+                    const idx = contentLines.findIndex((l) => l.includes(className));
+                    return {
+                      line: idx >= 0 ? idx + 1 : 1,
+                      severity: "warning",
+                      message: `${className} is unsatisfiable (equivalent to owl:Nothing) — it can never have any instances.`,
+                      iri: className,
+                    };
+                  }),
+                );
+              }
+            } catch {
+              /* non-fatal — this is a best-effort informational warning, not a save result */
+            }
+          })();
         } else {
           const errMsg = (response.error || "Failed to save content").replace(
             "Failed to save and sync code view: ",
@@ -15651,6 +15716,10 @@ const updateItemInState = useCallback(
                     issues={codeViewLintIssues}
                     onJumpToLine={(line) => codeHighlighterRef.current?.goToLine(line)}
                     onSaveAnyway={() => {
+                      if (codeViewLintIsPostSaveWarning) {
+                      setCodeViewLintIssues([]);
+                        return;
+                      }
                       const pending = lastCodeViewSaveContentRef.current;
                       setCodeViewLintIssues([]);
                       void handleSaveCodeContent(pending, true);
@@ -19730,7 +19799,10 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           draftCount={draftCount}
           onPRApproved={() => {
             refreshOpenPRCount();
-            if (projectId) fetchData(projectId, false);
+            // forceRefresh: true — fetchData() otherwise skips the reload entirely when
+            // this same project is already loaded (the common case: you're looking at the
+            // project you just merged into), leaving the hierarchy/ontology data stale.
+            if (projectId) fetchData(projectId, false, undefined, true);
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}
         />
