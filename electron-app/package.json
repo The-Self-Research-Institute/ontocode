@@ -17,7 +17,8 @@
     "pack": "npm run prepare-resources && electron-builder --dir",
 
     "dist:win": "npm run prepare-resources && npm run build-web && electron-builder --win",
-    "dist:win:appx": "npm run prepare-resources && npm run build-web && electron-builder --win appx",
+    "dist:win:appx": "npm run prepare-resources && npm run build-web && electron-builder --win appx --x64",
+    "dist:win:appx:arm64": "npm run prepare-resources && npm run build-web && electron-builder --win appx --arm64 -c.appx.minVersion=10.0.22000.0",
     "dist:win:dev": "npm run dist:win",
 
     "dist:mac": "npm run prepare-resources && npm run build-web && electron-builder --mac",
