@@ -213,6 +213,9 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
     }
   };
 
+ const isRollbackRecord = (change: OntologyChange): boolean =>
+    !!change.operationType && change.operationType.startsWith('ROLLBACK_');
+
   const handleRollback = (change: OntologyChange) => {
     if (!change.entityIRI) {
       setActionMessage({ type: 'error', text: 'Cannot rollback without entity IRI' });
@@ -552,8 +555,8 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                     )}
                     <button
                       onClick={() => handleRollback(selectedChange)}
-                      disabled={!!actionLoading || !selectedChange.entityIRI || selectedChange.reverted}
-                      title={selectedChange.reverted ? 'Already reverted' : undefined}
+                      disabled={!!actionLoading || !selectedChange.entityIRI || selectedChange.reverted || isRollbackRecord(selectedChange)}
+                      title={isRollbackRecord(selectedChange) ? "Rollback records can't be rolled back" : (selectedChange.reverted ? 'Already reverted' : undefined)}
                       className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium border border-orange-500 text-orange-600 rounded hover:bg-orange-50 disabled:opacity-50"
                     >
                       {actionLoading === 'rollback' ? <Loader2 size={10} className="animate-spin" /> : <Undo2 size={10} />}
