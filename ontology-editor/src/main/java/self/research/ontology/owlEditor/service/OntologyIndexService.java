@@ -189,7 +189,8 @@ public class OntologyIndexService {
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("counts", counts);
-        meta.put("prefixes", datasetService.getPrefixes(projectId));
+        List<Map<String, String>> prefixList = metadataService.getPrefixes(projectId);
+        meta.put("prefixes", prefixList);
         meta.put("lastUpdated", Instant.now().toString());
         meta.put("cacheComplete", true);  // Mark cache as complete for fast loading
         meta.put("cachedAt", Instant.now().toString());
@@ -228,7 +229,7 @@ public class OntologyIndexService {
         meta.put("annotationPropertyCount", counts.getOrDefault("annotationProperties", 0));
         meta.put("datatypeCount", datatypeCount);
         meta.put("importsCount", importsCount);
-        meta.put("prefixCount", meta.containsKey("prefixes") ? ((Map<?, ?>) meta.get("prefixes")).size() : 0);
+        meta.put("prefixCount", prefixList.size());
         meta.put("subClassOfAxiomCount", axiomCounts.get("subClassOf"));
         meta.put("equivalentClassesAxiomCount", axiomCounts.get("equivalentClasses"));
         meta.put("disjointClassesAxiomCount", axiomCounts.get("disjointClasses"));

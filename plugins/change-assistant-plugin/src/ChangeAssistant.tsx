@@ -30,6 +30,18 @@ type ChangeType = 'class' | 'property' | 'individual' | 'axiom' | 'annotation' |
 type ChangeAction = 'added' | 'deleted' | 'modified';
 type ChangeStatus = 'pending' | 'approved' | 'rejected' | 'conflicted' | 'draft';
 
+interface SubChangeDTO {
+  id: string;
+  predicate?: string;
+  oldValue?: string;
+  newValue?: string;
+  annotationProperty?: string;
+  addition: boolean;
+  reverted?: boolean;
+  revertedBy?: string;
+  revertedAt?: string;
+}
+
 interface OntologyChange {
   id: string;
   timestamp: Date;
@@ -50,6 +62,10 @@ interface OntologyChange {
   warnings?: ChangeWarning[];
   commentCount?: number;
   operationType?: string; // Original operation type for rollback (e.g., createObjectProperty, deleteDataProperty)
+  subChanges?: SubChangeDTO[];
+  reverted?: boolean;
+  revertedBy?: string;
+  revertedAt?: string;
 }
 
 interface ChangeComment {
@@ -147,6 +163,17 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
 
   const [rollbackLoading, setRollbackLoading] = useState<string | null>(null);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
+  const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
+  const [subChangeRollbackLoading, setSubChangeRollbackLoading] = useState<string | null>(null);
+
+  const toggleExpanded = (changeId: string) => {
+    setExpandedChanges(prev => {
+      const next = new Set(prev);
+      if (next.has(changeId)) next.delete(changeId);
+      else next.add(changeId);
+      return next;
+    });
+  };
   
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotification({ show: true, type, message });
@@ -235,6 +262,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       console.error('Failed to load draft changes:', error);
     }
   };
+
+ const isRollbackRecord = (change: OntologyChange): boolean =>
+    !!change.operationType && change.operationType.startsWith('ROLLBACK_');
 
   const mapOperationToType = (operationType: string): ChangeType => {
     if (!operationType) return 'axiom';
@@ -368,7 +398,11 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
           conflicts: change.hasConflict ? [{ conflictType: 'concurrent_edit' as const, description: 'Conflict detected' }] : [],
           warnings: [],
           commentCount: change.commentCount || 0,
-          operationType: originalOperationType // Preserve for rollback
+          operationType: originalOperationType, // Preserve for rollback
+          subChanges: change.subChanges || [],
+          reverted: change.reverted || false,
+          revertedBy: change.revertedBy,
+          revertedAt: change.revertedAt
         };
         return parsed;
       });
@@ -662,6 +696,65 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       showNotification('Failed to rollback: Network error', 'error');
     } finally {
       setRollbackLoading(null);
+    }
+  };
+
+  const executeSubChangeRollback = async (changeId: string, subChange: SubChangeDTO) => {
+    const loadingKey = `${changeId}:${subChange.id}`;
+    setSubChangeRollbackLoading(loadingKey);
+    setRollbackError(null);
+
+    try {
+      const apiBase = (window as any).API_BASE_URL || 'http://localhost:8082';
+      const currentUser = (window as any).vscodeUser || JSON.parse(localStorage.getItem('user') || '{}');
+      const userId = currentUser?.email || 'anonymous';
+      const username = currentUser?.username || 'Anonymous';
+
+      const response = await authFetch(
+        `${apiBase}/api/ontology/${projectId}/changes/${encodeURIComponent(changeId)}/subchanges/${encodeURIComponent(subChange.id)}/rollback`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId, username })
+        }
+      );
+
+      const data = await response.json();
+
+      if (data.success) {
+        showNotification(
+          data.alreadyReverted ? 'Already reverted' : (data.message || 'Sub-change rolled back successfully!'),
+          data.alreadyReverted ? 'info' : 'success'
+        );
+
+        window.dispatchEvent(new CustomEvent('ontologyRollback', {
+          detail: {
+            projectId,
+            changeId,
+            subChangeId: subChange.id,
+            entityIRI: data.entityIRI,
+            action: subChange.addition ? 'added' : 'deleted',
+            username,
+            oldValue: subChange.newValue,
+            newValue: subChange.oldValue,
+            success: true
+          }
+        }));
+
+        setTimeout(() => {
+          loadChanges();
+          loadDraftChanges();
+        }, 1200);
+      } else {
+        setRollbackError(data.error || 'Failed to rollback sub-change');
+        showNotification('Failed to rollback: ' + (data.error || 'Unknown error'), 'error');
+      }
+    } catch (error) {
+      console.error('Failed to rollback sub-change:', error);
+      setRollbackError('Network error occurred');
+      showNotification('Failed to rollback: Network error', 'error');
+    } finally {
+      setSubChangeRollbackLoading(null);
     }
   };
 
@@ -1229,10 +1322,10 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                     </button>
                     <button
                       onClick={() => rollbackChange(change.id, change)}
-                      disabled={rollbackLoading === change.id || !change.entityUri}
-                      title={!change.entityUri ? 'Cannot rollback: Entity IRI is missing' : 'Rollback this change'}
+                      disabled={rollbackLoading === change.id || !change.entityUri || change.reverted || isRollbackRecord(change)}
+                      title={isRollbackRecord(change) ? 'Rollback records can\'t be rolled back' : (change.reverted ? 'Already reverted' : (!change.entityUri ? 'Cannot rollback: Entity IRI is missing' : 'Rollback this change'))}
                       className={`flex items-center gap-1 px-3 py-1 text-sm border border-orange-600 text-orange-600 rounded hover:bg-orange-50 ${
-                        (rollbackLoading === change.id || !change.entityUri) ? 'opacity-50 cursor-not-allowed' : ''
+                        (rollbackLoading === change.id || !change.entityUri || change.reverted || isRollbackRecord(change)) ? 'opacity-50 cursor-not-allowed' : ''
                       }`}
                     >
                       {rollbackLoading === change.id ? (
@@ -1257,7 +1350,69 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                       <Eye className="w-3 h-3" />
                       Details
                     </button>
+                    {change.subChanges && change.subChanges.length > 0 && (
+                      <button
+                        onClick={() => toggleExpanded(change.id)}
+                        className="flex items-center gap-1 px-3 py-1 text-sm border rounded hover:bg-gray-50 ml-auto"
+                      >
+                        {expandedChanges.has(change.id) ? 'Hide' : 'Show'} {change.subChanges.length} sub-change{change.subChanges.length > 1 ? 's' : ''}
+                      </button>
+                    )}
                   </div>
+
+                  {change.reverted && (
+                    <div className="mt-2 text-xs text-gray-500">
+                      Reverted{change.revertedBy ? ` by ${change.revertedBy}` : ''}{change.revertedAt ? ` · ${new Date(change.revertedAt).toLocaleString()}` : ''}
+                    </div>
+                  )}
+
+                  {/* Sub-changes: each independently rollback-able */}
+                  {change.subChanges && change.subChanges.length > 0 && expandedChanges.has(change.id) && (
+                    <div className="mt-3 ml-6 space-y-2 border-l-2 border-gray-200 pl-3">
+                      {change.subChanges.map(sc => {
+                        const loadingKey = `${change.id}:${sc.id}`;
+                        const label = sc.predicate || sc.annotationProperty || 'sub-change';
+                        return (
+                          <div key={sc.id} className="border rounded p-2 bg-gray-50">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm">
+                                <span className="font-medium">{label}</span>
+                                <span className={`ml-2 text-xs ${sc.addition ? 'text-green-600' : 'text-red-600'}`}>
+                                  {sc.addition ? 'added' : 'removed'}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => executeSubChangeRollback(change.id, sc)}
+                                disabled={subChangeRollbackLoading === loadingKey || sc.reverted || change.reverted}
+                                title={(sc.reverted || change.reverted) ? 'Already reverted' : 'Rollback this sub-change'}
+                                className={`flex items-center gap-1 px-2 py-1 text-xs border border-orange-600 text-orange-600 rounded hover:bg-orange-50 ${
+                                  (subChangeRollbackLoading === loadingKey || sc.reverted || change.reverted) ? 'opacity-50 cursor-not-allowed' : ''
+                                }`}
+                              >
+                                {subChangeRollbackLoading === loadingKey ? (
+                                  <RefreshCw className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Undo2 className="w-3 h-3" />
+                                )}
+                                Rollback
+                              </button>
+                            </div>
+                            {(sc.oldValue || sc.newValue) && (
+                              <div className="text-xs font-mono mt-1 text-gray-600">
+                                {sc.oldValue && <span className="line-through mr-2">{sc.oldValue}</span>}
+                                {sc.newValue && <span>{sc.newValue}</span>}
+                              </div>
+                            )}
+                            {sc.reverted && (
+                              <div className="mt-1 text-xs text-gray-500">
+                                Reverted{sc.revertedBy ? ` by ${sc.revertedBy}` : ''}{sc.revertedAt ? ` · ${new Date(sc.revertedAt).toLocaleString()}` : ''}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))
             )}

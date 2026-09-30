@@ -5,7 +5,9 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -65,10 +67,106 @@ public class HistoryChange {
     
     // Metadata from GraphDB
     private Map<String, String> metadata = new HashMap<>();
-    
+
+    private List<SubChange> subChanges = new ArrayList<>();
+
+    private boolean draft = false;
+
+    // Rollback tracking (whole-entry rollback)
+    private boolean reverted = false;
+    private String revertedAuditId;
+
     // Sync tracking
     private LocalDateTime syncedAt;
-    
+
+    public static class SubChange {
+        private String id;
+        private String predicate;
+        private String oldValue;
+        private String newValue;
+        private String annotationProperty;
+        private boolean addition;
+
+        // Rollback tracking (granular rollback of this sub-change alone)
+        private boolean reverted;
+        private String revertedAuditId;
+
+        public SubChange() {
+        }
+
+        public SubChange(String predicate, String oldValue, String newValue, String annotationProperty, boolean addition) {
+            this.predicate = predicate;
+            this.oldValue = oldValue;
+            this.newValue = newValue;
+            this.annotationProperty = annotationProperty;
+            this.addition = addition;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+
+        public boolean isReverted() {
+            return reverted;
+        }
+
+        public void setReverted(boolean reverted) {
+            this.reverted = reverted;
+        }
+
+        public String getRevertedAuditId() {
+            return revertedAuditId;
+        }
+
+        public void setRevertedAuditId(String revertedAuditId) {
+            this.revertedAuditId = revertedAuditId;
+        }
+
+        public String getPredicate() {
+            return predicate;
+        }
+
+        public void setPredicate(String predicate) {
+            this.predicate = predicate;
+        }
+
+        public String getOldValue() {
+            return oldValue;
+        }
+
+        public void setOldValue(String oldValue) {
+            this.oldValue = oldValue;
+        }
+
+        public String getNewValue() {
+            return newValue;
+        }
+
+        public void setNewValue(String newValue) {
+            this.newValue = newValue;
+        }
+
+        public String getAnnotationProperty() {
+            return annotationProperty;
+        }
+
+        public void setAnnotationProperty(String annotationProperty) {
+            this.annotationProperty = annotationProperty;
+        }
+
+        public boolean isAddition() {
+            return addition;
+        }
+
+        public void setAddition(boolean addition) {
+            this.addition = addition;
+        }
+    }
+
     public static class CommentEntry {
         private String userId;
         private String username;
@@ -189,6 +287,18 @@ public class HistoryChange {
 
         public Builder metadata(String key, String value) {
             change.metadata.put(key, value);
+            return this;
+        }
+
+        public Builder subChanges(List<SubChange> subChanges) {
+            if (subChanges != null) {
+                change.subChanges = subChanges;
+            }
+            return this;
+        }
+
+        public Builder draft(boolean draft) {
+            change.draft = draft;
             return this;
         }
 
@@ -396,6 +506,38 @@ public class HistoryChange {
 
     public void setMetadata(Map<String, String> metadata) {
         this.metadata = metadata;
+    }
+
+    public List<SubChange> getSubChanges() {
+        return subChanges;
+    }
+
+    public void setSubChanges(List<SubChange> subChanges) {
+        this.subChanges = subChanges != null ? subChanges : new ArrayList<>();
+    }
+
+    public boolean isDraft() {
+        return draft;
+    }
+
+    public void setDraft(boolean draft) {
+        this.draft = draft;
+    }
+
+    public boolean isReverted() {
+        return reverted;
+    }
+
+    public void setReverted(boolean reverted) {
+        this.reverted = reverted;
+    }
+
+    public String getRevertedAuditId() {
+        return revertedAuditId;
+    }
+
+    public void setRevertedAuditId(String revertedAuditId) {
+        this.revertedAuditId = revertedAuditId;
     }
 
     public LocalDateTime getSyncedAt() {

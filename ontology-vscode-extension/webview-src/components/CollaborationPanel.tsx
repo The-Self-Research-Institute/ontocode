@@ -46,6 +46,7 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
   const [modificationNote, setModificationNote] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [subChangeLoading, setSubChangeLoading] = useState<string | null>(null);
 
   useEffect(() => {
     const savedPosition = localStorage.getItem('collaborationPanelPosition');
@@ -212,6 +213,9 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
     }
   };
 
+ const isRollbackRecord = (change: OntologyChange): boolean =>
+    !!change.operationType && change.operationType.startsWith('ROLLBACK_');
+
   const handleRollback = (change: OntologyChange) => {
     if (!change.entityIRI) {
       setActionMessage({ type: 'error', text: 'Cannot rollback without entity IRI' });
@@ -249,6 +253,39 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
       }
       return result;
     });
+  };
+
+  const handleSubChangeRollback = async (change: OntologyChange, subChangeId: string) => {
+    if (!projectId) return;
+    if (!confirm('Rollback this sub-change alone? The rest of the entry is left untouched.')) return;
+    setSubChangeLoading(subChangeId);
+    setActionMessage(null);
+    try {
+      const result = await changeTrackingService.rollbackSubChange(projectId, change.id, subChangeId);
+      if (result.success) {
+        setActionMessage({
+          type: 'success',
+          text: result.alreadyReverted ? 'Already reverted' : (result.message || 'Sub-change rolled back'),
+        });
+        window.dispatchEvent(
+          new CustomEvent('ontologyRollback', {
+            detail: {
+              projectId,
+              changeId: change.id,
+              subChangeId,
+              entityIRI: result.entityIRI || change.entityIRI,
+              entityLabel: change.entityLabel,
+              success: true,
+            },
+          }),
+        );
+        await fetchRecentChanges();
+      } else {
+        setActionMessage({ type: 'error', text: result.error || 'Rollback failed' });
+      }
+    } finally {
+      setSubChangeLoading(null);
+    }
   };
 
   const handleRequestModification = async (change: OntologyChange) => {
@@ -518,13 +555,51 @@ const CollaborationPanel = forwardRef<CollaborationPanelRef, CollaborationPanelP
                     )}
                     <button
                       onClick={() => handleRollback(selectedChange)}
-                      disabled={!!actionLoading || !selectedChange.entityIRI}
+                      disabled={!!actionLoading || !selectedChange.entityIRI || selectedChange.reverted || isRollbackRecord(selectedChange)}
+                      title={isRollbackRecord(selectedChange) ? "Rollback records can't be rolled back" : (selectedChange.reverted ? 'Already reverted' : undefined)}
                       className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium border border-orange-500 text-orange-600 rounded hover:bg-orange-50 disabled:opacity-50"
                     >
                       {actionLoading === 'rollback' ? <Loader2 size={10} className="animate-spin" /> : <Undo2 size={10} />}
                       Rollback
                     </button>
                   </div>
+
+                  {selectedChange.reverted && (
+                    <div className="text-[10px] text-gray-500">
+                      Reverted{selectedChange.revertedBy ? ` by ${selectedChange.revertedBy}` : ''}
+                      {selectedChange.revertedAt ? ` · ${formatTime(selectedChange.revertedAt)}` : ''}
+                    </div>
+                  )}
+
+                  {selectedChange.subChanges && selectedChange.subChanges.length > 0 && (
+                    <div className="space-y-1 border-t border-gray-200 pt-2">
+                      <label className="text-[10px] font-medium text-gray-600">
+                        Sub-changes ({selectedChange.subChanges.length})
+                      </label>
+                      {selectedChange.subChanges.map((sc) => (
+                        <div key={sc.id} className="flex items-center justify-between gap-2 bg-white rounded border p-1.5">
+                          <div className="min-w-0 text-[10px] text-gray-700 truncate">
+                            {sc.predicate || sc.annotationProperty || 'sub-change'}
+                            <span className={sc.addition ? 'text-green-600' : 'text-red-600'}> · {sc.addition ? 'added' : 'removed'}</span>
+                            {sc.reverted && (
+                              <span className="text-gray-400">
+                                {' '}· reverted{sc.revertedBy ? ` by ${sc.revertedBy}` : ''}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => handleSubChangeRollback(selectedChange, sc.id)}
+                            disabled={subChangeLoading === sc.id || sc.reverted || selectedChange.reverted}
+                            title={(sc.reverted || selectedChange.reverted) ? 'Already reverted' : 'Rollback this sub-change'}
+                            className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium border border-orange-500 text-orange-600 rounded hover:bg-orange-50 disabled:opacity-50 flex-shrink-0"
+                          >
+                            {subChangeLoading === sc.id ? <Loader2 size={9} className="animate-spin" /> : <Undo2 size={9} />}
+                            Rollback
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="space-y-1">
                     <label className="text-[10px] font-medium text-gray-600 flex items-center gap-1">

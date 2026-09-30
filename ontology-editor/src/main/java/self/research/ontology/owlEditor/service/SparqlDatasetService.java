@@ -24,6 +24,7 @@ import org.eclipse.rdf4j.rio.helpers.BasicParserSettings;
 import org.eclipse.rdf4j.rio.helpers.StatementCollector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
@@ -59,6 +60,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.LinkedHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -113,6 +115,9 @@ public class SparqlDatasetService {
     @Autowired(required = false)
     private TopLevelClassCacheService topLevelCacheService;
 
+    @Autowired(required = false)
+    private ProjectMetadataService projectMetadataService;
+
     // Hierarchy snapshot + per-class detail caches (MongoDB) — like the top-level
     // cache, they mirror the public graph and must drop on every public write.
     // @Lazy breaks the startup cycle: hierarchyIndexService → hierarchySnapshotBuildService
@@ -130,8 +135,8 @@ public class SparqlDatasetService {
     // OWLAPI in-memory model (fast-open). Evicted here so EVERY write path —
     // including services that call execUpdate directly without going through
     // OntologyMutationService.apply() — invalidates the parsed model.
-    @Autowired(required = false)
-    private OwlApiMutationCoordinator mutationCoordinator;
+ @Autowired
+    private ObjectProvider<OwlApiMutationCoordinator> mutationCoordinatorProvider;
 
     @Autowired(required = false)
     private self.research.ontology.owlEditor.repository.ProjectRepository projectRepository;
@@ -303,6 +308,100 @@ public class SparqlDatasetService {
                 throw new RuntimeException("Fuseki connection failed: " + e.getMessage(), e);
             }
         }
+    }
+
+   
+    private static final java.util.regex.Pattern XMLNS_DECLARATION_PATTERN =
+            java.util.regex.Pattern.compile("xmlns:?([a-zA-Z0-9_-]*)\\s*=\\s*\"([^\"]*)\"");
+
+    /**
+     * RDF4J's RDFXMLParser only fires handleNamespace() for a prefix once it's actually
+     * used to qualify an element/attribute that produces a triple — a prefix declared on
+     * the root <rdf:RDF> element but never referenced in the body (common for large
+     * ontologies that declare prefixes for related/imported vocabularies "just in case")
+     * is silently dropped from capturedNamespaces. Scanning the raw root element's own
+     * xmlns declarations directly recovers those too, so nothing declared in the source
+     * file is lost just because the ontology doesn't happen to use it (yet).
+     */
+    private void mergeDeclaredXmlnsPrefixes(Map<String, String> capturedNamespaces, byte[] headBytes, int length) {
+        if (headBytes == null || length <= 0) {
+            return;
+        }
+        try {
+            String head = new String(headBytes, 0, length, StandardCharsets.UTF_8);
+            int rootTagEnd = head.indexOf('>');
+            String rootTag = rootTagEnd >= 0 ? head.substring(0, rootTagEnd) : head;
+            java.util.regex.Matcher m = XMLNS_DECLARATION_PATTERN.matcher(rootTag);
+            int before = capturedNamespaces.size();
+            while (m.find()) {
+                String prefix = m.group(1) == null ? "" : m.group(1);
+                String uri = m.group(2);
+                if (uri != null && !uri.isBlank()) {
+                    capturedNamespaces.putIfAbsent(prefix, uri);
+                }
+            }
+            if (capturedNamespaces.size() > before) {
+                log.info("[NAMESPACES] Recovered {} declared-but-unused xmlns prefixes from the root element",
+                        capturedNamespaces.size() - before);
+            }
+        } catch (Exception e) {
+            log.debug("[NAMESPACES] Could not scan raw xmlns declarations: {}", e.getMessage());
+        }
+    }
+
+    private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces) {
+        if (capturedNamespaces.isEmpty()) {
+            log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
+            return;
+        }
+        if (projectMetadataService != null) {
+            try {
+                Map<String, Object> meta = new HashMap<>(
+                        projectMetadataService.readMeta(projectId).orElseGet(HashMap::new));
+                meta.put("prefixes", capturedNamespaces);
+                projectMetadataService.writeMeta(projectId, meta);
+                log.info("[NAMESPACES] Persisted {} prefix mappings to MongoDB for project {}: {}",
+                        capturedNamespaces.size(), projectId, capturedNamespaces.keySet());
+            } catch (Exception metaEx) {
+                log.warn("[NAMESPACES] Failed to persist prefixes to MongoDB for project {}: {}",
+                        projectId, metaEx.getMessage());
+            }
+        } else {
+            log.warn("[NAMESPACES] projectMetadataService unavailable — prefixes not persisted for project {}", projectId);
+        }
+    }
+
+    private Map<String, String> readProjectPrefixes(String projectId) {
+        Map<String, String> prefixes = new LinkedHashMap<>();
+        if (projectMetadataService == null) {
+            return prefixes;
+        }
+        try {
+            Object raw = projectMetadataService.readMeta(projectId)
+                    .map(meta -> meta.get("prefixes"))
+                    .orElse(null);
+            if (raw instanceof Map<?, ?> map) {
+                for (Map.Entry<?, ?> e : map.entrySet()) {
+                    if (e.getKey() != null && e.getValue() != null) {
+                        prefixes.put(normalizePrefixKey(String.valueOf(e.getKey())), String.valueOf(e.getValue()));
+                    }
+                }
+            } else if (raw instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> entry && entry.get("prefix") != null && entry.get("namespace") != null) {
+                        prefixes.put(normalizePrefixKey(String.valueOf(entry.get("prefix"))),
+                                String.valueOf(entry.get("namespace")));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[NAMESPACES] Failed to read prefixes from MongoDB for project {}: {}", projectId, e.getMessage());
+        }
+        return prefixes;
+    }
+
+    private static String normalizePrefixKey(String prefix) {
+        return prefix.endsWith(":") ? prefix.substring(0, prefix.length() - 1) : prefix;
     }
 
     /**
@@ -1174,16 +1273,28 @@ public class SparqlDatasetService {
     }
 
     /**
-     * Atomically publishes a copy-on-switch draft by moving the draft graph to main.
+     * Atomically publishes a copy-on-switch draft by replacing main's content with the draft's.
+     *
+     * <p>Deliberately NOT implemented as SPARQL {@code MOVE GRAPH}: the draft graph is always
+     * created by copying main (see {@link #copyMainGraphToDraft}), which preserves the store's
+     * internal blank-node identity rather than minting fresh ones. When the destination of a
+     * {@code MOVE} shares blank-node lineage with its source this way, Jena/Fuseki's native MOVE
+     * silently drops a fraction of the blank-node-anchored triples (reproduced directly against
+     * Fuseki outside the app, independent of this codebase — e.g. an 11-triple graph moved onto
+     * such an overlapping destination came out with only 6). The CLEAR+INSERT-WHERE+CLEAR
+     * sequence below is semantically equivalent to MOVE and was verified lossless in the same
+     * overlapping-blank-node scenario at full production scale.</p>
      */
     public void moveDraftToMain(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
-        String sparql = "MOVE GRAPH <" + draftGraph + "> TO <" + mainGraph + ">";
+        String sparql = "CLEAR GRAPH <" + mainGraph + "> ;\n"
+                + "INSERT { GRAPH <" + mainGraph + "> { ?s ?p ?o } } WHERE { GRAPH <" + draftGraph + "> { ?s ?p ?o } } ;\n"
+                + "CLEAR GRAPH <" + draftGraph + ">";
         long start = System.nanoTime();
         execUpdate(projectId, mainGraph, sparql);
         evictDraftReadyCache(projectId, userId);
-        log.info("[DRAFT-MOVE] MOVE GRAPH draft→main for project {} user {} in {}ms",
+        log.info("[DRAFT-MOVE] Published draft→main for project {} user {} in {}ms",
                 projectId, userId, elapsedMillis(start));
     }
 
@@ -1227,6 +1338,11 @@ public class SparqlDatasetService {
         }
     }
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {
+        return exportDraftGraphContent(projectId, userId, rdfFormat, java.util.Map.of());
+    }
+
+    public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat,
+            java.util.Map<String, String> extraPrefixes) {
         String draftGraph = getDraftGraphUri(projectId, userId);
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
@@ -1241,10 +1357,20 @@ public class SparqlDatasetService {
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             org.eclipse.rdf4j.rio.RDFWriter writer = org.eclipse.rdf4j.rio.Rio.createWriter(rdfFormat, out);
             writer.startRDF();
+            java.util.Set<String> registeredPrefixes = new java.util.HashSet<>();
             writer.handleNamespace("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
             writer.handleNamespace("rdfs", "http://www.w3.org/2000/01/rdf-schema#");
             writer.handleNamespace("owl", "http://www.w3.org/2002/07/owl#");
             writer.handleNamespace("xsd", "http://www.w3.org/2001/XMLSchema#");
+            registeredPrefixes.add("rdf");
+            registeredPrefixes.add("rdfs");
+            registeredPrefixes.add("owl");
+            registeredPrefixes.add("xsd");
+            for (Map.Entry<String, String> entry : extraPrefixes.entrySet()) {
+                if (registeredPrefixes.add(entry.getKey())) {
+                    writer.handleNamespace(entry.getKey(), entry.getValue());
+                }
+            }
             for (org.eclipse.rdf4j.model.Statement st : statements) {
                 writer.handleStatement(st);
             }
@@ -1338,12 +1464,8 @@ public class SparqlDatasetService {
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             java.io.StringWriter writer = new java.io.StringWriter();
             IRI context = conn.getValueFactory().createIRI(graphUri);
-            conn.export(org.eclipse.rdf4j.rio.Rio.createWriter(format, writer), context);
-            String result = writer.toString();
-            if (format == org.eclipse.rdf4j.rio.RDFFormat.RDFXML) {
-                result = stripSystemNamespaces(result);
-            }
-            return result;
+            conn.export(projectScopedWriter(projectId, org.eclipse.rdf4j.rio.Rio.createWriter(format, writer)), context);
+            return writer.toString();
         } catch (Exception e) {
             log.error("Failed to export graph {} for project {}", graphUri, projectId, e);
             throw new RuntimeException("Failed to export named graph", e);
@@ -1416,6 +1538,7 @@ public class SparqlDatasetService {
                 conn.begin();
             }
 
+            boolean committed = false;
             try {
                 long updateExecStart = System.nanoTime();
                 Update update = conn.prepareUpdate(graphAwareUpdate);
@@ -1429,6 +1552,7 @@ public class SparqlDatasetService {
                     conn.commit();
                     commitMs = elapsedMillis(commitStart);
                 }
+                committed = true;
 
                 long totalMs = elapsedMillis(totalStart);
                 sparqlLog.info("[SPARQL] UPDATE project={} execTime={}ms commitTime={}ms totalTime={}ms connTime={}ms",
@@ -1449,6 +1573,7 @@ public class SparqlDatasetService {
                 invalidateDerivedCachesAfterUpdate(projectId);
 
                 List<OntologyMutationService.MutationOp> structuredOps = MutationContext.getAndClear();
+                OwlApiMutationCoordinator mutationCoordinator = mutationCoordinatorProvider.getIfAvailable();
                 if (mutationCoordinator != null) {
                     mutationCoordinator.afterMutation(projectId, structuredOps);
                 }
@@ -1460,9 +1585,19 @@ public class SparqlDatasetService {
                 }
 
             } catch (Exception e) {
-                if (autoCommit) {
-                    conn.rollback();
-                    log.error("[GRAPHDB] Transaction rolled back for project {}", projectId);
+                // Once commit() has succeeded, the write is already durable — the SPARQL update
+                // itself is not what's failing here, something in post-commit processing (cache
+                // invalidation, the OWLAPI coordinator) is. Rolling back at that point has nothing
+                // to roll back and only throws its own "no transaction active" error, which used
+                // to replace this one and hide the real cause. Only roll back pre-commit failures,
+                // and never let a failed rollback attempt mask the exception that triggered it.
+                if (autoCommit && !committed) {
+                    try {
+                        conn.rollback();
+                        log.error("[GRAPHDB] Transaction rolled back for project {}", projectId);
+                    } catch (Exception rollbackEx) {
+                        log.error("[GRAPHDB] Rollback also failed for project {}: {}", projectId, rollbackEx.getMessage());
+                    }
                 }
                 throw e;
             }
@@ -1705,6 +1840,7 @@ public class SparqlDatasetService {
                     parser.getParserConfig().addNonFatalError(BasicParserSettings.VERIFY_LANGUAGE_TAGS);
                     AtomicLong totalTriples = new AtomicLong(0);
                     List<Statement> batch = new ArrayList<>(batchSize);
+                    final Map<String, String> capturedNamespaces = new LinkedHashMap<>();
 
                     String targetGraphUri = graphUri;
                     IRI targetGraphIri = graphIri;
@@ -1741,6 +1877,9 @@ public class SparqlDatasetService {
                         public void handleNamespace(String prefix, String uri) {
                             // Optimized: Skip namespace handling - causes overhead for large imports
                             // GraphDB infers namespaces from data anyway
+                            if (prefix != null && uri != null && !uri.isBlank()) {
+                                capturedNamespaces.putIfAbsent(prefix, uri);
+                            }
                         }
 
                         @Override
@@ -1809,16 +1948,21 @@ public class SparqlDatasetService {
 
                     log.info("Parsing RDF file...");
 
-                    // Preview first 500 bytes for debugging
-                    cleanedStream.mark(1024);
-                    byte[] preview = cleanedStream.readNBytes(500);
+                    // Preview head of the stream for debugging, and to recover any xmlns
+                    // declarations the parser itself won't report (see mergeDeclaredXmlnsPrefixes).
+                    final int headPreviewSize = 32768;
+                    cleanedStream.mark(headPreviewSize);
+                    byte[] preview = cleanedStream.readNBytes(headPreviewSize);
                     cleanedStream.reset();
-                    String previewStr = new String(preview, java.nio.charset.StandardCharsets.UTF_8);
+                    String previewStr = new String(preview, 0, Math.min(preview.length, 500),
+                            java.nio.charset.StandardCharsets.UTF_8);
                     log.info("Stream content preview (first 500 chars): {}", previewStr);
+                    mergeDeclaredXmlnsPrefixes(capturedNamespaces, preview, preview.length);
 
                     long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
                     log.info("[TIMING] RDF parsing completed in {} ms ({} triples parsed)", elapsedMillis(parseStart), totalTriples.get());
+                    persistCapturedNamespaces(projectId, capturedNamespaces);
 
                     // Upload remaining triples
                     if (partitionByNamespace) {
@@ -2060,6 +2204,31 @@ public class SparqlDatasetService {
             }
 
             invalidateContextCaches(projectId);
+
+            try (InputStream nsStream = Files.newInputStream(sourceFile)) {
+                RDFParser nsParser = Rio.createParser(rdfFormat);
+                nsParser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
+                final Map<String, String> capturedNamespaces = new LinkedHashMap<>();
+                nsParser.setRDFHandler(new AbstractRDFHandler() {
+                    @Override
+                    public void handleNamespace(String prefix, String uri) {
+                       if (prefix != null && uri != null && !uri.isBlank()) {
+                            capturedNamespaces.putIfAbsent(prefix, uri);
+                        }
+                    }
+                });
+                nsParser.parse(nsStream, "");
+                try (InputStream headStream = Files.newInputStream(sourceFile)) {
+                    byte[] head = headStream.readNBytes(32768);
+                    mergeDeclaredXmlnsPrefixes(capturedNamespaces, head, head.length);
+                } catch (Exception headEx) {
+                    log.debug("[NAMESPACES] Could not read file head for xmlns scan: {}", headEx.getMessage());
+                }
+                persistCapturedNamespaces(projectId, capturedNamespaces);
+            } catch (Exception nsEx) {
+                log.warn("[NAMESPACES] Failed to extract/register namespaces after DirectUpload for project {}: {}",
+                        projectId, nsEx.getMessage());
+            }
 
             log.info("═══════════════════════════════════════════════════════════");
             log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
@@ -2360,7 +2529,7 @@ public class SparqlDatasetService {
                         parser.setRDFHandler(new org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler() {
                             @Override
                             public void handleNamespace(String prefix, String uri) {
-                                conn.setNamespace(prefix, uri);
+                               
                             }
 
                             @Override
@@ -2538,105 +2707,14 @@ public class SparqlDatasetService {
     }
 
     /**
-     * Get prefix mappings from the dataset.
-     * Returns all namespaces registered in the GraphDB repository.
+     * Get this project's prefix mappings from MongoDB.
      */
     public Map<String, String> getPrefixes(String projectId) {
-        return doGetPrefixes(projectId);
-    }
-
-    /**
-     * Internal: returns prefixes registered in the GraphDB repository.
-     * Uses the fast conn.getNamespaces() API instead of scanning all triples.
-     */
-    private Map<String, String> doGetPrefixes(String projectId) {
         Map<String, String> prefixes = new HashMap<>();
-
-        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
-
-            long prefixStart = System.nanoTime();
-            for (org.eclipse.rdf4j.model.Namespace ns : conn.getNamespaces()) {
-                String prefix = ns.getPrefix();
-                if (!prefix.endsWith(":") && !prefix.isEmpty()) {
-                    prefix += ":";
-                } else if (prefix.isEmpty()) {
-                    prefix = ":";
-                }
-                prefixes.put(prefix, ns.getName());
-            }
-
-            log.info("[TIMING] doGetPrefixes for project {}: {} ms ({} prefixes)",
-                    projectId, elapsedMillis(prefixStart), prefixes.size());
-
-        } catch (Exception e) {
-            log.error("Failed to get prefixes for project: {}", projectId, e);
+        for (Map.Entry<String, String> e : readProjectPrefixes(projectId).entrySet()) {
+            prefixes.put(e.getKey() + ":", e.getValue());
         }
-
         return prefixes;
-    }
-
-    /**
-     * Set prefix mappings in the dataset
-     */
-    public void setPrefixes(String projectId, Map<String, String> prefixes) {
-        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
-
-            // Add prefix mappings to repository
-            for (Map.Entry<String, String> entry : prefixes.entrySet()) {
-                String prefix = entry.getKey();
-                // Normalize: strip trailing colon for RDF4J
-                if (prefix.endsWith(":")) {
-                    prefix = prefix.substring(0, prefix.length() - 1);
-                } else if (prefix.equals(":")) {
-                    prefix = ""; // Default prefix
-                }
-                conn.setNamespace(prefix, entry.getValue());
-            }
-
-            log.debug("Set {} prefixes for project: {}", prefixes.size(), projectId);
-
-        } catch (Exception e) {
-            log.error("Failed to set prefixes for project: {}", projectId, e);
-            throw new RuntimeException("Failed to set prefixes", e);
-        }
-    }
-
-    /**
-     * Update a single prefix mapping
-     */
-    public void updatePrefix(String projectId, String prefix, String iri) {
-        try (RepositoryConnection conn = getRepository().getConnection()) {
-            String normalizedPrefix = prefix;
-            if (normalizedPrefix.endsWith(":")) {
-                normalizedPrefix = normalizedPrefix.substring(0, normalizedPrefix.length() - 1);
-            } else if (normalizedPrefix.equals(":")) {
-                normalizedPrefix = "";
-            }
-            conn.setNamespace(normalizedPrefix, iri);
-            log.debug("Updated prefix '{}' to '{}' for project: {}", prefix, iri, projectId);
-        } catch (Exception e) {
-            log.error("Failed to update prefix '{}' for project: {}", prefix, projectId, e);
-            throw new RuntimeException("Failed to update prefix", e);
-        }
-    }
-
-    /**
-     * Remove a prefix mapping from the dataset
-     */
-    public void removePrefix(String projectId, String prefix) {
-        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
-            String normalizedPrefix = prefix;
-            if (normalizedPrefix.endsWith(":")) {
-                normalizedPrefix = normalizedPrefix.substring(0, normalizedPrefix.length() - 1);
-            } else if (normalizedPrefix.equals(":")) {
-                normalizedPrefix = "";
-            }
-            conn.removeNamespace(normalizedPrefix);
-            log.debug("Removed prefix '{}' for project: {}", prefix, projectId);
-        } catch (Exception e) {
-            log.error("Failed to remove prefix '{}' for project: {}", prefix, projectId, e);
-            throw new RuntimeException("Failed to remove prefix", e);
-        }
     }
 
     /**
@@ -2692,13 +2770,9 @@ public class SparqlDatasetService {
                 contexts.add(conn.getValueFactory().createIRI(g));
             }
 
-            conn.export(Rio.createWriter(format, writer), contexts.toArray(new IRI[0]));
+            conn.export(projectScopedWriter(projectId, Rio.createWriter(format, writer)), contexts.toArray(new IRI[0]));
 
             String result = writer.toString();
-            // Post-process: strip GraphDB system xmlns declarations from RDF/XML output
-            if (format == org.eclipse.rdf4j.rio.RDFFormat.RDFXML) {
-                result = stripSystemNamespaces(result);
-            }
             log.info("[TIMING] exportDataset for project {}: {} ms ({} chars, format: {})",
                      projectId, elapsedMillis(exportStart), result.length(), format);
             return result;
@@ -2739,7 +2813,7 @@ public class SparqlDatasetService {
                 }
             }
             conn.export(
-                Rio.createWriter(format, new OutputStreamWriter(out, StandardCharsets.UTF_8)),
+                projectScopedWriter(projectId, Rio.createWriter(format, new OutputStreamWriter(out, StandardCharsets.UTF_8))),
                 contexts.toArray(new IRI[0])
             );
             log.info("[TIMING] exportDatasetToStream for project {}: {} ms (format: {}, draftSession: {})",
@@ -2751,29 +2825,30 @@ public class SparqlDatasetService {
     }
 
     /**
-     * Strip GraphDB internal system namespace declarations from RDF/XML export output.
-     * GraphDB registers many internal namespaces in its repository config that pollute exports —
-     * but some of the "system" prefixes (e.g. skos, wgs, gn) are also real, commonly-used ontology
-     * vocabularies. Blindly deleting the xmlns declaration while leaving `prefix:something`
-     * elements/attributes in the body (because the ontology's own data genuinely uses that
-     * vocabulary) produces XML with an undefined namespace prefix, which any namespace-aware
-     * parser (OWLAPI, OntoCode, xmllint) rejects as malformed. Only strip a declaration when the
-     * prefix is truly unused elsewhere in the document.
+     * Wraps an export writer so it declares only this project's own prefixes (from MongoDB).
+     * conn.export() otherwise emits every namespace in the repository-wide namespace table,
+     * which holds the prefixes of every project sharing the store. Filtering at the writer
+     * works for every format (RDF/XML, Turtle, JSON-LD, ...) and for the streaming path.
+     * Projects with no stored prefixes fall back to the repository namespaces, minus GraphDB
+     * system prefixes and the default prefix (which would come from whichever project set it last).
      */
-    private String stripSystemNamespaces(String rdfXml) {
-        // Remove xmlns:PREFIX="..." declarations for known system namespaces, but only when
-        // that prefix isn't actually referenced as a QName anywhere else in the document.
-        for (String prefix : GRAPHDB_SYSTEM_NAMESPACE_PREFIXES) {
-            java.util.regex.Pattern usagePattern = java.util.regex.Pattern.compile(
-                "[<\\s\"']" + java.util.regex.Pattern.quote(prefix) + ":[A-Za-z_]");
-            if (usagePattern.matcher(rdfXml).find()) {
-                // Genuinely used as an element/attribute prefix — keep its declaration.
-                continue;
+    private RDFHandler projectScopedWriter(String projectId, RDFWriter writer) {
+        Map<String, String> ownPrefixes = readProjectPrefixes(projectId);
+        return new org.eclipse.rdf4j.rio.helpers.RDFHandlerWrapper(writer) {
+            @Override
+            public void startRDF() {
+                super.startRDF();
+                ownPrefixes.forEach(super::handleNamespace);
             }
-            rdfXml = rdfXml.replaceAll(
-                "\\s+xmlns:" + java.util.regex.Pattern.quote(prefix) + "=\"[^\"]*\"", "");
-        }
-        return rdfXml;
+
+            @Override
+            public void handleNamespace(String prefix, String uri) {
+                if (ownPrefixes.isEmpty() && prefix != null && !prefix.isEmpty()
+                        && !GRAPHDB_SYSTEM_NAMESPACE_PREFIXES.contains(prefix)) {
+                    super.handleNamespace(prefix, uri);
+                }
+            }
+        };
     }
 
     public RepositoryConnection getConnection() {
