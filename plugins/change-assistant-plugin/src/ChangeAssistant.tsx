@@ -263,6 +263,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
     }
   };
 
+ const isRollbackRecord = (change: OntologyChange): boolean =>
+    !!change.operationType && change.operationType.startsWith('ROLLBACK_');
+
   const mapOperationToType = (operationType: string): ChangeType => {
     if (!operationType) return 'axiom';
     const lower = operationType.toLowerCase();
@@ -1319,10 +1322,10 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
                     </button>
                     <button
                       onClick={() => rollbackChange(change.id, change)}
-                      disabled={rollbackLoading === change.id || !change.entityUri || change.reverted}
-                      title={change.reverted ? 'Already reverted' : (!change.entityUri ? 'Cannot rollback: Entity IRI is missing' : 'Rollback this change')}
+                      disabled={rollbackLoading === change.id || !change.entityUri || change.reverted || isRollbackRecord(change)}
+                      title={isRollbackRecord(change) ? 'Rollback records can\'t be rolled back' : (change.reverted ? 'Already reverted' : (!change.entityUri ? 'Cannot rollback: Entity IRI is missing' : 'Rollback this change'))}
                       className={`flex items-center gap-1 px-3 py-1 text-sm border border-orange-600 text-orange-600 rounded hover:bg-orange-50 ${
-                        (rollbackLoading === change.id || !change.entityUri || change.reverted) ? 'opacity-50 cursor-not-allowed' : ''
+                        (rollbackLoading === change.id || !change.entityUri || change.reverted || isRollbackRecord(change)) ? 'opacity-50 cursor-not-allowed' : ''
                       }`}
                     >
                       {rollbackLoading === change.id ? (
