@@ -10130,7 +10130,11 @@ const updateItemInState = useCallback(
                   ? remaining
                   : selectedItem.id.split(/[#/]/).pop() ?? selectedItem.id;
             }
-            const updatedItem = { ...selectedItem, label: updatedLabel, annotations: remainingAnnotations };
+            const updatedItem: SelectableItem = {
+              ...selectedItem,
+              label: updatedLabel,
+              annotations: remainingAnnotations as Record<string, string>,
+            };
             updateItemInState(updatedItem);
             // Sync annotation-mode display cache for the renamed node
             if (key === hierarchyAnnotationPropIri) {
