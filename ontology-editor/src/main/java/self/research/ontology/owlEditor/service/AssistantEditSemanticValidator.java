@@ -112,8 +112,10 @@ public class AssistantEditSemanticValidator {
         int notChecked = candidates.size() - checked.size();
         List<String> missing = new ArrayList<>();
         List<String> invalid = new ArrayList<>();
+        List<String> external = new ArrayList<>();
         if (!checked.isEmpty()) {
-            CheckResult lookupFailure = findMissingReferences(projectId, checked, missing, invalid);
+            CheckResult lookupFailure = findMissingReferences(projectId, checked, after.subjects, missing, invalid,
+                    external);
             if (lookupFailure != null) {
                 return lookupFailure;
             }
@@ -130,12 +132,24 @@ public class AssistantEditSemanticValidator {
             return new CheckResult(REFERENCES_RESOLVE, true,
                     "This group introduces no identifiers that need to exist already.");
         }
-        return new CheckResult(REFERENCES_RESOLVE, true, "All " + checked.size() + " new identifier"
-                + (checked.size() == 1 ? "" : "s") + " referenced by this group already exist in the graph." + overflow);
+        return new CheckResult(REFERENCES_RESOLVE, true, passedDetail(checked.size() - external.size(), external)
+                + overflow);
     }
 
-    private CheckResult findMissingReferences(String projectId, List<String> checked, List<String> missing,
-                                              List<String> invalid) {
+    private static String passedDetail(int found, List<String> external) {
+        String existing = found == 0 ? "" : "All " + found + " new identifier" + (found == 1 ? "" : "s")
+                + " referenced by this group already exist in the graph.";
+        if (external.isEmpty()) {
+            return existing;
+        }
+        String shown = angle(external.subList(0, Math.min(external.size(), 5)))
+                + (external.size() > 5 ? " and " + (external.size() - 5) + " more" : "");
+        return (existing.isEmpty() ? "" : existing + " ") + "Accepted as external references, because this ontology "
+                + "doesn't define anything in their namespaces: " + shown + ".";
+    }
+
+    private CheckResult findMissingReferences(String projectId, List<String> checked, Set<String> groupSubjects,
+                                              List<String> missing, List<String> invalid, List<String> external) {
         List<String> lookup = new ArrayList<>();
         for (String iri : checked) {
             if (AssistantGraphIdentifierLookup.isSafeIri(iri)) {
@@ -151,6 +165,7 @@ public class AssistantEditSemanticValidator {
                     missing.add(iri);
                 }
             }
+            external.addAll(graphLookup.removeExternal(projectId, groupSubjects, missing));
         } catch (Exception e) {
             return new CheckResult(REFERENCES_RESOLVE, false,
                     "Could not look up this group's new identifiers in the graph (" + e.getMessage() + ").");

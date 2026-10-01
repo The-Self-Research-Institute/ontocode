@@ -2,8 +2,10 @@ package self.research.ontology.owlEditor.service;
 
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +28,8 @@ public class AssistantGraphIdentifierLookup {
 
     public static final List<String> DECLARATION_KINDS = List.of(
             OWL_CLASS, OWL_OBJECT_PROPERTY, OWL_DATATYPE_PROPERTY, OWL_ANNOTATION_PROPERTY, OWL_NAMED_INDIVIDUAL);
+    private static final List<String> DEFINING_KINDS = List.of(
+            OWL_CLASS, OWL_OBJECT_PROPERTY, OWL_DATATYPE_PROPERTY, OWL_NAMED_INDIVIDUAL);
 
     private static final Pattern SAFE_IRI = Pattern.compile("[^\\s<>\"{}|^`\\\\\\p{Cntrl}]+");
     private static final int TIMEOUT_SECONDS = 10;
@@ -47,6 +51,55 @@ public class AssistantGraphIdentifierLookup {
 
     public static boolean isSafeIri(String iri) {
         return iri != null && !iri.isEmpty() && iri.length() <= 4096 && SAFE_IRI.matcher(iri).matches();
+    }
+
+    public static String namespaceOf(String iri) {
+        int cut = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
+        if (cut < 0) {
+            cut = iri.lastIndexOf(':');
+        }
+        return iri.substring(0, cut + 1);
+    }
+
+    public List<String> removeExternal(String projectId, Set<String> groupSubjects, List<String> missing) {
+        if (missing.isEmpty()) {
+            return List.of();
+        }
+        Set<String> namespaces = new LinkedHashSet<>();
+        missing.forEach(iri -> namespaces.add(namespaceOf(iri)));
+        Set<String> owned = new HashSet<>(definingNamespaces(projectId, namespaces));
+        groupSubjects.forEach(subject -> owned.add(namespaceOf(subject)));
+        List<String> external = new ArrayList<>();
+        missing.removeIf(iri -> !owned.contains(namespaceOf(iri)) && external.add(iri));
+        return external;
+    }
+
+    public Set<String> definingNamespaces(String projectId, Collection<String> namespaces) {
+        Set<String> candidates = new LinkedHashSet<>();
+        for (String namespace : namespaces) {
+            if (isSafeIri(namespace)) {
+                candidates.add(namespace);
+            }
+        }
+        if (candidates.isEmpty()) {
+            return Set.of();
+        }
+        StringBuilder values = new StringBuilder();
+        candidates.forEach(namespace -> values.append('"').append(namespace).append("\" "));
+        StringBuilder kinds = new StringBuilder();
+        DEFINING_KINDS.forEach(kind -> kinds.append('<').append(kind).append("> "));
+        String query = "SELECT DISTINCT ?ns WHERE { VALUES ?ns { " + values + "} VALUES ?k { " + kinds + "} ?s <"
+                + RDF_NS + "type> ?k . FILTER (isIRI(?s) && STRSTARTS(STR(?s), ?ns)) }";
+        SparqlDatasetService.CappedSparqlResult result =
+                datasetService.execSelectCapped(projectId, query, TIMEOUT_SECONDS, candidates.size() + 1, MAX_BYTES);
+        requireComplete(result);
+        Set<String> found = new LinkedHashSet<>();
+        for (Map<String, String> row : result.rows()) {
+            if (row.get("ns") != null) {
+                found.add(row.get("ns"));
+            }
+        }
+        return found;
     }
 
     public Set<String> existing(String projectId, Collection<String> iris) {

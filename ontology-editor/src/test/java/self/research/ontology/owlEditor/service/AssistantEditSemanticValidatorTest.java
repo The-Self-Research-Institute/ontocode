@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static self.research.ontology.owlEditor.service.AssistantGraphIdentifierLookup.OWL_ANNOTATION_PROPERTY;
 import static self.research.ontology.owlEditor.service.AssistantGraphIdentifierLookup.OWL_CLASS;
 import static self.research.ontology.owlEditor.service.AssistantGraphIdentifierLookup.OWL_DATATYPE_PROPERTY;
 import static self.research.ontology.owlEditor.service.AssistantGraphIdentifierLookup.OWL_NAMED_INDIVIDUAL;
@@ -124,6 +125,76 @@ class AssistantEditSemanticValidatorTest {
 
         assertTrue(named(checks, "references_resolve").passed(), named(checks, "references_resolve").detail());
         assertTrue(graph.lookedUp().isEmpty());
+    }
+
+    @Test
+    void otherVocabulariesAndWebLinksAreAcceptedAsExternalReferences() {
+        List<CheckResult> checks = check("turtle", edit(3, ":Pizza a owl:Class .", String.join(" ",
+                ":Pizza a owl:Class ;",
+                "<https://schema.org/description> \"A flat bread\" ;",
+                "<http://www.w3.org/ns/prov#wasDerivedFrom> <http://purl.obolibrary.org/obo/FOODON_00001234> ;",
+                "<http://purl.obolibrary.org/obo/IAO_0000115> \"definition\" ;",
+                "rdfs:seeAlso <https://en.wikipedia.org/wiki/Pizza> .")));
+
+        CheckResult references = named(checks, "references_resolve");
+        assertTrue(references.passed(), references.detail());
+        assertTrue(references.detail().contains("external references"), references.detail());
+        assertTrue(references.detail().contains("<https://en.wikipedia.org/wiki/Pizza>"), references.detail());
+    }
+
+    @Test
+    void aTypoIsStillCaughtNextToExternalReferences() {
+        List<CheckResult> checks = check("turtle", edit(3, ":Pizza a owl:Class .",
+                ":Pizza a owl:Class ; rdfs:subClassOf :Piza ; <https://schema.org/description> \"x\" ."));
+
+        CheckResult references = named(checks, "references_resolve");
+        assertFalse(references.passed());
+        assertTrue(references.detail().contains("<" + NS + "Piza>"), references.detail());
+        assertFalse(references.detail().contains("schema.org"), references.detail());
+    }
+
+    @Test
+    void aVocabularyTheOntologyOnlyUsesForAnnotationsStaysExternal() {
+        graph.declare("http://xmlns.com/foaf/0.1/name", OWL_ANNOTATION_PROPERTY);
+
+        List<CheckResult> checks = check("turtle", edit(3, ":Pizza a owl:Class .",
+                ":Pizza a owl:Class ; <http://xmlns.com/foaf/0.1/mbox> \"chef@example.org\" ."));
+
+        assertTrue(named(checks, "references_resolve").passed(), named(checks, "references_resolve").detail());
+    }
+
+    @Test
+    void aMisspeltTermInAnotherNamespaceTheOntologyDefinesThingsInIsStillATypo() {
+        List<CheckResult> checks = check("turtle", edit(3, ":Pizza a owl:Class .",
+                ":Pizza a owl:Class ; rdfs:subClassOf <http://other.org/food#Sop> ."));
+
+        CheckResult references = named(checks, "references_resolve");
+        assertFalse(references.passed());
+        assertTrue(references.detail().contains("<http://other.org/food#Sop>"), references.detail());
+    }
+
+    @Test
+    void aTypoOfSomethingDeclaredInTheSameGroupIsCaughtEvenInABrandNewNamespace() {
+        List<CheckResult> checks = check("turtle", edit(3, ":Pizza a owl:Class .", String.join("\n",
+                ":Pizza a owl:Class .",
+                "<http://new.org/drinks#Beverage> a owl:Class .",
+                "<http://new.org/drinks#Wine> a owl:Class ; rdfs:subClassOf <http://new.org/drinks#Beverag> .")));
+
+        CheckResult references = named(checks, "references_resolve");
+        assertFalse(references.passed());
+        assertTrue(references.detail().contains("<http://new.org/drinks#Beverag>"), references.detail());
+    }
+
+    @Test
+    void anUnknownTermNeedsTheGraphToBeReachableToBeClassified() {
+        graph.failure = new IllegalStateException("graph down");
+
+        List<CheckResult> checks = check("turtle", edit(3, ":Pizza a owl:Class .",
+                ":Pizza a owl:Class ; <https://schema.org/description> \"x\" ."));
+
+        CheckResult references = named(checks, "references_resolve");
+        assertFalse(references.passed());
+        assertTrue(references.detail().contains("Could not look up"), references.detail());
     }
 
     @Test
@@ -335,6 +406,20 @@ class AssistantEditSemanticValidatorTest {
         assertTrue(named(checks, "references_resolve").passed(), named(checks, "references_resolve").detail());
         assertTrue(named(checks, "no_conflicting_declaration").passed(),
                 named(checks, "no_conflicting_declaration").detail());
+    }
+
+    @Test
+    void rdfXmlLinkToAnExternalPageIsAccepted() throws Exception {
+        when(storageManager.ensureCodeViewFile("proj-1", "rdfxml")).thenReturn(write("doc.owl", RDFXML_DOC));
+
+        List<CheckResult> checks = check("rdfxml", edit(10,
+                "        <rdfs:subClassOf rdf:resource=\"#Pizza\"/>",
+                "        <rdfs:subClassOf rdf:resource=\"#Pizza\"/>\n"
+                        + "        <rdfs:seeAlso rdf:resource=\"https://en.wikipedia.org/wiki/Margherita_pizza\"/>"));
+
+        CheckResult references = named(checks, "references_resolve");
+        assertTrue(references.passed(), references.detail());
+        assertTrue(references.detail().contains("Margherita_pizza"), references.detail());
     }
 
     private List<CheckResult> check(String format, SemanticEdit... edits) {

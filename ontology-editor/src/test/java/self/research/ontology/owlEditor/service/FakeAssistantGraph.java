@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 final class FakeAssistantGraph {
 
     private static final Pattern IRI = Pattern.compile("<([^>]*)>");
+    private static final Pattern NAMESPACE = Pattern.compile("\"([^\"]*)\"");
 
     final Set<String> existing = new HashSet<>();
     final Map<String, Set<String>> kinds = new HashMap<>();
@@ -39,7 +40,7 @@ final class FakeAssistantGraph {
     List<String> lookedUp() {
         List<String> iris = new ArrayList<>();
         for (String query : queries) {
-            if (!query.contains("?t")) {
+            if (query.contains("VALUES ?x {") && !query.contains("?t")) {
                 iris.addAll(valuesOf(query));
             }
         }
@@ -52,6 +53,14 @@ final class FakeAssistantGraph {
             throw failure;
         }
         List<Map<String, String>> rows = new ArrayList<>();
+        if (query.contains("VALUES ?ns {")) {
+            for (String namespace : namespacesOf(query)) {
+                if (definesSomethingIn(namespace)) {
+                    rows.add(Map.of("ns", namespace));
+                }
+            }
+            return new SparqlDatasetService.CappedSparqlResult(List.of("ns"), rows, false, null);
+        }
         if (query.contains("?t")) {
             for (String iri : valuesOf(query)) {
                 for (String kind : kinds.getOrDefault(iri, Set.of())) {
@@ -66,6 +75,22 @@ final class FakeAssistantGraph {
             }
         }
         return new SparqlDatasetService.CappedSparqlResult(List.of("x"), rows, false, null);
+    }
+
+    private boolean definesSomethingIn(String namespace) {
+        return kinds.entrySet().stream().anyMatch(entry -> entry.getKey().startsWith(namespace)
+                && entry.getValue().stream().anyMatch(kind -> !kind.equals(AssistantGraphIdentifierLookup.OWL_ANNOTATION_PROPERTY)));
+    }
+
+    private static List<String> namespacesOf(String query) {
+        int start = query.indexOf("VALUES ?ns {");
+        int end = query.indexOf('}', start);
+        List<String> namespaces = new ArrayList<>();
+        Matcher matcher = NAMESPACE.matcher(query.substring(start, end));
+        while (matcher.find()) {
+            namespaces.add(matcher.group(1));
+        }
+        return namespaces;
     }
 
     private static List<String> valuesOf(String query) {
