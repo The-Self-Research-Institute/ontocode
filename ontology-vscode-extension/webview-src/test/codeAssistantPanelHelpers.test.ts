@@ -9,6 +9,7 @@ import {
   clearStoredChatEntries,
   compactEntryForStorage,
   describeLoopStage,
+  getApiBaseUrl,
 } from "../components/codeAssistantPanelHelpers";
 
 describe("toFriendlyErrorMessage", () => {
@@ -221,6 +222,22 @@ describe("buildSystemPrompt", () => {
   it("stays short", () => {
     for (const action of ["ask", "local-edit", "project-findings"] as const) {
       expect(buildSystemPrompt(action, "a.ttl").length).toBeLessThan(1200);
+    }
+  });
+});
+
+describe("getApiBaseUrl", () => {
+  type DesktopWindow = { electronAPI?: unknown; __DESKTOP_API_URL__?: string };
+
+  it("sends desktop assistant calls to the app's own backend, not the cloud API", () => {
+    const desktopWindow = window as DesktopWindow;
+    desktopWindow.electronAPI = {};
+    desktopWindow.__DESKTOP_API_URL__ = "http://127.0.0.1:18085";
+    try {
+      expect(getApiBaseUrl()).toBe("http://127.0.0.1:18085");
+    } finally {
+      delete desktopWindow.electronAPI;
+      delete desktopWindow.__DESKTOP_API_URL__;
     }
   });
 });
