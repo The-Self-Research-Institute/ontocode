@@ -259,9 +259,13 @@ public class OntologyMutationService {
                 datasetService.execDraftUpdateCopyOnSwitch(projectId, userId, sparql);
                 storageManager.bumpDraftGraphVersion(projectId, userId);
             } else {
+                 markDirtyAfterRawWrite(projectId);
                 datasetService.execUpdate(projectId, sparql);
                 if (mainGraphRevisionService != null) {
                     mainGraphRevisionService.incrementRevision(projectId);
+                }
+                if (ontologyCache != null) {
+                    ontologyCache.evict(projectId);
                 }
             }
             long sparqlDuration = System.currentTimeMillis() - sparqlStart;
