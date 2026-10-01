@@ -263,35 +263,6 @@ public class SparqlDatasetService {
     }
 
    
-    private static final java.util.regex.Pattern XMLNS_DECLARATION_PATTERN =
-            java.util.regex.Pattern.compile("xmlns:?([a-zA-Z0-9_-]*)\\s*=\\s*\"([^\"]*)\"");
-
-    private void mergeDeclaredXmlnsPrefixes(Map<String, String> capturedNamespaces, byte[] headBytes, int length) {
-        if (headBytes == null || length <= 0) {
-            return;
-        }
-        try {
-            String head = new String(headBytes, 0, length, StandardCharsets.UTF_8);
-            int rootTagEnd = head.indexOf('>');
-            String rootTag = rootTagEnd >= 0 ? head.substring(0, rootTagEnd) : head;
-            java.util.regex.Matcher m = XMLNS_DECLARATION_PATTERN.matcher(rootTag);
-            int before = capturedNamespaces.size();
-            while (m.find()) {
-                String prefix = m.group(1) == null ? "" : m.group(1);
-                String uri = m.group(2);
-                if (uri != null && !uri.isBlank()) {
-                    capturedNamespaces.putIfAbsent(prefix, uri);
-                }
-            }
-            if (capturedNamespaces.size() > before) {
-                log.info("[NAMESPACES] Recovered {} declared-but-unused xmlns prefixes from the root element",
-                        capturedNamespaces.size() - before);
-            }
-        } catch (Exception e) {
-            log.debug("[NAMESPACES] Could not scan raw xmlns declarations: {}", e.getMessage());
-        }
-    }
-
     private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces) {
         if (capturedNamespaces.isEmpty()) {
             log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
@@ -1816,7 +1787,7 @@ public class SparqlDatasetService {
                     String previewStr = new String(preview, 0, Math.min(preview.length, 500),
                             java.nio.charset.StandardCharsets.UTF_8);
                     log.info("Stream content preview (first 500 chars): {}", previewStr);
-                    mergeDeclaredXmlnsPrefixes(capturedNamespaces, preview, preview.length);
+                    self.research.ontology.owlEditor.util.XmlnsDeclarations.mergeRootDeclarations(capturedNamespaces, preview, preview.length);
 
                     long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
@@ -2079,7 +2050,7 @@ public class SparqlDatasetService {
                 nsParser.parse(nsStream, "");
                 try (InputStream headStream = Files.newInputStream(sourceFile)) {
                     byte[] head = headStream.readNBytes(32768);
-                    mergeDeclaredXmlnsPrefixes(capturedNamespaces, head, head.length);
+                    self.research.ontology.owlEditor.util.XmlnsDeclarations.mergeRootDeclarations(capturedNamespaces, head, head.length);
                 } catch (Exception headEx) {
                     log.debug("[NAMESPACES] Could not read file head for xmlns scan: {}", headEx.getMessage());
                 }
