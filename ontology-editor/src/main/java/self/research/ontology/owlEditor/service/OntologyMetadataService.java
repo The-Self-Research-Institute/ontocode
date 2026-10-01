@@ -1094,6 +1094,7 @@ public class OntologyMetadataService {
         String typeCounts = PREFIXES + """
             SELECT ?type (COUNT(DISTINCT ?s) AS ?count) WHERE {
               ?s a ?type .
+              FILTER(isIRI(?s))
               VALUES ?type {
                 owl:Class owl:ObjectProperty owl:DatatypeProperty
                 owl:AnnotationProperty owl:NamedIndividual
