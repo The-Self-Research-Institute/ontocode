@@ -114,6 +114,19 @@ class AssistantEditSemanticValidatorTest {
     }
 
     @Test
+    void standardAnnotationVocabulariesAreAcceptedEvenBeforeTheOntologyUsesThem() {
+        List<CheckResult> checks = check("turtle", edit(3, ":Pizza a owl:Class .", String.join(" ",
+                ":Pizza a owl:Class ;",
+                "<http://www.w3.org/2004/02/skos/core#definition> \"A flat bread\" ;",
+                "<http://www.w3.org/2004/02/skos/core#example> \"Margherita\" ;",
+                "<http://purl.org/dc/elements/1.1/creator> \"Pizza team\" ;",
+                "<http://purl.org/dc/terms/created> \"2025\" .")));
+
+        assertTrue(named(checks, "references_resolve").passed(), named(checks, "references_resolve").detail());
+        assertTrue(graph.lookedUp().isEmpty());
+    }
+
+    @Test
     void prefixesAreResolvedPositionallyFromTheStreamedDocument() {
         List<CheckResult> checks = check("turtle", edit(9, ":Soup a owl:Class .", ":Soup a owl:Class ; rdfs:seeAlso :Stew ."));
 

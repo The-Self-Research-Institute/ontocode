@@ -41,6 +41,10 @@ public class AssistantGraphIdentifierLookup {
         return iri.startsWith(RDF_NS) || iri.startsWith(RDFS_NS) || iri.startsWith(OWL_NS) || iri.startsWith(XSD_NS);
     }
 
+    public static boolean isStandardVocabulary(String iri) {
+        return isBuiltIn(iri) || OntologyMetadataService.STANDARD_PREFIXES.values().stream().anyMatch(iri::startsWith);
+    }
+
     public static boolean isSafeIri(String iri) {
         return iri != null && !iri.isEmpty() && iri.length() <= 4096 && SAFE_IRI.matcher(iri).matches();
     }

@@ -104,7 +104,7 @@ public class AssistantEditSemanticValidator {
         List<String> unresolved = after.unresolved.stream().filter(t -> !before.unresolved.contains(t)).toList();
         List<String> candidates = after.terms.stream()
                 .filter(iri -> !before.terms.contains(iri))
-                .filter(iri -> !AssistantGraphIdentifierLookup.isBuiltIn(iri))
+                .filter(iri -> !AssistantGraphIdentifierLookup.isStandardVocabulary(iri))
                 .filter(iri -> !after.subjects.contains(iri))
                 .filter(iri -> !introducedByOperation.contains(iri))
                 .toList();
