@@ -164,6 +164,11 @@ function copyOwlEditorJar() {
     copyDesktopJar();
 }
 
+function copySwrlJar() {
+    const src = path.join(REPO_ROOT, 'ontology-swrl', 'target', 'ontology-swrl-1.0.0.jar');
+    copyIfExists(src, path.join(JARS_DIR, 'swrl.jar'), 'swrl.jar');
+}
+
 async function copyFusekiJar() {
     console.log('\n[2/4] Fuseki JAR');
     const cachedSrc = path.join(REPO_ROOT, 'fuseki-docker', 'fuseki-server.jar');
@@ -838,6 +843,7 @@ async function main() {
     await bundleJre();
     console.log('\n[5/5] SWRL JRE (dedicated JDK 17 — Drools/MVEL incompatible with JDK 21+)');
     await bundleSwrlJre();
+    copySwrlJar();
     if (TARGET_PLATFORM === 'win32') bundleMongodRuntimeDlls();
     generateJreBaseCdsArchives();
 
