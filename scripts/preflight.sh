@@ -119,7 +119,7 @@ else
 fi
 
 section "Patch coverage"
-if bash scripts/coverage-wrapper.sh "$base_ref" "$head_ref"; then
+if COVERAGE_REUSE_REPORTS=1 bash scripts/coverage-wrapper.sh "$base_ref" "$head_ref"; then
     record "PASS  patch coverage"
 else
     record "FAIL  patch coverage"

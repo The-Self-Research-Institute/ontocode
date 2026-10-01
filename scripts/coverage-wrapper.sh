@@ -32,8 +32,9 @@ if [ -n "$webview_changed" ]; then
     echo "=== webview-src (ontology-vscode-extension/webview-src) ===" >&2
     lcov_file="ontology-vscode-extension/webview-src/coverage/lcov.info"
     if command -v npm >/dev/null 2>&1; then
-        echo "coverage-wrapper: running the webview's own coverage command (e2e/Playwright + nyc)..." >&2
-        if (cd ontology-vscode-extension/e2e && npm run test:coverage && npm run coverage:report); then
+        echo "coverage-wrapper: running the webview's own coverage command (vitest + v8)..." >&2
+        rm -f "$lcov_file"
+        if (cd ontology-vscode-extension/webview-src && npm run test:coverage); then
             :
         else
             echo "coverage-wrapper: webview coverage command failed to run." >&2
@@ -77,8 +78,38 @@ for module in $java_changed; do
     [ -d "$module" ] || continue
     echo "" >&2
     echo "=== $module (Java) ===" >&2
-    echo "coverage-wrapper: FAIL — no JaCoCo (or other coverage tool) is configured for any Java module yet. Reporting explicitly as not applicable rather than a false pass, per section 14." >&2
-    overall_status=1
+    main_changed=$(echo "$changed_files" | grep -E "^$module/src/main/java/.*\.java$" || true)
+    if [ -z "$main_changed" ]; then
+        echo "coverage-wrapper: $module has no changed production sources — not applicable." >&2
+        continue
+    fi
+    jacoco_report="$module/target/site/jacoco/jacoco.xml"
+    if [ "${COVERAGE_REUSE_REPORTS:-0}" != "1" ] || [ ! -f "$jacoco_report" ]; then
+        echo "coverage-wrapper: running $module tests with JaCoCo..." >&2
+        rm -f "$module/target/jacoco.exec" "$jacoco_report"
+        if ! mvn -q -pl "$module" -am test; then
+            echo "coverage-wrapper: $module tests failed, so its coverage can't be trusted." >&2
+            overall_status=1
+        fi
+    fi
+    if [ -f "$jacoco_report" ]; then
+        changed_args=()
+        while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            changed_args+=(--changed-file "$f")
+        done <<< "$main_changed"
+        python3 scripts/patch_coverage.py \
+            --repo-root "$repo_root" \
+            --base "$merge_base" \
+            --head "$head_ref" \
+            --jacoco-xml "$jacoco_report" \
+            --source-base-dir "$module/src/main/java" \
+            --min-percent 90 \
+            "${changed_args[@]}" || overall_status=1
+    else
+        echo "coverage-wrapper: FAIL — $jacoco_report not found. Missing coverage reports fail verification, not treated as passing (section 9)." >&2
+        overall_status=1
+    fi
 done
 
 if [ -z "$webview_changed" ] && [ -z "$exthost_changed" ] && [ -z "$java_changed" ]; then
