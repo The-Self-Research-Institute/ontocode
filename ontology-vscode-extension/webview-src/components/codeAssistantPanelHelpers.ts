@@ -1,6 +1,5 @@
 import { MessageSquare, Pencil, Search, type LucideIcon } from "lucide-react";
-import { getGatewayUrl, getRemoteApiBaseUrl } from "../config/deploymentConfig";
-import { isDesktop } from "../utils/desktop";
+import { getGatewayUrl } from "../config/deploymentConfig";
 import type { HistoryTurn, LoopStageEvent } from "../services/codeAssistantLoop";
 import type { ProviderUsage } from "../services/codeAssistantProviders";
 
@@ -28,7 +27,7 @@ export const ACTIONS: Array<{ id: CodeAssistantAction; label: string; descriptio
 ];
 
 export function getApiBaseUrl(): string {
-  return isDesktop() ? getRemoteApiBaseUrl() : getGatewayUrl();
+  return getGatewayUrl();
 }
 
 export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: string): string {
