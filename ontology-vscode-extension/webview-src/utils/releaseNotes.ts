@@ -18,16 +18,19 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
-    version: "1.2.4",
+    version: "1.2.4-beta.1",
+    webVersion: "1.2.4",
     date: "September 25, 2026",
     highlights: [
       "ONTOCODE-93: Ontology Prefixes — Fixed prefixes from a file's namespace declarations not showing in the Ontology Prefixes panel and fixed the prefix count increasing on export.",
+      "ONTOCODE-89: Changes made in Code View are now reflected in the Change Assistant. Implemented the grouped rollback option to allow related changes to be rolled back together.",
     ],
     videoUrl: "",
   },
 
   {
-    version: "1.2.3",
+    version: "1.2.3-beta.1",
+    webVersion: "1.2.3",
     date: "September 24, 2026",
     highlights: [
       "ONTOCODE-92: Active Ontology — Fixed Metrics panel showing wrong counts for Annotation Properties and Datatypes compared to the Entities tab.",
@@ -37,13 +40,13 @@ export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
     version: "1.2.2-beta.1",
-  webVersion: "1.2.2",
-  date: "September 8, 2026",
-  highlights: [
-    "TSRI-348: Reasoner — \"Explain Inconsistency\" now finds the real cause of each inconsistency, instead of only recognizing a fixed set of common cases. Added Regular and Laconic explanation styles and an option to view all causes or just the first few.",
-  ],
-  videoUrl: "",
-},
+    webVersion: "1.2.2",
+    date: "September 8, 2026",
+    highlights: [
+      "TSRI-348: Reasoner — \"Explain Inconsistency\" now finds the real cause of each inconsistency, instead of only recognizing a fixed set of common cases. Added Regular and Laconic explanation styles and an option to view all causes or just the first few.",
+    ],
+    videoUrl: "",
+  },
 
   {
     version: "1.2.1-beta.1",
