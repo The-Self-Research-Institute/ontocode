@@ -79,17 +79,19 @@ class RollbackMutationPlannerTest {
     }
 
     @Test
-    void genericIriPredicatesUseRawUpdatesAndLiteralReinsertsAreUnsupported() {
+    void genericPredicatesUseRawUpdatesForIriAndLiteralValues() {
         HistoryChange change = entry("addStatement",
                 sub("iri", DISJOINT, "http://example.org/Other", null, false),
-                sub("lit", "http://example.org/note", "some text", null, false),
+                sub("lit", "http://example.org/note", "some \"quoted\" text", null, false),
                 sub("del", DISJOINT, null, "http://example.org/Third", true));
         Plan plan = planner.planUndo(change, RollbackMutationPlanner.active(change));
-        assertEquals(2, plan.rawUpdates().size());
+        assertEquals(3, plan.rawUpdates().size());
         assertTrue(plan.rawUpdates().get(0).startsWith("INSERT DATA"));
-        assertTrue(plan.rawUpdates().get(1).startsWith("DELETE {"));
-        assertEquals(List.of("http://example.org/note"), plan.unsupported());
-        assertEquals(java.util.Set.of("iri", "del"), plan.handledSubChangeIds());
+        assertEquals("INSERT DATA { <" + E + "> <http://example.org/note> \"some \\\"quoted\\\" text\" }",
+                plan.rawUpdates().get(1));
+        assertTrue(plan.rawUpdates().get(2).startsWith("DELETE {"));
+        assertTrue(plan.unsupported().isEmpty());
+        assertEquals(java.util.Set.of("iri", "lit", "del"), plan.handledSubChangeIds());
     }
 
     @Test

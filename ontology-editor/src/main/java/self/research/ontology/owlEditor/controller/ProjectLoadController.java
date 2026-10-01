@@ -1638,9 +1638,11 @@ public class ProjectLoadController {
             log.info("[CODE-VIEW-SAVE] Saving and syncing code view for project: {} in format: {}, size: {} bytes",
                      projectId, format, content.length());
 
-            Optional<Map<String, Object>> rejection = codeViewSaveValidator.validate(projectId, format, content);
+            Optional<self.research.ontology.owlEditor.service.CodeViewSaveValidator.Rejection> rejection =
+                    codeViewSaveValidator.validate(projectId, format, content,
+                    oldBytes, Boolean.TRUE.equals(request.get("confirmLargeReduction")));
             if (rejection.isPresent()) {
-                return ResponseEntity.unprocessableEntity().body(rejection.get());
+                return ResponseEntity.status(rejection.get().status()).body(rejection.get().body());
             }
 
             String ext = storageManager.extensionFor(format);

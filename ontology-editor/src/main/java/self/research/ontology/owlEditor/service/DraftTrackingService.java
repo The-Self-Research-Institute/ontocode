@@ -460,30 +460,28 @@ public class DraftTrackingService {
         return stats;
     }
     
-    /**
-     * Record drafts as permanent changes in change tracking
-     */
+
     private void recordDraftsAsChanges(String projectId, List<DraftChange> drafts) {
         try {
             for (DraftChange draft : drafts) {
                 OntologyChange.ChangeType changeType = mapOperationToChangeType(draft.getOperationType());
                 if (changeType == null) continue;
-                
+
                 Map<String, Object> data = draft.getOperationData();
                 String entityIri = (String) data.get("iri");
                 String label = (String) data.get("label");
                 String oldValue = data.get("oldValue") != null ? data.get("oldValue").toString() : null;
-                String newValue = data.get("value") != null ? data.get("value").toString() : 
+                String newValue = data.get("value") != null ? data.get("value").toString() :
                                   (data.get("newValue") != null ? data.get("newValue").toString() : null);
-                
-                log.info("[DRAFT] Recording change - operationType: {}, oldValue: '{}', newValue: '{}', entityIRI: {}", 
+
+                log.info("[DRAFT] Recording change - operationType: {}, oldValue: '{}', newValue: '{}', entityIRI: {}",
                     draft.getOperationType(), oldValue, newValue, entityIri);
                 log.info("[DRAFT] Operation data keys: {}", data.keySet());
-                
+
                 OntologyChange change = new OntologyChange.Builder(
-                    projectId, 
-                    draft.getUserId(), 
-                    draft.getUsername(), 
+                    projectId,
+                    draft.getUserId(),
+                    draft.getUsername(),
                     changeType
                 )
                 .changeCategory(determineCategory(draft.getOperationType()))
@@ -494,32 +492,107 @@ public class DraftTrackingService {
                 .oldValue(oldValue)
                 .newValue(newValue)
                 .build();
-                
+
                 // Record to MongoDB via change tracking service
                 changeTrackingService.recordChange(change);
-                
-                // Also record to GraphDB history for Change Assistant plugin
-                String annotationProperty = data.get("property") != null ? data.get("property").toString() : null;
+            }
+
+            Map<String, List<DraftChange>> byEntity = new java.util.LinkedHashMap<>();
+            for (DraftChange draft : drafts) {
+                Object iri = draft.getOperationData().get("iri");
+                String key = iri != null ? iri.toString() : ("__no_entity__:" + draft.getId());
+                byEntity.computeIfAbsent(key, k -> new ArrayList<>()).add(draft);
+            }
+
+            for (List<DraftChange> group : byEntity.values()) {
+                DraftChange primary = group.stream()
+                        .filter(d -> d.getOperationType() != null && d.getOperationType().startsWith("create"))
+                        .findFirst()
+                        .orElse(group.get(0));
+
+                Map<String, Object> primaryData = primary.getOperationData();
+                String entityIri = (String) primaryData.get("iri");
+                String label = (String) primaryData.get("label");
+                String primaryAnnotationProperty = primaryData.get("property") != null
+                        ? primaryData.get("property").toString() : null;
+                String oldValue = primaryData.get("oldValue") != null ? primaryData.get("oldValue").toString() : null;
+                String newValue = primaryData.get("value") != null ? primaryData.get("value").toString()
+                        : (primaryData.get("newValue") != null ? primaryData.get("newValue").toString() : null);
+
+                List<Map<String, String>> subChanges = new ArrayList<>();
+                for (DraftChange draft : group) {
+                    if (draft == primary) continue;
+                    subChanges.add(toSubChangeMap(draft));
+                }
+
+                String description = subChanges.isEmpty()
+                        ? formatChangeDescription(primary)
+                        : formatChangeDescription(primary) + " (" + subChanges.size() + " additional change"
+                                + (subChanges.size() == 1 ? "" : "s") + ")";
+
                 historyService.recordEdit(
-                    projectId,
-                    draft.getUserId(),
-                    draft.getUsername(),
-                    draft.getOperationType(),
-                    entityIri,
-                    label != null ? label : entityIri,
-                    oldValue,
-                    newValue,
-                    formatChangeDescription(draft),
-                    annotationProperty
+                        projectId,
+                        primary.getUserId(),
+                        primary.getUsername(),
+                        primary.getOperationType(),
+                        entityIri,
+                        label != null ? label : entityIri,
+                        oldValue,
+                        newValue,
+                        description,
+                        primaryAnnotationProperty,
+                        subChanges,
+                        false
                 );
             }
-            log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history", drafts.size());
+
+            log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries)",
+                    drafts.size(), byEntity.size());
         } catch (Exception e) {
             log.error("[DRAFT] Failed to record changes to change tracking", e);
             // Don't fail the save if change tracking fails
         }
     }
-    
+
+
+    private Map<String, String> toSubChangeMap(DraftChange draft) {
+        Map<String, Object> data = draft.getOperationData();
+        String opType = draft.getOperationType();
+        boolean addition = opType == null || !(opType.startsWith("remove") || opType.startsWith("delete"));
+
+        Map<String, String> subChange = new HashMap<>();
+        subChange.put("addition", String.valueOf(addition));
+
+        String predicate;
+        if ("addSubClassOf".equals(opType) || "deleteSubClassOf".equals(opType)) {
+            predicate = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+            Object parent = data.get("parent");
+            subChange.put(addition ? "newValue" : "oldValue", parent != null ? parent.toString() : null);
+        } else if (data.get("property") != null) {
+            predicate = data.get("property").toString();
+            Object value = data.get("value") != null ? data.get("value") : data.get("newValue");
+            String valueStr = value != null ? value.toString() : null;
+            // "annotationProperty" here isn't limited to true OWL annotation properties — it's
+            // this codebase's signal (see ChangeTrackingController#appendSubChangeInverseMutations)
+            // for "a predicate + literal value, invertible via generic add/deleteAnnotation SPARQL".
+            // A plain data-property statement like hasPrice/servingNote is exactly that shape, so
+            // it needs the same signal — only an IRI-valued (object property) statement doesn't,
+            // since wrapping an IRI in annotationLiteral() would quote it as a literal instead of
+            // emitting a real reference.
+            boolean looksLikeIri = valueStr != null && (valueStr.startsWith("http://") || valueStr.startsWith("https://"));
+            if (!looksLikeIri) {
+                subChange.put("annotationProperty", predicate);
+            }
+            subChange.put(addition ? "newValue" : "oldValue", valueStr);
+        } else {
+            predicate = opType;
+            Object value = data.get("value") != null ? data.get("value") : data.get("newValue");
+            subChange.put(addition ? "newValue" : "oldValue", value != null ? value.toString() : null);
+        }
+        subChange.put("predicate", predicate);
+        return subChange;
+    }
+
     /**
      * Map operation type to ChangeType
      */

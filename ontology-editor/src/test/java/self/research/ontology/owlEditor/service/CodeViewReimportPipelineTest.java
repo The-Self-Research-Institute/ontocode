@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.MockitoAnnotations;
+import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.model.ImportOptions;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline.ReimportRequest;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline.ReimportResult;
@@ -16,6 +17,10 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.Map;
+import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -278,5 +283,61 @@ class CodeViewReimportPipelineTest {
 
         verify(metadataService, never()).incrementMutationVersion(anyString());
         verify(storageManager, never()).clearCodeViewCache(anyString());
+    }
+
+    private final Deque<Runnable> queuedRefreshes = new ArrayDeque<>();
+
+    private OntologyIndexService withMetadataRefresh() {
+        OntologyIndexService indexService = org.mockito.Mockito.mock(OntologyIndexService.class);
+        ReflectionTestUtils.setField(pipeline, "indexService", indexService);
+        ReflectionTestUtils.setField(pipeline, "metadataExecutor", (Executor) queuedRefreshes::add);
+        return indexService;
+    }
+
+    @Test
+    void aCodeViewSaveRefreshesTheCachedCountsBeforeItReturns() throws Exception {
+        OntologyIndexService indexService = withMetadataRefresh();
+        Map<String, Object> meta = Map.of("classes", 3);
+        when(indexService.computeMetadata("proj-1")).thenReturn(meta);
+
+        pipeline.reimport(new ReimportRequest("proj-1", "turtle", fileWith("ttl", ":A a owl:Class ."),
+                false, "u1", "User", null, null, false));
+
+        verify(metadataService).writeMeta("proj-1", meta);
+        assertTrue(queuedRefreshes.isEmpty());
+    }
+
+    @Test
+    void anAssistantApplyRefreshesTheCachedCountsInTheBackground() throws Exception {
+        OntologyIndexService indexService = withMetadataRefresh();
+        Map<String, Object> meta = Map.of("classes", 3);
+        when(indexService.computeMetadata("proj-1")).thenReturn(meta);
+
+        pipeline.reimport(new ReimportRequest("proj-1", "turtle", fileWith("ttl", ":A a owl:Class ."),
+                false, "u1", "User", null, null, false, ChangeOrigin.ai("g1", "claude", "m", "s1", "add A")));
+
+        verify(metadataService, never()).writeMeta(anyString(), any());
+        assertEquals(1, queuedRefreshes.size());
+        queuedRefreshes.poll().run();
+        verify(metadataService).writeMeta("proj-1", meta);
+    }
+
+    @Test
+    void anOlderBackgroundRefreshNeverOverwritesANewerOne() throws Exception {
+        OntologyIndexService indexService = withMetadataRefresh();
+        Map<String, Object> newer = Map.of("classes", 2);
+        Map<String, Object> older = Map.of("classes", 1);
+        when(indexService.computeMetadata("proj-1")).thenReturn(newer, older);
+        Path snapshot = fileWith("owl",
+                "<?xml version=\"1.0\"?><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"></rdf:RDF>");
+
+        pipeline.restoreSnapshot("proj-1", snapshot);
+        pipeline.restoreSnapshot("proj-1", snapshot);
+        Runnable first = queuedRefreshes.poll();
+        queuedRefreshes.poll().run();
+        first.run();
+
+        verify(metadataService).writeMeta("proj-1", newer);
+        verify(metadataService, never()).writeMeta("proj-1", older);
     }
 }

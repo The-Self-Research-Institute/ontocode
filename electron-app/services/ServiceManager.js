@@ -25,6 +25,25 @@ const OWL_DATA_DIR    = path.join(DATA_DIR, 'ontologies');
 const LOGS_DIR        = path.join(app.getPath('userData'), 'logs');
 const FUSEKI_BASE_DIR = path.join(app.getPath('userData'), 'fuseki-base');
 
+const helperProcesses = new Set();
+let startupCancelled = false;
+
+function assertNotCancelled() {
+    if (startupCancelled) throw new Error('Startup cancelled');
+}
+
+const CDS_TRAINING_TIMEOUT_MS = 420000;
+const CDS_TRAINING_DELAY_MS = 45000;
+const CDS_TRAINING_MIN_FREE_BYTES = (Number(process.env.ONTOCODE_CDS_MIN_FREE_MB) || 1200) * 1024 * 1024;
+const CDS_TRAINING_RETRY_MS = 180000;
+const CDS_TRAINING_MAX_DEFERRALS = 5;
+const CDS_TRAINING_MAX_FAILURES = 3;
+const CDS_LOCK_STALE_MS = 15 * 60 * 1000;
+const pendingTraining = [];
+let trainingTimer = null;
+let trainingActive = false;
+const STARTUP_HEALTH_TIMEOUT_MS = 300000;
+
 const DEFAULT_PORTS = {
     mongo:   27117,
     fuseki:  13030,
@@ -91,10 +110,12 @@ module.exports = {
     onLog(callback) { _logCallback = callback; },
 
     async startAll() {
+        startupCancelled = false;
         ensureDirs();
         validateBackendBundles();
         await resolveAllPorts();
         await startMongo();
+        assertNotCancelled();
         if (!LAZY_FUSEKI) {
             await startFuseki();
         } else {
@@ -155,6 +176,12 @@ module.exports = {
     },
 
     async stopAll() {
+        startupCancelled = true;
+        clearTimeout(trainingTimer);
+        trainingTimer = null;
+        pendingTraining.length = 0;
+        helperProcesses.forEach((p) => { try { p.kill('SIGKILL'); } catch (_) {} });
+        helperProcesses.clear();
         await stopProcess(swrlProcess,    'SWRL',    4000);
         await stopProcess(desktopProcess, 'Desktop', 10000);
         await stopProcess(fusekiProcess,  'Fuseki',  4000);
@@ -471,12 +498,19 @@ function removeCdsDir(dir) {
     fs.rmSync(dir, { recursive: true, force: true });
 }
 
+function discardPartialArchive(archiveFile) {
+    try {
+        fs.chmodSync(archiveFile, 0o666);
+    } catch (_) {}
+    try {
+        fs.rmSync(archiveFile, { force: true });
+    } catch (_) {}
+}
+
 async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPath) {
-    const extractedDir = path.join(cdsDir, 'extracted');
-    const extractedJar = path.join(extractedDir, path.basename(originalJar));
+    const extractedJar = path.join(cdsDir, 'extracted', path.basename(originalJar));
     const archiveFile  = path.join(cdsDir, `${name.toLowerCase()}.jsa`);
     const markerFile   = path.join(cdsDir, '.java-bin');
-    const noCds = { launchJar: originalJar, cdsFlags: [] };
 
     const jarStat = fs.statSync(originalJar);
     const jarFingerprint = `${jarStat.mtimeMs}:${jarStat.size}`;
@@ -493,58 +527,224 @@ async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPat
     await ensureBaseCdsArchive(javaBinPath);
 
     if (fs.existsSync(archiveFile) && fs.existsSync(extractedJar)) {
+        const leftover = path.join(cdsDir, 'scratch');
+        if (fs.existsSync(leftover)) removeScratch(leftover);
         return { launchJar: extractedJar, cdsFlags: [`-XX:SharedArchiveFile=${archiveFile}`] };
     }
 
-    try {
-        fs.mkdirSync(cdsDir, { recursive: true });
-        fs.writeFileSync(markerFile, JSON.stringify({ javaBin: javaBinPath, jarFingerprint }), 'utf8');
-
-        if (!fs.existsSync(extractedJar)) {
-            log('info', `[${name}] Extracting jar for CDS (one-time)…`);
-            await runToCompletion(javaBinPath, [
-                '-Djarmode=tools', '-jar', originalJar, 'extract', '--destination', extractedDir,
-            ], env);
-        }
-
-        log('info', `[${name}] Training CDS archive (one-time — this launch only, adds ~15-25s)…`);
-        const trainingLog = path.join(cdsDir, 'training.log');
-        await runToCompletion(javaBinPath, [
-            // Capped well below the real runtime heap (heaps.desktopXmx can be several GB) —
-            // this run only boots Spring once to record loaded classes, then exits immediately
-            // (spring.context.exit=onRefresh). Letting it inherit the JVM's unbounded default
-            // heap sizing made this one-time step the single heaviest allocation in the whole
-            // startup sequence, which is exactly what silently took the process down on a
-            // memory-constrained machine — no exception, no crash dialog, just gone.
-            '-Xmx512m',
-            `-XX:ArchiveClassesAtExit=${archiveFile}`,
-            '-Dspring.context.exit=onRefresh',
-            '-jar', extractedJar,
-            ...springArgs,
-        ], env, trainingLog);
-
-        if (fs.existsSync(archiveFile)) {
-            return { launchJar: extractedJar, cdsFlags: [`-XX:SharedArchiveFile=${archiveFile}`] };
-        }
-        log('warn', `[${name}] CDS training did not produce an archive — continuing without it`);
-    } catch (err) {
-        log('warn', `[${name}] CDS setup failed (${err.message}) — continuing without it`);
-    }
-    return noCds;
+    queueCdsTraining({ name, originalJar, cdsDir, springArgs, env, javaBinPath, jarFingerprint });
+    return { launchJar: originalJar, cdsFlags: [] };
 }
 
-function runToCompletion(bin, args, extraEnv = {}, logFile = null) {
+function queueCdsTraining(job) {
+    if (pendingTraining.some((queued) => queued.name === job.name)) return;
+    pendingTraining.push(job);
+    if (trainingTimer || trainingActive) return;
+    trainingTimer = setTimeout(runQueuedTraining, CDS_TRAINING_DELAY_MS);
+    trainingTimer.unref();
+}
+
+async function runQueuedTraining() {
+    trainingTimer = null;
+    trainingActive = true;
+    try {
+        while (pendingTraining.length && !startupCancelled) {
+            const job = pendingTraining.shift();
+            const outcome = await trainCdsInBackground(job);
+            if (outcome === 'deferred' && !startupCancelled) {
+                job.deferrals = (job.deferrals || 0) + 1;
+                if (job.deferrals < CDS_TRAINING_MAX_DEFERRALS) {
+                    pendingTraining.push(job);
+                    trainingTimer = setTimeout(runQueuedTraining, CDS_TRAINING_RETRY_MS);
+                    trainingTimer.unref();
+                    return;
+                }
+                log('info', `[${job.name}] Startup cache postponed to a later launch (memory stayed low)`);
+            }
+        }
+    } finally {
+        trainingActive = false;
+    }
+}
+
+function readCount(file) {
+    try { return parseInt(fs.readFileSync(file, 'utf8'), 10) || 0; } catch (_) { return 0; }
+}
+
+function acquireLock(lockFile) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            fs.closeSync(fs.openSync(lockFile, 'wx'));
+            return true;
+        } catch (err) {
+            if (err.code !== 'EEXIST') return false;
+            try {
+                if (Date.now() - fs.statSync(lockFile).mtimeMs < CDS_LOCK_STALE_MS) return false;
+                fs.rmSync(lockFile, { force: true });
+            } catch (_) { return false; }
+        }
+    }
+    return false;
+}
+
+async function startScratchMongo(scratchDir) {
+    const port = await findFreePort(27300, 'CDS training MongoDB');
+    const dbPath = path.join(scratchDir, 'mongo');
+    fs.mkdirSync(dbPath, { recursive: true });
+    const proc = spawn(mongoBin(), [
+        '--dbpath', dbPath, '--port', String(port), '--bind_ip', '127.0.0.1',
+        '--logpath', path.join(scratchDir, 'mongo.log'),
+    ], { stdio: 'ignore', windowsHide: true });
+    helperProcesses.add(proc);
+    proc.once('exit', () => helperProcesses.delete(proc));
+    await waitForTcp('127.0.0.1', port, 30000, 'scratch MongoDB');
+    return { proc, port };
+}
+
+async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env, javaBinPath, jarFingerprint }) {
+    const failuresFile = path.join(cdsDir, '.train-failures');
+    const extractedDir = path.join(cdsDir, 'extracted');
+    const extractedJar = path.join(extractedDir, path.basename(originalJar));
+    const archiveFile  = path.join(cdsDir, `${name.toLowerCase()}.jsa`);
+    const tempArchive  = `${archiveFile}.tmp`;
+    const scratchDir   = path.join(cdsDir, 'scratch');
+    const lockFile     = path.join(cdsDir, 'training.lock');
+
+    const failures = readCount(failuresFile);
+    if (failures >= CDS_TRAINING_MAX_FAILURES) {
+        log('info', `[${name}] Startup cache disabled after ${failures} failed attempts`);
+        return;
+    }
+    if (os.freemem() < CDS_TRAINING_MIN_FREE_BYTES) {
+        log('info', `[${name}] Startup cache waiting for more free memory`);
+        return 'deferred';
+    }
+    fs.mkdirSync(cdsDir, { recursive: true });
+    if (!acquireLock(lockFile)) {
+        log('info', `[${name}] Startup cache is already being built by another session`);
+        return;
+    }
+
+    let scratchMongo = null;
+    const startedAt = Date.now();
+    try {
+        fs.writeFileSync(path.join(cdsDir, '.java-bin'), JSON.stringify({ javaBin: javaBinPath, jarFingerprint }), 'utf8');
+        removeCdsDir(scratchDir);
+        fs.mkdirSync(path.join(scratchDir, 'data'), { recursive: true });
+        fs.mkdirSync(path.join(scratchDir, 'home'), { recursive: true });
+        fs.mkdirSync(path.join(scratchDir, 'tmp'), { recursive: true });
+        discardPartialArchive(tempArchive);
+        log('info', `[${name}] Building startup cache in the background (uses the editor's idle time; first launch only)…`);
+
+        if (!fs.existsSync(extractedJar)) {
+            await runToCompletion(javaBinPath, [
+                '-Djarmode=tools', '-jar', originalJar, 'extract', '--destination', extractedDir,
+            ], env, null, { timeoutMs: CDS_TRAINING_TIMEOUT_MS, lowPriority: true });
+            assertNotCancelled();
+        }
+
+        scratchMongo = await startScratchMongo(scratchDir);
+        assertNotCancelled();
+
+        const isolatedArgs = springArgs
+            .filter((arg) => !/^--(spring\.data\.mongodb\.uri|ontocode\.data\.dir|server\.port)=/.test(arg))
+            .concat([
+                `--spring.data.mongodb.uri=mongodb://127.0.0.1:${scratchMongo.port}/cds-training`,
+                `--ontocode.data.dir=${path.join(scratchDir, 'data')}`,
+                '--server.port=0',
+            ]);
+        await runToCompletion(javaBinPath, [
+            '-Xmx512m',
+            `-Duser.home=${path.join(scratchDir, 'home')}`,
+            `-Djava.io.tmpdir=${path.join(scratchDir, 'tmp')}`,
+            `-XX:ArchiveClassesAtExit=${tempArchive}`,
+            '-Dspring.context.exit=onRefresh',
+            '-jar', extractedJar,
+            ...isolatedArgs,
+        ], env, path.join(cdsDir, 'training.log'), { timeoutMs: CDS_TRAINING_TIMEOUT_MS, lowPriority: true });
+        assertNotCancelled();
+
+        if (!fs.existsSync(tempArchive)) throw new Error('training produced no archive');
+        fs.renameSync(tempArchive, archiveFile);
+        fs.rmSync(failuresFile, { force: true });
+        log('ok', `[${name}] Startup cache ready — next launch will be faster`);
+        log('info', `[PERF] [${name}] background CDS build took ${Date.now() - startedAt}ms`);
+    } catch (err) {
+        discardPartialArchive(tempArchive);
+        if (!startupCancelled) {
+            fs.writeFileSync(failuresFile, String(failures + 1), 'utf8');
+            log('warn', `[${name}] Startup cache build failed (${err.message}); will retry on a later launch`);
+        }
+    } finally {
+        if (scratchMongo) {
+            await killAndWait(scratchMongo.proc);
+        }
+        removeScratch(scratchDir);
+        fs.rmSync(lockFile, { force: true });
+    }
+}
+
+function killAndWait(proc) {
+    return new Promise((resolve) => {
+        if (proc.exitCode !== null) return resolve();
+        const giveUp = setTimeout(resolve, 5000);
+        proc.once('exit', () => {
+            clearTimeout(giveUp);
+            resolve();
+        });
+        try { proc.kill('SIGKILL'); } catch (_) { clearTimeout(giveUp); resolve(); }
+    });
+}
+
+function removeScratch(dir) {
+    try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    } catch (err) {
+        log('warn', `Could not remove startup-cache scratch folder ${dir}: ${err.message}`);
+    }
+}
+
+function runToCompletion(bin, args, extraEnv = {}, logFile = null, { timeoutMs = 0, onTick = null, tickMs = 10000, lowPriority = false } = {}) {
     return new Promise((resolve, reject) => {
         const env = { ...process.env, ...extraEnv };
         const p = spawn(bin, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        if (lowPriority && p.pid) {
+            try { os.setPriority(p.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch (_) {}
+        }
         if (logFile) {
             const stream = fs.createWriteStream(logFile, { flags: 'w' });
             p.stdout.pipe(stream);
             p.stderr.pipe(stream);
         }
 
-        p.on('exit', () => resolve());
-        p.on('error', reject);
+        const startedAt = Date.now();
+        let ticker = null;
+        let killer = null;
+        helperProcesses.add(p);
+        const cleanup = () => {
+            clearInterval(ticker);
+            clearTimeout(killer);
+            helperProcesses.delete(p);
+        };
+        if (onTick) {
+            ticker = setInterval(() => onTick(Math.round((Date.now() - startedAt) / 1000)), tickMs);
+        }
+        if (timeoutMs > 0) {
+            killer = setTimeout(() => {
+                try { p.kill('SIGKILL'); } catch (_) {}
+                cleanup();
+                reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s`));
+            }, timeoutMs);
+        }
+
+        p.on('exit', () => {
+            cleanup();
+            resolve();
+        });
+        p.on('error', (err) => {
+            cleanup();
+            reject(err);
+        });
     });
 }
 
@@ -620,6 +820,7 @@ async function startDesktop() {
         ...springArgs,
     ];
 
+    assertNotCancelled();
     desktopProcess = spawnService('Desktop', java, args, desktopEnv, logFile, { cwd: DATA_DIR });
 
     const startedAt = Date.now();
@@ -631,8 +832,9 @@ async function startDesktop() {
     try {
         await waitForHttp(
             `http://127.0.0.1:${DESKTOP_PORT}/actuator/health`,
-            120000,
+            STARTUP_HEALTH_TIMEOUT_MS,
             'Desktop',
+            () => desktopProcess.exitCode !== null,
         );
     } finally {
         clearInterval(heartbeat);
@@ -678,6 +880,7 @@ async function startSwrl() {
         'SWRL', jar, path.join(DATA_DIR, 'cds', 'swrl'), springArgs, swrlEnv, swrlJava,
     );
 
+    assertNotCancelled();
     swrlProcess = spawnService('SWRL', swrlJava, [
         '-Xmx512m',
         ...cdsFlags,
@@ -686,7 +889,8 @@ async function startSwrl() {
         ...springArgs,
     ], swrlEnv, logFile);
 
-    await waitForHttp(`http://127.0.0.1:${SWRL_PORT}/actuator/health`, 120000, 'SWRL');
+    await waitForHttp(`http://127.0.0.1:${SWRL_PORT}/actuator/health`, STARTUP_HEALTH_TIMEOUT_MS, 'SWRL',
+        () => swrlProcess.exitCode !== null);
     log('ok', `SWRL reasoner ready on port ${SWRL_PORT}`);
 }
 
@@ -770,10 +974,11 @@ function waitForTcp(host, port, timeoutMs, label) {
     });
 }
 
-function waitForHttp(url, timeoutMs, label) {
+function waitForHttp(url, timeoutMs, label, hasExited = null) {
     return new Promise((resolve, reject) => {
         const deadline = Date.now() + timeoutMs;
         function attempt() {
+            if (hasExited && hasExited()) return reject(new Error(`${label} exited before it became ready`));
             if (Date.now() > deadline) return reject(new Error(`Timeout waiting for ${label} at ${url}`));
             const req = http.get(url, (res) => {
                 if (res.statusCode >= 200 && res.statusCode < 400) resolve();

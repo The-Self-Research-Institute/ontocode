@@ -68,6 +68,37 @@ class RollbackRequestSupportTest {
     }
 
     @Test
+    void viewersMayNotRollBackAnything() {
+        when(ownership.isViewerInProject("u1", "p")).thenReturn(true);
+        MockHttpServletRequest request = withToken("{\"email\":\"v@x.com\",\"userId\":\"u1\"}");
+        HistoryChange change = new HistoryChange.Builder("p", "e1", "other@x.com", "Other").draft(false).build();
+
+        ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(List.of(change), "p", request);
+
+        assertNotNull(denied);
+        assertEquals(403, denied.getStatusCode().value());
+    }
+
+    @Test
+    void onlyTheAuthorMayRollBackAStillDraftChangeEvenForEditors() {
+        MockHttpServletRequest request = withToken("{\"email\":\"editor@x.com\",\"userId\":\"u2\"}");
+        HistoryChange someoneElsesDraft = new HistoryChange.Builder("p", "e1", "author@x.com", "Author").draft(true).build();
+        HistoryChange ownDraft = new HistoryChange.Builder("p", "e2", "editor@x.com", "Editor").draft(true).build();
+        HistoryChange merged = new HistoryChange.Builder("p", "e3", "author@x.com", "Author").draft(false).build();
+
+        ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(List.of(someoneElsesDraft), "p", request);
+        assertNotNull(denied);
+        assertEquals(403, denied.getStatusCode().value());
+        assertNull(support.denyIfNotAllowed(List.of(ownDraft, merged), "p", request));
+    }
+
+    @Test
+    void withoutATokenNothingIsBlocked() {
+        HistoryChange draft = new HistoryChange.Builder("p", "e1", "author@x.com", "Author").draft(true).build();
+        assertNull(support.denyIfNotAllowed(List.of(draft), "p", new MockHttpServletRequest()));
+    }
+
+    @Test
     void alreadyUndoneMapsToASuccessfulNoOp() {
         ChangeRollbackService.Result result = new ChangeRollbackService.Result(200, false, false, "UNDO", "c1",
                 List.of(), List.of(item("Already undone")), null, "Nothing to undo");

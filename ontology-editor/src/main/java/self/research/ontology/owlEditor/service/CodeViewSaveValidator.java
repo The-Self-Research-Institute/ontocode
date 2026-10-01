@@ -37,12 +37,18 @@ public class CodeViewSaveValidator {
         this.reasonerService = reasonerService;
     }
 
-    public Optional<Map<String, Object>> validate(String projectId, String format, String content) {
+    private static final int SHRINK_CHECK_MIN_AXIOMS = 20;
+    private static final double SHRINK_CHECK_MIN_FRACTION = 0.5;
+
+    public record Rejection(int status, Map<String, Object> body) {}
+
+    public Optional<Rejection> validate(String projectId, String format, String content,
+                                       @Nullable byte[] previousContent, boolean confirmLargeReduction) {
         OWLOntology parsed;
         try {
-            parsed = parse(content);
+            parsed = parse(content.getBytes(StandardCharsets.UTF_8));
         } catch (Exception parseEx) {
-            return Optional.of(syntaxRejection(projectId, format, parseEx));
+            return Optional.of(new Rejection(422, syntaxRejection(projectId, format, parseEx)));
         }
         Optional<Map<String, Object>> rejection = rejectEmptyParse(projectId, format, content, parsed);
         if (rejection.isEmpty()) {
@@ -51,13 +57,48 @@ public class CodeViewSaveValidator {
         if (rejection.isEmpty()) {
             rejection = rejectInconsistent(projectId, parsed);
         }
-        return rejection;
+        if (rejection.isPresent()) {
+            return Optional.of(new Rejection(422, rejection.get()));
+        }
+        if (confirmLargeReduction) {
+            return Optional.empty();
+        }
+        return rejectSuspiciousShrink(projectId, previousContent, parsed).map(body -> new Rejection(409, body));
     }
 
-    private static OWLOntology parse(String content) throws Exception {
-        try (InputStream input = new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))) {
+    private static OWLOntology parse(byte[] content) throws Exception {
+        try (InputStream input = new ByteArrayInputStream(content)) {
             return OWLManager.createOWLOntologyManager().loadOntologyFromOntologyDocument(input);
         }
+    }
+
+    private Optional<Map<String, Object>> rejectSuspiciousShrink(String projectId, @Nullable byte[] previousContent,
+                                                                 OWLOntology parsed) {
+        if (previousContent == null || previousContent.length == 0) {
+            return Optional.empty();
+        }
+        int oldAxiomCount;
+        try {
+            oldAxiomCount = parse(previousContent).getAxiomCount();
+        } catch (Exception oldParseEx) {
+            log.debug("[CODE-VIEW-SAVE] Could not parse pre-save content for the size-reduction check: {}",
+                    oldParseEx.getMessage());
+            return Optional.empty();
+        }
+        int newAxiomCount = parsed.getAxiomCount();
+        if (oldAxiomCount < SHRINK_CHECK_MIN_AXIOMS || newAxiomCount >= oldAxiomCount * SHRINK_CHECK_MIN_FRACTION) {
+            return Optional.empty();
+        }
+        int pctRemaining = (int) Math.round(100.0 * newAxiomCount / oldAxiomCount);
+        log.warn("[CODE-VIEW-SAVE] Rejecting save for project {}: content would shrink from {} to {} axioms ({}% of current)",
+                projectId, oldAxiomCount, newAxiomCount, pctRemaining);
+        Map<String, Object> body = rejection("SUSPICIOUS_SIZE_REDUCTION", "This save would reduce the ontology from "
+                + oldAxiomCount + " to " + newAxiomCount + " axioms (" + pctRemaining + "% of the current content). This"
+                + " usually means the editor didn't have the full ontology loaded before saving. Reload Code View to"
+                + " make sure you have the complete content, or confirm the save if you meant to delete this much.");
+        body.put("oldAxiomCount", oldAxiomCount);
+        body.put("newAxiomCount", newAxiomCount);
+        return Optional.of(body);
     }
 
     private Map<String, Object> syntaxRejection(String projectId, String format, Exception parseEx) {

@@ -20,6 +20,10 @@ export function formatTime(timestamp: string | number) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+export function isRollbackRecord(change: OntologyChange): boolean {
+  return !!change.operationType && change.operationType.startsWith('ROLLBACK_');
+}
+
 export function changeActionIcon(changeType: string) {
   const t = changeType.toLowerCase();
   if (t.includes('add') || t.includes('create')) return '+ ';
@@ -94,8 +98,8 @@ export const CollaborationChangeReview: React.FC<CollaborationChangeReviewProps>
       )}
       <button
         onClick={() => onRollback(selectedChange)}
-        disabled={!!actionLoading || !selectedChange.entityIRI || selectedChange.reverted}
-        title={selectedChange.reverted ? 'Already reverted' : undefined}
+        disabled={!!actionLoading || !selectedChange.entityIRI || selectedChange.reverted || isRollbackRecord(selectedChange)}
+        title={isRollbackRecord(selectedChange) ? "Rollback records can't be rolled back" : (selectedChange.reverted ? 'Already reverted' : undefined)}
         className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium border border-orange-500 text-orange-600 rounded hover:bg-orange-50 disabled:opacity-50"
       >
         {actionLoading === 'rollback' ? <Loader2 size={10} className="animate-spin" /> : <Undo2 size={10} />}

@@ -193,7 +193,7 @@ public class RollbackMutationPlanner {
         }
         return looksLikeIri(value)
                 ? "INSERT DATA { " + subject + " " + predicate + " <" + SparqlSafety.safeIri(value) + "> }"
-                : null;
+                : "INSERT DATA { " + subject + " " + predicate + " " + stringLiteral(value) + " }";
     }
 
     private MutationOp recreateOp(HistoryChange change, List<HistoryChange.SubChange> remaining, Builder plan) {

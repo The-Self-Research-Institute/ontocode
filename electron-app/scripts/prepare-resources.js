@@ -805,6 +805,26 @@ function flattenSingleSubdir(targetDir) {
     fs.rmdirSync(sub);
 }
 
+function generateJreBaseCdsArchives() {
+    console.log('\n[7/7] JRE base class-data archives (an installed Store app cannot create them)');
+    if (CROSS_BUILDING || CROSS_ARCH) {
+        console.log('  -  Skipped: the target JRE cannot run on this host');
+        return;
+    }
+    const exe = process.platform === 'win32' ? 'java.exe' : 'java';
+    for (const dir of ['jre', 'jre17']) {
+        const javaBin = path.join(RESOURCES, dir, 'bin', exe);
+        if (!fs.existsSync(javaBin)) continue;
+        try {
+            execFileSync(javaBin, ['-Xshare:dump'], { stdio: 'ignore', timeout: 120_000 });
+            const archive = path.join(RESOURCES, dir, 'bin', 'server', 'classes.jsa');
+            console.log(fs.existsSync(archive) ? `  ✓  ${dir}: classes.jsa generated` : `  ⚠  ${dir}: dump ran but no classes.jsa found`);
+        } catch (err) {
+            console.warn(`  ⚠  ${dir}: could not generate classes.jsa (${err.message})`);
+        }
+    }
+}
+
 async function main() {
     console.log('\n=== OntoCode Studio — prepare-resources ===');
     if (CROSS_BUILDING) {
@@ -819,6 +839,7 @@ async function main() {
     console.log('\n[5/5] SWRL JRE (dedicated JDK 17 — Drools/MVEL incompatible with JDK 21+)');
     await bundleSwrlJre();
     if (TARGET_PLATFORM === 'win32') bundleMongodRuntimeDlls();
+    generateJreBaseCdsArchives();
 
     if (!requiredResourcesPresent()) {
         console.error('\nERROR: Missing required files. Fix the warnings above before running electron-builder.\n');

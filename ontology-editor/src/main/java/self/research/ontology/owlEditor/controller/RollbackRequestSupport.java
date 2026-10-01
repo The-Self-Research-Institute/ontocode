@@ -41,19 +41,33 @@ public class RollbackRequestSupport {
         String authHeader = request != null ? request.getHeader("Authorization") : null;
         String[] claims = JwtClaimUtils.extractPlanAndUserId(authHeader);
         String requesterId = claims != null ? claims[1] : null;
-        if (requesterId == null || !workspaceOwnershipService.isDraftEditorInProject(requesterId, projectId)
-                || workspaceOwnershipService.isUserOwnerOfProject(requesterId, projectId)) {
+        if (requesterId == null) {
             return null;
+        }
+        if (workspaceOwnershipService.isViewerInProject(requesterId, projectId)
+                && !workspaceOwnershipService.isUserOwnerOfProject(requesterId, projectId)) {
+            return ResponseEntity.status(403).body(Map.of("success", false,
+                    "error", "You do not have permission to roll back changes in this project."));
         }
         String requesterEmail = JwtClaimUtils.extractEmail(authHeader);
-        boolean allOwnDrafts = !changes.isEmpty() && changes.stream().allMatch(change -> change.isDraft()
-                && change.getUserId() != null
-                && (change.getUserId().equals(requesterId) || change.getUserId().equalsIgnoreCase(requesterEmail)));
-        if (allOwnDrafts) {
-            return null;
+        boolean touchesSomeoneElsesDraft = changes.stream().anyMatch(change -> change.isDraft()
+                && !isAuthor(change, requesterId, requesterEmail));
+        if (touchesSomeoneElsesDraft) {
+            return ResponseEntity.status(403).body(Map.of("success", false,
+                    "error", "Only the person who made this change can roll it back before it's merged."));
         }
-        return ResponseEntity.status(403).body(Map.of("success", false,
-                "error", "You can only roll back changes in your own draft."));
+        if (workspaceOwnershipService.isDraftEditorInProject(requesterId, projectId)
+                && !workspaceOwnershipService.isUserOwnerOfProject(requesterId, projectId)
+                && changes.stream().anyMatch(change -> !change.isDraft())) {
+            return ResponseEntity.status(403).body(Map.of("success", false,
+                    "error", "You can only roll back changes in your own draft."));
+        }
+        return null;
+    }
+
+    private static boolean isAuthor(HistoryChange change, String requesterId, String requesterEmail) {
+        String owner = change.getUserId();
+        return owner != null && (owner.equals(requesterId) || owner.equalsIgnoreCase(requesterEmail));
     }
 
     public static ResponseEntity<Map<String, Object>> toBody(ChangeRollbackService.Result result, String changeId,

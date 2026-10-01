@@ -1135,18 +1135,7 @@ const TopMenuBar = ({
 };
 
 
-/**
- * Appends the explicit draft-scope opt-in the backend requires before reading from a
- * user's draft graph instead of main. userId alone isn't a scope signal — it's always
- * resolvable via the X-Ontocode-User-Id header/JWT, even on requests made while viewing
- * Public — so omitting/blanking userId doesn't stop a read from being scoped to draft.
- */
-/**
- * True when reads/writes should carry draft=true. Draft/public graph scoping is a
- * WEBAPP-only concern: desktop is single-user OWLAPI-first with its own local-graph model
- * and no shared public/draft split, so we never send draft params there — that keeps
- * desktop's read/write behavior byte-for-byte unchanged by the draft-isolation work.
- */
+
 function isDraftScopeActive(): boolean {
   return !isDesktop() && ontologyMutationService.isPrivateEditMode();
 }
@@ -2161,6 +2150,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // True when codeViewSaveError is a version conflict (see above) rather than a genuine
   // save failure — swaps the dialog's "Retry Save" for "Reload Latest".
   const [codeViewSaveConflict, setCodeViewSaveConflict] = useState(false);
+  const [codeViewLargeReduction, setCodeViewLargeReduction] = useState<{ oldCount: number; newCount: number } | null>(null);
   const [savingCodeView, setSavingCodeView] = useState(false);
   const lastCodeViewSaveContentRef = useRef<string>("");
   // Lint runs right before save (see handleSaveCodeContent) — non-blocking content
@@ -2277,16 +2267,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       id: "Classes",
       label: "Classes",
       icon: Package,
-      // Trust backend metadata as the source of truth when available — it
-      // reflects the whole ontology, unlike classHierarchy, which can be
-      // partially loaded/collapsed in the UI on larger ontologies. Only fall
-      // back to counting the (now deduplicated) tree when metadata is missing.
-      count:
-        Number((metadata as any)?.classCount) > 0
-          ? Number((metadata as any)?.classCount)
-          : classHierarchy.length > 0
-            ? countNodes(classHierarchy)
-            : 0,
+      count: Math.max(
+        Number((metadata as any)?.classCount) || 0,
+        classHierarchy.length > 0 ? countNodes(classHierarchy) : 0,
+      ),
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
@@ -8628,6 +8612,8 @@ const updateItemInState = useCallback(
       handleRefreshIndividuals();
       handleRefreshAnnotationProperties();
       handleRefreshDatatypes();
+      codeViewDirtyRef.current = true;
+      silentRefreshMetadata();
 
       // Build notification message with value changes if available
       let message = `${rollbackUser} ${detail.direction === "REDO" ? "redid" : detail.direction === "UNDO" ? "undid" : "rolled back"} change by ${originalAuthor}`;
@@ -12545,7 +12531,7 @@ const updateItemInState = useCallback(
 
   // Handle saving code content to backend
   const handleSaveCodeContent = useCallback(
-    async (content: string, skipLintCheck: boolean = false) => {
+    async (content: string, skipLintCheck: boolean = false, confirmLargeReduction: boolean = false) => {
       // Free-plan non-owners cannot edit or save — show the Pro upgrade dialog
       if (isViewOnlyMember) {
         setShowProPromptType('edit');
@@ -12659,9 +12645,19 @@ const updateItemInState = useCallback(
               content: content,
               format: codeViewFormat,
               ...(codeViewSourceVersion != null ? { expectedSourceVersion: codeViewSourceVersion } : {}),
+              ...(confirmLargeReduction ? { confirmLargeReduction: true } : {}),
             },
           );
         } catch (syncError: any) {
+          if (syncError?.data?.errorType === "SUSPICIOUS_SIZE_REDUCTION") {
+            console.warn("[Dashboard] code-view-save needs confirmation (large size reduction):", syncError?.data?.error);
+            setCodeViewSaveConflict(false);
+            setCodeViewLargeReduction({
+              oldCount: Number(syncError?.data?.oldAxiomCount) || 0,
+              newCount: Number(syncError?.data?.newAxiomCount) || 0,
+            });
+            return;
+          }
           if (syncError?.status === 409 || syncError?.data?.conflictBlocked) {
             const conflictMsg =
               syncError?.data?.error ||
@@ -12679,7 +12675,7 @@ const updateItemInState = useCallback(
             return;
           }
           if (syncError?.data?.errorType === "INCONSISTENT_ONTOLOGY") {
-    
+
             const inconsistentMsg = syncError?.data?.error || "Inconsistent: this change makes the ontology inconsistent.";
             console.warn("[Dashboard] code-view-save rejected (inconsistent):", inconsistentMsg);
             setCodeViewSaveConflict(false);
@@ -12710,6 +12706,7 @@ const updateItemInState = useCallback(
           handleRefreshAnnotationProperties();
           handleRefreshIndividuals();
           handleRefreshDatatypes();
+          silentRefreshMetadata();
           // Let other open views (Graph View plugin, etc.) know the ontology changed so they
           // can drop their caches and refetch too — mirrors ontologyMutationService's broadcast
           // for normal entity-editor mutations, which this save path bypasses (it POSTs directly
@@ -12789,6 +12786,7 @@ const updateItemInState = useCallback(
       handleRefreshAnnotationProperties,
       handleRefreshIndividuals,
       handleRefreshDatatypes,
+      silentRefreshMetadata,
     ],
   );
 
@@ -18021,6 +18019,21 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           void fetchCodeViewContent(codeViewFormat, false, true);
         }}
       />
+      <ConfirmDialog
+        isOpen={!!codeViewLargeReduction}
+        onClose={() => setCodeViewLargeReduction(null)}
+        onConfirm={() => {
+          void handleSaveCodeContent(lastCodeViewSaveContentRef.current, true, true);
+        }}
+        title="Delete most of this ontology?"
+        message={
+          codeViewLargeReduction && codeViewLargeReduction.oldCount > 0
+            ? `This save keeps ${codeViewLargeReduction.newCount} of ${codeViewLargeReduction.oldCount} axioms. If Code View hadn't finished loading the whole file, saving now would delete the rest. Cancel and reload Code View if you're not sure.`
+            : "This save would delete most of the ontology. If Code View hadn't finished loading the whole file, saving now would delete the rest. Cancel and reload Code View if you're not sure."
+        }
+        confirmLabel="Save anyway"
+        cancelLabel="Cancel"
+      />
       {publishConflictDialog.isOpen && (() => {
         const conflicts = publishConflictDialog.conflicts;
         const resolvedCount = conflicts.filter((c) => conflictResolutions[c.entityIRI]).length;
@@ -19385,7 +19398,10 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           draftCount={draftCount}
           onPRApproved={() => {
             refreshOpenPRCount();
-            if (projectId) fetchData(projectId, false);
+            // forceRefresh: true — fetchData() otherwise skips the reload entirely when
+            // this same project is already loaded (the common case: you're looking at the
+            // project you just merged into), leaving the hierarchy/ontology data stale.
+            if (projectId) fetchData(projectId, false, undefined, true);
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}
         />

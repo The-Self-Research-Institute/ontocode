@@ -10,6 +10,7 @@ import org.eclipse.rdf4j.rio.RDFParser;
 import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.rio.helpers.StatementCollector;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Service
@@ -57,6 +63,19 @@ public class CodeViewReimportPipeline {
     @Autowired(required = false)
     @Nullable
     private ChangeSetBroadcaster changeSetBroadcaster;
+
+    @Autowired(required = false)
+    @Nullable
+    private OntologyIndexService indexService;
+
+    @Autowired(required = false)
+    @Qualifier("metadataExecutor")
+    @Nullable
+    private Executor metadataExecutor;
+
+    private final Map<String, AtomicLong> metadataRefreshSeq = new ConcurrentHashMap<>();
+
+    private enum MetadataRefresh { NOW, BACKGROUND }
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
@@ -119,7 +138,8 @@ public class CodeViewReimportPipeline {
                 return new ReimportResult(format, files.rdfFormat,
                         storageManager.getDraftGraphVersion(req.projectId(), req.userId()), false);
             }
-            invalidateAfterGraphReplaced(req.projectId());
+            invalidateAfterGraphReplaced(req.projectId(),
+                    req.origin() == null ? MetadataRefresh.NOW : MetadataRefresh.BACKGROUND);
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
             perf.mark("invalidate");
 
@@ -250,7 +270,7 @@ public class CodeViewReimportPipeline {
                 projectId, snapshot.getFileName(), Files.size(snapshot));
         streamIntoGraphDb(projectId, snapshot, RdfFiles.snapshotFormat(snapshot), null);
         invalidateReasonerCaches(projectId);
-        invalidateAfterGraphReplaced(projectId);
+        invalidateAfterGraphReplaced(projectId, MetadataRefresh.BACKGROUND);
         log.info("[CODE-VIEW-SAVE] Project {} restored from its pre-apply snapshot", projectId);
         return storageManager.getPublicGraphVersion(projectId);
     }
@@ -272,7 +292,7 @@ public class CodeViewReimportPipeline {
         } catch (Exception diffEx) {
             log.warn("[CODE-VIEW-SAVE] Failed to record change history for a patched apply: {}", diffEx.getMessage());
         }
-        invalidateAfterGraphReplaced(projectId);
+        invalidateAfterGraphReplaced(projectId, MetadataRefresh.BACKGROUND);
         storageManager.storeCodeViewCacheFile(projectId, format, patchedFile);
         if (recorded) {
             announce(projectId, userId, username, resolved);
@@ -301,9 +321,36 @@ public class CodeViewReimportPipeline {
         storageManager.bumpDraftGraphVersion(projectId, userId);
     }
 
-    private void invalidateAfterGraphReplaced(String projectId) {
+    private void invalidateAfterGraphReplaced(String projectId, MetadataRefresh refresh) {
         invalidateDerivedCaches(projectId);
         storageManager.clearCodeViewCache(projectId);
+        datasetService.evictPublicReadCache(projectId);
+        if (indexService == null) {
+            return;
+        }
+        long seq = metadataRefreshSeq.computeIfAbsent(projectId, id -> new AtomicLong()).incrementAndGet();
+        if (refresh == MetadataRefresh.NOW || metadataExecutor == null) {
+            refreshCachedMetadata(projectId, seq);
+            return;
+        }
+        try {
+            metadataExecutor.execute(() -> refreshCachedMetadata(projectId, seq));
+        } catch (RejectedExecutionException rejected) {
+            log.warn("[CODE-VIEW-SAVE] Metadata refresh queue is full; project {} keeps its previous counts until the next change",
+                    projectId);
+        }
+    }
+
+    private void refreshCachedMetadata(String projectId, long seq) {
+        try {
+            Map<String, Object> meta = indexService.computeMetadata(projectId);
+            if (metadataRefreshSeq.get(projectId).get() == seq) {
+                metadataService.writeMeta(projectId, meta);
+            }
+        } catch (Exception metaEx) {
+            log.warn("[CODE-VIEW-SAVE] Failed to refresh cached metadata for project {}: {}",
+                    projectId, metaEx.getMessage());
+        }
     }
 
     private void invalidateDerivedCaches(String projectId) {
