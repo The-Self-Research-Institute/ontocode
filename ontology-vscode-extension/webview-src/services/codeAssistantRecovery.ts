@@ -1,3 +1,4 @@
+import { assistantAuthHeaders } from "./codeAssistantAuthHeaders";
 export interface RecoveryState {
   locked: boolean;
   reason?: string;
@@ -46,7 +47,7 @@ async function send(
     method,
     headers: {
       ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...assistantAuthHeaders(token),
     },
     body: method === "POST" ? "{}" : undefined,
     signal,

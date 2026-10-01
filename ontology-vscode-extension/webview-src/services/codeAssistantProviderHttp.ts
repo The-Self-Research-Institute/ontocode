@@ -1,3 +1,4 @@
+import { assistantAuthHeaders } from "./codeAssistantAuthHeaders";
 import { LlmProvider, LlmRequestError } from "./LlmInsightsService";
 import { toAssistantApiError } from "./codeAssistantSessionErrors";
 
@@ -72,7 +73,7 @@ export function managedTarget(managed: ManagedProviderCall, body: Record<string,
   const path = managedProviderCallPath(managed.sessionId);
   return {
     url: `${managed.apiBaseUrl}${path}`,
-    headers: { "Content-Type": "application/json", ...(managed.token ? { Authorization: `Bearer ${managed.token}` } : {}) },
+    headers: { "Content-Type": "application/json", ...assistantAuthHeaders(managed.token) },
     payload: JSON.stringify({ request: body }),
     path,
   };

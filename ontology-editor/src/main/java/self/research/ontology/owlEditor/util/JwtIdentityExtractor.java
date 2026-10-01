@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Optional;
@@ -15,7 +17,11 @@ import java.util.Optional;
 public final class JwtIdentityExtractor {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    public static final String DESKTOP_LAUNCH_KEY_HEADER = "X-Ontocode-Desktop-Key";
+    public static final String DESKTOP_USER = "desktop-user-local";
+
     private static volatile SecretKey signatureKey;
+    private static volatile byte[] desktopLaunchKey;
 
     private JwtIdentityExtractor() {
     }
@@ -28,14 +34,29 @@ public final class JwtIdentityExtractor {
         return signatureKey != null;
     }
 
+    public static void trustDesktopLaunchKey(String key) {
+        desktopLaunchKey = key == null || key.isBlank() ? null : key.getBytes(StandardCharsets.UTF_8);
+    }
+
     public static Optional<String> extractEmail(HttpServletRequest request) {
         String authHeader = request.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            return Optional.empty();
+            return desktopUser(request);
         }
         String token = authHeader.substring(7).trim();
         SecretKey key = signatureKey;
         return key != null ? verifiedEmail(token, key) : unverifiedEmail(token);
+    }
+
+    private static Optional<String> desktopUser(HttpServletRequest request) {
+        byte[] expected = desktopLaunchKey;
+        String presented = request.getHeader(DESKTOP_LAUNCH_KEY_HEADER);
+        if (expected == null || presented == null) {
+            return Optional.empty();
+        }
+        return MessageDigest.isEqual(expected, presented.getBytes(StandardCharsets.UTF_8))
+                ? Optional.of(DESKTOP_USER)
+                : Optional.empty();
     }
 
     private static Optional<String> verifiedEmail(String token, SecretKey key) {

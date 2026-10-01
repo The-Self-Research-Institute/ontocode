@@ -21,6 +21,13 @@ class JwtIdentityExtractorTest {
     @AfterEach
     void resetSignatureKey() {
         JwtIdentityExtractor.requireSignature(null);
+        JwtIdentityExtractor.trustDesktopLaunchKey(null);
+    }
+
+    private static MockHttpServletRequest withLaunchKey(String key) {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(JwtIdentityExtractor.DESKTOP_LAUNCH_KEY_HEADER, key);
+        return request;
     }
 
     private static MockHttpServletRequest withToken(String token) {
@@ -61,5 +68,35 @@ class JwtIdentityExtractorTest {
     @Test
     void missingHeaderGivesNoIdentity() {
         assertEquals(Optional.empty(), JwtIdentityExtractor.extractEmail(new MockHttpServletRequest()));
+    }
+
+    @Test
+    void theDesktopLaunchKeyIdentifiesTheLocalDesktopUserWithoutSigningIn() {
+        JwtIdentityExtractor.trustDesktopLaunchKey("launch-key-123");
+
+        assertEquals(Optional.of(JwtIdentityExtractor.DESKTOP_USER),
+                JwtIdentityExtractor.extractEmail(withLaunchKey("launch-key-123")));
+    }
+
+    @Test
+    void aWrongOrMissingLaunchKeyGivesNoIdentity() {
+        JwtIdentityExtractor.trustDesktopLaunchKey("launch-key-123");
+
+        assertEquals(Optional.empty(), JwtIdentityExtractor.extractEmail(withLaunchKey("guessed-key")));
+        assertEquals(Optional.empty(), JwtIdentityExtractor.extractEmail(new MockHttpServletRequest()));
+    }
+
+    @Test
+    void theLaunchKeyHeaderIsIgnoredWhenNoKeyIsTrusted() {
+        assertEquals(Optional.empty(), JwtIdentityExtractor.extractEmail(withLaunchKey("anything")));
+    }
+
+    @Test
+    void aSignedInTokenStillTakesPriorityOverTheLaunchKey() {
+        JwtIdentityExtractor.trustDesktopLaunchKey("launch-key-123");
+        MockHttpServletRequest request = withToken(unsigned("{\"email\":\"dev@x.com\"}"));
+        request.addHeader(JwtIdentityExtractor.DESKTOP_LAUNCH_KEY_HEADER, "launch-key-123");
+
+        assertEquals(Optional.of("dev@x.com"), JwtIdentityExtractor.extractEmail(request));
     }
 }

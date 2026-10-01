@@ -1,3 +1,4 @@
+import { assistantAuthHeaders } from "./codeAssistantAuthHeaders";
 import { toAssistantApiError, type ErrorEnvelope } from "./codeAssistantSessionErrors";
 
 export interface IdempotentCallOptions {
@@ -53,7 +54,7 @@ export async function postJson<T>(
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...assistantAuthHeaders(token),
     ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
   };
   const serializedBody = JSON.stringify(body);

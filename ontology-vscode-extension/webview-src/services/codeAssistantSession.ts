@@ -1,3 +1,4 @@
+import { assistantAuthHeaders } from "./codeAssistantAuthHeaders";
 import { getStoredModel, getStoredProvider } from "./LlmInsightsService";
 import type { CodeAssistantAction } from "../components/CodeAssistantPanel";
 import type {
@@ -139,7 +140,7 @@ export function reportAssistantUsage(
     }
     const pending = fetch(`${apiBaseUrl}/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/usage`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { "Content-Type": "application/json", ...assistantAuthHeaders(token) },
       body: JSON.stringify(body),
       keepalive: true,
     });

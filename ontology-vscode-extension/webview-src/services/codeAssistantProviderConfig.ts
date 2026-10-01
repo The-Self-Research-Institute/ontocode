@@ -1,3 +1,4 @@
+import { assistantAuthHeaders } from "./codeAssistantAuthHeaders";
 import type { LlmProvider } from "./LlmInsightsService";
 
 export type ProviderConfig = { managed: false } | { managed: true; provider: LlmProvider; model: string };
@@ -31,7 +32,7 @@ export function getCachedProviderConfig(): ProviderConfig | null {
 async function loadProviderConfig(apiBaseUrl: string, token: string | undefined): Promise<ProviderConfig> {
   const res = await fetch(`${apiBaseUrl}${PROVIDER_CONFIG_PATH}`, {
     method: "GET",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: assistantAuthHeaders(token),
   });
   if (!res.ok) throw new Error(`Provider config request failed (HTTP ${res.status}).`);
   return normalizeProviderConfig(await res.json());

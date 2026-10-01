@@ -30,6 +30,9 @@ public class EditorIdentityConfig {
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
+    @Value("${ontocode.desktop.launch-key:}")
+    private String desktopLaunchKey;
+
     public EditorIdentityConfig(Environment environment) {
         this.environment = environment;
     }
@@ -37,6 +40,11 @@ public class EditorIdentityConfig {
     @PostConstruct
     void configure() {
         if (desktopMode) {
+            if (desktopLaunchKey == null || desktopLaunchKey.isBlank()) {
+                log.warn("[Security] No desktop launch key was provided, so Code View AI only accepts signed-in "
+                        + "requests in this run.");
+            }
+            JwtIdentityExtractor.trustDesktopLaunchKey(desktopLaunchKey);
             return;
         }
         boolean deployed = Arrays.stream(environment.getActiveProfiles()).anyMatch(DEPLOYED_PROFILES::contains);

@@ -297,6 +297,7 @@ function createMainWindow() {
     mainWindow.webContents.on('did-finish-load', () => {
         mainWindow.webContents.executeJavaScript(`
             window.__DESKTOP_API_URL__ = '${editorUrl}';
+            window.__DESKTOP_LAUNCH_KEY__ = '${svcMgr.DESKTOP_LAUNCH_KEY}';
             window.__DESKTOP_MODE__ = true;
             window.__IS_DEV__ = ${IS_DEV};
             // Plugins (UMD bundles) call fetch() against window.API_BASE_URL.
