@@ -202,6 +202,20 @@ public class OntologyMetadataService {
     private final ManchesterExpressionService manchesterExpressionService;
     private final Map<String, String> ontologyIriCache = new java.util.concurrent.ConcurrentHashMap<>();
 
+
+    public static final Map<String, String> STANDARD_PREFIXES;
+    static {
+        Map<String, String> defaults = new LinkedHashMap<>();
+        defaults.put("owl",   "http://www.w3.org/2002/07/owl#");
+        defaults.put("rdf",   "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+        defaults.put("rdfs",  "http://www.w3.org/2000/01/rdf-schema#");
+        defaults.put("xsd",   "http://www.w3.org/2001/XMLSchema#");
+        defaults.put("dc",    "http://purl.org/dc/elements/1.1/");
+        defaults.put("dcterms", "http://purl.org/dc/terms/");
+        defaults.put("skos",  "http://www.w3.org/2004/02/skos/core#");
+        STANDARD_PREFIXES = java.util.Collections.unmodifiableMap(defaults);
+    }
+
     
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private self.research.ontology.owlEditor.cache.ProjectOntologyCache ontologyCache;
@@ -1587,17 +1601,7 @@ public class OntologyMetadataService {
 
         // Always include the standard OWL/RDF/RDFS/XSD prefixes .
         // User-defined prefixes take precedence; we only add a standard one if not already present.
-        Map<String, String> defaults = new java.util.LinkedHashMap<>();
-        defaults.put("owl",   "http://www.w3.org/2002/07/owl#");
-        defaults.put("rdf",   "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-        defaults.put("rdfs",  "http://www.w3.org/2000/01/rdf-schema#");
-        defaults.put("xsd",   "http://www.w3.org/2001/XMLSchema#");
-        defaults.put("dc",    "http://purl.org/dc/elements/1.1/");
-        defaults.put("dcterms", "http://purl.org/dc/terms/");
-        defaults.put("skos",  "http://www.w3.org/2004/02/skos/core#");
-        for (Map.Entry<String, String> e : defaults.entrySet()) {
-            prefixMap.putIfAbsent(e.getKey(), e.getValue());
-        }
+        STANDARD_PREFIXES.forEach(prefixMap::putIfAbsent);
 
         // Convert to list of objects for frontend compatibility
         List<Map<String, String>> result = new ArrayList<>();
