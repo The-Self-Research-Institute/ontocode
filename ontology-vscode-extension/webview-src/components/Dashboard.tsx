@@ -19402,9 +19402,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           draftCount={draftCount}
           onPRApproved={() => {
             refreshOpenPRCount();
-            // forceRefresh: true — fetchData() otherwise skips the reload entirely when
-            // this same project is already loaded (the common case: you're looking at the
-            // project you just merged into), leaving the hierarchy/ontology data stale.
             if (projectId) fetchData(projectId, false, undefined, true);
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}

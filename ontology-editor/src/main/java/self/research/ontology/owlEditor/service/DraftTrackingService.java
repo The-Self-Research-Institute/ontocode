@@ -572,13 +572,6 @@ public class DraftTrackingService {
             predicate = data.get("property").toString();
             Object value = data.get("value") != null ? data.get("value") : data.get("newValue");
             String valueStr = value != null ? value.toString() : null;
-            // "annotationProperty" here isn't limited to true OWL annotation properties — it's
-            // this codebase's signal (see ChangeTrackingController#appendSubChangeInverseMutations)
-            // for "a predicate + literal value, invertible via generic add/deleteAnnotation SPARQL".
-            // A plain data-property statement like hasPrice/servingNote is exactly that shape, so
-            // it needs the same signal — only an IRI-valued (object property) statement doesn't,
-            // since wrapping an IRI in annotationLiteral() would quote it as a literal instead of
-            // emitting a real reference.
             boolean looksLikeIri = valueStr != null && (valueStr.startsWith("http://") || valueStr.startsWith("https://"));
             if (!looksLikeIri) {
                 subChange.put("annotationProperty", predicate);

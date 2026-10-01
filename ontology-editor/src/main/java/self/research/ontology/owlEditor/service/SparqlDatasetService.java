@@ -266,15 +266,6 @@ public class SparqlDatasetService {
     private static final java.util.regex.Pattern XMLNS_DECLARATION_PATTERN =
             java.util.regex.Pattern.compile("xmlns:?([a-zA-Z0-9_-]*)\\s*=\\s*\"([^\"]*)\"");
 
-    /**
-     * RDF4J's RDFXMLParser only fires handleNamespace() for a prefix once it's actually
-     * used to qualify an element/attribute that produces a triple — a prefix declared on
-     * the root <rdf:RDF> element but never referenced in the body (common for large
-     * ontologies that declare prefixes for related/imported vocabularies "just in case")
-     * is silently dropped from capturedNamespaces. Scanning the raw root element's own
-     * xmlns declarations directly recovers those too, so nothing declared in the source
-     * file is lost just because the ontology doesn't happen to use it (yet).
-     */
     private void mergeDeclaredXmlnsPrefixes(Map<String, String> capturedNamespaces, byte[] headBytes, int length) {
         if (headBytes == null || length <= 0) {
             return;
@@ -1215,19 +1206,6 @@ public class SparqlDatasetService {
         log.info("[DRAFT-GRAPH] Cleared draft graph {} for project {} user {}", draftGraph, projectId, userId);
     }
 
-    /**
-     * Atomically publishes a copy-on-switch draft by replacing main's content with the draft's.
-     *
-     * <p>Deliberately NOT implemented as SPARQL {@code MOVE GRAPH}: the draft graph is always
-     * created by copying main (see {@link #copyMainGraphToDraft}), which preserves the store's
-     * internal blank-node identity rather than minting fresh ones. When the destination of a
-     * {@code MOVE} shares blank-node lineage with its source this way, Jena/Fuseki's native MOVE
-     * silently drops a fraction of the blank-node-anchored triples (reproduced directly against
-     * Fuseki outside the app, independent of this codebase — e.g. an 11-triple graph moved onto
-     * such an overlapping destination came out with only 6). The CLEAR+INSERT-WHERE+CLEAR
-     * sequence below is semantically equivalent to MOVE and was verified lossless in the same
-     * overlapping-blank-node scenario at full production scale.</p>
-     */
     public void moveDraftToMain(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
@@ -1474,12 +1452,6 @@ public class SparqlDatasetService {
                 }
 
             } catch (Exception e) {
-                // Once commit() has succeeded, the write is already durable — the SPARQL update
-                // itself is not what's failing here, something in post-commit processing (cache
-                // invalidation, the OWLAPI coordinator) is. Rolling back at that point has nothing
-                // to roll back and only throws its own "no transaction active" error, which used
-                // to replace this one and hide the real cause. Only roll back pre-commit failures,
-                // and never let a failed rollback attempt mask the exception that triggered it.
                 if (autoCommit && !committed) {
                     try {
                         conn.rollback();
@@ -1837,8 +1809,6 @@ public class SparqlDatasetService {
 
                     log.info("Parsing RDF file...");
 
-                    // Preview head of the stream for debugging, and to recover any xmlns
-                    // declarations the parser itself won't report (see mergeDeclaredXmlnsPrefixes).
                     final int headPreviewSize = 32768;
                     cleanedStream.mark(headPreviewSize);
                     byte[] preview = cleanedStream.readNBytes(headPreviewSize);
