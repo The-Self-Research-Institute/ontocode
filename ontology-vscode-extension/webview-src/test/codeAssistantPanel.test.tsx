@@ -1,0 +1,410 @@
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const logout = vi.fn();
+
+vi.mock("../custom-hook/useAuth", () => ({
+  useAuth: () => ({ user: { token: "jwt" }, logout }),
+}));
+
+vi.mock("../hooks/useSubscription", () => ({
+  useSubscription: () => ({ isFree: false, getUpgradeMessage: () => "" }),
+}));
+
+vi.mock("../services/LlmInsightsService", () => ({
+  hasApiKey: () => true,
+  setStoredApiKey: () => {},
+}));
+
+vi.mock("../components/CodeAssistantModelSwitcher", () => ({
+  CodeAssistantModelSwitcher: () => null,
+}));
+
+vi.mock("../services/codeAssistantProviderConfig", () => ({
+  getProviderConfig: async () => ({ managed: false }),
+  getCachedProviderConfig: () => ({ managed: false }),
+}));
+
+vi.mock("../services/codeAssistantLoop", () => ({
+  runAssistantLoop: vi.fn(),
+}));
+
+vi.mock("../services/codeAssistantSession", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/codeAssistantSession")>();
+  return { ...actual, createAssistantSession: vi.fn(), applyEditGroup: vi.fn() };
+});
+
+import { CodeAssistantPanel } from "../components/CodeAssistantPanel";
+import { runAssistantLoop } from "../services/codeAssistantLoop";
+import { AssistantApiError, applyEditGroup, createAssistantSession } from "../services/codeAssistantSession";
+import { UNSAVED_CODE_VIEW_MESSAGE } from "../components/codeAssistantPanelHelpers";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const loopMock = vi.mocked(runAssistantLoop);
+const sessionMock = vi.mocked(createAssistantSession);
+const applyMock = vi.mocked(applyEditGroup);
+
+let container: HTMLDivElement;
+let root: Root;
+
+const session = {
+  sessionId: "s1",
+  snapshot: { projectId: "proj-1", documentPath: "a.ttl", revision: 3, actionType: "ask" as const },
+  budget: { retrievalCallsRemaining: 10, maxRetrievalCalls: 10 },
+  expiresAt: "2030-01-01T00:00:00Z",
+};
+
+function renderPanel(props: Partial<React.ComponentProps<typeof CodeAssistantPanel>> = {}) {
+  act(() => {
+    root.render(<CodeAssistantPanel projectId="proj-1" documentPath="a.ttl" {...props} />);
+  });
+}
+
+async function flush() {
+  for (let i = 0; i < 6; i++) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+function composer(): HTMLTextAreaElement {
+  return container.querySelector("textarea") as HTMLTextAreaElement;
+}
+
+function type(value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  act(() => {
+    setter?.call(composer(), value);
+    composer().dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function send(value: string) {
+  type(value);
+  act(() => {
+    composer().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+  await flush();
+}
+
+function buttons(text: string): HTMLButtonElement[] {
+  return Array.from(container.querySelectorAll("button")).filter((b) => b.textContent?.trim().startsWith(text)) as HTMLButtonElement[];
+}
+
+function group(id: string) {
+  return {
+    clientGroupId: `c-${id}`,
+    serverGroupId: id,
+    validation: { passed: true, checks: [] },
+    diff: [{ targetPath: "a.ttl", before: `old ${id}`, after: `new ${id}` }],
+  };
+}
+
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  loopMock.mockReset();
+  sessionMock.mockReset();
+  applyMock.mockReset();
+  logout.mockReset();
+  sessionMock.mockResolvedValue(session);
+  Element.prototype.scrollIntoView = () => {};
+  window.localStorage.clear();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe("CodeAssistantPanel dead ends", () => {
+  it("puts the prompt back and resubmits it with the latest version after REVISION_STALE", async () => {
+    loopMock
+      .mockResolvedValueOnce({ kind: "stopped", reason: "Project changed", errorCode: "REVISION_STALE" })
+      .mockResolvedValueOnce({ kind: "answer", text: "A is a class." });
+    renderPanel();
+    await send("What is A?");
+
+    expect(composer().value).toBe("What is A?");
+    const retry = buttons("Ask again with the latest version");
+    expect(retry).toHaveLength(1);
+
+    act(() => retry[0].click());
+    await flush();
+
+    expect(loopMock).toHaveBeenCalledTimes(2);
+    expect(loopMock.mock.calls[1][2]).toBe("What is A?");
+    expect(loopMock.mock.calls[1][5]).toEqual([]);
+    expect(sessionMock).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("A is a class.");
+    expect(composer().value).toBe("");
+  });
+
+  it("counts down before allowing a retry after RATE_LIMITED", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false, toFake: ["setInterval", "clearInterval", "Date"] });
+    loopMock.mockResolvedValueOnce({ kind: "stopped", reason: "Slow down", errorCode: "RATE_LIMITED", retryAfterSeconds: 3 } as never);
+    renderPanel();
+    await send("Explain B");
+
+    let retry = buttons("Try again")[0];
+    expect(retry.textContent).toContain("Try again in 3 s");
+    expect(retry.disabled).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(3100);
+    });
+    retry = buttons("Try again")[0];
+    expect(retry.textContent?.trim()).toBe("Try again");
+    expect(retry.disabled).toBe(false);
+  });
+
+  it("offers to sign in again after UNAUTHORIZED from the backend", async () => {
+    sessionMock.mockRejectedValueOnce(new AssistantApiError("Code assistant request failed (HTTP 401)."));
+    renderPanel();
+    await send("Hello");
+    expect(composer().value).toBe("Hello");
+    act(() => buttons("Sign in again")[0].click());
+    expect(logout).toHaveBeenCalledWith(true);
+    expect(loopMock).not.toHaveBeenCalled();
+  });
+
+  it("explains a permission problem without offering a retry", async () => {
+    loopMock.mockResolvedValueOnce({ kind: "stopped", reason: "Forbidden", errorCode: "FORBIDDEN" });
+    renderPanel();
+    await send("Change C");
+    expect(container.textContent).toContain("permission");
+    expect(buttons("Ask again")).toHaveLength(0);
+  });
+});
+
+describe("CodeAssistantPanel Apply All", () => {
+  it("stops at the first failed group and summarises the run", async () => {
+    loopMock.mockResolvedValueOnce({
+      kind: "propose",
+      result: { ok: true, groups: [group("g1"), group("g2"), group("g3")] },
+    });
+    applyMock
+      .mockResolvedValueOnce({ ok: true, applied: true, newRevision: 4, remappedPendingGroups: [{ serverGroupId: "g2", remapped: true }] })
+      .mockRejectedValueOnce(new AssistantApiError("The reimport failed.", "RECOVERY_REQUIRED"));
+    renderPanel();
+    await send("Rename things");
+
+    act(() => buttons("Apply All")[0].click());
+    await flush();
+
+    expect(applyMock).toHaveBeenCalledTimes(2);
+    expect(applyMock.mock.calls.map((c) => c[3])).toEqual(["g1", "g2"]);
+    expect(container.textContent).toContain(
+      "Applied 1 · Failed: group 2 (it failed partway and the project needs checking) · Not attempted: 1",
+    );
+    const cards = Array.from(container.querySelectorAll("div.border-2"));
+    expect(cards[1].textContent).toContain("The reimport failed.");
+    expect(Array.from(cards[1].querySelectorAll("button")).some((b) => b.textContent?.trim() === "Apply")).toBe(false);
+  });
+
+  it("keeps Apply disabled while Code View has unsaved changes", async () => {
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1"), group("g2")] } });
+    renderPanel({ hasUnsavedCodeViewChanges: true });
+    await send("Edit");
+    expect(container.textContent).toContain(UNSAVED_CODE_VIEW_MESSAGE);
+    expect(buttons("Apply All")[0].disabled).toBe(true);
+    act(() => buttons("Apply All")[0].click());
+    await flush();
+    expect(applyMock).not.toHaveBeenCalled();
+
+    renderPanel({ hasUnsavedCodeViewChanges: false });
+    expect(buttons("Apply All")[0].disabled).toBe(false);
+  });
+});
+
+describe("CodeAssistantPanel usage", () => {
+  it("hands the loop an onUsage handler and shows each turn's usage under the answer", async () => {
+    loopMock.mockImplementationOnce(async (_ctx, _system, _text, _onStage, _signal, _history, _onContext, onUsage) => {
+      onUsage?.({ provider: "claude", model: "m", latencyMs: 700, inputTokens: 1000, outputTokens: 20, cacheReadTokens: 800 });
+      onUsage?.({ provider: "claude", model: "m", latencyMs: 400, inputTokens: 1100, outputTokens: 60, cacheWriteTokens: 50 });
+      return { kind: "answer", text: "A is a class." };
+    });
+    renderPanel();
+    await send("What is A?");
+
+    expect(typeof loopMock.mock.calls[0][7]).toBe("function");
+    expect(container.querySelector("[data-usage-total]")?.textContent).toBe(
+      "· 2,100 in · 80 out · 800 cache read · 50 cache write · 1.1 s",
+    );
+    act(() => buttons("Usage")[0].click());
+    const rows = Array.from(container.querySelectorAll("[data-usage-turns] li")).map((li) => li.textContent);
+    expect(rows).toEqual(["Turn 1: 1,000 in · 20 out · 800 cache read · 700 ms", "Turn 2: 1,100 in · 60 out · 50 cache write · 400 ms"]);
+  });
+
+  it("keeps usage on a review entry too", async () => {
+    loopMock.mockImplementationOnce(async (_ctx, _system, _text, _onStage, _signal, _history, _onContext, onUsage) => {
+      onUsage?.({ provider: "openai", model: "m", latencyMs: 1500, inputTokens: 10, outputTokens: 5 });
+      return { kind: "propose", result: { ok: true, groups: [group("g1")] } };
+    });
+    renderPanel();
+    await send("Rename A");
+    expect(container.querySelector("[data-usage-total]")?.textContent).toBe("· 10 in · 5 out · 1.5 s");
+  });
+});
+
+describe("CodeAssistantPanel request identity", () => {
+  it("drops an answer that arrives after switching project and notes the cancellation in the old chat", async () => {
+    let resolveLoop: (value: { kind: "answer"; text: string }) => void = () => {};
+    loopMock.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveLoop = resolve;
+      }),
+    );
+    renderPanel({ projectId: "proj-1" });
+    await send("What is A?");
+
+    renderPanel({ projectId: "proj-2" });
+    await flush();
+    resolveLoop({ kind: "answer", text: "A is a class." });
+    await flush();
+
+    expect(container.textContent).not.toContain("A is a class.");
+    expect(container.textContent).not.toContain("What is A?");
+    const stored = window.localStorage.getItem("ontocode.askAi.chat.proj-1") ?? "";
+    expect(stored).toContain("What is A?");
+    expect(stored).toContain("Cancelled because you switched to another project");
+    expect(stored).not.toContain("A is a class.");
+  });
+
+  it("does not refresh Code View for a proposal that belongs to another project", async () => {
+    const onApplySuccess = vi.fn();
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1")] } });
+    applyMock.mockResolvedValueOnce({ ok: true, applied: true, newRevision: 4, remappedPendingGroups: [] });
+    renderPanel({ projectId: "proj-1", onApplySuccess });
+    await send("Rename A");
+    renderPanel({ projectId: "proj-2", onApplySuccess });
+    await flush();
+    const stored = window.localStorage.getItem("ontocode.askAi.chat.proj-1") ?? "[]";
+    window.localStorage.setItem("ontocode.askAi.chat.proj-3", stored);
+
+    renderPanel({ projectId: "proj-3", onApplySuccess });
+    await flush();
+    act(() => buttons("Apply")[0].click());
+    await flush();
+
+    expect(applyMock).toHaveBeenCalledTimes(1);
+    expect(onApplySuccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("CodeAssistantPanel Code View refresh", () => {
+  it("refreshes Code View once after Apply All with every applied change", async () => {
+    const onApplySuccess = vi.fn();
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1"), group("g2")] } });
+    applyMock
+      .mockResolvedValueOnce({ ok: true, applied: true, newRevision: 4, remappedPendingGroups: [], appliedRanges: [{ format: "turtle", startLine: 3, lineCount: 1 }] })
+      .mockResolvedValueOnce({ ok: true, applied: true, newRevision: 5, remappedPendingGroups: [] });
+    renderPanel({ onApplySuccess });
+    await send("Label things");
+
+    act(() => buttons("Apply All")[0].click());
+    await flush();
+
+    expect(applyMock).toHaveBeenCalledTimes(2);
+    expect(onApplySuccess).toHaveBeenCalledTimes(1);
+    expect(onApplySuccess).toHaveBeenCalledWith(["new g1", "new g2"], [{ format: "turtle", startLine: 3, lineCount: 1 }]);
+  });
+
+  it("does not refresh Code View when Apply All applies nothing", async () => {
+    const onApplySuccess = vi.fn();
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1"), group("g2")] } });
+    applyMock.mockRejectedValueOnce(new AssistantApiError("Document changed", "CONFLICT"));
+    renderPanel({ onApplySuccess });
+    await send("Label things");
+
+    act(() => buttons("Apply All")[0].click());
+    await flush();
+
+    expect(onApplySuccess).not.toHaveBeenCalled();
+  });
+
+  it("marks a sibling stale as soon as the apply result says so", async () => {
+    loopMock.mockResolvedValueOnce({ kind: "propose", result: { ok: true, groups: [group("g1"), group("g2")] } });
+    applyMock.mockResolvedValueOnce({
+      ok: true,
+      applied: true,
+      newRevision: 4,
+      remappedPendingGroups: [{ serverGroupId: "g2", remapped: true, stale: true }],
+    });
+    renderPanel();
+    await send("Label things");
+
+    act(() => buttons("Apply")[0].click());
+    await flush();
+
+    expect(buttons("Apply").filter((b) => b.textContent?.trim() === "Apply")).toHaveLength(0);
+    expect(container.textContent?.toLowerCase()).toContain("stale");
+  });
+});
+
+describe("CodeAssistantPanel editor selection", () => {
+  it("sends the selected lines with the question and records them as action context", async () => {
+    const onClearEditorSelection = vi.fn();
+    loopMock.mockResolvedValueOnce({ kind: "answer", text: "It is a class." });
+    renderPanel({
+      editorSelection: { startLine: 4, endLine: 5, text: "ex:Dog a owl:Class ;\n  rdfs:label \"Dog\" .", format: "turtle", pageStartLine: 1000 },
+      onClearEditorSelection,
+    });
+    expect(container.textContent).toContain("Using your selection: lines 1005–1006");
+
+    await send("Why is this wrong?");
+
+    const sentText = loopMock.mock.calls[0][2] as string;
+    expect(sentText.startsWith("Why is this wrong?")).toBe(true);
+    expect(sentText).toContain('zero-based range "turtle:1004-2"');
+    expect(sentText).toContain("ex:Dog a owl:Class ;");
+    expect(JSON.parse(sessionMock.mock.calls[0][2].actionContext)).toEqual({
+      selection: { format: "turtle", startLine: 1004, endLine: 1005 },
+    });
+    expect(onClearEditorSelection).toHaveBeenCalled();
+    expect(container.textContent).toContain("Why is this wrong?");
+    expect(container.textContent).not.toContain("zero-based range");
+  });
+});
+
+describe("CodeAssistantPanel failed checks", () => {
+  it("lists why a group failed validation", async () => {
+    loopMock.mockResolvedValueOnce({
+      kind: "propose",
+      result: {
+        ok: true,
+        groups: [{
+          clientGroupId: "c1",
+          serverGroupId: "g1",
+          validation: { passed: false, checks: [{ name: "references_resolve", passed: false, detail: "ex:Hamster is not defined" }] },
+          diff: [{ targetPath: "turtle", before: "", after: "ex:Thumper a ex:Hamster .", startLine: 9, lineCount: 0 }],
+        }],
+      },
+    });
+    renderPanel();
+    await send("Make Thumper a Hamster");
+
+    expect(container.textContent).toContain("Referenced names exist in the ontology: ex:Hamster is not defined");
+    expect(container.textContent).toContain("turtle · insert at line 10");
+  });
+});
+
+describe("CodeAssistantPanel proposal explanation", () => {
+  it("shows what the model said alongside its proposal", async () => {
+    loopMock.mockResolvedValueOnce({
+      kind: "propose",
+      result: { ok: true, groups: [group("g1")] },
+      explanation: "Dog has no label, so this adds one in English.",
+    });
+    renderPanel();
+    await send("Label Dog");
+    expect(container.textContent).toContain("Dog has no label, so this adds one in English.");
+  });
+});

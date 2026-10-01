@@ -24,6 +24,8 @@ const WEBVIEW = path.join(REPO_ROOT, 'ontology-vscode-extension', 'webview-src')
 const DESKTOP_JAVA = path.join(REPO_ROOT, 'ontology-desktop');
 const DESKTOP_JAR_SRC = path.join(DESKTOP_JAVA, 'target', 'ontology-desktop-1.0.0.jar');
 const DESKTOP_JAR_DEST = path.join(ELECTRON_APP, 'resources', 'backend', 'jars', 'desktop.jar');
+const SWRL_JAR_SRC = path.join(REPO_ROOT, 'ontology-swrl', 'target', 'ontology-swrl-1.0.0.jar');
+const SWRL_JAR_DEST = path.join(ELECTRON_APP, 'resources', 'backend', 'jars', 'swrl.jar');
 const RENDERER_DIST = path.join(ELECTRON_APP, 'renderer', 'dist');
 const WEBVIEW_DIST = path.join(WEBVIEW, 'dist');
 const PLUGINS_ROOT = path.join(REPO_ROOT, 'plugins');
@@ -239,6 +241,12 @@ function buildJava(quick) {
     ensureDir(path.dirname(DESKTOP_JAR_DEST));
     fs.copyFileSync(DESKTOP_JAR_SRC, DESKTOP_JAR_DEST);
     console.log(`  ✓  desktop.jar → ${DESKTOP_JAR_DEST}`);
+    run(`mvn ${quick ? '' : 'clean '}package -pl ontology-swrl -DskipTests -q`, REPO_ROOT, 'Maven: ontology-swrl (SWRL reasoner)');
+    if (!fs.existsSync(SWRL_JAR_SRC)) {
+        throw new Error(`Missing ${SWRL_JAR_SRC} after Maven build`);
+    }
+    fs.copyFileSync(SWRL_JAR_SRC, SWRL_JAR_DEST);
+    console.log(`  ✓  swrl.jar → ${SWRL_JAR_DEST}`);
 }
 
 /** Incremental Maven — only editor + desktop fat jar (~60–90s vs 4+ min full chain). */

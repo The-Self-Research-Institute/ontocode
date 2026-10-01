@@ -896,3 +896,5 @@ ontology-vscode-extension/test-invitation-helper.js
 # deploy-coretopia-release.sh flock lock file
 .desktop-build.lock
 .deploy-app/
+
+__pycache__/

@@ -52,8 +52,13 @@ for module in $java_modules; do
     mvn -q -o -pl "$module" compile || status=1
 done
 
+if command -v python3 >/dev/null 2>&1; then
+    echo "pre-push: checking the comment policy on changed lines..." >&2
+    python3 scripts/comment_policy.py origin/develop || status=1
+fi
+
 if [ "$status" -ne 0 ]; then
-    echo "pre-push: typecheck failed, push aborted." >&2
+    echo "pre-push: typecheck or comment policy failed, push aborted." >&2
 fi
 
 exit "$status"

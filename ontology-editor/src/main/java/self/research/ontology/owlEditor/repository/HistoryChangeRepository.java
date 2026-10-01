@@ -11,6 +11,8 @@ import java.util.Optional;
 public interface HistoryChangeRepository extends MongoRepository<HistoryChange, String> {
     
     List<HistoryChange> findByProjectIdOrderByTimestampDesc(String projectId);
+
+    List<HistoryChange> findByProjectIdAndChangeSetIdOrderByTimestampDesc(String projectId, String changeSetId);
     
     List<HistoryChange> findByProjectIdAndStatusOrderByTimestampDesc(String projectId, String status);
     

@@ -76,6 +76,11 @@ public class HistoryChange {
     private boolean reverted = false;
     private String revertedAuditId;
 
+    @Indexed
+    private String changeSetId;
+    private String source;
+    private AiInfo ai;
+
     // Sync tracking
     private LocalDateTime syncedAt;
 
@@ -233,6 +238,36 @@ public class HistoryChange {
     }
 
     // Builder pattern
+    public static class AiInfo {
+        private String provider;
+        private String model;
+        private String sessionId;
+        private String groupId;
+        private String summary;
+
+        public AiInfo() {
+        }
+
+        public AiInfo(String provider, String model, String sessionId, String groupId, String summary) {
+            this.provider = provider;
+            this.model = model;
+            this.sessionId = sessionId;
+            this.groupId = groupId;
+            this.summary = summary;
+        }
+
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+        public String getModel() { return model; }
+        public void setModel(String model) { this.model = model; }
+        public String getSessionId() { return sessionId; }
+        public void setSessionId(String sessionId) { this.sessionId = sessionId; }
+        public String getGroupId() { return groupId; }
+        public void setGroupId(String groupId) { this.groupId = groupId; }
+        public String getSummary() { return summary; }
+        public void setSummary(String summary) { this.summary = summary; }
+    }
+
     public static class Builder {
         private HistoryChange change;
 
@@ -299,6 +334,21 @@ public class HistoryChange {
 
         public Builder draft(boolean draft) {
             change.draft = draft;
+            return this;
+        }
+
+        public Builder changeSetId(String changeSetId) {
+            change.changeSetId = changeSetId;
+            return this;
+        }
+
+        public Builder source(String source) {
+            change.source = source;
+            return this;
+        }
+
+        public Builder ai(AiInfo ai) {
+            change.ai = ai;
             return this;
         }
 
@@ -526,6 +576,30 @@ public class HistoryChange {
 
     public boolean isReverted() {
         return reverted;
+    }
+
+    public String getChangeSetId() {
+        return changeSetId;
+    }
+
+    public void setChangeSetId(String changeSetId) {
+        this.changeSetId = changeSetId;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
+    }
+
+    public AiInfo getAi() {
+        return ai;
+    }
+
+    public void setAi(AiInfo ai) {
+        this.ai = ai;
     }
 
     public void setReverted(boolean reverted) {
