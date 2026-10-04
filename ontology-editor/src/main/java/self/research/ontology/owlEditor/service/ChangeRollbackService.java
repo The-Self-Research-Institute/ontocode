@@ -54,12 +54,13 @@ public class ChangeRollbackService {
     private final RollbackAuditRepository audits;
     private final ProjectWriteLockRegistry locks;
     private final RollbackRecorder recorder;
+    private final DraftTrackingService draftTracking;
 
     @Autowired
     public ChangeRollbackService(HistorySyncService historySync, RollbackMutationPlanner planner,
                                  RollbackGraphFacts facts, OntologyMutationService mutations,
                                  RollbackAuditRepository audits, OntologyHistoryService history,
-                                 ProjectWriteLockRegistry locks,
+                                 ProjectWriteLockRegistry locks, DraftTrackingService draftTracking,
                                  @Autowired(required = false) @Nullable SimpMessagingTemplate messaging) {
         this.historySync = historySync;
         this.planner = planner;
@@ -67,6 +68,7 @@ public class ChangeRollbackService {
         this.mutations = mutations;
         this.audits = audits;
         this.locks = locks;
+        this.draftTracking = draftTracking;
         this.recorder = new RollbackRecorder(audits, history, messaging);
     }
 
@@ -382,6 +384,9 @@ public class ChangeRollbackService {
         if (!work.plan().mutations().isEmpty()) {
             if (draft) {
                 mutations.applyDraftForRollback(req.projectId(), entry.getUserId(), work.plan().mutations());
+                if (entry.getEntityIRI() != null) {
+                    draftTracking.discardDraftsByIris(req.projectId(), entry.getUserId(), Set.of(entry.getEntityIRI()));
+                }
             } else {
                 mutations.applyForRollback(req.projectId(), work.plan().mutations());
             }

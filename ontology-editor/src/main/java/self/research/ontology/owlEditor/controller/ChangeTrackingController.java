@@ -9,7 +9,6 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.model.HistoryChange;
-import self.research.ontology.owlEditor.model.RollbackAudit;
 import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
