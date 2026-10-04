@@ -51,6 +51,9 @@ public class ChangeTrackingController {
     @Autowired
     private RollbackAuditRepository rollbackAuditRepository;
 
+    @Autowired
+    private self.research.ontology.owlEditor.service.DraftTrackingService draftTrackingService;
+
     /**
      * Get change history for a project
      * GET /api/ontology/{projectId}/changes/history
@@ -849,6 +852,7 @@ public class ChangeTrackingController {
                         log.info("[ROLLBACK] Applying {} inverse mutations to draft graph (owner={})",
                                 inverseMutations.size(), draftOwnerUserId);
                         ontologyMutationService.applyDraftForRollback(projectId, draftOwnerUserId, inverseMutations);
+                        draftTrackingService.discardDraftsByIris(projectId, draftOwnerUserId, Set.of(entityIRI));
                     } else {
                         log.info("[ROLLBACK] Applying {} inverse mutations to public graph", inverseMutations.size());
                         ontologyMutationService.applyForRollback(projectId, inverseMutations);
