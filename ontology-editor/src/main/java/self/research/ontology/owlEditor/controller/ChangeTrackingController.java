@@ -852,12 +852,6 @@ public class ChangeTrackingController {
                         log.info("[ROLLBACK] Applying {} inverse mutations to draft graph (owner={})",
                                 inverseMutations.size(), draftOwnerUserId);
                         ontologyMutationService.applyDraftForRollback(projectId, draftOwnerUserId, inverseMutations);
-                        // The draft ontology data is now fixed, but draft_changes (the Mongo log
-                        // Pull Requests are built from) is a separate, independently-written log
-                        // with no shared key back to this HistoryChange — rolling back only ever
-                        // touched history_changes, so a re-raised PR kept showing this entity as
-                        // a pending change forever. Discard its draft_changes entry too, so a new
-                        // PR's change list actually reflects what rollback did.
                         draftTrackingService.discardDraftsByIris(projectId, draftOwnerUserId, Set.of(entityIRI));
                     } else {
                         log.info("[ROLLBACK] Applying {} inverse mutations to public graph", inverseMutations.size());

@@ -101,7 +101,7 @@ import PropertyEditor from "./details/PropertyEditor";
 import IndividualEditor from "./details/IndividualEditor";
 import DatatypeEditor from "./details/DatatypeEditor";
 import AnnotationPropertyEditor from "./details/AnnotationPropertyEditor";
-import { Panel, AnnotationsDisplay, AxiomRow, ExplanationModal } from "./details/common";
+import { Panel, AnnotationsDisplay, AxiomRow } from "./details/common";
 // SparqlQueryEditor moved to plugin: sparql-query-plugin
 import { ProjectSelector } from "./ProjectSelector";
 import CollaborationPanel, { CollaborationPanelRef } from "./CollaborationPanel";
@@ -2002,30 +2002,19 @@ const Dashboard: React.FC<DashboardProps> = ({
     userId: string,
     options?: { showModal?: boolean; onReady?: () => void }
   ) => {
-    if (!targetProjectId || !userId) return;
+    if (!targetProjectId || !userId) { return; }
 
-    // Guards against double-firing onReady/onFailed even once (see below) — belt-and-suspenders
-    // on top of the setTimeout rewrite, since this callback can trigger a full project reload
-    // that stomps syncMode if it ever runs twice for one draft-copy session.
     let settled = false;
 
     const pollUntilReady = () => {
       const pollRef = options?.showModal ? draftCopyPollRef : autoDraftPollRef;
-      if (pollRef.current) clearTimeout(pollRef.current);
+      if (pollRef.current) { clearTimeout(pollRef.current); }
 
-      // A recursive setTimeout, not setInterval: setInterval fires on a fixed clock regardless
-      // of whether the previous tick's async status check has finished, so a slow backend
-      // response let two ticks' awaits resolve to 'READY' concurrently — each called onReady(),
-      // and the second call's fetchData() raced the first one's still-in-flight reload, landing
-      // on a stale/empty projectId closure that fell through to the shared-project default of
-      // Public, flipping the toggle right back after the user had just switched to Draft.
-      // Scheduling the next check only after this one's await settles makes that overlap
-      // impossible.
       const tick = async () => {
         try {
           const status = await draftTrackingService.getDraftCopyStatus(targetProjectId, userId);
           if (status === 'READY') {
-            if (settled) return;
+            if (settled) { return; }
             settled = true;
             options?.onReady?.();
             if (options?.showModal) {
@@ -2038,17 +2027,17 @@ const Dashboard: React.FC<DashboardProps> = ({
             return;
           }
           if (status === 'FAILED') {
-            if (settled) return;
+            if (settled) { return; }
             settled = true;
-            if (options?.showModal) setDraftCopyPhase('failed');
-            else setAutoDraftStatus('idle');
+            if (options?.showModal) { setDraftCopyPhase('failed'); }
+            else { setAutoDraftStatus('idle'); }
             return;
           }
           pollRef.current = setTimeout(tick, 2000);
         } catch {
-          if (settled) return;
+          if (settled) { return; }
           settled = true;
-          if (options?.showModal) setDraftCopyPhase('failed');
+          if (options?.showModal) { setDraftCopyPhase('failed'); }
         }
       };
       pollRef.current = setTimeout(tick, 2000);
@@ -2603,48 +2592,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   }>({ open: false, loading: false, data: null, error: null });
   const [isReasonerSettingsOpen, setIsReasonerSettingsOpen] = useState(false);
 
-  // "?" on an unsatisfiable class in the Entities tab's class hierarchy tree (the red
-  // entries under owl:Nothing) — same generalized entailment engine as explainInconsistency
-  // above, but for a single class instead of the whole ontology. Shares the ExplanationModal
-  // component with AxiomRow's per-axiom "?" in details/common.tsx.
-  const [unsatExplainTarget, setUnsatExplainTarget] = useState<{ iri: string; label: string } | null>(null);
-  const [unsatExplainMode, setUnsatExplainMode] = useState<'regular' | 'laconic'>('regular');
-  const [unsatExplainLimitAll, setUnsatExplainLimitAll] = useState(true); // default to "All", matching Protégé
-  const [unsatExplainLimitValue, setUnsatExplainLimitValue] = useState(3);
-  const [unsatExplainJustifications, setUnsatExplainJustifications] = useState<any[] | null>(null);
-  const [unsatExplainLoading, setUnsatExplainLoading] = useState(false);
-  const [unsatExplainError, setUnsatExplainError] = useState<string | null>(null);
-
-  const fetchUnsatExplanation = useCallback(async (
-    target: { iri: string; label: string }, mode: 'regular' | 'laconic', limit: number,
-  ) => {
-    if (!projectId) return;
-    setUnsatExplainLoading(true);
-    setUnsatExplainError(null);
-    try {
-      const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
-        entailmentType: 'UNSATISFIABLE_CLASS',
-        subjectIri: target.iri,
-        mode,
-        maxJustifications: limit,
-      });
-      const data = (res as any)?.data ?? res;
-      setUnsatExplainJustifications(data?.justifications ?? []);
-    } catch (e: any) {
-      setUnsatExplainError(e?.response?.data?.error ?? e?.message ?? 'Failed to load explanation');
-    } finally {
-      setUnsatExplainLoading(false);
-    }
-  }, [projectId]);
-
-  const handleExplainUnsatisfiable = useCallback((iri: string, label: string) => {
-    const target = { iri, label };
-    setUnsatExplainTarget(target);
-    setUnsatExplainJustifications(null);
-    fetchUnsatExplanation(target, unsatExplainMode, unsatExplainLimitAll ? 99 : unsatExplainLimitValue);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchUnsatExplanation]);
-
   const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || "asserted";
 
   const isEntitiesSectionLoading = useMemo(() => {
@@ -2934,11 +2881,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     const builtinsByTab: Record<string, Set<string>> = {
-      // owl:Nothing deliberately excluded: unlike owl:Thing (inert scaffolding), it's the
-      // entry point for unsatisfiable-class explanations when the ontology has any — hiding
-      // it via a generic declutter toggle would silently hide that feature, which Protégé
-      // itself never does (it always shows Nothing when there's anything unsatisfiable).
-      Classes: new Set(["http://www.w3.org/2002/07/owl#Thing"]),
+      Classes: new Set(["http://www.w3.org/2002/07/owl#Thing", "http://www.w3.org/2002/07/owl#Nothing"]),
       ObjectProperties: new Set([
         "http://www.w3.org/2002/07/owl#topObjectProperty",
         "http://www.w3.org/2002/07/owl#bottomObjectProperty",
@@ -3533,44 +3476,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     ];
   }
 
-  // The plugin-service classify bundle's own class-hierarchy builder skips owl:Nothing
-  // entirely (it has no equivalent of the editor endpoint's "group unsatisfiable classes
-  // under Nothing" step) — so unlike the editor's /inferred-class-hierarchy, this bundle
-  // never surfaces unsatisfiability at all. Reuse the unsatisfiableClasses list the same
-  // classify response already provides (it feeds the Reasoner tab's own list) to nest a
-  // synthetic owl:Nothing node under owl:Thing — matching Protégé's own convention (every
-  // class, including Nothing, is technically a subclass of Thing) rather than making it a
-  // second top-level sibling.
-  function appendUnsatisfiableRoot(tree: TreeNode[], unsatisfiableClassesRaw: any): TreeNode[] {
-    // Only nest under a real Thing root — an empty `tree` means classHierarchy wasn't
-    // usable at all, and the caller's own "bundle was empty, fall back to a fresh fetch"
-    // check needs to still see that as empty, not a lone Nothing-only result.
-    if (tree.length === 0) return tree;
-    if (!Array.isArray(unsatisfiableClassesRaw) || unsatisfiableClassesRaw.length === 0) return tree;
-    const nothingNode: TreeNode = {
-      id: "http://www.w3.org/2002/07/owl#Nothing",
-      label: "owl:Nothing",
-      isUnsatisfiable: true,
-      hasChildren: true,
-      children: unsatisfiableClassesRaw.map((cls: any) => ({
-        id: cls.iri || cls.id,
-        label: cls.label,
-        isUnsatisfiable: true,
-        hasChildren: false,
-        children: [],
-      })),
-    } as TreeNode;
-    const [thingRoot, ...rest] = tree;
-    return [
-      {
-        ...thingRoot,
-        children: [nothingNode, ...(thingRoot.children || [])],
-        hasChildren: true,
-      },
-      ...rest,
-    ];
-  }
-
   const startReasoner = useCallback(async () => {
     if (!projectId) {
       notificationService.error("No Ontology Loaded", "Please load an ontology first");
@@ -3606,10 +3511,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      const bundleClassHierarchy = appendUnsatisfiableRoot(
-        buildInferredTreeFromFlatList((results as any)?.classHierarchy),
-        (results as any)?.unsatisfiableClasses,
-      );
+      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
       const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
         (results as any)?.objectPropertyHierarchy,
         { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
@@ -5091,29 +4993,10 @@ const Dashboard: React.FC<DashboardProps> = ({
               myProjectsList.map((f: any) => f.id),
             );
 
-            // Configure mutation service: shared/live OR non-workspace web direct-write.
-            // Desktop and private web projects use per-user draft graphs until Save.
-            // localStorage is the immediate source (written on every explicit toggle, so it is
-            // always up-to-date on the same device). On first visit to a project on a new
-            // device (no localStorage entry), we await the DB once to pick up a cross-device
-            // preference. That await only blocks on genuine first-visit; all other loads are instant.
-            // Use currentProjectId (the freshly-passed parameter), not the outer projectId
-            // closure — fetchData is long-running and spans multiple awaits/re-renders, so by
-            // the time execution reaches here the closure can be stale relative to the project
-            // this specific call is actually about, causing the restore to read the wrong
-            // project's localStorage key (or none at all) and fall through to a default.
             const syncModeKey = currentProjectId ? `ontocode_sync_mode_${currentProjectId}` : null;
             const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
             let shouldApplyDirectly: boolean;
             if (savedSyncMode !== null) {
-              // Trust the user's own explicit choice for this project on this device, even if
-              // shared or non-workspace — a reload must not silently revert a mode the user just
-              // picked via the toggle (localStorage is written on every explicit mode change).
-              // This has to outrank the non-workspace default below: the toggle's own "switch to
-              // draft" handler calls fetchData() right after writing 'private' here to refresh the
-              // tree for the new scope, and that refresh re-enters this same restore logic — if
-              // non-workspace mode won by default, it would immediately flip the toggle straight
-              // back to Public before the user ever saw the Draft mode they just chose.
               shouldApplyDirectly = savedSyncMode === "public";
             } else if (isNonWorkspaceMode) {
               // Non-workspace files have no durable draft storage — always apply directly
@@ -5137,17 +5020,6 @@ const Dashboard: React.FC<DashboardProps> = ({
             } else {
               shouldApplyDirectly = true;
             }
-            // TEMP DIAGNOSTIC: confirming why sync mode isn't restoring on reload.
-            console.warn("[Dashboard] 🔍 syncMode restore decision:", {
-              isNonWorkspaceMode,
-              initialProjectId,
-              workspaceId: user?.workspaceId,
-              isDesktopFlag: isDesktop(),
-              isShared,
-              syncModeKey,
-              savedSyncMode,
-              shouldApplyDirectly,
-            });
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
             ontologyMutationService.setDraftRequired(false); // Clear any stale block from a prior project.
             setSyncMode(shouldApplyDirectly ? "public" : "private");
@@ -9712,10 +9584,7 @@ const updateItemInState = useCallback(
       // endpoint below — that one doesn't reliably honor the requested
       // reasonerType and can report a false "inconsistent", wiping out a
       // perfectly good result we already have right here.
-      const bundleClassHierarchy = appendUnsatisfiableRoot(
-        buildInferredTreeFromFlatList((results as any)?.classHierarchy),
-        (results as any)?.unsatisfiableClasses,
-      );
+      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
       const bundleObjectPropertyHierarchy = (results as any)?.objectPropertyHierarchy;
       const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList((results as any)?.objectPropertyHierarchy);
       if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
@@ -18738,35 +18607,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         loading={explanationState.loading}
         error={explanationState.error}
       />
-      <ExplanationModal
-        isOpen={!!unsatExplainTarget}
-        onClose={() => setUnsatExplainTarget(null)}
-        label={unsatExplainTarget?.label || ''}
-        loading={unsatExplainLoading}
-        error={unsatExplainError}
-        justifications={unsatExplainJustifications}
-        mode={unsatExplainMode}
-        onModeChange={(mode) => {
-          setUnsatExplainMode(mode);
-          if (unsatExplainTarget) fetchUnsatExplanation(unsatExplainTarget, mode, unsatExplainLimitAll ? 99 : unsatExplainLimitValue);
-        }}
-        limitAll={unsatExplainLimitAll}
-        onLimitAllChange={(all) => {
-          setUnsatExplainLimitAll(all);
-          if (unsatExplainTarget) fetchUnsatExplanation(unsatExplainTarget, unsatExplainMode, all ? 99 : unsatExplainLimitValue);
-        }}
-        limitValue={unsatExplainLimitValue}
-        onLimitValueChange={(value) => {
-          setUnsatExplainLimitValue(value);
-          if (unsatExplainTarget && !unsatExplainLimitAll) fetchUnsatExplanation(unsatExplainTarget, unsatExplainMode, value);
-        }}
-        onNavigate={(iri, kind) => {
-          if (kind === 'class') {
-            setSelectedItem({ id: iri, label: iri.split(/[#/]/).pop() || iri, type: 'Class' } as any);
-            setUnsatExplainTarget(null);
-          }
-        }}
-      />
       <ReasonerSettingsDialog
         isOpen={isReasonerSettingsOpen}
         selectedReasoner={selectedReasoner}
@@ -19159,7 +18999,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   expandedNodes={expandedNodes}
                   searchQuery={searchQuery}
                   onSearchQueryChange={setSearchQuery}
-                  onExplainUnsatisfiable={handleExplainUnsatisfiable}
                   searchOptions={searchOptions}
                   onSearchOptionsChange={setSearchOptions}
                   searchMatchSubtreeDepth={searchMatchSubtreeDepth}
