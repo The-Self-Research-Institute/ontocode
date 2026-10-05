@@ -6,6 +6,7 @@ const path = require('path');
 const fs   = require('fs');
 const http = require('http');
 const os   = require('os');
+const crypto = require('crypto');
 
 function jvmHeaps() {
     const totalGb = os.totalmem() / (1024 ** 3);
@@ -99,7 +100,10 @@ async function resolveAllPorts() {
     log('info', `Ports → MongoDB:${MONGO_PORT}  Fuseki:${FUSEKI_PORT}  Desktop:${DESKTOP_PORT}  SWRL:${SWRL_PORT}`);
 }
 
+const DESKTOP_LAUNCH_KEY = crypto.randomBytes(32).toString('hex');
+
 module.exports = {
+    get DESKTOP_LAUNCH_KEY() { return DESKTOP_LAUNCH_KEY; },
     get MONGO_PORT()   { return MONGO_PORT; },
     get FUSEKI_PORT()  { return FUSEKI_PORT; },
     get DESKTOP_PORT() { return DESKTOP_PORT; },
@@ -805,6 +809,7 @@ async function startDesktop() {
         JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8',
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
+        ONTOCODE_DESKTOP_LAUNCH_KEY: DESKTOP_LAUNCH_KEY,
     };
 
     const { launchJar, cdsFlags } = await prepareCds(

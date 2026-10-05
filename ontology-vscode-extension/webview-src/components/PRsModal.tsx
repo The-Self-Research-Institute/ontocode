@@ -366,7 +366,7 @@ const PRsModal: React.FC<Props> = ({
                               )}
                               {statusPill(change.status)}
                               {change.hasConflict && (
-                                <AlertTriangle size={11} className="text-amber-500" title="Conflict detected" />
+                                <span title="Conflict detected" className="inline-flex"><AlertTriangle size={11} className="text-amber-500" /></span>
                               )}
                             </div>
                             {change.description && (

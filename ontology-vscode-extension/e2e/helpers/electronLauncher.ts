@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { _electron as electron } from '@playwright/test';
@@ -7,31 +8,52 @@ const REPO_ROOT = path.resolve(__dirname, '../../..');
 export const ELECTRON_DIR = path.join(REPO_ROOT, 'electron-app');
 const DEFAULT_EXE = path.join(ELECTRON_DIR, 'dist-electron', 'win-unpacked', 'OntoCode.exe');
 
-export function resolveElectronExecutable(): string {
+export interface ResolvedElectronExecutable {
+  path: string;
+  isPackagedApp: boolean;
+}
+
+export function resolveElectronExecutable(): ResolvedElectronExecutable {
   if (process.env.DESKTOP_EXE && fs.existsSync(process.env.DESKTOP_EXE)) {
-    return process.env.DESKTOP_EXE;
+    return { path: process.env.DESKTOP_EXE, isPackagedApp: true };
   }
   if (fs.existsSync(DEFAULT_EXE)) {
-    return DEFAULT_EXE;
+    return { path: DEFAULT_EXE, isPackagedApp: true };
   }
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require(path.join(ELECTRON_DIR, 'node_modules', 'electron')) as string;
+  const bareElectronBinary = require(path.join(ELECTRON_DIR, 'node_modules', 'electron')) as string;
+  return { path: bareElectronBinary, isPackagedApp: false };
 }
 
 export function bundledDesktopJarExists(): boolean {
   return fs.existsSync(path.join(ELECTRON_DIR, 'resources', 'backend', 'jars', 'desktop.jar'));
 }
 
-export async function launchOntocodeElectron(): Promise<ElectronApplication> {
-  const startupTimeout = Number(process.env.ELECTRON_STARTUP_TIMEOUT_MS || 300_000);
-  const exe = resolveElectronExecutable();
-  const isPackagedExe = exe.toLowerCase().endsWith('.exe') || exe.endsWith('OntoCode');
+export function isolatedUserDataDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'ontocode-e2e-'));
+}
 
-  if (isPackagedExe) {
-    return electron.launch({
-      executablePath: exe,
+export interface LaunchedElectron {
+  app: ElectronApplication;
+  userDataDir: string;
+}
+
+export async function launchOntocodeElectron(): Promise<LaunchedElectron> {
+  const startupTimeout = Number(process.env.ELECTRON_STARTUP_TIMEOUT_MS || 300_000);
+  const resolved = resolveElectronExecutable();
+  const userDataDir = isolatedUserDataDir();
+  const userDataArg = `--user-data-dir=${userDataDir}`;
+
+  if (resolved.isPackagedApp) {
+    const packagedEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete packagedEnv.ELECTRON_RUN_AS_NODE;
+    const app = await electron.launch({
+      executablePath: resolved.path,
+      args: [userDataArg],
+      env: packagedEnv,
       timeout: startupTimeout,
     });
+    return { app, userDataDir };
   }
 
   const mainJs = path.join(ELECTRON_DIR, 'main.js');
@@ -54,6 +76,7 @@ export async function launchOntocodeElectron(): Promise<ElectronApplication> {
   }
 
   const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
   if (useDevShell) {
     env.ELECTRON_IS_DEV = '1';
     env.ELECTRON_DEV_API_URL = (process.env.DESKTOP_API_BASE || 'http://127.0.0.1:18085').replace(/\/$/, '');
@@ -63,13 +86,23 @@ export async function launchOntocodeElectron(): Promise<ElectronApplication> {
     env.ONTOCODE_E2E = '1';
   }
 
-  return electron.launch({
-    executablePath: exe,
-    args: isPackagedExe ? [] : [mainJs],
-    cwd: isPackagedExe ? path.dirname(exe) : ELECTRON_DIR,
+  const app = await electron.launch({
+    executablePath: resolved.path,
+    args: [ELECTRON_DIR, userDataArg],
+    cwd: ELECTRON_DIR,
     env,
     timeout: startupTimeout,
   });
+  return { app, userDataDir };
+}
+
+export function cleanupUserDataDir(userDataDir: string): void {
+  try {
+    fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (e) {
+    // Best-effort — a locked file (AV scan, lingering handle) shouldn't fail the test run.
+    console.warn(`[electron] Could not remove isolated profile ${userDataDir}:`, e instanceof Error ? e.message : e);
+  }
 }
 
 export async function findElectronMainPage(app: ElectronApplication): Promise<Page> {

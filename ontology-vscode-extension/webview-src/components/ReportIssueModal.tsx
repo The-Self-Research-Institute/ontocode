@@ -584,7 +584,7 @@ export const ReportIssueModal: React.FC<ReportIssueModalProps> = ({
                 </div>
                 <select
                   value={issueType}
-                  onChange={(e) => setIssueType(e.target.value)}
+                  onChange={(e) => setIssueType(e.target.value === "Task" ? "Task" : "Bug")}
                   className="w-full pl-11 pr-10 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white text-black appearance-none cursor-pointer transition-all"
                   disabled={submitting}
                 >

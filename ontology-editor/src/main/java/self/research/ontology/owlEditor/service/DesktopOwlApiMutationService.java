@@ -49,6 +49,10 @@ public class DesktopOwlApiMutationService {
         this.fusekiSyncScheduler = fusekiSyncScheduler;
     }
 
+    public boolean isAuthoritative(String projectId) {
+        return owlApiFirst && ontologyCache.has(projectId);
+    }
+
     public boolean tryApply(String projectId, List<OntologyMutationService.MutationOp> ops, String sparqlUpdate) {
         if (!owlApiFirst || ops == null || ops.isEmpty() || !ontologyCache.has(projectId)) {
             return false;

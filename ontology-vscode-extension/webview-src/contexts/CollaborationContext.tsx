@@ -1,16 +1,26 @@
 import React, { createContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from "react";
 import { Client, StompSubscription } from "@stomp/stompjs";
-import SockJS from "sockjs-client";
 import { getBaseUrl } from "../services/apiClient";
 import { getAuthHeaders } from "../utils/authenticatedFetch";
 import { useAuth } from "../custom-hook/useAuth";
+import { useCollabSocket } from "../hooks/useCollabSocket";
+import { subscribeGlobalTopics } from "../utils/collabGlobalTopics";
+import { isDesktop, getDesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from "../utils/desktop";
+import {
+  OP_BATCH_MS,
+  capNotifications,
+  collaborationAllowed,
+  createForbiddenFilter,
+  createShareDeduper,
+  summarizeRemoteOps,
+} from "../utils/collabSocketPolicy";
 
 export interface ActiveUser {
   userId: string;
   username: string;
   color: string;
   lastActivity: number;
-  projectId?: string; // Track which project/file the user is viewing
+  projectId?: string;
   cursorPosition?: string;
   selectedNodes?: string[];
 }
@@ -35,7 +45,7 @@ export interface EditNotification {
 
 export interface CollaborationState {
   connected: boolean;
-  currentProjectId: string | null; // Track the current project being viewed
+  currentProjectId: string | null;
   activeUsers: Map<string, ActiveUser>;
   locks: Map<string, NodeLock>;
   notifications: EditNotification[];
@@ -53,6 +63,8 @@ interface CollaborationContextType {
 }
 
 export const CollaborationContext = createContext<CollaborationContextType | undefined>(undefined);
+
+const PROJECT_TOPICS = ["edit", "presence", "locks", "import", "queue"];
 
 const isBrowserMode = () => {
   return (
@@ -72,100 +84,89 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     notifications: [],
   });
 
-  const { user } = useAuth();
-  const stompClientRef = useRef<Client | null>(null);
+  const { user, refreshPermissions } = useAuth();
   const subscriptionsRef = useRef<Map<string, StompSubscription>>(new Map());
   const currentProjectRef = useRef<string | null>(null);
 
   const addNotificationRef = useRef<((n: Omit<EditNotification, "id">) => void) | null>(null);
 
+  const tokenRef = useRef(user?.token);
+  tokenRef.current = user?.token;
+  const userRef = useRef(user);
+  userRef.current = user;
+  const [collabAllowed, setCollabAllowed] = useState(!isDesktop());
+  const shareIsNew = useRef(createShareDeduper()).current;
+  const forbiddenDest = useRef(createForbiddenFilter()).current;
+  const joinRef = useRef<(client: Client, projectId: string) => void>(() => {});
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
+  const activeJobsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
-    if (!isBrowserMode() || !user?.token) return;
+    if (!isDesktop()) {
+      return;
+    }
+    const check = () => {
+      getDesktopLicense().then((lic) => setCollabAllowed(collaborationAllowed(true, lic)));
+    };
+    check();
+    window.addEventListener(DESKTOP_LICENSE_UPDATED_EVENT, check);
+    return () => window.removeEventListener(DESKTOP_LICENSE_UPDATED_EVENT, check);
+  }, []);
 
-    const baseUrl = getBaseUrl() || window.location.origin;
-    const sockJsUrl = new URL("/ws", baseUrl).toString();
-
-    const client = new Client({
-      webSocketFactory: () => new SockJS(sockJsUrl) as any,
-      connectHeaders: { Authorization: `Bearer ${user.token}` },
-      debug: () => {},
-      reconnectDelay: 2000,
-      heartbeatIncoming: 4000,
-      heartbeatOutgoing: 4000,
-      onConnect: () => {
-        setState((prev) => ({ ...prev, connected: true }));
-
-        if (user.email) {
-          const sub = client.subscribe(`/topic/shares/${user.email}`, (msg) => {
-            try {
-              const notification = JSON.parse(msg.body);
-              window.dispatchEvent(new CustomEvent("fileShared", { detail: notification }));
-            } catch (e) {
-              console.error("[CollaborationContext] Share parse error:", e);
-            }
-          });
-          subscriptionsRef.current.set("shares", sub);
-        }
-
-        const queueStatsSub = client.subscribe("/topic/queue/stats", (msg) => {
-          try {
-            const payload = JSON.parse(msg.body);
-            if (payload.queueStats) {
-              window.dispatchEvent(new CustomEvent("queueStatsUpdate", { detail: payload.queueStats }));
-            }
-          } catch (e) {
-            console.error("[CollaborationContext] Queue stats parse error:", e);
-          }
-        });
-        subscriptionsRef.current.set("queueStats", queueStatsSub);
-
-        if (user.workspaceId) {
-          const wsSub = client.subscribe(`/topic/workspace/${user.workspaceId}`, (msg) => {
-            try {
-              const event = JSON.parse(msg.body);
-              window.dispatchEvent(new CustomEvent("workspaceEvent", { detail: event }));
-            } catch (e) {
-              console.error("[CollaborationContext] Workspace event parse error:", e);
-            }
-          });
-          subscriptionsRef.current.set("workspace", wsSub);
-        }
-
-        if (currentProjectRef.current) {
-          joinProjectTopics(client, currentProjectRef.current);
-        }
-      },
-      onDisconnect: () => {
-        setState((prev) => ({ ...prev, connected: false }));
-      },
-      onWebSocketError: (e) => {
-        console.error("[CollaborationContext] WebSocket error:", e);
-      },
-    });
-
-    stompClientRef.current = client;
-    client.activate();
-
-    return () => {
-
-      if (currentProjectRef.current && client.connected) {
-        client.publish({
-          destination: `/app/collab/${currentProjectRef.current}/presence`,
-          body: JSON.stringify({
-            type: "USER_LEFT",
-            projectId: currentProjectRef.current,
-            userId: user.userId || user.username,
-            username: user.username,
-            timestamp: Date.now(),
-          }),
-        });
+  const hasToken = !!user?.token;
+  const identity = `${user?.userId ?? ""}|${user?.email ?? ""}|${user?.workspaceId ?? ""}`;
+  const stompClientRef = useCollabSocket(isBrowserMode() && hasToken && collabAllowed, identity, user?.token, {
+    getToken: () => tokenRef.current,
+    refreshToken: async () => {
+      await refreshPermissions();
+      return localStorage.getItem("authToken");
+    },
+    onConnected: (client, reconnect) => {
+      subscriptionsRef.current.clear();
+      setConnectionEpoch((epoch) => epoch + 1);
+      setState((prev) => ({ ...prev, connected: true }));
+      subscribeGlobalTopics(client, subscriptionsRef.current, userRef.current, { shareIsNew, forbiddenDest });
+      if (currentProjectRef.current) {
+        joinRef.current(client, currentProjectRef.current);
+      }
+      if (reconnect) {
+        window.dispatchEvent(new CustomEvent("collaborationReconnected", { detail: { timestamp: Date.now() } }));
+      }
+    },
+    onClosing: (client) => {
+      const projectId = currentProjectRef.current;
+      if (projectId && client.connected) {
+        publishPresence(client, projectId, "USER_LEFT");
       }
       subscriptionsRef.current.forEach((sub) => sub.unsubscribe());
       subscriptionsRef.current.clear();
-      client.deactivate();
-      stompClientRef.current = null;
-    };
-  }, [user?.token]);
+    },
+    onDown: () => setState((prev) => (prev.connected ? { ...prev, connected: false } : prev)),
+    onGiveUp: () => {
+      addNotificationRef.current?.({
+        type: "warning",
+        message: "Live collaboration disconnected. Sign in again to reconnect.",
+        userId: "system",
+        username: "OntoCode",
+        userColor: "#F59E0B",
+        timestamp: Date.now(),
+      });
+    },
+  });
+
+  const publishPresence = (client: Client, projectId: string, type: string) => {
+    const u = userRef.current;
+    client.publish({
+      destination: `/app/collab/${projectId}/presence`,
+      body: JSON.stringify({
+        type,
+        projectId,
+        userId: u?.userId || u?.username,
+        username: u?.username,
+        timestamp: Date.now(),
+      }),
+    });
+  };
 
   useEffect(() => {
     const jobSubscriptions = new Map<string, StompSubscription>();
@@ -182,6 +183,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
           if (payload.status === "COMPLETED" || payload.status === "FAILED") {
             sub.unsubscribe();
             jobSubscriptions.delete(jobId);
+            activeJobsRef.current.delete(jobId);
           }
         } catch (e) {
           console.error("[CollaborationContext] DL Query job parse error:", e);
@@ -190,9 +192,12 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       jobSubscriptions.set(jobId, sub);
     };
 
+    activeJobsRef.current.forEach(subscribeToJob);
+
     const handleSubscribe = (event: Event) => {
       const jobId = (event as CustomEvent).detail?.jobId as string | undefined;
       if (!jobId) return;
+      activeJobsRef.current.add(jobId);
 
       const trySubscribe = () => {
         if (stompClientRef.current?.connected) {
@@ -215,6 +220,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     const handleUnsubscribe = (event: Event) => {
       const jobId = (event as CustomEvent).detail?.jobId as string | undefined;
       if (!jobId) return;
+      activeJobsRef.current.delete(jobId);
       const sub = jobSubscriptions.get(jobId);
       if (sub) {
         sub.unsubscribe();
@@ -228,23 +234,30 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     return () => {
       window.removeEventListener("dlQuerySubscribe", handleSubscribe);
       window.removeEventListener("dlQueryUnsubscribe", handleUnsubscribe);
-      jobSubscriptions.forEach((sub) => sub.unsubscribe());
+      jobSubscriptions.forEach((sub) => {
+        try {
+          sub.unsubscribe();
+        } catch {
+          return;
+        }
+      });
       jobSubscriptions.clear();
     };
-  }, [user?.token]);
+  }, [stompClientRef, connectionEpoch]);
+
+  const dropProjectSubscriptions = () => {
+    PROJECT_TOPICS.forEach((key) => {
+      subscriptionsRef.current.get(key)?.unsubscribe();
+      subscriptionsRef.current.delete(key);
+    });
+  };
 
   const joinProjectTopics = useCallback(
     (client: Client, projectId: string) => {
-
-      subscriptionsRef.current.forEach((sub, key) => {
-        if (key !== "shares" && key !== "queueStats") {
-          sub.unsubscribe();
-          subscriptionsRef.current.delete(key);
-        }
-      });
+      dropProjectSubscriptions();
 
       const userId = user?.userId || user?.username || "";
-      const username = user?.username || "";
+      const userEmail = user?.email || "";
 
       const METADATA_EVENT_TYPES = new Set([
         "ONTOLOGY_ANNOTATION_ADDED", "ONTOLOGY_ANNOTATION_MODIFIED", "ONTOLOGY_ANNOTATION_DELETED",
@@ -255,7 +268,11 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         try {
           const edit = JSON.parse(msg.body);
 
-          if (edit.userId === userId && !METADATA_EVENT_TYPES.has(edit.type)) return;
+          const ownEdit = edit.userId === userId || (!!userEmail && edit.userEmail === userEmail);
+          if (ownEdit && !METADATA_EVENT_TYPES.has(edit.type)) {
+            window.dispatchEvent(new CustomEvent("ownEditReceived", { detail: edit }));
+            return;
+          }
           handleRemoteEdit(edit);
         } catch (e) {
           console.error("[CollaborationContext] Edit parse error:", e);
@@ -303,27 +320,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       });
       subscriptionsRef.current.set("queue", queueSub);
 
-      const cursorSub = client.subscribe(`/topic/cursor/${projectId}`, (msg) => {
-        try {
-          const cursor = JSON.parse(msg.body);
-          if (cursor.userId === userId) return;
-          window.dispatchEvent(new CustomEvent("remoteCursorUpdate", { detail: cursor }));
-        } catch (e) {
-          console.error("[CollaborationContext] Cursor parse error:", e);
-        }
-      });
-      subscriptionsRef.current.set("cursor", cursorSub);
-
-      client.publish({
-        destination: `/app/collab/${projectId}/presence`,
-        body: JSON.stringify({
-          type: "USER_JOINED",
-          projectId,
-          userId,
-          username,
-          timestamp: Date.now(),
-        }),
-      });
+      publishPresence(client, projectId, "USER_JOINED");
 
       const baseUrl = getBaseUrl();
       fetch(`${baseUrl}/api/collab-graph/${projectId}/active-users`, {
@@ -351,6 +348,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     },
     [user],
   );
+  joinRef.current = joinProjectTopics;
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -397,7 +395,9 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
           break;
 
         case "shareNotification":
-
+          if (!shareIsNew(message.notification)) {
+            break;
+          }
           const shareEvent = new CustomEvent("fileShared", {
             detail: message.notification,
           });
@@ -471,9 +471,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
   }, [user?.userId, user?.username]);
 
   const handleLockUpdate = useCallback((lock: any) => {
-    // LOCK_DENIED is broadcast project-wide (same topic as everything else) but
-    // it's only meaningful to whoever asked for the lock — no shared state to
-    // update, just tell that one user why they can't edit.
     if (lock.type === "LOCK_DENIED") {
       const myUserId = user?.userId || user?.username;
       if (lock.userId === myUserId) {
@@ -517,61 +514,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     });
   }, []);
 
-  const getEditActionDescription = (operationType: string, edit?: any): string => {
-    const actionMap: Record<string, string> = {
-      CLASS_ADDED: "added a class",
-      CLASS_MODIFIED: "modified a class",
-      CLASS_DELETED: "deleted a class",
-      CLASS_RENAMED: "renamed a class",
-      PROPERTY_ADDED: "added a property",
-      PROPERTY_MODIFIED: "modified a property",
-      PROPERTY_DELETED: "deleted a property",
-      ANNOTATION_ADDED: "added an annotation",
-      ANNOTATION_MODIFIED: "modified an annotation",
-      ANNOTATION_DELETED: "deleted an annotation",
-      SUBCLASS_ADDED: "added a subclass relationship",
-      SUBCLASS_REMOVED: "removed a subclass relationship",
-      INDIVIDUAL_ADDED: "added an individual",
-      INDIVIDUAL_MODIFIED: "modified an individual",
-      INDIVIDUAL_DELETED: "deleted an individual",
-
-      DISJOINT_ADDED: "made classes disjoint",
-      DISJOINT_REMOVED: "removed disjoint axiom",
-      EQUIVALENT_ADDED: "added equivalent class",
-      EQUIVALENT_REMOVED: "removed equivalent class",
-
-      IMPORT_ADDED: "added an import",
-      IMPORT_REMOVED: "removed an import",
-      ONTOLOGY_ANNOTATION_ADDED: "added an ontology annotation",
-      ONTOLOGY_ANNOTATION_MODIFIED: "modified an ontology annotation",
-      ONTOLOGY_ANNOTATION_DELETED: "deleted an ontology annotation",
-      GCI_ADDED: "added a general class axiom",
-      GCI_REMOVED: "removed a general class axiom",
-
-      SPARQL_UPDATE: "executed a SPARQL update",
-      CHANGE_REVERTED: "reverted a change",
-      PROJECT_SAVED: "saved the project",
-
-      SWRL_RULE_ADDED: "added a SWRL rule",
-      SWRL_RULE_MODIFIED: "modified a SWRL rule",
-      SWRL_RULE_DELETED: "deleted a SWRL rule",
-    };
-    const base = actionMap[operationType] || "made a change";
-
-    if (operationType === "CLASS_DELETED" || operationType === "CLASS_ADDED" || operationType === "CLASS_RENAMED") {
-      const label =
-        edit?.metadata?.label ||
-        edit?.value ||
-        (typeof edit?.nodeId === "string"
-          ? edit.nodeId.split(/[#/]/).pop()
-          : null);
-      if (label && typeof label === "string" && label.length < 80 && !label.includes("://")) {
-        return `${base.replace(/ a class$/, "")} "${label}"`;
-      }
-    }
-    return base;
-  };
-
   const addNotification = useCallback((notification: Omit<EditNotification, "id">) => {
     const id = `notif-${Date.now()}-${Math.random()}`;
     setState((prev) => {
@@ -581,7 +523,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
       return {
         ...prev,
-        notifications: [...prev.notifications, { ...notification, id, userColor }],
+        notifications: capNotifications([...prev.notifications, { ...notification, id, userColor }]),
       };
     });
 
@@ -606,49 +548,52 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
     }));
   }, []);
 
-  const handleRemoteEdit = useCallback((edit: any) => {
+  const pendingOpsRef = useRef<any[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const expiryTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
-    const remoteEditEvent = new CustomEvent("remoteEditReceived", {
-      detail: edit,
-    });
-
-    window.dispatchEvent(remoteEditEvent);
-
+  const flushRemoteOps = useCallback(() => {
+    flushTimerRef.current = null;
+    const ops = pendingOpsRef.current;
+    pendingOpsRef.current = [];
+    const stamp = Date.now();
+    const added = summarizeRemoteOps(ops).map((summary, i) => ({ ...summary, id: `notif-${stamp}-${i}-${Math.random()}` }));
+    if (!added.length) {
+      return;
+    }
+    const ids = new Set(added.map((n) => n.id));
     setState((prev) => {
-      const id = `notif-${Date.now()}-${Math.random()}`;
-      const notification: Omit<EditNotification, "id"> = {
-        type: "info",
-        message: `${edit.username || "Someone"} ${getEditActionDescription(edit.type, edit)}`,
-        userId: edit.userId,
-        username: edit.username,
-        userColor: "#888888",
-        timestamp: edit.timestamp,
-      };
-
-      const user = prev.activeUsers.get(notification.userId);
-      const userColor = user?.color || notification.userColor;
-
-      const newUsers = new Map(prev.activeUsers);
-      if (user) {
-        newUsers.set(edit.userId, { ...user, lastActivity: edit.timestamp || Date.now() });
-      }
-
-      const newState = {
-        ...prev,
-        activeUsers: newUsers,
-        notifications: [...prev.notifications, { ...notification, id, userColor }],
-      };
-
-      setTimeout(() => {
-        setState((s) => ({
-          ...s,
-          notifications: s.notifications.filter((n) => n.id !== id),
-        }));
-      }, 5000);
-
-      return newState;
+      const users = new Map(prev.activeUsers);
+      const notes: EditNotification[] = added.map((n) => {
+        const known = users.get(n.userId);
+        if (known) {
+          users.set(n.userId, { ...known, lastActivity: n.timestamp });
+        }
+        return { ...n, type: "info", userColor: known?.color || "#888888" };
+      });
+      return { ...prev, activeUsers: users, notifications: capNotifications([...prev.notifications, ...notes]) };
     });
+    const expiry = setTimeout(() => {
+      expiryTimersRef.current.delete(expiry);
+      setState((s) => ({ ...s, notifications: s.notifications.filter((n) => !ids.has(n.id)) }));
+    }, 5000);
+    expiryTimersRef.current.add(expiry);
+  }, []);
 
+  const handleRemoteEdit = useCallback((edit: any) => {
+    window.dispatchEvent(new CustomEvent("remoteEditReceived", { detail: edit }));
+    pendingOpsRef.current.push(edit);
+    if (!flushTimerRef.current) {
+      flushTimerRef.current = setTimeout(flushRemoteOps, OP_BATCH_MS);
+    }
+  }, [flushRemoteOps]);
+
+  useEffect(() => () => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+    }
+    expiryTimersRef.current.forEach(clearTimeout);
+    expiryTimersRef.current.clear();
   }, []);
 
   const publishCursor = useCallback(
@@ -749,8 +694,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         });
       }
 
-      // Release optimistically client-side too — mirrors how CollaborationManager.web.ts's
-      // releaseLock behaves, so the UI doesn't wait on a round trip to unblock itself.
       setState((prev) => {
         const newLocks = new Map(prev.locks);
         newLocks.delete(nodeId);
@@ -762,27 +705,26 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const setCurrentProject = useCallback(
     (projectId: string | null) => {
+      const previous = currentProjectRef.current;
       currentProjectRef.current = projectId;
       setState((prev) => ({
         ...prev,
         currentProjectId: projectId,
       }));
 
-      if (isBrowserMode() && stompClientRef.current?.connected) {
+      const client = stompClientRef.current;
+      if (isBrowserMode() && client?.connected) {
+        if (previous && previous !== projectId) {
+          publishPresence(client, previous, "USER_LEFT");
+        }
         if (projectId) {
-          joinProjectTopics(stompClientRef.current, projectId);
+          joinProjectTopics(client, projectId);
         } else {
-
-          subscriptionsRef.current.forEach((sub, key) => {
-            if (key !== "shares") {
-              sub.unsubscribe();
-              subscriptionsRef.current.delete(key);
-            }
-          });
+          dropProjectSubscriptions();
         }
       }
     },
-    [joinProjectTopics],
+    [joinProjectTopics, stompClientRef],
   );
 
   const value: CollaborationContextType = useMemo(

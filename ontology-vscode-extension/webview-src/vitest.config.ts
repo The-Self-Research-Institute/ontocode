@@ -9,7 +9,10 @@ export default defineConfig({
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     coverage: {
       provider: 'v8',
-      include: ['services/**/*.ts'],
+      include: ['**/*.{ts,tsx}'],
+      exclude: ['test/**', 'node_modules/**', 'dist/**', 'coverage/**', '**/*.d.ts', '*.config.ts'],
+      reporter: ['lcov', 'text-summary'],
+      reportsDirectory: 'coverage',
     },
   },
   resolve: {

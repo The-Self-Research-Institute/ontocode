@@ -37,11 +37,13 @@ export interface ParseExpressionResult {
   error?: string;
 }
 
-function unwrap<T extends Record<string, unknown>>(res: T): T {
-  if (res && typeof res === 'object' && 'data' in res && res.data && typeof res.data === 'object') {
-    return res.data as T;
+function unwrap(res: unknown): Record<string, unknown> {
+  if (!res || typeof res !== 'object') {
+    return {};
   }
-  return res;
+  const record = res as Record<string, unknown>;
+  const data = record.data;
+  return data && typeof data === 'object' ? (data as Record<string, unknown>) : record;
 }
 
 export const expressionService = {
@@ -50,7 +52,7 @@ export const expressionService = {
       `/api/ontology/${encodeURIComponent(projectId)}/expression/parse`,
       { expression },
     );
-    const payload = unwrap(res as Record<string, unknown>);
+    const payload = unwrap(res);
     return {
       success: payload.success !== false,
       manchester: payload.manchester as string | undefined,

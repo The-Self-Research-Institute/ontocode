@@ -92,6 +92,7 @@ export interface Axiom {
   expressionType?: 'intersection' | 'union' | 'complement' | 'oneOf';
 
   members?: string[];
+  isAllDisjointClasses?: boolean;
 
   properties?: string[];
 

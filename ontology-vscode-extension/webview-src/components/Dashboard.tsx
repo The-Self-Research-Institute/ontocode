@@ -31,7 +31,6 @@ import {
   Clock,
   Users,
   Download,
-  RefreshCw,
   AlertCircle,
   Puzzle,
   Zap,
@@ -111,6 +110,7 @@ import { CollaborativeCursors } from "./CollaborativeCursor";
 import ShareDialog from "./ShareDialog";
 import MergeWizard from "./MergeWizard";
 import { ReportIssueModal } from "./ReportIssueModal";
+import { useProjectRecovery } from "../hooks/useCodeAssistantRecovery";
 import { UserGuideModal } from "./UserGuideModal";
 import { OpenSourceLicensesModal } from "./OpenSourceLicensesModal";
 import ThemeSettings from "./ThemeSettings";
@@ -146,6 +146,21 @@ import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
 import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
+import { useAskAiCodeViewSync } from "./dashboard-parts/hooks/useAskAiCodeViewSync";
+import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
+import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
+import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
+import { getStoredShowLabelOverlay, setStoredShowLabelOverlay } from "../services/LlmInsightsService";
+import { useCodeViewDownload } from "./dashboard-parts/hooks/useCodeViewDownload";
+import { OpenFileDialog } from "./dashboard-parts/OpenFileDialog";
+import {
+  CODE_VIEW_PAGE_LINES,
+  CODE_VIEW_STREAMING_FORMATS,
+  getCodeViewEditableCeiling,
+  requestCodeViewPage,
+  toCodeViewPage,
+  type CodeViewPageWindow,
+} from "./dashboard-parts/codeViewPaging";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
 import { buildEntityIri } from "../utils/entityIri";
 import { PluginMarketplace } from "./PluginMarketplace";
@@ -164,7 +179,6 @@ import {
   DeleteClassDialog,
   DuplicateFileDialog,
   SaveErrorDialog,
-  PromptDialog,
   LintProblemsPanel,
   DetailsPanel,
   type TopLevelClass,
@@ -1122,376 +1136,10 @@ const TopMenuBar = ({
   );
 };
 
-const OpenFileDialog = ({
-  isOpen,
-  onClose,
-  myFiles,
-  sharedFiles,
-  currentProjectId,
-  currentFileId,
-  currentFileName,
-  onDeleteFile,
-  onSwitchFile,
-  parentProjectId,
-  onLoadProjectFile,
-  projectFiles,
-  importMode,
-  partitionStrategy,
-  onImportModeChange,
-  onPartitionStrategyChange,
-  isWorkspaceMode,
-  onRefresh,
-  onCreateNewFile,
-  isPlanExpired,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  myFiles: FileInfo[];
-  sharedFiles: FileInfo[];
-  currentProjectId: string | null;
-  currentFileId?: string | null;
-  currentFileName?: string | null;
-  onDeleteFile?: (projectId: string, fileName: string) => void;
-  onSwitchFile: (projectId: string) => void;
-  parentProjectId?: string;
-  onLoadProjectFile?: (fileId: string, fileName: string) => void;
-  projectFiles?: FileInfo[];
-  importMode: "full" | "incremental" | "diff";
-  partitionStrategy: "none" | "namespace";
-  onImportModeChange: (mode: "full" | "incremental" | "diff") => void;
-  onPartitionStrategyChange: (strategy: "none" | "namespace") => void;
-  isWorkspaceMode?: boolean;
-  onRefresh?: () => void;
-  onCreateNewFile?: () => void;
-  isPlanExpired?: boolean;
-}) => {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showNewFileNamePrompt, setShowNewFileNamePrompt] = useState(false);
-  const canOpenLocalFile = typeof window !== "undefined" && !!(window as any).vscode;
-  const usingProjectFiles = !!parentProjectId;
-  const NEW_FILE_VALID_EXTENSIONS = [".owl", ".rdf", ".ttl", ".n3", ".nt", ".jsonld"];
-
-  // Backend now filters to only return files (not projects), so just pass through
-  const primaryFiles = usingProjectFiles ? projectFiles || [] : myFiles;
-  const secondaryFiles = usingProjectFiles ? [] : sharedFiles;
-
-  // Track when projectFiles prop changes
-  useEffect(() => {
-    if (usingProjectFiles) {
-      console.log("[OpenFileDialog] 🔄 projectFiles prop changed:", {
-        count: projectFiles?.length || 0,
-        files: projectFiles?.map((f) => f.filename),
-      });
-    }
-  }, [projectFiles, usingProjectFiles]);
-
-  const handleOpenLocalFile = () => {
-    if (!canOpenLocalFile || !window.vscode) {
-      return;
-    }
-    window.vscode.postMessage({
-      type: "openLocalFile",
-      projectId: parentProjectId || undefined,
-      importMode,
-      partition: partitionStrategy,
-    });
-    onClose();
-  };
-
-  const handleCreateNewFile = async () => {
-    if (isDesktop() && parentProjectId) {
-      setShowNewFileNamePrompt(true);
-      return;
-    }
-    if (isDesktop()) {
-      // Desktop without a project — use native save dialog to pick location
-      const baseName = "my-ontology.owl";
-      const ontologyIRI = `http://example.org/ontologies/my-ontology`;
-      const content = `<?xml version="1.0"?>
-<rdf:RDF xmlns="${ontologyIRI}#"
-     xml:base="${ontologyIRI}"
-     xmlns:owl="http://www.w3.org/2002/07/owl#"
-     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-     xmlns:xml="http://www.w3.org/XML/1998/namespace"
-     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
-     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
-    <owl:Ontology rdf:about="${ontologyIRI}"/>
-    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
-</rdf:RDF>`;
-      const api = (window as any).electronAPI;
-      if (!api?.saveAs) return;
-      const savedPath = await api.saveAs(content, baseName);
-      if (!savedPath) return;
-      const fileName = savedPath.split(/[\\/]/).pop() || baseName;
-      const fileContent = content;
-      window.dispatchEvent(new CustomEvent("electron:file-opened", {
-        detail: { fileName, fileContent, filePath: savedPath, fileSize: fileContent.length }
-      }));
-      onCreateNewFile?.();
-      onClose();
-      return;
-    }
-    if (!canOpenLocalFile || !window.vscode) {
-      return;
-    }
-
-    onCreateNewFile?.();
-    window.vscode.postMessage({
-      type: "createNewFile",
-      projectId: parentProjectId || undefined,
-      importMode,
-      partition: partitionStrategy,
-    });
-    onClose();
-  };
-
-  // Only invoked via the PromptDialog opened from the isDesktop() && parentProjectId
-  // branch above, so parentProjectId is always set here.
-  const handleConfirmNewFileName = async (trimmed: string) => {
-    setShowNewFileNamePrompt(false);
-    const ontologyIRI = `http://example.org/ontologies/${trimmed.replace(/\.[^/.]+$/, "")}`;
-    const content = `<?xml version="1.0"?>
-<rdf:RDF xmlns="${ontologyIRI}#"
-     xml:base="${ontologyIRI}"
-     xmlns:owl="http://www.w3.org/2002/07/owl#"
-     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-     xmlns:xml="http://www.w3.org/XML/1998/namespace"
-     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
-     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
-    <owl:Ontology rdf:about="${ontologyIRI}"/>
-    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
-</rdf:RDF>`;
-    const file = new File([content], trimmed, { type: "application/rdf+xml" });
-    const formData = new FormData();
-    formData.append("file", file, trimmed);
-    formData.append("fileName", trimmed);
-    formData.append("fileType", "application/rdf+xml");
-    let uploadedFileId: string | undefined;
-    try {
-      const uploadResult = await apiClient.post<{ fileId?: string; filename?: string }>(
-        `/api/projects/${parentProjectId}/files`,
-        formData,
-        { headers: { "Content-Type": "multipart/form-data" } },
-      );
-      uploadedFileId = uploadResult?.fileId;
-    } catch (error: any) {
-      console.error("[OpenFileDialog] Failed to create new file:", error);
-      notificationService.error(
-        "Create File Failed",
-        error?.response?.data?.error || error?.message || "Could not create the new file. See console for details.",
-      );
-      return;
-    }
-    onCreateNewFile?.();
-    // Load the new file directly instead of waiting for the "fileReady" WebSocket
-    // message — on Desktop that signal isn't always delivered promptly (or at all),
-    // which previously left the newly created file sitting in the project unopened
-    // with no visible error. We already have its id from the upload response, so
-    // open it the same way clicking an existing file in this list does.
-    if (uploadedFileId && onLoadProjectFile) {
-      onLoadProjectFile(uploadedFileId, trimmed);
-    }
-    onClose();
-  };
-
-  // console.log('[OpenFileDialog] Rendered with myFiles:', myFiles.length, 'sharedFiles:', sharedFiles.length, 'isOpen:', isOpen);
-  // console.log('[OpenFileDialog] myFiles data:', myFiles);
-  // console.log('[OpenFileDialog] sharedFiles data:', sharedFiles);
-
-  if (!isOpen) return null;
-
-  const allFiles = [...primaryFiles, ...secondaryFiles];
-  const filteredFiles = searchQuery
-    ? allFiles.filter((f) => f.filename.toLowerCase().includes(searchQuery.toLowerCase()))
-    : allFiles;
-
-  return (
-    <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && e.button === 0) onClose();
-      }}
-    >
-      <div
-        className="bg-theme-surface rounded-lg shadow-2xl w-full max-w-md mx-4 max-h-[70vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-4 border-b" style={{ borderColor: "var(--color-border)" }}>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium" style={{ color: "var(--color-text)" }}>
-              {usingProjectFiles ? `Project Files (${filteredFiles.length})` : "Open File"}
-            </h3>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search files..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                autoFocus
-                className="w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 text-sm"
-                style={
-                  {
-                    borderColor: "var(--color-border)",
-                    backgroundColor: "var(--color-surface)",
-                    color: "var(--color-text)",
-                    "--tw-ring-color": "var(--color-primary)",
-                  } as React.CSSProperties
-                }
-              />
-            </div>
-            {usingProjectFiles && onRefresh && (
-              <button
-                onClick={() => {
-                  console.log("[OpenFileDialog] 🔄 Manual refresh clicked");
-                  onRefresh();
-                }}
-                className="p-2 rounded-md border hover:bg-gray-50 transition-colors"
-                style={{
-                  borderColor: "var(--color-border)",
-                  color: "var(--color-text)",
-                }}
-                title="Refresh file list"
-              >
-                <RefreshCw size={16} />
-              </button>
-            )}
-          </div>
-        </div>
-        {isPlanExpired && (
-          <div className="mx-3 mt-3 px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 flex items-center gap-2 text-xs text-red-400">
-            <AlertTriangle size={13} className="flex-shrink-0" />
-            <span>Plan validity has ended. Please renew your subscription to open files.</span>
-          </div>
-        )}
-        <div className="flex-1 overflow-y-auto">
-          {filteredFiles.length > 0 ? (
-            <div className="p-3">
-              <div className="space-y-0.5">
-                {filteredFiles.map((file) => {
-                  const fileProjectId =
-                    file.projectId || file.id || (file.filename ? file.filename.replace(/\.[^/.]+$/, "") : "");
-                  const isActiveById = currentFileId ? file.id === currentFileId : false;
-                  const isActiveByName = currentFileName ? file.filename === currentFileName : false;
-                  const isActiveByProjectId = currentProjectId
-                    ? fileProjectId === currentProjectId || file.filename === currentProjectId
-                    : false;
-                  const isActive = isActiveById || isActiveByName || isActiveByProjectId;
-                  const isSharedFile = sharedFiles.some((sf) => sf.id === file.id);
-
-                  return (
-                    <div
-                      key={file.id}
-                      onClick={() => {
-                        if (isPlanExpired) return;
-                        if (!isActive) {
-                          if (parentProjectId && onLoadProjectFile) {
-                            onLoadProjectFile(file.id, file.filename);
-                          } else {
-                            onSwitchFile(fileProjectId);
-                          }
-                        }
-                        onClose();
-                      }}
-                      className={`flex items-center gap-3 p-2 px-3 rounded-md transition-all ${isPlanExpired
-                          ? "opacity-50 cursor-not-allowed"
-                          : isActive
-                            ? "selected cursor-pointer"
-                            : "hover-overlay border border-transparent cursor-pointer"
-                        }`}
-                    >
-                      <FileText size={18} className={isSharedFile ? "text-blue-500" : "text-accent"} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-gray-900 truncate">{file.filename}</span>
-                          {isActive && (
-                            <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-semibold rounded">
-                              ACTIVE
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {!usingProjectFiles && onDeleteFile && fileProjectId && !isSharedFile && (
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onDeleteFile(fileProjectId, file.filename);
-                          }}
-                          className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50"
-                          title="Delete file"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-              <Search size={40} className="mb-3 opacity-30" />
-              <p className="text-base font-medium text-gray-600 mb-1">No files found</p>
-              <p className="text-xs text-gray-500 max-w-xs text-center">
-                {searchQuery
-                  ? `No files match "${searchQuery}". Try a different search.`
-                  : "Upload or open a local file to get started."}
-              </p>
-            </div>
-          )}
-        </div>
-        <div className="p-3 border-t space-y-2" style={{ borderColor: "var(--color-border)" }}>
-          <button
-            onClick={handleCreateNewFile}
-            disabled={!canOpenLocalFile || isPlanExpired}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              borderColor: "var(--color-border)",
-              color: "var(--color-text)",
-            }}
-          >
-            <Plus size={14} />
-            Create New File
-          </button>
-          <button
-            onClick={handleOpenLocalFile}
-            disabled={!canOpenLocalFile || isPlanExpired}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              borderColor: "var(--color-border)",
-              color: "var(--color-text)",
-            }}
-          >
-            <FolderOpen size={14} />
-            Open Local File...
-          </button>
-        </div>
-      </div>
-      <PromptDialog
-        isOpen={showNewFileNamePrompt}
-        title="New Ontology File"
-        message="Enter a filename for the new ontology."
-        defaultValue="my-ontology.owl"
-        confirmLabel="Create"
-        validate={(value) =>
-          NEW_FILE_VALID_EXTENSIONS.some((ext) => value.toLowerCase().endsWith(ext))
-            ? null
-            : "File must have a valid extension: .owl, .rdf, .ttl, .n3, .nt, or .jsonld"
-        }
-        onConfirm={handleConfirmNewFileName}
-        onCancel={() => setShowNewFileNamePrompt(false)}
-      />
-    </div>
-  );
-};
-
-
 
 
 function isDraftScopeActive(): boolean {
-  return ontologyMutationService.isPrivateEditMode();
+  return !isDesktop() && ontologyMutationService.isPrivateEditMode();
 }
 
 // Webapp + public/live sync: every mutation already writes straight to the shared
@@ -2452,6 +2100,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     "Reasoner",
     "CodeView",
   ]);
+  const [showCodeAssistant, setShowCodeAssistant] = useState(false);
+  const [showLabelOverlay, setShowLabelOverlayState] = useState(getStoredShowLabelOverlay);
+  const setShowLabelOverlay = useCallback((value: boolean) => {
+    setStoredShowLabelOverlay(value);
+    setShowLabelOverlayState(value);
+  }, []);
+  const codeAssistantResize = useResizablePanelWidth(420, 280, 800);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [hasPluginUpdates, setHasPluginUpdates] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<Set<string>>(new Set());
@@ -2464,36 +2119,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
   const [codeViewLoading, setCodeViewLoading] = useState(false);
-  const [isDownloadingCodeView, setIsDownloadingCodeView] = useState(false);
-  // Tracks the in-flight Code View download's requestId so the real
-  // "downloadOntologyComplete"/"downloadOntologyFailed" host reply can clear
-  // the spinner (previously this used a fixed 3s cooldown that cleared the
-  // spinner regardless of whether the download had actually finished).
-  const codeViewDownloadRequestIdRef = useRef(0);
-  const pendingCodeViewDownloadRef = useRef<{ requestId: number; filename: string } | null>(null);
-  const codeViewDownloadSafetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const handleCodeViewDownloadMessage = (event: MessageEvent) => {
-      const message = event.data;
-      if (!message || (message.type !== "downloadOntologyComplete" && message.type !== "downloadOntologyFailed")) return;
-      const pending = pendingCodeViewDownloadRef.current;
-      if (!pending || message.requestId !== pending.requestId) return;
-      if (codeViewDownloadSafetyTimeoutRef.current) {
-        clearTimeout(codeViewDownloadSafetyTimeoutRef.current);
-        codeViewDownloadSafetyTimeoutRef.current = null;
-      }
-      pendingCodeViewDownloadRef.current = null;
-      setIsDownloadingCodeView(false);
-      if (message.type === "downloadOntologyComplete") {
-        notificationService.success("Export Complete", `${pending.filename} downloaded`);
-      } else if (!message.cancelled) {
-        notificationService.error("Export Failed", message.error || `Could not export ${pending.filename}`);
-      }
-    };
-    window.addEventListener("message", handleCodeViewDownloadMessage);
-    return () => window.removeEventListener("message", handleCodeViewDownloadMessage);
-  }, []);
+  const [highlightedLineNumbers, setHighlightedLineNumbers] = useState<Map<number, { startCol: number; endCol: number } | "full"> | undefined>(undefined);
+  const [codeViewRefreshing, setCodeViewRefreshing] = useState(false);
+  const highlightClearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [recoveryVersion, setRecoveryVersion] = useState(0);
   // Large-file guard: CodeHighlighter materializes per-line gutter elements and
   // scans the whole document for fold ranges, so past this size the webview
   // freezes. Above the cap we show a read-only preview of the head of the file
@@ -2503,29 +2132,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // Paged read-only mode for large ontologies: the backend serves 10k-line
   // windows from disk, so neither side ever holds the whole 200MB document.
   // null = normal full-content editing mode.
-  const [codeViewPage, setCodeViewPage] = useState<{
-    startLine: number;
-    lineCount: number;
-    totalLines: number;
-    totalBytes: number;
-  } | null>(null);
-  const CODE_VIEW_PAGE_LINES = 10_000;
-  // Editable-size ceiling, tiered by format. Turtle/RDF-XML/N-Triples/JSON-LD export
-  // and reimport without ever requiring a full in-memory OWLAPI model (StorageManager's
-  // streamed/buffered export path), so raising their ceiling is safe once the
-  // CodeHighlighter gutter-freeze fix lands. OWL/XML, Manchester, and Functional
-  // Syntax always require a full OWLAPI parse+reserialize to save regardless of file
-  // size (OWLFormatConverter.convertToRDFXML — fixed 30s timeout, StackOverflow-retry
-  // risk) — raising their ceiling buys nothing and only increases exposure to that
-  // existing backend risk, so they keep the original conservative threshold.
-  const CODE_VIEW_STREAMING_FORMATS = new Set(["turtle", "rdfxml", "ntriples", "jsonld"]);
-  const CODE_VIEW_OWLAPI_CEILING_BYTES = 10 * 1024 * 1024;
-  // Starting point for the raised ceiling — tune after the manual large-file
-  // responsiveness pass (see the Code View large-file plan's Verification section).
-  const CODE_VIEW_STREAMING_CEILING_BYTES = 60 * 1024 * 1024;
-  const getCodeViewEditableCeiling = (
-    fmt: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld",
-  ) => (CODE_VIEW_STREAMING_FORMATS.has(fmt) ? CODE_VIEW_STREAMING_CEILING_BYTES : CODE_VIEW_OWLAPI_CEILING_BYTES);
+  const [codeViewPage, setCodeViewPage] = useState<CodeViewPageWindow | null>(null);
 
   // In-flight export (web/desktop browser bridge only — VS Code exports run in
   // the extension host behind a native cancellable progress notification).
@@ -2547,6 +2154,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     return () => window.removeEventListener("ontocode:export-status", onExportStatus);
   }, []);
   const [hasLocalCodeViewChanges, setHasLocalCodeViewChanges] = useState(false);
+  const [codeViewHasUnsavedEdits, setCodeViewHasUnsavedEdits] = useState(false);
+  const codeViewHasUnsavedEditsRef = useRef(false);
+  codeViewHasUnsavedEditsRef.current = codeViewHasUnsavedEdits;
   const [codeViewSyntaxError, setCodeViewSyntaxError] = useState<string | null>(null);
   // Opaque version handed back by /content and /content-page, checked back on save so a
   // mutation made elsewhere (another tab, Class Hierarchy edit) while Code View was open
@@ -2558,6 +2168,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // True when codeViewSaveError is a version conflict (see above) rather than a genuine
   // save failure — swaps the dialog's "Retry Save" for "Reload Latest".
   const [codeViewSaveConflict, setCodeViewSaveConflict] = useState(false);
+  const [codeViewLargeReduction, setCodeViewLargeReduction] = useState<{ oldCount: number; newCount: number } | null>(null);
   const [savingCodeView, setSavingCodeView] = useState(false);
   const lastCodeViewSaveContentRef = useRef<string>("");
   // Lint runs right before save (see handleSaveCodeContent) — non-blocking content
@@ -8762,6 +8373,11 @@ const updateItemInState = useCallback(
           fetchData(projectId, false);
           break;
 
+        case "ROLLBACK":
+        case "CHANGE_SET_APPLIED":
+          fetchData(projectId, false);
+          break;
+
         // Handle change reverts - need full refresh
         case "CHANGE_REVERTED":
           console.log("[Dashboard] ⏪ Change reverted, refreshing all data");
@@ -8919,11 +8535,6 @@ const updateItemInState = useCallback(
     };
   }, [projectId, selectedItem, entitiesTab]); // Removed fetchData, showNotification to prevent infinite loop
 
-  // Shared by the handleRefresh* callbacks below. On desktop, a mutation can leave the OWLAPI
-  // in-memory model briefly evicted/re-warming — a plain GET right after create/delete can land
-  // on that transient "warming" response (data: []), which would otherwise wipe the whole list.
-  // Retry instead of trusting it. Returns null if the list is still warming after retries, so
-  // callers can log their own entity-specific warning and keep the current list.
   const fetchEntityListWithWarmup = useCallback(
     async (endpoint: string, listField: string): Promise<any[] | null> => {
       if (!projectId) return null;
@@ -8939,12 +8550,6 @@ const updateItemInState = useCallback(
     [projectId],
   );
 
-  // Returns the freshly-fetched list so callers can verify a specific just-applied change
-  // actually shows up (see handleCreateAnnotationProperty / handleAnnotationSuperpropertyConfirm)
-  // instead of trusting a single fetch — desktop's OWLAPI cache has a version-check/evict/rewarm
-  // cycle (OwlApiMutationCoordinator.ensureFreshForRead) that can race with two back-to-back
-  // mutations (create-then-link is two separate requests), so a read moments later can
-  // land mid-rewarm and see the entity without its just-added relationship.
   const handleRefreshAnnotationProperties = useCallback(async (): Promise<AnnotationProperty[]> => {
     if (!projectId) return [];
     const rawProperties = await fetchEntityListWithWarmup(
@@ -9009,7 +8614,7 @@ const updateItemInState = useCallback(
       silentRefreshMetadata();
 
       // Build notification message with value changes if available
-      let message = `${rollbackUser} rolled back change by ${originalAuthor}`;
+      let message = `${rollbackUser} ${detail.direction === "REDO" ? "redid" : detail.direction === "UNDO" ? "undid" : "rolled back"} change by ${originalAuthor}`;
       if (oldValue && newValue) {
         message += ` (from "${oldValue}" back to "${newValue}")`;
       } else if (newValue) {
@@ -9190,7 +8795,7 @@ const updateItemInState = useCallback(
     handleRefreshIndividuals,
     handleRefreshAnnotationProperties,
     handleRefreshDatatypes,
-  ]); // Removed fetchData, showNotification to prevent infinite loop
+  ]);
 
   // Handle file share notifications
   useEffect(() => {
@@ -10523,7 +10128,11 @@ const updateItemInState = useCallback(
                   ? remaining
                   : selectedItem.id.split(/[#/]/).pop() ?? selectedItem.id;
             }
-            const updatedItem = { ...selectedItem, label: updatedLabel, annotations: remainingAnnotations };
+            const updatedItem: SelectableItem = {
+              ...selectedItem,
+              label: updatedLabel,
+              annotations: remainingAnnotations as Record<string, string>,
+            };
             updateItemInState(updatedItem);
             // Sync annotation-mode display cache for the renamed node
             if (key === hierarchyAnnotationPropIri) {
@@ -10839,6 +10448,21 @@ const updateItemInState = useCallback(
   const flattenTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
     return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
   }, []);
+
+  const codeAssistantLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const addAll = (items: Array<{ id: string; label?: string }>) => {
+      for (const item of items) {
+        if (item.id && item.label) map.set(item.id, item.label);
+      }
+    };
+    addAll(flattenTree(classHierarchy));
+    addAll(objectProperties);
+    addAll(dataProperties);
+    addAll(annotationProperties);
+    addAll(individuals);
+    return map;
+  }, [classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, flattenTree]);
 
   const effectiveOntologyIri = useMemo(() => {
     if (metadata?.ontologyIRI) return metadata.ontologyIRI;
@@ -12666,8 +12290,10 @@ const updateItemInState = useCallback(
       format: "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld",
       forceRefresh: boolean = false,
       forceReload: boolean = false,
+      keepEditorMounted: boolean = false,
     ) => {
       if (!projectId) return;
+      const setBusy = keepEditorMounted && codeViewContent ? setCodeViewRefreshing : setCodeViewLoading;
 
       // Clear any previous syntax error / lint warnings when loading new content
       setCodeViewSyntaxError(null);
@@ -12691,7 +12317,7 @@ const updateItemInState = useCallback(
         }
       }
 
-      setCodeViewLoading(true);
+      setBusy(true);
       try {
         // Desktop is OWLAPI-first with lazy Fuseki sync — Code View's /content endpoint always
         // exports from Fuseki (it has no OWLAPI-aware read path), so without this it can show
@@ -12706,33 +12332,12 @@ const updateItemInState = useCallback(
         // JSON string. Small files fall through to the normal full-content fetch below
         // (now a server-side cache hit, since the probe generated the cache file).
         // Older backends without /content-page fall through too.
-        // /content-page (and the on-disk cache it populates as a side effect) aren't
-        // draft-aware yet — skip the probe entirely in draft mode so it can't refresh that
-        // shared cache with public content while a private draft is being viewed, and go
-        // straight to /content, which does correctly export fresh from the draft graph.
         if (!isDraftScopeActive()) {
           try {
-            const probe = await apiClient.get<{
-              success: boolean;
-              content: string;
-              startLine: number;
-              lineCount: number;
-              totalLines: number;
-              totalBytes: number;
-              sourceVersion?: number;
-            }>(`/api/ontology/${projectId}/content-page`, {
-              format,
-              startLine: "0",
-              lineCount: String(CODE_VIEW_PAGE_LINES),
-            });
+            const probe = await requestCodeViewPage(projectId, format, 0);
             if (probe?.success && Number(probe.totalBytes) > getCodeViewEditableCeiling(format)) {
               setCodeViewContent(probe.content ?? "");
-              setCodeViewPage({
-                startLine: 0,
-                lineCount: Number(probe.lineCount) || 0,
-                totalLines: Number(probe.totalLines) || 0,
-                totalBytes: Number(probe.totalBytes) || 0,
-              });
+              setCodeViewPage(toCodeViewPage(probe, 0));
               setCodeViewTruncation(null);
               setCodeViewFormat(format);
               setCodeViewSourceVersion(probe.sourceVersion != null ? Number(probe.sourceVersion) : null);
@@ -12812,40 +12417,36 @@ const updateItemInState = useCallback(
         );
         setCodeViewFormat(format);
       } finally {
-        setCodeViewLoading(false);
+        setBusy(false);
       }
     },
     [projectId, codeViewFormat, codeViewContent],
   );
 
+  useEffect(() => {
+    return () => {
+      if (highlightClearTimeoutRef.current) clearTimeout(highlightClearTimeoutRef.current);
+    };
+  }, []);
+
+
+  const recovery = useProjectRecovery(projectId || undefined, user?.token, {
+    onRecoveryChanged: () => setRecoveryVersion((v) => v + 1),
+    onProjectRestored: () => void fetchCodeViewContent(codeViewFormat, false, true),
+  });
+
   // Navigate to another window of a large document in paged Code View mode.
   const loadCodeViewPage = useCallback(
-    async (startLine: number) => {
+    async (startLine: number, keepEditorMounted: boolean = false) => {
       if (!projectId || !codeViewPage) return;
       const clamped = Math.max(0, Math.min(startLine, Math.max(0, codeViewPage.totalLines - 1)));
-      setCodeViewLoading(true);
+      const setBusy = keepEditorMounted ? setCodeViewRefreshing : setCodeViewLoading;
+      setBusy(true);
       try {
-        const res = await apiClient.get<{
-          success: boolean;
-          content: string;
-          startLine: number;
-          lineCount: number;
-          totalLines: number;
-          totalBytes: number;
-          error?: string;
-        }>(`/api/ontology/${projectId}/content-page`, {
-          format: codeViewFormat,
-          startLine: String(clamped),
-          lineCount: String(CODE_VIEW_PAGE_LINES),
-        });
+        const res = await requestCodeViewPage(projectId, codeViewFormat, clamped);
         if (res?.success) {
           setCodeViewContent(res.content ?? "");
-          setCodeViewPage({
-            startLine: clamped,
-            lineCount: Number(res.lineCount) || 0,
-            totalLines: Number(res.totalLines) || 0,
-            totalBytes: Number(res.totalBytes) || 0,
-          });
+          setCodeViewPage(toCodeViewPage(res, clamped));
         } else {
           notificationService.error("Load Failed", res?.error || "Could not load this section of the file.");
         }
@@ -12853,47 +12454,31 @@ const updateItemInState = useCallback(
         console.error("[Dashboard] Failed to load code view page:", error);
         notificationService.error("Load Failed", error?.message || "Could not load this section of the file.");
       } finally {
-        setCodeViewLoading(false);
+        setBusy(false);
       }
     },
     [projectId, codeViewFormat, codeViewPage],
   );
 
-  // Download the complete serialized file for the current Code View format —
-  // the editing path for documents too large to edit in the browser.
-  //
-  // No visual "in progress" feedback existed here before, so a double-click fired
-  // this twice — on desktop each call opens its own native Save dialog, and the
-  // first one gets orphaned/dismissed when the second grabs focus, leaving only
-  // the second click's file actually saved. Guard against re-entrant calls.
-  const downloadFullCodeViewFile = useCallback(() => {
-    if (!projectId || isDownloadingCodeView) return;
-    const extByFormat: Record<string, string> = {
-      rdfxml: "owl", turtle: "ttl", ntriples: "nt", owlxml: "owlxml",
-      manchester: "omn", functional: "ofn", jsonld: "jsonld",
-    };
-    const ext = extByFormat[codeViewFormat] || "owl";
-    const filename = `${projectId}.${ext}`;
-    const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(projectId)}?format=${codeViewFormat}`;
-    if (window.vscode) {
-      codeViewDownloadRequestIdRef.current += 1;
-      const requestId = codeViewDownloadRequestIdRef.current;
-      pendingCodeViewDownloadRef.current = { requestId, filename };
-      setIsDownloadingCodeView(true);
-      window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId, format: codeViewFormat, requestId });
-      notificationService.info("Exporting…", `${filename} — this can take a few minutes for large ontologies`);
-      if (codeViewDownloadSafetyTimeoutRef.current) clearTimeout(codeViewDownloadSafetyTimeoutRef.current);
-      codeViewDownloadSafetyTimeoutRef.current = setTimeout(() => {
-        if (pendingCodeViewDownloadRef.current?.requestId === requestId) {
-          pendingCodeViewDownloadRef.current = null;
-          setIsDownloadingCodeView(false);
-          notificationService.error("Export Timed Out", `${filename} export did not finish in time. Please try again.`);
-        }
-      }, 60 * 60 * 1000);
-    } else {
-      window.open(url, "_blank");
-    }
-  }, [projectId, codeViewFormat, isDownloadingCodeView]);
+  const {
+    handleAskAiApplySuccess,
+    handleShowInCodeView,
+    selection: codeViewSelection,
+    setSelection: setCodeViewSelection,
+  } = useAskAiCodeViewSync({
+    codeViewContent,
+    codeViewFormat,
+    codeViewPage,
+    busy: codeViewLoading || codeViewRefreshing,
+    hasUnsavedEditsRef: codeViewHasUnsavedEditsRef,
+    highlighterRef: codeHighlighterRef,
+    highlightClearTimeoutRef,
+    setHighlightedLineNumbers,
+    fetchCodeViewContent,
+    loadCodeViewPage,
+  });
+
+  const { isDownloading: isDownloadingCodeView, download: downloadFullCodeViewFile } = useCodeViewDownload(projectId, codeViewFormat);
 
   // Citation insertion handlers
   const handleCitationSelection = useCallback((citation: any) => {
@@ -12963,7 +12548,7 @@ const updateItemInState = useCallback(
 
   // Handle saving code content to backend
   const handleSaveCodeContent = useCallback(
-    async (content: string, skipLintCheck: boolean = false) => {
+    async (content: string, skipLintCheck: boolean = false, confirmLargeReduction: boolean = false) => {
       // Free-plan non-owners cannot edit or save — show the Pro upgrade dialog
       if (isViewOnlyMember) {
         setShowProPromptType('edit');
@@ -12973,6 +12558,14 @@ const updateItemInState = useCallback(
       if (!projectId) {
         console.error("[Dashboard] No projectId available for save");
         notificationService.error("Save Failed", "No project selected");
+        return;
+      }
+
+      if (recovery.recoveryLocked) {
+        notificationService.error(
+          "Save Disabled",
+          "This project is locked for recovery. Restore the previous version or confirm it looks right before saving.",
+        );
         return;
       }
 
@@ -13069,9 +12662,19 @@ const updateItemInState = useCallback(
               content: content,
               format: codeViewFormat,
               ...(codeViewSourceVersion != null ? { expectedSourceVersion: codeViewSourceVersion } : {}),
+              ...(confirmLargeReduction ? { confirmLargeReduction: true } : {}),
             },
           );
         } catch (syncError: any) {
+          if (syncError?.data?.errorType === "SUSPICIOUS_SIZE_REDUCTION") {
+            console.warn("[Dashboard] code-view-save needs confirmation (large size reduction):", syncError?.data?.error);
+            setCodeViewSaveConflict(false);
+            setCodeViewLargeReduction({
+              oldCount: Number(syncError?.data?.oldAxiomCount) || 0,
+              newCount: Number(syncError?.data?.newAxiomCount) || 0,
+            });
+            return;
+          }
           if (syncError?.status === 409 || syncError?.data?.conflictBlocked) {
             const conflictMsg =
               syncError?.data?.error ||
@@ -13094,14 +12697,6 @@ const updateItemInState = useCallback(
             console.warn("[Dashboard] code-view-save rejected (inconsistent):", inconsistentMsg);
             setCodeViewSaveConflict(false);
             setCodeViewSaveError(inconsistentMsg);
-            return;
-          }
-          if (syncError?.data?.errorType === "SUSPICIOUS_SIZE_REDUCTION") {
-            const sizeMsg = syncError?.data?.error
-              || "This save would delete most of the ontology — reload Code View to confirm you have the complete content before saving.";
-            console.warn("[Dashboard] code-view-save rejected (suspicious size reduction):", sizeMsg);
-            setCodeViewSaveConflict(false);
-            setCodeViewSaveError(sizeMsg);
             return;
           }
           const errMsg = syncError?.message || "Failed to reach the save endpoint";
@@ -13201,6 +12796,7 @@ const updateItemInState = useCallback(
       isViewOnlyMember,
       codeViewTruncation,
       codeViewPage,
+      recovery.recoveryLocked,
       setShowProPromptType,
       refreshClassHierarchy,
       refreshProperties,
@@ -15374,10 +14970,11 @@ const updateItemInState = useCallback(
     switch (mainTab) {
       case "CodeView":
         return (
-          <div className="flex h-full" style={{ backgroundColor: "var(--color-background)" }}>
-            <div className="flex-1 flex flex-col bg-theme-surface">
+          <div className="flex h-full overflow-hidden code-view-enter" style={{ backgroundColor: "var(--color-background)" }}>
+            <div className="flex-1 min-w-0 flex flex-col bg-theme-surface">
               <div className="p-4 border-b border-gray-200">
-                <h2 className="text-lg font-semibold">OWL/RDF Code View</h2>
+                <h2 className="text-lg font-semibold inline-block">OWL/RDF Code View</h2>
+                <div className="h-0.5 bg-gradient-to-r from-purple-600 to-indigo-500 rounded-full code-view-underline" />
                 <p className="text-sm text-gray-600 mt-1">View the ontology in different serialization formats</p>
               </div>
               <div className="flex-1 flex flex-col overflow-hidden p-4">
@@ -15530,6 +15127,7 @@ const updateItemInState = useCallback(
                   >
                     {codeViewLoading ? "Refreshing..." : "Refresh"}
                   </button>
+                  <CodeViewAskAiToggle open={showCodeAssistant} onToggle={() => setShowCodeAssistant((v) => !v)} />
                   {/* <button
                     onClick={() => {
                       if (window.confirm('This will reload fresh from GraphDB and lose any citation line positions. Continue?')) {
@@ -15666,6 +15264,7 @@ const updateItemInState = useCallback(
                         </div>
                       </div>
                     )}
+                    <CodeViewAskAiStatus recovery={recovery} refreshing={codeViewRefreshing} />
                     {codeViewLoading ? (
                       <div className="flex items-center justify-center h-64">
                         <div className="text-gray-500">Loading ontology content...</div>
@@ -15687,6 +15286,9 @@ const updateItemInState = useCallback(
                         readOnly={isViewOnlyMember || !!codeViewTruncation || !!codeViewPage}
                         canExport={subscription.canAccessFeature('hasExport') && !isViewOnlyMember}
                         onExportProAction={handleExportProAction}
+                        onUnsavedChangesChange={setCodeViewHasUnsavedEdits}
+                        highlightedLineNumbers={highlightedLineNumbers}
+                        onSelectionChange={setCodeViewSelection}
                       />
                     )}
                   </div>
@@ -15707,6 +15309,36 @@ const updateItemInState = useCallback(
                 </div>
               </div>
             </div>
+            {showCodeAssistant && (
+              <CodeAssistantLabelOverlayProvider
+                value={{
+                  enabled: showLabelOverlay,
+                  setEnabled: setShowLabelOverlay,
+                  labelMap: codeAssistantLabelMap,
+                  prefixMappings,
+                }}
+              >
+                <CodeViewAskAiSidebar
+                  resize={codeAssistantResize}
+                  projectName={projectId || undefined}
+                  projectId={projectId || undefined}
+                  documentPath={activeFileName || undefined}
+                  hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
+                  onClose={() => setShowCodeAssistant(false)}
+                  onApplySuccess={handleAskAiApplySuccess}
+                  onShowInCodeView={handleShowInCodeView}
+                  recoveryVersion={recoveryVersion}
+                  onRecoveryChanged={() => void recovery.refreshRecovery()}
+                  onProjectRestored={() => void fetchCodeViewContent(codeViewFormat, false, true)}
+                  editorSelection={
+                    codeViewSelection
+                      ? { ...codeViewSelection, format: codeViewFormat, pageStartLine: codeViewPage?.startLine ?? 0 }
+                      : null
+                  }
+                  onClearEditorSelection={() => setCodeViewSelection(null)}
+                />
+              </CodeAssistantLabelOverlayProvider>
+            )}
           </div>
         );
       case "SPARQL": {
@@ -18413,6 +18045,21 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           void fetchCodeViewContent(codeViewFormat, false, true);
         }}
       />
+      <ConfirmDialog
+        isOpen={!!codeViewLargeReduction}
+        onClose={() => setCodeViewLargeReduction(null)}
+        onConfirm={() => {
+          void handleSaveCodeContent(lastCodeViewSaveContentRef.current, true, true);
+        }}
+        title="Delete most of this ontology?"
+        message={
+          codeViewLargeReduction && codeViewLargeReduction.oldCount > 0
+            ? `This save keeps ${codeViewLargeReduction.newCount} of ${codeViewLargeReduction.oldCount} axioms. If Code View hadn't finished loading the whole file, saving now would delete the rest. Cancel and reload Code View if you're not sure.`
+            : "This save would delete most of the ontology. If Code View hadn't finished loading the whole file, saving now would delete the rest. Cancel and reload Code View if you're not sure."
+        }
+        confirmLabel="Save anyway"
+        cancelLabel="Cancel"
+      />
       {publishConflictDialog.isOpen && (() => {
         const conflicts = publishConflictDialog.conflicts;
         const resolvedCount = conflicts.filter((c) => conflictResolutions[c.entityIRI]).length;
@@ -19777,9 +19424,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           draftCount={draftCount}
           onPRApproved={() => {
             refreshOpenPRCount();
-            // forceRefresh: true — fetchData() otherwise skips the reload entirely when
-            // this same project is already loaded (the common case: you're looking at the
-            // project you just merged into), leaving the hierarchy/ontology data stale.
             if (projectId) fetchData(projectId, false, undefined, true);
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}

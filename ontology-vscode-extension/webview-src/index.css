@@ -1145,3 +1145,98 @@ textarea.code-editor-textarea {
   /* Login/Signup form */
   .w-full.max-w-md { max-width: 100%; }
 }
+
+@keyframes ask-ai-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+.ask-ai-bob {
+  animation: ask-ai-bob 2.4s ease-in-out infinite;
+}
+
+@keyframes ask-ai-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  93%, 96% { transform: scaleY(0.1); }
+}
+.ask-ai-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ask-ai-blink 4.5s ease-in-out infinite;
+}
+.ask-ai-eye-right {
+  animation-delay: 0.08s;
+}
+
+@keyframes ask-ai-sparkle {
+  0%, 88%, 100% { opacity: 0; transform: scale(0.4) rotate(0deg); }
+  93% { opacity: 1; transform: scale(1) rotate(15deg); }
+  97% { opacity: 0; transform: scale(0.6) rotate(30deg); }
+}
+.ask-ai-sparkle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ask-ai-sparkle 4.5s ease-in-out infinite;
+}
+
+@keyframes code-view-fade-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+.code-view-enter {
+  transform-origin: center;
+  animation: code-view-fade-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes code-view-underline-draw {
+  from { width: 0; }
+  to { width: 64px; }
+}
+.code-view-underline {
+  width: 0;
+  animation: code-view-underline-draw 0.5s 0.15s ease-out forwards;
+}
+
+@keyframes chat-message-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.chat-message-enter {
+  animation: chat-message-fade-in 0.22s ease-out;
+}
+
+@keyframes chat-chip-fade-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.chat-chip-enter {
+  animation: chat-chip-fade-in 0.22s ease-out both;
+}
+
+.assistant-markdown > :first-child { margin-top: 0; }
+.assistant-markdown > :last-child { margin-bottom: 0; }
+.assistant-markdown p, .assistant-markdown ul, .assistant-markdown ol, .assistant-markdown pre,
+.assistant-markdown blockquote, .assistant-markdown table { margin: 0 0 0.5rem; }
+.assistant-markdown ul { list-style: disc; padding-left: 1.25rem; }
+.assistant-markdown ol { list-style: decimal; padding-left: 1.25rem; }
+.assistant-markdown h1, .assistant-markdown h2, .assistant-markdown h3,
+.assistant-markdown h4, .assistant-markdown h5, .assistant-markdown h6 { font-weight: 600; margin: 0.5rem 0 0.25rem; }
+.assistant-markdown h1 { font-size: 1.05rem; }
+.assistant-markdown h2 { font-size: 1rem; }
+.assistant-markdown h3, .assistant-markdown h4, .assistant-markdown h5, .assistant-markdown h6 { font-size: 0.925rem; }
+.assistant-markdown code { font-family: ui-monospace, Consolas, monospace; font-size: 0.85em; background: rgba(0, 0, 0, 0.06); padding: 0 3px; border-radius: 3px; }
+.assistant-markdown pre { overflow-x: auto; background: rgba(0, 0, 0, 0.06); padding: 0.5rem 0.625rem; border-radius: 6px; }
+.assistant-markdown pre code { background: none; padding: 0; white-space: pre; }
+.assistant-markdown a { color: #6d28d9; text-decoration: underline; }
+.assistant-markdown blockquote { border-left: 3px solid rgba(0, 0, 0, 0.15); padding-left: 0.625rem; color: #4b5563; }
+.assistant-markdown table { display: block; overflow-x: auto; border-collapse: collapse; }
+.assistant-markdown th, .assistant-markdown td { border: 1px solid rgba(0, 0, 0, 0.12); padding: 2px 6px; text-align: left; }
+.assistant-markdown hr { border: 0; border-top: 1px solid rgba(0, 0, 0, 0.12); margin: 0.5rem 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-message-enter,
+  .chat-chip-enter,
+  .code-line {
+    animation: none !important;
+    transition: none !important;
+  }
+}

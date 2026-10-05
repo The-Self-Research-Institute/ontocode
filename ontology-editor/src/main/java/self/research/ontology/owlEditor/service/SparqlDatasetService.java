@@ -58,6 +58,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.LinkedHashMap;
@@ -196,55 +197,6 @@ public class SparqlDatasetService {
         public long getElapsedMs() { return elapsedMs; }
     }
 
-    private static class CountingInputStream extends java.io.FilterInputStream {
-        private long count = 0L;
-        private long mark = -1L;
-
-        protected CountingInputStream(InputStream in) {
-            super(in);
-        }
-
-        @Override
-        public int read() throws java.io.IOException {
-            int b = super.read();
-            if (b != -1) {
-                count++;
-            }
-            return b;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) throws java.io.IOException {
-            int n = super.read(b, off, len);
-            if (n > 0) {
-                count += n;
-            }
-            return n;
-        }
-
-        @Override
-        public synchronized void mark(int readlimit) {
-            if (in.markSupported()) {
-                super.mark(readlimit);
-                mark = count;
-            }
-        }
-
-        @Override
-        public synchronized void reset() throws java.io.IOException {
-            if (in.markSupported()) {
-                super.reset();
-                if (mark >= 0) {
-                    count = mark;
-                }
-            }
-        }
-
-        public long getCount() {
-            return count;
-        }
-    }
-
     /**
      * Initialize Fuseki SPARQL endpoint connection via SPARQLRepository
      */
@@ -311,44 +263,6 @@ public class SparqlDatasetService {
     }
 
    
-    private static final java.util.regex.Pattern XMLNS_DECLARATION_PATTERN =
-            java.util.regex.Pattern.compile("xmlns:?([a-zA-Z0-9_-]*)\\s*=\\s*\"([^\"]*)\"");
-
-    /**
-     * RDF4J's RDFXMLParser only fires handleNamespace() for a prefix once it's actually
-     * used to qualify an element/attribute that produces a triple — a prefix declared on
-     * the root <rdf:RDF> element but never referenced in the body (common for large
-     * ontologies that declare prefixes for related/imported vocabularies "just in case")
-     * is silently dropped from capturedNamespaces. Scanning the raw root element's own
-     * xmlns declarations directly recovers those too, so nothing declared in the source
-     * file is lost just because the ontology doesn't happen to use it (yet).
-     */
-    private void mergeDeclaredXmlnsPrefixes(Map<String, String> capturedNamespaces, byte[] headBytes, int length) {
-        if (headBytes == null || length <= 0) {
-            return;
-        }
-        try {
-            String head = new String(headBytes, 0, length, StandardCharsets.UTF_8);
-            int rootTagEnd = head.indexOf('>');
-            String rootTag = rootTagEnd >= 0 ? head.substring(0, rootTagEnd) : head;
-            java.util.regex.Matcher m = XMLNS_DECLARATION_PATTERN.matcher(rootTag);
-            int before = capturedNamespaces.size();
-            while (m.find()) {
-                String prefix = m.group(1) == null ? "" : m.group(1);
-                String uri = m.group(2);
-                if (uri != null && !uri.isBlank()) {
-                    capturedNamespaces.putIfAbsent(prefix, uri);
-                }
-            }
-            if (capturedNamespaces.size() > before) {
-                log.info("[NAMESPACES] Recovered {} declared-but-unused xmlns prefixes from the root element",
-                        capturedNamespaces.size() - before);
-            }
-        } catch (Exception e) {
-            log.debug("[NAMESPACES] Could not scan raw xmlns declarations: {}", e.getMessage());
-        }
-    }
-
     private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces) {
         if (capturedNamespaces.isEmpty()) {
             log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
@@ -740,6 +654,13 @@ public class SparqlDatasetService {
         return graphUriCache.computeIfAbsent(projectId, SparqlGraphUris::mainProjectGraph);
     }
 
+    public record ProjectGraphTarget(Repository repository, String graphUri) {}
+
+    public ProjectGraphTarget graphTarget(String projectId) {
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        return new ProjectGraphTarget(binding.repository(), binding.graphUri());
+    }
+
     public String getDraftGraphUri(String projectId, String userId) {
         return SparqlGraphUris.userDraftGraph(projectId, userId);
     }
@@ -1120,43 +1041,20 @@ public class SparqlDatasetService {
         }
     }
 
-    /**
-     * Simple in-memory TupleQueryResult implementation
-     */
-    private static class SimpleTupleQueryResult implements TupleQueryResult {
-        private final List<String> bindingNames;
-        private final List<BindingSet> bindings;
-        private int currentIndex = -1;
+    public record CappedSparqlResult(List<String> vars, List<Map<String, String>> rows, boolean truncated,
+                                      String capExceeded) {}
 
-        public SimpleTupleQueryResult(List<String> bindingNames, List<BindingSet> bindings) {
-            this.bindingNames = bindingNames;
-            this.bindings = bindings;
-        }
-
-        @Override
-        public List<String> getBindingNames() {
-            return bindingNames;
-        }
-
-        @Override
-        public void close() {
-            // No-op, already materialized
-        }
-
-        @Override
-        public boolean hasNext() {
-            return currentIndex < bindings.size() - 1;
-        }
-
-        @Override
-        public BindingSet next() {
-            currentIndex++;
-            return bindings.get(currentIndex);
-        }
-
-        @Override
-        public void remove() {
-            throw new UnsupportedOperationException();
+    public CappedSparqlResult execSelectCapped(String projectId, String sparqlQuery, int timeoutSeconds,
+                                                int maxRows, long maxBytesApprox) {
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try (RepositoryConnection conn = binding.repository().getConnection()) {
+            CappedSparqlResult result = GraphStatementOps.selectCapped(conn, sparqlQuery, scopeGraphUris(conn, projectId),
+                    timeoutSeconds, maxRows, maxBytesApprox);
+            log.info("[GRAPHDB] capped SELECT project={} rows={} capExceeded={}", projectId, result.rows().size(), result.capExceeded());
+            return result;
+        } catch (Exception e) {
+            log.error("[GRAPHDB] capped SELECT failed for project {}", projectId, e);
+            throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);
         }
     }
 
@@ -1279,19 +1177,6 @@ public class SparqlDatasetService {
         log.info("[DRAFT-GRAPH] Cleared draft graph {} for project {} user {}", draftGraph, projectId, userId);
     }
 
-    /**
-     * Atomically publishes a copy-on-switch draft by replacing main's content with the draft's.
-     *
-     * <p>Deliberately NOT implemented as SPARQL {@code MOVE GRAPH}: the draft graph is always
-     * created by copying main (see {@link #copyMainGraphToDraft}), which preserves the store's
-     * internal blank-node identity rather than minting fresh ones. When the destination of a
-     * {@code MOVE} shares blank-node lineage with its source this way, Jena/Fuseki's native MOVE
-     * silently drops a fraction of the blank-node-anchored triples (reproduced directly against
-     * Fuseki outside the app, independent of this codebase — e.g. an 11-triple graph moved onto
-     * such an overlapping destination came out with only 6). The CLEAR+INSERT-WHERE+CLEAR
-     * sequence below is semantically equivalent to MOVE and was verified lossless in the same
-     * overlapping-blank-node scenario at full production scale.</p>
-     */
     public void moveDraftToMain(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
@@ -1305,45 +1190,20 @@ public class SparqlDatasetService {
                 projectId, userId, elapsedMillis(start));
     }
 
-       public void copyMainGraphToDraft(String projectId, String userId) {
+    public void copyMainGraphToDraft(String projectId, String userId) {
         String mainGraph = getGraphUri(projectId);
         String draftGraph = getDraftGraphUri(projectId, userId);
         long start = System.nanoTime();
-        ProjectGraphBinding binding = resolveBinding(projectId, false);
-        try (RepositoryConnection conn = binding.repository().getConnection()) {
-            org.eclipse.rdf4j.model.ValueFactory vf = conn.getValueFactory();
-            org.eclipse.rdf4j.model.IRI mainGraphIri = vf.createIRI(mainGraph);
-            org.eclipse.rdf4j.model.IRI draftGraphIri = vf.createIRI(draftGraph);
-
-            boolean autoCommit = conn.isAutoCommit();
-            if (autoCommit) {
-                conn.begin();
-            }
-            try {
-                java.util.List<org.eclipse.rdf4j.model.Statement> statements = new java.util.ArrayList<>();
-                try (org.eclipse.rdf4j.repository.RepositoryResult<org.eclipse.rdf4j.model.Statement> result =
-                        conn.getStatements(null, null, null, false, mainGraphIri)) {
-                    while (result.hasNext()) {
-                        statements.add(result.next());
-                    }
-                }
-                conn.add(statements, draftGraphIri);
-                if (autoCommit) {
-                    conn.commit();
-                }
-                log.info("[DRAFT-COPY] Copied {} triples main -> draft for project {} user {} in {}ms",
-                        statements.size(), projectId, userId, elapsedMillis(start));
-            } catch (Exception e) {
-                if (autoCommit) {
-                    conn.rollback();
-                }
-                throw e;
-            }
+        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
+            int copied = GraphStatementOps.copy(conn, mainGraph, draftGraph);
+            log.info("[DRAFT-COPY] Copied {} triples main -> draft for project {} user {} in {}ms",
+                    copied, projectId, userId, elapsedMillis(start));
         }
         if (projectRepoCache != null) {
             projectRepoCache.evict(projectId);
         }
     }
+
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {
         return exportDraftGraphContent(projectId, userId, rdfFormat, java.util.Map.of());
     }
@@ -1351,44 +1211,15 @@ public class SparqlDatasetService {
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat,
             java.util.Map<String, String> extraPrefixes) {
         String draftGraph = getDraftGraphUri(projectId, userId);
-        ProjectGraphBinding binding = resolveBinding(projectId, false);
-        try (RepositoryConnection conn = binding.repository().getConnection()) {
-            org.eclipse.rdf4j.model.IRI draftGraphIri = conn.getValueFactory().createIRI(draftGraph);
-            java.util.List<org.eclipse.rdf4j.model.Statement> statements = new java.util.ArrayList<>();
-            try (org.eclipse.rdf4j.repository.RepositoryResult<org.eclipse.rdf4j.model.Statement> result =
-                    conn.getStatements(null, null, null, false, draftGraphIri)) {
-                while (result.hasNext()) {
-                    statements.add(result.next());
-                }
-            }
-            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-            org.eclipse.rdf4j.rio.RDFWriter writer = org.eclipse.rdf4j.rio.Rio.createWriter(rdfFormat, out);
-            writer.startRDF();
-            java.util.Set<String> registeredPrefixes = new java.util.HashSet<>();
-            writer.handleNamespace("rdf", "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-            writer.handleNamespace("rdfs", "http://www.w3.org/2000/01/rdf-schema#");
-            writer.handleNamespace("owl", "http://www.w3.org/2002/07/owl#");
-            writer.handleNamespace("xsd", "http://www.w3.org/2001/XMLSchema#");
-            registeredPrefixes.add("rdf");
-            registeredPrefixes.add("rdfs");
-            registeredPrefixes.add("owl");
-            registeredPrefixes.add("xsd");
-            for (Map.Entry<String, String> entry : extraPrefixes.entrySet()) {
-                if (registeredPrefixes.add(entry.getKey())) {
-                    writer.handleNamespace(entry.getKey(), entry.getValue());
-                }
-            }
-            for (org.eclipse.rdf4j.model.Statement st : statements) {
-                writer.handleStatement(st);
-            }
-            writer.endRDF();
-            log.info("[DRAFT-EXPORT] Exported {} triples from draft graph for project {} user {}",
-                    statements.size(), projectId, userId);
-            return out.toString(java.nio.charset.StandardCharsets.UTF_8);
+        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
+            String content = GraphStatementOps.export(conn, draftGraph, rdfFormat, extraPrefixes);
+            log.info("[DRAFT-EXPORT] Exported draft graph for project {} user {} ({} chars)", projectId, userId, content.length());
+            return content;
         } catch (Exception e) {
             throw new RuntimeException("Failed to export draft graph: " + e.getMessage(), e);
         }
     }
+
     public long countDraftTriples(String projectId, String userId) {
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);
@@ -1592,12 +1423,6 @@ public class SparqlDatasetService {
                 }
 
             } catch (Exception e) {
-                // Once commit() has succeeded, the write is already durable — the SPARQL update
-                // itself is not what's failing here, something in post-commit processing (cache
-                // invalidation, the OWLAPI coordinator) is. Rolling back at that point has nothing
-                // to roll back and only throws its own "no transaction active" error, which used
-                // to replace this one and hide the real cause. Only roll back pre-commit failures,
-                // and never let a failed rollback attempt mask the exception that triggered it.
                 if (autoCommit && !committed) {
                     try {
                         conn.rollback();
@@ -1955,8 +1780,6 @@ public class SparqlDatasetService {
 
                     log.info("Parsing RDF file...");
 
-                    // Preview head of the stream for debugging, and to recover any xmlns
-                    // declarations the parser itself won't report (see mergeDeclaredXmlnsPrefixes).
                     final int headPreviewSize = 32768;
                     cleanedStream.mark(headPreviewSize);
                     byte[] preview = cleanedStream.readNBytes(headPreviewSize);
@@ -1964,7 +1787,7 @@ public class SparqlDatasetService {
                     String previewStr = new String(preview, 0, Math.min(preview.length, 500),
                             java.nio.charset.StandardCharsets.UTF_8);
                     log.info("Stream content preview (first 500 chars): {}", previewStr);
-                    mergeDeclaredXmlnsPrefixes(capturedNamespaces, preview, preview.length);
+                    self.research.ontology.owlEditor.util.XmlnsDeclarations.mergeRootDeclarations(capturedNamespaces, preview, preview.length);
 
                     long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
@@ -2227,7 +2050,7 @@ public class SparqlDatasetService {
                 nsParser.parse(nsStream, "");
                 try (InputStream headStream = Files.newInputStream(sourceFile)) {
                     byte[] head = headStream.readNBytes(32768);
-                    mergeDeclaredXmlnsPrefixes(capturedNamespaces, head, head.length);
+                    self.research.ontology.owlEditor.util.XmlnsDeclarations.mergeRootDeclarations(capturedNamespaces, head, head.length);
                 } catch (Exception headEx) {
                     log.debug("[NAMESPACES] Could not read file head for xmlns scan: {}", headEx.getMessage());
                 }
@@ -3425,14 +3248,17 @@ public class SparqlDatasetService {
         }
     }
 
-    private String buildFromClause(RepositoryConnection conn, String projectId) {
+    private List<String> scopeGraphUris(RepositoryConnection conn, String projectId) {
         String userId = SparqlQueryContext.getUserId();
         if (shouldScopeReadsToDraftCopy(projectId, userId)) {
-            return "FROM <" + getDraftGraphUri(projectId, userId) + ">";
+            return List.of(getDraftGraphUri(projectId, userId));
         }
-        List<String> graphs = getAllGraphUris(conn, projectId);
+        return getAllGraphUris(conn, projectId);
+    }
+
+    private String buildFromClause(RepositoryConnection conn, String projectId) {
         StringBuilder builder = new StringBuilder();
-        for (String g : graphs) {
+        for (String g : scopeGraphUris(conn, projectId)) {
             builder.append("FROM <").append(g).append("> ");
         }
         return builder.toString().trim();
