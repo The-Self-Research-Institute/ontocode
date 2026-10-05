@@ -1489,20 +1489,9 @@ const OpenFileDialog = ({
 
 
 
-/**
- * Appends the explicit draft-scope opt-in the backend requires before reading from a
- * user's draft graph instead of main. userId alone isn't a scope signal — it's always
- * resolvable via the X-Ontocode-User-Id header/JWT, even on requests made while viewing
- * Public — so omitting/blanking userId doesn't stop a read from being scoped to draft.
- */
-/**
- * True when reads/writes should carry draft=true. Draft/public graph scoping is a
- * WEBAPP-only concern: desktop is single-user OWLAPI-first with its own local-graph model
- * and no shared public/draft split, so we never send draft params there — that keeps
- * desktop's read/write behavior byte-for-byte unchanged by the draft-isolation work.
- */
+
 function isDraftScopeActive(): boolean {
-  return !isDesktop() && ontologyMutationService.isPrivateEditMode();
+  return ontologyMutationService.isPrivateEditMode();
 }
 
 // Webapp + public/live sync: every mutation already writes straight to the shared
@@ -2013,16 +2002,20 @@ const Dashboard: React.FC<DashboardProps> = ({
     userId: string,
     options?: { showModal?: boolean; onReady?: () => void }
   ) => {
-    if (!targetProjectId || !userId) return;
+    if (!targetProjectId || !userId) { return; }
+
+    let settled = false;
 
     const pollUntilReady = () => {
       const pollRef = options?.showModal ? draftCopyPollRef : autoDraftPollRef;
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(async () => {
+      if (pollRef.current) { clearTimeout(pollRef.current); }
+
+      const tick = async () => {
         try {
           const status = await draftTrackingService.getDraftCopyStatus(targetProjectId, userId);
           if (status === 'READY') {
-            if (pollRef.current) clearInterval(pollRef.current);
+            if (settled) { return; }
+            settled = true;
             options?.onReady?.();
             if (options?.showModal) {
               setDraftCopyPhase('ready');
@@ -2031,16 +2024,23 @@ const Dashboard: React.FC<DashboardProps> = ({
               setAutoDraftStatus('ready');
               setTimeout(() => setAutoDraftStatus('idle'), 3000);
             }
-          } else if (status === 'FAILED') {
-            if (pollRef.current) clearInterval(pollRef.current);
-            if (options?.showModal) setDraftCopyPhase('failed');
-            else setAutoDraftStatus('idle');
+            return;
           }
+          if (status === 'FAILED') {
+            if (settled) { return; }
+            settled = true;
+            if (options?.showModal) { setDraftCopyPhase('failed'); }
+            else { setAutoDraftStatus('idle'); }
+            return;
+          }
+          pollRef.current = setTimeout(tick, 2000);
         } catch {
-          if (pollRef.current) clearInterval(pollRef.current);
-          if (options?.showModal) setDraftCopyPhase('failed');
+          if (settled) { return; }
+          settled = true;
+          if (options?.showModal) { setDraftCopyPhase('failed'); }
         }
-      }, 2000);
+      };
+      pollRef.current = setTimeout(tick, 2000);
     };
 
     draftTrackingService.getDraftCopyStatus(targetProjectId, userId).then((status) => {
@@ -2674,16 +2674,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       id: "Classes",
       label: "Classes",
       icon: Package,
-      // Trust backend metadata as the source of truth when available — it
-      // reflects the whole ontology, unlike classHierarchy, which can be
-      // partially loaded/collapsed in the UI on larger ontologies. Only fall
-      // back to counting the (now deduplicated) tree when metadata is missing.
-      count:
-        Number((metadata as any)?.classCount) > 0
-          ? Number((metadata as any)?.classCount)
-          : classHierarchy.length > 0
-            ? countNodes(classHierarchy)
-            : 0,
+      count: Math.max(
+        Number((metadata as any)?.classCount) || 0,
+        classHierarchy.length > 0 ? countNodes(classHierarchy) : 0,
+      ),
       theme: "bg-gradient-to-b from-[#F5F0E6] to-[#E1C688] text-black border-[#D6C9AD]",
     },
     {
@@ -4999,33 +4993,24 @@ const Dashboard: React.FC<DashboardProps> = ({
               myProjectsList.map((f: any) => f.id),
             );
 
-            // Configure mutation service: shared/live OR non-workspace web direct-write.
-            // Desktop and private web projects use per-user draft graphs until Save.
-            // localStorage is the immediate source (written on every explicit toggle, so it is
-            // always up-to-date on the same device). On first visit to a project on a new
-            // device (no localStorage entry), we await the DB once to pick up a cross-device
-            // preference. That await only blocks on genuine first-visit; all other loads are instant.
-            const syncModeKey = projectId ? `ontocode_sync_mode_${projectId}` : null;
+            const syncModeKey = currentProjectId ? `ontocode_sync_mode_${currentProjectId}` : null;
             const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
             let shouldApplyDirectly: boolean;
-            if (isNonWorkspaceMode) {
+            if (savedSyncMode !== null) {
+              shouldApplyDirectly = savedSyncMode === "public";
+            } else if (isNonWorkspaceMode) {
               // Non-workspace files have no durable draft storage — always apply directly
               // to avoid silently losing edits when navigating away.
               shouldApplyDirectly = true;
-            } else if (savedSyncMode !== null) {
-              // Trust the user's own explicit choice for this project on this device, even if
-              // shared — a reload must not silently revert a mode the user just picked via the
-              // toggle (localStorage is written on every explicit mode change).
-              shouldApplyDirectly = savedSyncMode === "public";
             } else if (isShared) {
               shouldApplyDirectly = true;
             } else if (isDesktop()) {
               // Desktop is always local draft-until-Save — never default to direct/public
               // writes just because no saved preference exists for this project yet.
               shouldApplyDirectly = false;
-            } else if (projectId) {
+            } else if (currentProjectId) {
               // First visit on this device: fetch from DB (one-time cost) for cross-device restore.
-              const dbSyncMode = await userPreferencesService.getSyncMode(projectId);
+              const dbSyncMode = await userPreferencesService.getSyncMode(currentProjectId);
               if (dbSyncMode !== null) {
                 shouldApplyDirectly = dbSyncMode === "public";
                 if (syncModeKey) localStorage.setItem(syncModeKey, dbSyncMode);
@@ -5035,31 +5020,20 @@ const Dashboard: React.FC<DashboardProps> = ({
             } else {
               shouldApplyDirectly = true;
             }
-            // TEMP DIAGNOSTIC: confirming why sync mode isn't restoring on reload.
-            console.warn("[Dashboard] 🔍 syncMode restore decision:", {
-              isNonWorkspaceMode,
-              initialProjectId,
-              workspaceId: user?.workspaceId,
-              isDesktopFlag: isDesktop(),
-              isShared,
-              syncModeKey,
-              savedSyncMode,
-              shouldApplyDirectly,
-            });
             ontologyMutationService.setRealTimeSync(shouldApplyDirectly);
             ontologyMutationService.setDraftRequired(false); // Clear any stale block from a prior project.
             setSyncMode(shouldApplyDirectly ? "public" : "private");
 
-            if (!shouldApplyDirectly && projectId && !isShared && !isNonWorkspaceMode) {
+            if (!shouldApplyDirectly && currentProjectId && !isShared && !isNonWorkspaceMode) {
               const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-              startDraftCopySession(projectId, effectiveUserId, { showModal: true });
+              startDraftCopySession(currentProjectId, effectiveUserId, { showModal: true });
             }
 
             // Check requireDraftForMembers — members stay in public view-only until they
             // explicitly choose "Switch to Draft Mode"; no auto-copy on project open.
-            if (projectId && !isNonWorkspaceMode && !isShared) {
+            if (currentProjectId && !isNonWorkspaceMode && !isShared) {
               const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-              draftTrackingService.getDraftSettings(projectId, effectiveUserId)
+              draftTrackingService.getDraftSettings(currentProjectId, effectiveUserId)
                 .then(({ requireDraftForMembers: rdm, isOwner }) => {
                   setRequireDraftForMembers(rdm);
                   setIsProjectOwner(isOwner);
@@ -9031,6 +9005,8 @@ const updateItemInState = useCallback(
       handleRefreshIndividuals();
       handleRefreshAnnotationProperties();
       handleRefreshDatatypes();
+      codeViewDirtyRef.current = true;
+      silentRefreshMetadata();
 
       // Build notification message with value changes if available
       let message = `${rollbackUser} rolled back change by ${originalAuthor}`;
@@ -9608,7 +9584,7 @@ const updateItemInState = useCallback(
       // endpoint below — that one doesn't reliably honor the requested
       // reasonerType and can report a false "inconsistent", wiping out a
       // perfectly good result we already have right here.
-      const bundleClassHierarchy = (results as any)?.classHierarchy;
+      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
       const bundleObjectPropertyHierarchy = (results as any)?.objectPropertyHierarchy;
       const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList((results as any)?.objectPropertyHierarchy);
       if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
@@ -13152,6 +13128,7 @@ const updateItemInState = useCallback(
           handleRefreshAnnotationProperties();
           handleRefreshIndividuals();
           handleRefreshDatatypes();
+          silentRefreshMetadata();
           // Let other open views (Graph View plugin, etc.) know the ontology changed so they
           // can drop their caches and refetch too — mirrors ontologyMutationService's broadcast
           // for normal entity-editor mutations, which this save path bypasses (it POSTs directly
@@ -13230,6 +13207,7 @@ const updateItemInState = useCallback(
       handleRefreshAnnotationProperties,
       handleRefreshIndividuals,
       handleRefreshDatatypes,
+      silentRefreshMetadata,
     ],
   );
 

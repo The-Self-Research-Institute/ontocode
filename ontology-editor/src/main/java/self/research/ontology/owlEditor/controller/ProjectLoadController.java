@@ -152,6 +152,9 @@ public class ProjectLoadController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.lang.Nullable
     private self.research.ontology.owlEditor.service.ReasonerService owlEditorReasonerService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.OntologyIndexService indexService;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.beans.factory.annotation.Qualifier("metadataExecutor")
@@ -2325,6 +2328,32 @@ public class ProjectLoadController {
                 String cachedContent = isOwlApiFormat ? content : new String(importBytes, StandardCharsets.UTF_8);
                 storageManager.storeCodeViewCache(projectId, cachedContent, format);
                 log.info("[CODE-VIEW-SAVE] Current format cache restored");
+
+                // bulkLoadChunked() writes straight to Fuseki and never goes through
+                // execUpdate(), so it can't rely on that method's own cache eviction —
+                // do it explicitly here or the recompute below reads the pre-save snapshot.
+                datasetService.evictPublicReadCache(projectId);
+
+                // Unlike the mutations/raw-update paths, this save never recomputed the
+                // Mongo-cached project metadata (classCount etc.) — so Public mode kept
+                // serving the pre-save counts indefinitely (until the next full project
+                // reload), while Draft mode looked "wrong" by comparison only because it
+                // always bypasses this cache and recomputes live from Fuseki.
+                //
+                // Synchronous, not fire-and-forget: the frontend refreshes the Classes badge
+                // exactly once, right after this request resolves. An async recompute here
+                // raced that single refresh — it read the still-stale cache every time, then
+                // never retried, so Public mode's count only ever caught up on a full reload
+                // while Draft mode (always live, no cache) looked fine by comparison.
+                if (indexService != null) {
+                    try {
+                        Map<String, Object> meta = indexService.computeMetadata(projectId);
+                        metadataService.writeMeta(projectId, meta);
+                    } catch (Exception metaEx) {
+                        log.warn("[CODE-VIEW-SAVE] Failed to refresh cached metadata for project {}: {}",
+                                projectId, metaEx.getMessage());
+                    }
+                }
             }
 
             Map<String, Object> successBody = new java.util.HashMap<>();

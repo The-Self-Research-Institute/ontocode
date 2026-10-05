@@ -1251,6 +1251,13 @@ public class SparqlDatasetService {
         } else {
             log.warn("[REVISION] mainGraphRevisionService is null in SparqlDatasetService for project={}", projectId);
         }
+  evictPublicReadCache(projectId);
+    }
+
+    public void evictPublicReadCache(String projectId) {
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
     }
 
     /**
