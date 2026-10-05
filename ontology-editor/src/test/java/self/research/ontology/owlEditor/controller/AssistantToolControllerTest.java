@@ -11,6 +11,8 @@ import self.research.ontology.owlEditor.dto.ReadContextRequest;
 import self.research.ontology.owlEditor.dto.RunSparqlRequest;
 import self.research.ontology.owlEditor.service.AssistantContextToolService;
 import self.research.ontology.owlEditor.service.AssistantContextToolService.ContextToolResult;
+import self.research.ontology.owlEditor.service.AssistantReasonerToolService;
+import self.research.ontology.owlEditor.service.AssistantReasonerToolService.ReasonerToolResult;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService.SparqlToolResult;
 
@@ -31,12 +33,15 @@ class AssistantToolControllerTest {
     @Mock
     private AssistantContextToolService contextToolService;
 
+    @Mock
+    private AssistantReasonerToolService reasonerToolService;
+
     private AssistantToolController controller;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        controller = new AssistantToolController(sparqlToolService, contextToolService);
+        controller = new AssistantToolController(sparqlToolService, contextToolService, reasonerToolService);
     }
 
     @Test
@@ -138,6 +143,48 @@ class AssistantToolControllerTest {
                 "s1", new RunSparqlRequest("SELECT * WHERE { ?s ?p ?o }"), requestWithBearerToken());
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
+    }
+
+    @Test
+    void checkConsistencyReturnsUnauthorizedWithoutBearerToken() {
+        ResponseEntity<?> response = controller.checkConsistency("s1", new MockHttpServletRequest());
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void checkConsistencyReturnsOkEnvelopeOnSuccess() {
+        when(reasonerToolService.checkConsistency(anyString(), anyString(), any())).thenReturn(
+                ReasonerToolResult.builder().ok(true).data(Map.of("consistent", true)).truncated(false)
+                        .revision(42L).build());
+
+        ResponseEntity<?> response = controller.checkConsistency("s1", requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(true, body.get("ok"));
+    }
+
+    @Test
+    void explainInconsistencyReturnsUnauthorizedWithoutBearerToken() {
+        ResponseEntity<?> response = controller.explainInconsistency("s1", new MockHttpServletRequest());
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void explainInconsistencyReturnsErrorEnvelopeOnFailure() {
+        when(reasonerToolService.explainInconsistency(anyString(), anyString(), any())).thenReturn(
+                ReasonerToolResult.builder().ok(false).errorCode("REASONER_UNAVAILABLE").message("timed out").build());
+
+        ResponseEntity<?> response = controller.explainInconsistency("s1", requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(false, body.get("ok"));
+        assertEquals("REASONER_UNAVAILABLE", body.get("errorCode"));
     }
 
     private MockHttpServletRequest requestWithBearerToken() {

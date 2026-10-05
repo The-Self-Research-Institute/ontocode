@@ -45,10 +45,15 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
         ].join(" ")
       : "This session cannot propose or apply edits — propose_edit and propose_rename will always be rejected. Answer the question directly. If the user is actually asking for a change, tell them to switch to Local edit mode and ask again there.";
   return [
-    "You are an ontology-editing assistant with four tools: read_context, run_sparql (read-only), propose_edit and propose_rename.",
+    "You are an ontology-editing assistant with six tools: read_context, run_sparql (read-only), propose_edit, " +
+      "propose_rename, check_consistency and explain_inconsistency.",
     scope,
     editable,
-    "Ground every claim in what read_context or run_sparql actually returned. If you don't have enough information, say so instead of guessing.",
+    "If asked whether the ontology is consistent, or to find/fix a logical contradiction, call check_consistency first " +
+      "— it's cheap. Only call explain_inconsistency afterward, and only if check_consistency reported consistent: false; " +
+      "it's slower (it rebuilds the reasoner every call) and pointless to call on a consistent ontology.",
+    "Ground every claim in what read_context, run_sparql, check_consistency or explain_inconsistency actually returned. " +
+      "If you don't have enough information, say so instead of guessing.",
   ].join("\n");
 }
 
@@ -145,9 +150,17 @@ export function clearStoredChatEntries(projectId: string): void {
   }
 }
 
+const FRIENDLY_TOOL_NAMES: Record<string, string> = {
+  check_consistency: "Checking whether the ontology is consistent",
+  explain_inconsistency: "Figuring out what's causing the inconsistency",
+};
+
 function describeStage(event: LoopStageEvent): string {
   if (event.stage === "calling-provider") return event.detail || "Thinking...";
-  if (event.stage === "calling-tool") return `Running ${event.detail}...`;
+  if (event.stage === "calling-tool") {
+    const friendly = event.detail ? FRIENDLY_TOOL_NAMES[event.detail] : undefined;
+    return friendly ? `${friendly}...` : `Running ${event.detail}...`;
+  }
   if (event.stage === "tool-result") return `Got a result from ${event.detail}`;
   if (event.stage === "propose") return "Preparing changes for review...";
   return "";

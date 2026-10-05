@@ -44,6 +44,13 @@ export interface SparqlResult {
   provenance: { revision: number; coverage?: "partial" | "complete" };
 }
 
+export interface ReasonerResult {
+  ok: true;
+  result: Record<string, unknown>;
+  truncated: boolean;
+  provenance: { revision: number };
+}
+
 export interface ProposedEdit {
   targetPath: string;
   range: unknown;

@@ -8,6 +8,7 @@ import type {
   ProposeResult,
   ReadContextResult,
   ReadContextTarget,
+  ReasonerResult,
   SparqlResult,
 } from "./codeAssistantSessionTypes";
 import { newIdempotencyKey, postJson, type IdempotentCallOptions } from "./codeAssistantSessionHttp";
@@ -21,6 +22,7 @@ export type {
   ReadContextTarget,
   ReadContextResultItem,
   ReadContextResult,
+  ReasonerResult,
   SparqlResult,
   ProposedEdit,
   RenameIdentifierOperation,
@@ -97,6 +99,36 @@ export async function runSparql(
     `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/tools/run_sparql`,
     token,
     { query },
+    signal,
+  );
+}
+
+export async function checkConsistency(
+  apiBaseUrl: string,
+  token: string | undefined,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<ReasonerResult> {
+  return postJson<ReasonerResult>(
+    apiBaseUrl,
+    `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/tools/check_consistency`,
+    token,
+    {},
+    signal,
+  );
+}
+
+export async function explainInconsistency(
+  apiBaseUrl: string,
+  token: string | undefined,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<ReasonerResult> {
+  return postJson<ReasonerResult>(
+    apiBaseUrl,
+    `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/tools/explain_inconsistency`,
+    token,
+    {},
     signal,
   );
 }

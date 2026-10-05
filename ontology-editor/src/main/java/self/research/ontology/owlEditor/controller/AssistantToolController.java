@@ -16,6 +16,8 @@ import self.research.ontology.owlEditor.dto.ReadContextRequest;
 import self.research.ontology.owlEditor.dto.RunSparqlRequest;
 import self.research.ontology.owlEditor.service.AssistantContextToolService;
 import self.research.ontology.owlEditor.service.AssistantContextToolService.ContextToolResult;
+import self.research.ontology.owlEditor.service.AssistantReasonerToolService;
+import self.research.ontology.owlEditor.service.AssistantReasonerToolService.ReasonerToolResult;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService.SparqlToolResult;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
@@ -38,11 +40,14 @@ public class AssistantToolController {
 
     private final AssistantSparqlToolService sparqlToolService;
     private final AssistantContextToolService contextToolService;
+    private final AssistantReasonerToolService reasonerToolService;
 
     public AssistantToolController(AssistantSparqlToolService sparqlToolService,
-                                    AssistantContextToolService contextToolService) {
+                                    AssistantContextToolService contextToolService,
+                                    AssistantReasonerToolService reasonerToolService) {
         this.sparqlToolService = sparqlToolService;
         this.contextToolService = contextToolService;
+        this.reasonerToolService = reasonerToolService;
     }
 
     @PostMapping("/run_sparql")
@@ -67,6 +72,28 @@ public class AssistantToolController {
                     }
                     ContextToolResult result = contextToolService.readContext(
                             sessionId, userEmail, request.targets(), request.kind());
+                    return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
+                })
+                .orElseGet(AssistantToolController::unauthorized);
+    }
+
+    @PostMapping("/check_consistency")
+    public ResponseEntity<?> checkConsistency(@PathVariable String sessionId, HttpServletRequest httpRequest) {
+        return JwtIdentityExtractor.extractEmail(httpRequest)
+                .map(userEmail -> {
+                    ReasonerToolResult result = reasonerToolService.checkConsistency(
+                            sessionId, userEmail, httpRequest.getHeader(HttpHeaders.AUTHORIZATION));
+                    return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
+                })
+                .orElseGet(AssistantToolController::unauthorized);
+    }
+
+    @PostMapping("/explain_inconsistency")
+    public ResponseEntity<?> explainInconsistency(@PathVariable String sessionId, HttpServletRequest httpRequest) {
+        return JwtIdentityExtractor.extractEmail(httpRequest)
+                .map(userEmail -> {
+                    ReasonerToolResult result = reasonerToolService.explainInconsistency(
+                            sessionId, userEmail, httpRequest.getHeader(HttpHeaders.AUTHORIZATION));
                     return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
                 })
                 .orElseGet(AssistantToolController::unauthorized);
@@ -115,6 +142,18 @@ public class AssistantToolController {
                 "result", Map.of("rows", result.getRows(), "truncated", result.isTruncated(),
                         "rowCount", result.getRowCount()),
                 "provenance", Map.of("revision", result.getRevision()));
+    }
+
+    private static Map<String, Object> toBody(ReasonerToolResult result) {
+        if (!result.isOk()) {
+            return errorBody(result.getErrorCode(), result.getMessage(), result.getRetryAfterSeconds());
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("result", result.getData());
+        body.put("truncated", result.isTruncated());
+        body.put("provenance", Map.of("revision", result.getRevision()));
+        return body;
     }
 
     private static Map<String, Object> toBody(ContextToolResult result) {

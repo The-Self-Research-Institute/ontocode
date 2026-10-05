@@ -133,6 +133,32 @@ export const PROPOSE_RENAME_TOOL: ToolDefinition = {
   },
 };
 
-export const ASSISTANT_TOOLS: ToolDefinition[] = [READ_CONTEXT_TOOL, RUN_SPARQL_TOOL, PROPOSE_EDIT_TOOL, PROPOSE_RENAME_TOOL];
+export const CHECK_CONSISTENCY_TOOL: ToolDefinition = {
+  name: "check_consistency",
+  description:
+    "Check whether the ontology is logically consistent using an OWL reasoner. Cheap — usually fast, a few seconds at " +
+    "most. Call explain_inconsistency afterward only if this reports consistent: false.",
+  parameters: {
+    type: "object",
+    properties: {},
+  },
+};
+
+export const EXPLAIN_INCONSISTENCY_TOOL: ToolDefinition = {
+  name: "explain_inconsistency",
+  description:
+    "Explain why the ontology is inconsistent: the conflicting axioms and justifications, already rendered human-readable. " +
+    "Slower than check_consistency (it rebuilds the reasoner every call, several seconds up to ~15s) — only call this " +
+    "after check_consistency reports consistent: false, not as a first step.",
+  parameters: {
+    type: "object",
+    properties: {},
+  },
+};
+
+export const ASSISTANT_TOOLS: ToolDefinition[] = [
+  READ_CONTEXT_TOOL, RUN_SPARQL_TOOL, PROPOSE_EDIT_TOOL, PROPOSE_RENAME_TOOL,
+  CHECK_CONSISTENCY_TOOL, EXPLAIN_INCONSISTENCY_TOOL,
+];
 
 export const PROPOSAL_TOOLS = new Set([PROPOSE_EDIT_TOOL.name, PROPOSE_RENAME_TOOL.name]);

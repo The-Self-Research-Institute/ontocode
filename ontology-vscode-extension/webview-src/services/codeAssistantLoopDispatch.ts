@@ -4,6 +4,8 @@ import { ASSISTANT_TOOLS } from "./codeAssistantLoopTools";
 import {
   readContext,
   runSparql,
+  checkConsistency,
+  explainInconsistency,
   proposeEditGroups,
   AssistantApiError,
   type AssistantErrorCode,
@@ -64,6 +66,16 @@ async function dispatchRunSparql(ctx: LoopContext, args: Record<string, unknown>
   return { result: res.result, isError: false, revision: res.provenance?.revision };
 }
 
+async function dispatchCheckConsistency(ctx: LoopContext, _args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
+  const res = await checkConsistency(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, signal);
+  return { result: res.result, isError: false, revision: res.provenance?.revision };
+}
+
+async function dispatchExplainInconsistency(ctx: LoopContext, _args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
+  const res = await explainInconsistency(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, signal);
+  return { result: res.result, isError: false, revision: res.provenance?.revision };
+}
+
 async function submitGroups(ctx: LoopContext, groups: ProposedEditGroupInput[], signal?: AbortSignal): Promise<DispatchOutcome> {
   const res = await proposeEditGroups(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, groups, signal);
   return { result: { groupCount: res.groups.length }, isError: false, proposeResult: res };
@@ -112,6 +124,8 @@ const DISPATCHERS: Record<string, ToolDispatcher> = {
   run_sparql: dispatchRunSparql,
   propose_edit: dispatchProposeEdit,
   propose_rename: dispatchProposeRename,
+  check_consistency: dispatchCheckConsistency,
+  explain_inconsistency: dispatchExplainInconsistency,
 };
 
 function toolErrorOutcome(e: unknown): DispatchOutcome {

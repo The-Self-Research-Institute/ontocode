@@ -169,6 +169,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => 
         editLockedMessage={c.editLockedMessage}
         busy={c.run.busy}
         statusText={c.run.statusText}
+        stageStartedAt={c.run.stageStartedAt}
         draft={c.run.draft}
         now={c.chat.now}
         review={buildReviewHandlers(c, props)}
