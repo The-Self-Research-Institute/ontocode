@@ -125,7 +125,10 @@ public class AssistantEditReferenceCoverageValidator {
             return subjects;
         }
         for (String line : text.split("\n", -1)) {
-            Matcher matcher = IDENTIFIER_TOKEN.matcher(line.stripLeading());
+            if (!line.equals(line.stripLeading())) {
+                continue;
+            }
+            Matcher matcher = IDENTIFIER_TOKEN.matcher(line);
             if (matcher.lookingAt()) {
                 subjects.add(matcher.group());
             }

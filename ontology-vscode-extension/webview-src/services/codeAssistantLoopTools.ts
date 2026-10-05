@@ -40,7 +40,9 @@ export const READ_CONTEXT_TOOL: ToolDefinition = {
           "\"definitions\" returns the declarations and axioms of the targets. " +
           "\"diagnostics\" returns the real parse errors and warnings the document currently has, each item's text starting with " +
           "\"ERROR:\" or \"WARNING:\" and carrying the line range it applies to, 1-indexed (unlike \"statement\" and \"range\", " +
-          "which are 0-indexed). \"references\" returns where the targets are used.",
+          "which are 0-indexed). \"references\" returns where the targets are used. " +
+          "Only these three values are valid here — there is no \"statements\" kind. To read an entity's statement " +
+          "block, set targets[].type to \"statement\" instead and use kind \"definitions\".",
       },
     },
   },
