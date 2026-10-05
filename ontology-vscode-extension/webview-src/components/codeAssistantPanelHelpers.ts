@@ -49,11 +49,9 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
       "propose_rename, check_consistency and explain_inconsistency.",
     scope,
     editable,
-    "If asked whether the ontology is consistent, or to find/fix a logical contradiction, call check_consistency first " +
-      "— it's cheap. Only call explain_inconsistency afterward, and only if check_consistency reported consistent: false; " +
-      "it's slower (it rebuilds the reasoner every call) and pointless to call on a consistent ontology.",
-    "Ground every claim in what read_context, run_sparql, check_consistency or explain_inconsistency actually returned. " +
-      "If you don't have enough information, say so instead of guessing.",
+    "For consistency questions: call check_consistency first (cheap). Only call explain_inconsistency afterward, " +
+      "and only if that reported consistent: false — it's slower and pointless otherwise.",
+    "Ground every claim in an actual tool result. If you don't have enough information, say so instead of guessing.",
   ].join("\n");
 }
 

@@ -209,7 +209,10 @@ describe("propose_rename and read_context tool surface", () => {
 
   it("exports propose_rename in ASSISTANT_TOOLS and points propose_edit at it", () => {
     const names = ASSISTANT_TOOLS.map((t) => t.name);
-    expect(names).toEqual(["read_context", "run_sparql", "propose_edit", "propose_rename"]);
+    expect(names).toEqual([
+      "read_context", "run_sparql", "propose_edit", "propose_rename",
+      "check_consistency", "explain_inconsistency",
+    ]);
     expect(PROPOSE_RENAME_TOOL.parameters.required).toEqual(["targetPath", "targetIdentifier", "replacementIdentifier"]);
     expect(ASSISTANT_TOOLS.find((t) => t.name === "propose_edit")!.description).toMatch(/propose_rename/);
   });
