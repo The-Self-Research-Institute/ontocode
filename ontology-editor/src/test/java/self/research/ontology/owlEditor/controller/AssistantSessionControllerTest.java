@@ -149,6 +149,34 @@ class AssistantSessionControllerTest {
     }
 
     @Test
+    void aBudgetOverrideInTheRequestFlowsThroughToTheResponse() {
+        AssistantSessionCreateRequest request = request("proj-1");
+        request.setTokenBudget(15000);
+        request.setRetrievalAttempts(9);
+
+        ResponseEntity<?> response = controller.createSession(request, requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        AssistantSessionResponse body = assertInstanceOf(AssistantSessionResponse.class, response.getBody());
+        assertEquals(9, body.getBudget().getRetrievalCallsRemaining());
+        assertEquals(9, body.getBudget().getMaxRetrievalCalls());
+    }
+
+    @Test
+    void anOutOfRangeBudgetOverrideIsClampedNotRejected() {
+        AssistantSessionCreateRequest request = request("proj-1");
+        request.setTokenBudget(999999);
+        request.setRetrievalAttempts(999);
+
+        ResponseEntity<?> response = controller.createSession(request, requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        AssistantSessionResponse body = assertInstanceOf(AssistantSessionResponse.class, response.getBody());
+        assertEquals(10, body.getBudget().getRetrievalCallsRemaining());
+        assertEquals(10, body.getBudget().getMaxRetrievalCalls());
+    }
+
+    @Test
     void providerAndModelAreStoredTrimmedAndAudited() {
         AssistantSessionCreateRequest request = request("proj-1");
         request.setProvider(" claude ");

@@ -32,7 +32,7 @@ const LiveActivityTab: React.FC<{ activities: LiveActivity[] }> = ({ activities 
   <div className="space-y-3">
     <div className="flex items-center gap-2 mb-4">
       <Activity className="w-5 h-5 text-green-500" />
-      <h3 className="font-medium">Live Activity</h3>
+      <h3 className="font-medium">Activity</h3>
       <span className="text-xs text-gray-500">Real-time updates from you and collaborators</span>
     </div>
     {activities.length === 0 ? (

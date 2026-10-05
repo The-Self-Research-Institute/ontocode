@@ -99,6 +99,43 @@ class AssistantSessionServiceTest {
     }
 
     @Test
+    void createSessionAcceptsABudgetOverrideWithinRange() {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(1L);
+
+        AssistantSessionDocument session = service.createSession(
+                "proj-1", "user@example.com", "/doc.owl", "ask", "ctx", "claude", "m", 12000, 7);
+
+        assertEquals(12000, session.getTokenBudgetRemaining());
+        assertEquals(7, session.getRetrievalAttemptsRemaining());
+    }
+
+    @Test
+    void createSessionClampsAnOutOfRangeBudgetInsteadOfRejectingIt() {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(1L);
+
+        AssistantSessionDocument tooHigh = service.createSession(
+                "proj-1", "user@example.com", "/doc.owl", "ask", "ctx", "claude", "m", 999999, 999);
+        AssistantSessionDocument tooLow = service.createSession(
+                "proj-1", "user@example.com", "/doc.owl", "ask", "ctx", "claude", "m", 10, 0);
+
+        assertEquals(20000, tooHigh.getTokenBudgetRemaining());
+        assertEquals(10, tooHigh.getRetrievalAttemptsRemaining());
+        assertEquals(2000, tooLow.getTokenBudgetRemaining());
+        assertEquals(2, tooLow.getRetrievalAttemptsRemaining());
+    }
+
+    @Test
+    void createSessionFallsBackToDefaultsWhenNoOverrideIsGiven() {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(1L);
+
+        AssistantSessionDocument session = service.createSession(
+                "proj-1", "user@example.com", "/doc.owl", "ask", "ctx", "claude", "m", null, null);
+
+        assertEquals(8000, session.getTokenBudgetRemaining());
+        assertEquals(5, session.getRetrievalAttemptsRemaining());
+    }
+
+    @Test
     void legacyCreateSessionLeavesProviderAndModelEmpty() {
         when(metadataService.getMutationVersion("proj-1")).thenReturn(7L);
 

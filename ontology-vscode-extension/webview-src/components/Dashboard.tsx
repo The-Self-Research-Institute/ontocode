@@ -149,6 +149,8 @@ import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
 import { useAskAiCodeViewSync } from "./dashboard-parts/hooks/useAskAiCodeViewSync";
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
+import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
+import { getStoredShowLabelOverlay, setStoredShowLabelOverlay } from "../services/LlmInsightsService";
 import { useCodeViewDownload } from "./dashboard-parts/hooks/useCodeViewDownload";
 import { OpenFileDialog } from "./dashboard-parts/OpenFileDialog";
 import {
@@ -2099,6 +2101,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     "CodeView",
   ]);
   const [showCodeAssistant, setShowCodeAssistant] = useState(false);
+  const [showLabelOverlay, setShowLabelOverlayState] = useState(getStoredShowLabelOverlay);
+  const setShowLabelOverlay = useCallback((value: boolean) => {
+    setStoredShowLabelOverlay(value);
+    setShowLabelOverlayState(value);
+  }, []);
   const codeAssistantResize = useResizablePanelWidth(420, 280, 800);
   const [showPluginMarketplace, setShowPluginMarketplace] = useState(false);
   const [hasPluginUpdates, setHasPluginUpdates] = useState(false);
@@ -10442,6 +10449,21 @@ const updateItemInState = useCallback(
     return nodes.flatMap((n) => [n, ...(n.children ? flattenTree(n.children) : [])]);
   }, []);
 
+  const codeAssistantLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const addAll = (items: Array<{ id: string; label?: string }>) => {
+      for (const item of items) {
+        if (item.id && item.label) map.set(item.id, item.label);
+      }
+    };
+    addAll(flattenTree(classHierarchy));
+    addAll(objectProperties);
+    addAll(dataProperties);
+    addAll(annotationProperties);
+    addAll(individuals);
+    return map;
+  }, [classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, flattenTree]);
+
   const effectiveOntologyIri = useMemo(() => {
     if (metadata?.ontologyIRI) return metadata.ontologyIRI;
     const sampleIri =
@@ -15288,25 +15310,34 @@ const updateItemInState = useCallback(
               </div>
             </div>
             {showCodeAssistant && (
-              <CodeViewAskAiSidebar
-                resize={codeAssistantResize}
-                projectName={projectId || undefined}
-                projectId={projectId || undefined}
-                documentPath={activeFileName || undefined}
-                hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
-                onClose={() => setShowCodeAssistant(false)}
-                onApplySuccess={handleAskAiApplySuccess}
-                onShowInCodeView={handleShowInCodeView}
-                recoveryVersion={recoveryVersion}
-                onRecoveryChanged={() => void recovery.refreshRecovery()}
-                onProjectRestored={() => void fetchCodeViewContent(codeViewFormat, false, true)}
-                editorSelection={
-                  codeViewSelection
-                    ? { ...codeViewSelection, format: codeViewFormat, pageStartLine: codeViewPage?.startLine ?? 0 }
-                    : null
-                }
-                onClearEditorSelection={() => setCodeViewSelection(null)}
-              />
+              <CodeAssistantLabelOverlayProvider
+                value={{
+                  enabled: showLabelOverlay,
+                  setEnabled: setShowLabelOverlay,
+                  labelMap: codeAssistantLabelMap,
+                  prefixMappings,
+                }}
+              >
+                <CodeViewAskAiSidebar
+                  resize={codeAssistantResize}
+                  projectName={projectId || undefined}
+                  projectId={projectId || undefined}
+                  documentPath={activeFileName || undefined}
+                  hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
+                  onClose={() => setShowCodeAssistant(false)}
+                  onApplySuccess={handleAskAiApplySuccess}
+                  onShowInCodeView={handleShowInCodeView}
+                  recoveryVersion={recoveryVersion}
+                  onRecoveryChanged={() => void recovery.refreshRecovery()}
+                  onProjectRestored={() => void fetchCodeViewContent(codeViewFormat, false, true)}
+                  editorSelection={
+                    codeViewSelection
+                      ? { ...codeViewSelection, format: codeViewFormat, pageStartLine: codeViewPage?.startLine ?? 0 }
+                      : null
+                  }
+                  onClearEditorSelection={() => setCodeViewSelection(null)}
+                />
+              </CodeAssistantLabelOverlayProvider>
             )}
           </div>
         );

@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import type { ProposedDiffEntry } from "../services/codeAssistantSession";
+import { resolveLabelOverlaySegments } from "./codeAssistantLabelOverlay";
+import { useCodeAssistantLabelOverlay } from "./CodeAssistantLabelOverlayContext";
 
 const COLLAPSED_LINES = 12;
 
@@ -19,6 +21,31 @@ function clip(text: string, expanded: boolean): { text: string; hidden: number }
   if (expanded || lines.length <= COLLAPSED_LINES) return { text, hidden: 0 };
   return { text: lines.slice(0, COLLAPSED_LINES).join("\n"), hidden: lines.length - COLLAPSED_LINES };
 }
+
+const DiffText: React.FC<{ text: string }> = ({ text }) => {
+  const { enabled, labelMap, prefixMappings } = useCodeAssistantLabelOverlay();
+  if (!enabled || labelMap.size === 0) {
+    return <>{text}</>;
+  }
+
+  const segments = resolveLabelOverlaySegments(text, labelMap, prefixMappings);
+  return (
+    <>
+      {segments.map((seg, i) =>
+        seg.label ? (
+          <span key={i} className="group relative inline-block border-b border-dotted border-current cursor-default">
+            {seg.label}
+            <span className="pointer-events-none absolute left-0 bottom-full z-10 mb-1 hidden whitespace-nowrap rounded bg-gray-900 px-1.5 py-0.5 text-[10px] font-mono font-normal text-white group-hover:block">
+              {seg.text}
+            </span>
+          </span>
+        ) : (
+          <React.Fragment key={i}>{seg.text}</React.Fragment>
+        ),
+      )}
+    </>
+  );
+};
 
 export const CodeAssistantDiffEntry: React.FC<CodeAssistantDiffEntryProps> = ({ entry, onShowInCodeView }) => {
   const [expanded, setExpanded] = useState(false);
@@ -44,8 +71,16 @@ export const CodeAssistantDiffEntry: React.FC<CodeAssistantDiffEntryProps> = ({ 
           </button>
         )}
       </div>
-      {entry.before && <div className="text-red-600 line-through whitespace-pre-wrap break-all">{before.text}</div>}
-      {entry.after && <div className="text-green-700 whitespace-pre-wrap break-all">{after.text}</div>}
+      {entry.before && (
+        <div className="text-red-600 line-through whitespace-pre-wrap break-all">
+          <DiffText text={before.text} />
+        </div>
+      )}
+      {entry.after && (
+        <div className="text-green-700 whitespace-pre-wrap break-all">
+          <DiffText text={after.text} />
+        </div>
+      )}
       {!entry.after && <div className="text-gray-500 font-sans italic">Removes these lines</div>}
       {hidden > 0 && (
         <button type="button" onClick={() => setExpanded(true)} className="font-sans text-blue-700 hover:underline">

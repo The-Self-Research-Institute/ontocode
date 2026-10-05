@@ -7,6 +7,8 @@ import {
   setStoredModel,
   getStoredMaxResponseTokens,
   setStoredMaxResponseTokens,
+  getStoredSessionTokenBudget,
+  setStoredSessionTokenBudget,
   getAvailableProviders,
   getProviderModels,
   refreshAvailableModels,
@@ -21,6 +23,7 @@ interface SaveContext {
   apiKey: string;
   model: string;
   maxResponseTokens: number;
+  sessionTokenBudget: number;
   list: ModelList;
   setModel: (model: string) => void;
   setSaving: (saving: boolean) => void;
@@ -56,6 +59,7 @@ function makeSaveHandler(ctx: SaveContext) {
     setStoredApiKey(ctx.apiKey);
     setStoredModel(modelToSave);
     setStoredMaxResponseTokens(ctx.maxResponseTokens);
+    setStoredSessionTokenBudget(ctx.sessionTokenBudget);
 
     ctx.setMessage({ type: 'success', text: `Saved ${ctx.providerLabel} settings.` });
     setTimeout(() => ctx.setMessage(null), 3000);
@@ -98,6 +102,7 @@ export function useLlmSettings(onSave?: () => void) {
   const [apiKey, setApiKey] = useStoredApiKeyState();
   const [model, setModel] = useState(getStoredModel());
   const [maxResponseTokens, setMaxResponseTokens] = useState(getStoredMaxResponseTokens());
+  const [sessionTokenBudget, setSessionTokenBudget] = useState(getStoredSessionTokenBudget());
   const [showKey, setShowKey] = useState(false);
   const [message, setMessage] = useState<LlmSettingsMessage>(null);
   const [testing, setTesting] = useState(false);
@@ -123,12 +128,13 @@ export function useLlmSettings(onSave?: () => void) {
   };
 
   const handleSave = makeSaveHandler({
-    provider, apiKey, model, maxResponseTokens, list, setModel, setSaving, setMessage, providerLabel, onSave,
+    provider, apiKey, model, maxResponseTokens, sessionTokenBudget, list, setModel, setSaving, setMessage, providerLabel, onSave,
   });
   const handleTestConnection = makeTestHandler(apiKey, providerLabel, setTesting, setMessage);
 
   return {
     provider, apiKey, setApiKey, model, setModel, maxResponseTokens, setMaxResponseTokens,
+    sessionTokenBudget, setSessionTokenBudget,
     showKey, setShowKey, message, testing, saving, providers, providerConfig, providerLabel,
     models: list.models, modelsSource: list.modelsSource, modelsRefreshing: list.modelsRefreshing,
     handleRefreshModels: list.handleRefreshModels, selectProvider, handleClear, handleSave, handleTestConnection,

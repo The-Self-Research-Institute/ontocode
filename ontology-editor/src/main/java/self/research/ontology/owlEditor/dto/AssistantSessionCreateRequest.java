@@ -10,4 +10,6 @@ public class AssistantSessionCreateRequest {
     private String actionContext;
     private String provider;
     private String model;
+    private Integer tokenBudget;
+    private Integer retrievalAttempts;
 }

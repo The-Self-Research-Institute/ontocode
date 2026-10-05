@@ -1,15 +1,46 @@
-import React from "react";
+import React, { useState } from "react";
 import { Check, ChevronDown, Loader2, LogOut } from "lucide-react";
 import {
   getAvailableProviders,
   getStoredProvider,
   getStoredModel,
   getProviderModels,
+  getStoredSessionTokenBudget,
+  setStoredSessionTokenBudget,
   hasApiKey,
   type LlmProvider,
   type KnownModel,
 } from "../services/LlmInsightsService";
 import { useCodeAssistantModelSwitcher } from "../hooks/useCodeAssistantModelSwitcher";
+import { LabelOverlayToggleRow } from "./CodeAssistantLabelOverlayToggle";
+
+const SessionBudgetRow: React.FC = () => {
+  const [budget, setBudget] = useState(getStoredSessionTokenBudget());
+  return (
+    <div className="px-3 py-2 border-t border-gray-100">
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor="code-assistant-session-budget" className="text-xs font-medium text-gray-700">
+          Session budget (tokens)
+        </label>
+        <input
+          id="code-assistant-session-budget"
+          type="number"
+          min={2000}
+          max={20000}
+          step={1000}
+          value={budget}
+          onChange={(e) => {
+            const next = Number(e.target.value) || budget;
+            setBudget(next);
+            setStoredSessionTokenBudget(next);
+          }}
+          className="w-20 px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+        />
+      </div>
+      <p className="text-[10px] text-gray-500 mt-1">Applies to your next message, not the current one.</p>
+    </div>
+  );
+};
 
 const KEY_LINKS: Record<LlmProvider, string> = {
   gemini: "https://ai.google.dev/pricing",
@@ -157,6 +188,8 @@ const SwitcherPopover: React.FC<{ s: SwitcherState; providers: ProviderOption[] 
           error={s.error}
         />
       )}
+      <SessionBudgetRow />
+      <LabelOverlayToggleRow />
     </div>
   );
 };

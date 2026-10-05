@@ -75,6 +75,7 @@ public class AssistantSessionController {
         AssistantSessionService.SessionCreateOutcome outcome = sessionService.createSession(
                 request.getProjectId(), userEmail, request.getDocumentPath(),
                 request.getActionType(), request.getActionContext(), provider, model,
+                request.getTokenBudget(), request.getRetrievalAttempts(),
                 () -> admissionLimiter.tryAdmitSessionCreate(userEmail));
         if (!outcome.created()) {
             return rateLimited(outcome.retryAfterSeconds());
@@ -91,7 +92,7 @@ public class AssistantSessionController {
                         .build())
                 .budget(AssistantSessionResponse.Budget.builder()
                         .retrievalCallsRemaining(session.getRetrievalAttemptsRemaining())
-                        .maxRetrievalCalls(sessionService.getMaxRetrievalAttempts())
+                        .maxRetrievalCalls(session.getRetrievalAttemptsRemaining())
                         .build())
                 .expiresAt(session.getExpiresAt())
                 .build();

@@ -19,7 +19,7 @@ const TabBar: React.FC<TabBarProps> = ({ activeTab, onSelect, liveCount, stats }
   <div className="border-b">
     <div className="flex overflow-x-auto">
       {[
-        { id: 'live', label: 'Live', icon: Activity, count: liveCount > 0 ? liveCount : undefined },
+        { id: 'live', label: 'Activity', icon: Activity, count: liveCount > 0 ? liveCount : undefined },
         { id: 'drafts', label: 'Drafts', icon: Edit3, count: stats.draftChanges > 0 ? stats.draftChanges : undefined },
         { id: 'changes', label: 'Saved', icon: GitCommit, count: stats.totalChanges },
         { id: 'conflicts', label: 'Conflicts', icon: AlertTriangle, count: stats.conflicts > 0 ? stats.conflicts : undefined },

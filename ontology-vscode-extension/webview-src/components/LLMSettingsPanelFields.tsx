@@ -1,6 +1,6 @@
 import React from 'react';
 import { Save, Trash2, Eye, EyeOff, Check, X, RefreshCw } from 'lucide-react';
-import { DEFAULT_MAX_RESPONSE_TOKENS, KnownModel, LlmProvider } from '../services/LlmInsightsService';
+import { DEFAULT_MAX_RESPONSE_TOKENS, DEFAULT_SESSION_TOKEN_BUDGET, KnownModel, LlmProvider } from '../services/LlmInsightsService';
 import type { LlmSettingsMessage } from '../hooks/useLlmModelList';
 
 const INPUT_CLASS = 'w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent';
@@ -93,6 +93,27 @@ export const MaxTokensField: React.FC<{ value: number; onChange: (value: number)
     />
     <p className="text-xs text-gray-500 mt-1">
       Longer answers and larger propose_edit changes need more tokens; a low value risks the response being cut off mid-way.
+    </p>
+  </div>
+);
+
+export const SessionBudgetField: React.FC<{ value: number; onChange: (value: number) => void }> = ({ value, onChange }) => (
+  <div>
+    <label className="block text-sm font-medium text-gray-700 mb-2">
+      Session exploration budget (tokens)
+    </label>
+    <input
+      type="number"
+      min={2000}
+      max={20000}
+      step={1000}
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value) || DEFAULT_SESSION_TOKEN_BUDGET)}
+      className={INPUT_CLASS}
+    />
+    <p className="text-xs text-gray-500 mt-1">
+      How much the assistant can spend looking things up (e.g. running SPARQL queries) before it has to answer.
+      Raise it if a complex request keeps getting cut short; lower it to spend less.
     </p>
   </div>
 );

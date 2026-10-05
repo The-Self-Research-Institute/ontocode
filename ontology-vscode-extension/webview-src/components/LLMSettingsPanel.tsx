@@ -3,7 +3,7 @@ import { Zap, Building2 } from 'lucide-react';
 import type { ProviderConfig } from '../services/codeAssistantProviderConfig';
 import { LlmProvider } from '../services/LlmInsightsService';
 import { useLlmSettings } from '../hooks/useLlmSettings';
-import { ApiKeyField, ApiKeyLinks, ActionButtons, MaxTokensField, ModelField, StatusMessage } from './LLMSettingsPanelFields';
+import { ApiKeyField, ApiKeyLinks, ActionButtons, MaxTokensField, ModelField, SessionBudgetField, StatusMessage } from './LLMSettingsPanelFields';
 
 interface LLMSettingsPanelProps {
   onSave?: () => void;
@@ -152,6 +152,7 @@ const LLMSettingsPanel: React.FC<LLMSettingsPanelProps> = ({
         onRefreshModels={s.handleRefreshModels}
       />
       <MaxTokensField value={s.maxResponseTokens} onChange={s.setMaxResponseTokens} />
+      <SessionBudgetField value={s.sessionTokenBudget} onChange={s.setSessionTokenBudget} />
       {s.message && <StatusMessage message={s.message} />}
       <ActionButtons
         compact={compact}

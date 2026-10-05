@@ -158,6 +158,8 @@ public class AssistantContextToolService {
             } catch (Exception e) {
                 log.warn("[Assistant] read_context target {} failed: {}", target.value(), e.getMessage());
                 anyPartial = true;
+                items.add(Item.builder().kind("note").text("NOTE: Could not read target \"" + target.value()
+                        + "\" (" + e.getMessage() + ") — try a different range or a narrower question.").build());
             }
             if (!"diagnostics".equals(kind) || TYPE_STATEMENT.equals(target.type())) {
                 perf.add(target.type(), (System.nanoTime() - targetStart) / 1_000_000);
@@ -173,6 +175,8 @@ public class AssistantContextToolService {
             } catch (Exception e) {
                 log.warn("[Assistant] read_context diagnostics failed for project {}: {}", projectId, e.getMessage());
                 anyPartial = true;
+                items.add(Item.builder().kind("note").text("NOTE: Could not read diagnostics ("
+                        + e.getMessage() + ") — try again or ask a narrower question.").build());
             }
         }
         return new TargetResolution(items, anyPartial);

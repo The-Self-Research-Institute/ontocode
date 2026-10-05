@@ -154,7 +154,9 @@ class AssistantContextToolServiceTest {
 
         assertTrue(result.isOk());
         assertEquals("partial", result.getCoverage());
-        assertTrue(result.getItems().isEmpty());
+        assertEquals(1, result.getItems().size());
+        assertEquals("note", result.getItems().get(0).getKind());
+        assertTrue(result.getItems().get(0).getText().contains("ROW_CAP_EXCEEDED"));
     }
 
     @Test
@@ -201,7 +203,8 @@ class AssistantContextToolServiceTest {
 
         assertTrue(result.isOk());
         assertEquals("partial", result.getCoverage());
-        assertTrue(result.getItems().isEmpty());
+        assertEquals(1, result.getItems().size());
+        assertEquals("note", result.getItems().get(0).getKind());
     }
 
     @Test
@@ -216,7 +219,9 @@ class AssistantContextToolServiceTest {
 
         assertTrue(result.isOk());
         assertEquals("partial", result.getCoverage());
-        assertTrue(result.getItems().isEmpty());
+        assertEquals(1, result.getItems().size());
+        assertEquals("note", result.getItems().get(0).getKind());
+        assertTrue(result.getItems().get(0).getText().contains("boom"));
     }
 
     @Test

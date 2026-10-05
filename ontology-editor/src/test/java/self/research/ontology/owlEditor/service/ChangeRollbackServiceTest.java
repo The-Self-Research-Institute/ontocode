@@ -40,6 +40,7 @@ class ChangeRollbackServiceTest {
     private OntologyMutationService mutations;
     private RollbackAuditRepository audits;
     private OntologyHistoryService history;
+    private DraftTrackingService draftTracking;
     private ChangeRollbackService service;
 
     @BeforeEach
@@ -49,6 +50,7 @@ class ChangeRollbackServiceTest {
         mutations = mock(OntologyMutationService.class);
         audits = mock(RollbackAuditRepository.class);
         history = mock(OntologyHistoryService.class);
+        draftTracking = mock(DraftTrackingService.class);
         when(audits.save(any())).thenAnswer(inv -> {
             RollbackAudit audit = inv.getArgument(0);
             audit.setId("audit-1");
@@ -56,7 +58,7 @@ class ChangeRollbackServiceTest {
         });
         when(facts.entityExists(anyString(), anyString(), anyBoolean(), any())).thenReturn(true);
         service = new ChangeRollbackService(historySync, new RollbackMutationPlanner(), facts, mutations, audits, history,
-                new ProjectWriteLockRegistry(), null);
+                new ProjectWriteLockRegistry(), draftTracking, null);
     }
 
     private static HistoryChange.SubChange sub(String id, String predicate, String value, boolean addition) {

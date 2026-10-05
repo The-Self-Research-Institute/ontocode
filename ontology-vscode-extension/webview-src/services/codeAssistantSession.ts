@@ -1,5 +1,5 @@
 import { assistantAuthHeaders } from "./codeAssistantAuthHeaders";
-import { getStoredModel, getStoredProvider } from "./LlmInsightsService";
+import { getStoredModel, getStoredProvider, getStoredSessionTokenBudget } from "./LlmInsightsService";
 import type { CodeAssistantAction } from "../components/CodeAssistantPanel";
 import type {
   AssistantSession,
@@ -43,6 +43,7 @@ export interface CreateAssistantSessionInput {
   actionContext: string;
   provider?: string;
   model?: string;
+  tokenBudget?: number;
 }
 
 export async function createAssistantSession(
@@ -56,6 +57,7 @@ export async function createAssistantSession(
     ...input,
     provider: input.provider ?? getStoredProvider(),
     model: input.model ?? getStoredModel(),
+    tokenBudget: input.tokenBudget ?? getStoredSessionTokenBudget(),
   };
   return postJson<AssistantSession>(
     apiBaseUrl,

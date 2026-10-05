@@ -32,6 +32,9 @@ class AssistantSparqlToolServiceTest {
     @Mock
     private SparqlDatasetService datasetService;
 
+    @Mock
+    private OntologyMetadataService ontologyMetadataService;
+
     private AssistantSparqlToolService toolService;
     private AssistantAdmissionLimiter limiter;
 
@@ -40,12 +43,13 @@ class AssistantSparqlToolServiceTest {
         MockitoAnnotations.openMocks(this);
         limiter = new AssistantAdmissionLimiter(4, 2, 32, 30, 3, Clock.systemUTC());
         toolService = new AssistantSparqlToolService(sessionService, datasetService, new ProjectWriteLockRegistry(),
-                limiter);
+                limiter, ontologyMetadataService);
         ReflectionTestUtils.setField(toolService, "maxRows", 200);
         ReflectionTestUtils.setField(toolService, "maxBytes", 200000L);
         ReflectionTestUtils.setField(toolService, "timeoutSeconds", 15);
         when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
         when(sessionService.isRevisionStale(any())).thenReturn(false);
+        when(ontologyMetadataService.getPrefixes(anyString())).thenReturn(List.of());
     }
 
     @Test
@@ -253,6 +257,42 @@ class AssistantSparqlToolServiceTest {
                 toolService.runSparql("s1", "u@x.com", "DELETE WHERE { ?s ?p ?o }").getErrorCode());
         ((AssistantAdmissionLimiter.Admitted) a).close();
         ((AssistantAdmissionLimiter.Admitted) b).close();
+    }
+
+    @Test
+    void injectsUndeclaredPrefixesSoAPlainOwlClassQuerySucceeds() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(ontologyMetadataService.getPrefixes("proj-1")).thenReturn(List.of(
+                Map.of("prefix", "owl", "namespace", "http://www.w3.org/2002/07/owl#"),
+                Map.of("prefix", "ex", "namespace", "http://example.org/")));
+        org.mockito.ArgumentCaptor<String> sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(datasetService.execSelectCapped(eq("proj-1"), sent.capture(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("class"), List.of(Map.of("class", "ex:Car")), false, null));
+
+        AssistantSparqlToolService.SparqlToolResult result =
+                toolService.runSparql("s1", "u@x.com", "SELECT ?class WHERE { ?class a owl:Class }");
+
+        assertTrue(result.isOk());
+        assertTrue(sent.getValue().contains("PREFIX owl: <http://www.w3.org/2002/07/owl#>"));
+        assertTrue(sent.getValue().contains("PREFIX ex: <http://example.org/>"));
+        assertTrue(sent.getValue().endsWith("SELECT ?class WHERE { ?class a owl:Class }"));
+    }
+
+    @Test
+    void doesNotDuplicateAPrefixTheModelAlreadyDeclared() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(ontologyMetadataService.getPrefixes("proj-1")).thenReturn(List.of(
+                Map.of("prefix", "owl", "namespace", "http://www.w3.org/2002/07/owl#")));
+        org.mockito.ArgumentCaptor<String> sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        when(datasetService.execSelectCapped(eq("proj-1"), sent.capture(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("class"), List.of(), false, null));
+
+        String query = "PREFIX owl: <http://www.w3.org/2002/07/owl#>\nSELECT ?class WHERE { ?class a owl:Class }";
+        toolService.runSparql("s1", "u@x.com", query);
+
+        assertEquals(1, sent.getValue().split("PREFIX owl:", -1).length - 1);
     }
 
     private AssistantSessionDocument activeSession() {

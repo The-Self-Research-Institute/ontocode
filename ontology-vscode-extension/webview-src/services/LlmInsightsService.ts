@@ -106,6 +106,26 @@ export const DEFAULT_MAX_RESPONSE_TOKENS = 8192;
 const MIN_MAX_RESPONSE_TOKENS = 512;
 const MAX_MAX_RESPONSE_TOKENS = 32768;
 
+const SHOW_LABEL_OVERLAY_STORAGE = 'ontocode_llm_show_label_overlay';
+
+export function getStoredShowLabelOverlay(): boolean {
+  try {
+    const stored = localStorage.getItem(SHOW_LABEL_OVERLAY_STORAGE);
+    if (stored === '0') return false;
+    if (stored === '1') return true;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+export function setStoredShowLabelOverlay(value: boolean): void {
+  try {
+    localStorage.setItem(SHOW_LABEL_OVERLAY_STORAGE, value ? '1' : '0');
+  } catch {
+  }
+}
+
 export function getStoredMaxResponseTokens(): number {
   try {
     const stored = Number(localStorage.getItem(MAX_TOKENS_STORAGE));
@@ -120,6 +140,31 @@ export function setStoredMaxResponseTokens(value: number): void {
   try {
     const clamped = Math.round(Math.min(MAX_MAX_RESPONSE_TOKENS, Math.max(MIN_MAX_RESPONSE_TOKENS, value)));
     localStorage.setItem(MAX_TOKENS_STORAGE, String(clamped));
+  } catch {
+  }
+}
+
+const SESSION_TOKEN_BUDGET_STORAGE = 'ontocode_llm_session_token_budget';
+export const DEFAULT_SESSION_TOKEN_BUDGET = 8000;
+const MIN_SESSION_TOKEN_BUDGET = 2000;
+const MAX_SESSION_TOKEN_BUDGET = 20000;
+
+export function getStoredSessionTokenBudget(): number {
+  try {
+    const stored = Number(localStorage.getItem(SESSION_TOKEN_BUDGET_STORAGE));
+    if (Number.isInteger(stored) && stored >= MIN_SESSION_TOKEN_BUDGET && stored <= MAX_SESSION_TOKEN_BUDGET) {
+      return stored;
+    }
+    return DEFAULT_SESSION_TOKEN_BUDGET;
+  } catch {
+    return DEFAULT_SESSION_TOKEN_BUDGET;
+  }
+}
+
+export function setStoredSessionTokenBudget(value: number): void {
+  try {
+    const clamped = Math.round(Math.min(MAX_SESSION_TOKEN_BUDGET, Math.max(MIN_SESSION_TOKEN_BUDGET, value)));
+    localStorage.setItem(SESSION_TOKEN_BUDGET_STORAGE, String(clamped));
   } catch {
   }
 }

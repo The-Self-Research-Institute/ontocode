@@ -29,6 +29,11 @@ public class AssistantSessionService {
 
     private static final int CREATE_LOCK_STRIPES = 64;
 
+    private static final int MIN_TOKEN_BUDGET = 2000;
+    private static final int MAX_TOKEN_BUDGET = 20000;
+    private static final int MIN_RETRIEVAL_ATTEMPTS = 2;
+    private static final int MAX_RETRIEVAL_ATTEMPTS = 10;
+
     public record SessionCreateOutcome(AssistantSessionDocument session, Integer retryAfterSeconds) {
         public boolean created() {
             return session != null;
@@ -86,6 +91,15 @@ public class AssistantSessionService {
                                               String actionType, String actionContext,
                                               String provider, String model,
                                               Supplier<Optional<Integer>> rateAdmission) {
+        return createSession(projectId, userEmail, documentPath, actionType, actionContext, provider, model,
+                null, null, rateAdmission);
+    }
+
+    public SessionCreateOutcome createSession(String projectId, String userEmail, String documentPath,
+                                              String actionType, String actionContext,
+                                              String provider, String model,
+                                              Integer tokenBudgetOverride, Integer retrievalAttemptsOverride,
+                                              Supplier<Optional<Integer>> rateAdmission) {
         ReentrantLock lock = createLocks[Math.floorMod(String.valueOf(userEmail).hashCode(), CREATE_LOCK_STRIPES)];
         lock.lock();
         try {
@@ -99,7 +113,8 @@ public class AssistantSessionService {
                 return new SessionCreateOutcome(null, retryAfter.get());
             }
             return new SessionCreateOutcome(
-                    createSession(projectId, userEmail, documentPath, actionType, actionContext, provider, model),
+                    createSession(projectId, userEmail, documentPath, actionType, actionContext, provider, model,
+                            tokenBudgetOverride, retrievalAttemptsOverride),
                     null);
         } finally {
             lock.unlock();
@@ -114,8 +129,19 @@ public class AssistantSessionService {
     public AssistantSessionDocument createSession(String projectId, String userEmail, String documentPath,
                                                    String actionType, String actionContext,
                                                    String provider, String model) {
+        return createSession(projectId, userEmail, documentPath, actionType, actionContext, provider, model,
+                null, null);
+    }
+
+    public AssistantSessionDocument createSession(String projectId, String userEmail, String documentPath,
+                                                   String actionType, String actionContext,
+                                                   String provider, String model,
+                                                   Integer tokenBudgetOverride, Integer retrievalAttemptsOverride) {
         long pinnedRevision = metadataService.getMutationVersion(projectId);
         Instant now = Instant.now();
+        int tokenBudget = clampOrDefault(tokenBudgetOverride, MIN_TOKEN_BUDGET, MAX_TOKEN_BUDGET, defaultTokenBudget);
+        int retrievalAttempts = clampOrDefault(retrievalAttemptsOverride, MIN_RETRIEVAL_ATTEMPTS, MAX_RETRIEVAL_ATTEMPTS,
+                defaultRetrievalAttempts);
         AssistantSessionDocument session = AssistantSessionDocument.builder()
                 .projectId(projectId)
                 .userEmail(userEmail)
@@ -126,8 +152,8 @@ public class AssistantSessionService {
                 .model(model)
                 .pinnedRevision(pinnedRevision)
                 .status(AssistantSessionStatus.ACTIVE)
-                .retrievalAttemptsRemaining(defaultRetrievalAttempts)
-                .tokenBudgetRemaining(defaultTokenBudget)
+                .retrievalAttemptsRemaining(retrievalAttempts)
+                .tokenBudgetRemaining(tokenBudget)
                 .expiresAt(now.plusSeconds(deadlineSeconds))
                 .createdAt(now)
                 .updatedAt(now)
@@ -138,6 +164,13 @@ public class AssistantSessionService {
         audit(new AssistantAuditService.AssistantAuditEvent(userEmail, projectId, saved.getId(), null,
                 SESSION_CREATE_OPERATION, pinnedRevision, provider, model, "ok", null, actionType));
         return saved;
+    }
+
+    private static int clampOrDefault(Integer requested, int min, int max, int fallback) {
+        if (requested == null) {
+            return fallback;
+        }
+        return Math.max(min, Math.min(max, requested));
     }
 
     public void recordCreateRejected(String userEmail, String projectId, String provider, String model,

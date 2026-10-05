@@ -5,10 +5,12 @@ import {
   getProviderModels,
   getStoredMaxResponseTokens,
   getStoredModel,
+  getStoredSessionTokenBudget,
   isLikelyPaidOnlyModel,
   refreshAvailableModels,
   setStoredApiKey,
   setStoredMaxResponseTokens,
+  setStoredSessionTokenBudget,
   LlmConfigError,
   LlmRequestError,
 } from "../services/LlmInsightsService";
@@ -150,6 +152,18 @@ describe("model helpers", () => {
     expect(getStoredMaxResponseTokens()).toBe(2048);
     localStorage.setItem("ontocode_llm_max_response_tokens", "1000.5");
     expect(getStoredMaxResponseTokens()).toBe(8192);
+  });
+
+  it("clamps and rounds the session token budget", () => {
+    expect(getStoredSessionTokenBudget()).toBe(8000);
+    setStoredSessionTokenBudget(100);
+    expect(getStoredSessionTokenBudget()).toBe(2000);
+    setStoredSessionTokenBudget(1_000_000);
+    expect(getStoredSessionTokenBudget()).toBe(20000);
+    setStoredSessionTokenBudget(5000.4);
+    expect(getStoredSessionTokenBudget()).toBe(5000);
+    localStorage.setItem("ontocode_llm_session_token_budget", "1000.5");
+    expect(getStoredSessionTokenBudget()).toBe(8000);
   });
 
   it("writes the key through to the key store", async () => {
