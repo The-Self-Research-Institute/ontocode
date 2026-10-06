@@ -1,6 +1,7 @@
-import React from "react";
-import { X } from "lucide-react";
+import React, { useState } from "react";
+import { BookOpen, X } from "lucide-react";
 import { AskAiIcon } from "./AskAiIcon";
+import CodeAssistantHelpGuide from "./CodeAssistantHelpGuide";
 import { setStoredApiKey } from "../services/LlmInsightsService";
 import { ProviderFooter, RecoveryNotice } from "./CodeAssistantPanelParts";
 import { CodeAssistantActionChips } from "./CodeAssistantActionChips";
@@ -44,7 +45,9 @@ function composerPlaceholder(recoveryLocked: boolean, ready: boolean, action: Co
   return action === "local-edit" ? "Describe the change you want..." : "Type your question...";
 }
 
-const PanelHeader: React.FC<{ documentPath?: string; onClose?: () => void }> = ({ documentPath, onClose }) => (
+const PanelHeader: React.FC<{ documentPath?: string; onClose?: () => void; onOpenHelp?: () => void }> = ({
+  documentPath, onClose, onOpenHelp,
+}) => (
   <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-3 flex items-center justify-between flex-shrink-0">
     <div className="flex items-center gap-2.5 min-w-0">
       <div className="bg-white bg-opacity-20 p-1.5 rounded-[50%_50%_50%_4px] flex-shrink-0">
@@ -55,15 +58,26 @@ const PanelHeader: React.FC<{ documentPath?: string; onClose?: () => void }> = (
         {documentPath && <p className="text-purple-100 text-xs truncate max-w-[280px]">{documentPath}</p>}
       </div>
     </div>
-    {onClose && (
-      <button
-        onClick={onClose}
-        className="text-purple-100 hover:text-white hover:bg-white hover:bg-opacity-10 rounded-md p-1 flex-shrink-0"
-        title="Close"
-      >
-        <X size={16} />
-      </button>
-    )}
+    <div className="flex items-center gap-1 flex-shrink-0">
+      {onOpenHelp && (
+        <button
+          onClick={onOpenHelp}
+          className="text-purple-100 hover:text-white hover:bg-white hover:bg-opacity-10 rounded-md p-1"
+          title="Guide"
+        >
+          <BookOpen size={16} />
+        </button>
+      )}
+      {onClose && (
+        <button
+          onClick={onClose}
+          className="text-purple-100 hover:text-white hover:bg-white hover:bg-opacity-10 rounded-md p-1"
+          title="Close"
+        >
+          <X size={16} />
+        </button>
+      )}
+    </div>
   </div>
 );
 
@@ -143,6 +157,7 @@ const PanelFooter: React.FC<{
 export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => {
   const { projectId, documentPath, editorSelection = null } = props;
   const c = useCodeAssistantPanel(props);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const submitMessage = (override?: PromptToRetry) =>
     void c.run.submit({
@@ -158,7 +173,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => 
 
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--color-background)" }}>
-      <PanelHeader documentPath={documentPath} onClose={props.onClose} />
+      <PanelHeader documentPath={documentPath} onClose={props.onClose} onOpenHelp={() => setIsHelpOpen(true)} />
+      <CodeAssistantHelpGuide isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
       <RecoveryNotice c={c} shownByHost={props.recoveryShownByHost} />
       <CodeAssistantTranscript
         entries={c.chat.entries}
@@ -169,6 +185,7 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => 
         editLockedMessage={c.editLockedMessage}
         busy={c.run.busy}
         statusText={c.run.statusText}
+        liveBudget={c.run.liveBudget}
         stageStartedAt={c.run.stageStartedAt}
         draft={c.run.draft}
         now={c.chat.now}

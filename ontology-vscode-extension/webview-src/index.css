@@ -1212,6 +1212,7 @@ textarea.code-editor-textarea {
   animation: chat-chip-fade-in 0.22s ease-out both;
 }
 
+.assistant-markdown { overflow-wrap: anywhere; }
 .assistant-markdown > :first-child { margin-top: 0; }
 .assistant-markdown > :last-child { margin-bottom: 0; }
 .assistant-markdown p, .assistant-markdown ul, .assistant-markdown ol, .assistant-markdown pre,

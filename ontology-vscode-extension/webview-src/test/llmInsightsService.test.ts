@@ -6,11 +6,13 @@ import {
   getStoredMaxResponseTokens,
   getStoredModel,
   getStoredSessionTokenBudget,
+  getStoredRetrievalAttempts,
   isLikelyPaidOnlyModel,
   refreshAvailableModels,
   setStoredApiKey,
   setStoredMaxResponseTokens,
   setStoredSessionTokenBudget,
+  setStoredRetrievalAttempts,
   LlmConfigError,
   LlmRequestError,
 } from "../services/LlmInsightsService";
@@ -156,14 +158,26 @@ describe("model helpers", () => {
 
   it("clamps and rounds the session token budget", () => {
     expect(getStoredSessionTokenBudget()).toBe(8000);
-    setStoredSessionTokenBudget(100);
+    expect(setStoredSessionTokenBudget(100)).toBe(2000);
     expect(getStoredSessionTokenBudget()).toBe(2000);
-    setStoredSessionTokenBudget(1_000_000);
+    expect(setStoredSessionTokenBudget(1_000_000)).toBe(20000);
     expect(getStoredSessionTokenBudget()).toBe(20000);
-    setStoredSessionTokenBudget(5000.4);
+    expect(setStoredSessionTokenBudget(5000.4)).toBe(5000);
     expect(getStoredSessionTokenBudget()).toBe(5000);
     localStorage.setItem("ontocode_llm_session_token_budget", "1000.5");
     expect(getStoredSessionTokenBudget()).toBe(8000);
+  });
+
+  it("clamps and rounds the retrieval attempts cap", () => {
+    expect(getStoredRetrievalAttempts()).toBe(8);
+    expect(setStoredRetrievalAttempts(0)).toBe(2);
+    expect(getStoredRetrievalAttempts()).toBe(2);
+    expect(setStoredRetrievalAttempts(100)).toBe(30);
+    expect(getStoredRetrievalAttempts()).toBe(30);
+    expect(setStoredRetrievalAttempts(5.6)).toBe(6);
+    expect(getStoredRetrievalAttempts()).toBe(6);
+    localStorage.setItem("ontocode_llm_retrieval_attempts", "1000.5");
+    expect(getStoredRetrievalAttempts()).toBe(8);
   });
 
   it("writes the key through to the key store", async () => {

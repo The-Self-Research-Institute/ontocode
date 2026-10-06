@@ -119,7 +119,7 @@ class AssistantSessionServiceTest {
                 "proj-1", "user@example.com", "/doc.owl", "ask", "ctx", "claude", "m", 10, 0);
 
         assertEquals(20000, tooHigh.getTokenBudgetRemaining());
-        assertEquals(10, tooHigh.getRetrievalAttemptsRemaining());
+        assertEquals(30, tooHigh.getRetrievalAttemptsRemaining());
         assertEquals(2000, tooLow.getTokenBudgetRemaining());
         assertEquals(2, tooLow.getRetrievalAttemptsRemaining());
     }
@@ -243,6 +243,26 @@ class AssistantSessionServiceTest {
                 .thenReturn(null);
 
         assertFalse(service.tryConsumeTokenBudget("session-1", 50000));
+    }
+
+    @Test
+    void currentBudgetSnapshotReturnsRemainingValuesForAnActiveSession() {
+        when(sessionRepository.findByIdAndUserEmail("session-1", "user@example.com"))
+                .thenReturn(Optional.of(baseSession().retrievalAttemptsRemaining(3).tokenBudgetRemaining(6500).build()));
+
+        Optional<AssistantSessionService.BudgetSnapshot> snapshot =
+                service.currentBudgetSnapshot("session-1", "user@example.com");
+
+        assertTrue(snapshot.isPresent());
+        assertEquals(3, snapshot.get().retrievalAttemptsRemaining());
+        assertEquals(6500, snapshot.get().tokenBudgetRemaining());
+    }
+
+    @Test
+    void currentBudgetSnapshotReturnsEmptyWhenSessionIsGone() {
+        when(sessionRepository.findByIdAndUserEmail("missing", "user@example.com")).thenReturn(Optional.empty());
+
+        assertTrue(service.currentBudgetSnapshot("missing", "user@example.com").isEmpty());
     }
 
     @Test

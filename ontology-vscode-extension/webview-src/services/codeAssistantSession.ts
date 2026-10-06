@@ -1,5 +1,5 @@
 import { assistantAuthHeaders } from "./codeAssistantAuthHeaders";
-import { getStoredModel, getStoredProvider, getStoredSessionTokenBudget } from "./LlmInsightsService";
+import { getStoredModel, getStoredProvider, getStoredSessionTokenBudget, getStoredRetrievalAttempts } from "./LlmInsightsService";
 import type { CodeAssistantAction } from "../components/CodeAssistantPanel";
 import type {
   AssistantSession,
@@ -10,6 +10,8 @@ import type {
   ReadContextTarget,
   ReasonerResult,
   SparqlResult,
+  SwrlResult,
+  FuzzyQueryResult,
 } from "./codeAssistantSessionTypes";
 import { newIdempotencyKey, postJson, type IdempotentCallOptions } from "./codeAssistantSessionHttp";
 import { AssistantApiError } from "./codeAssistantSessionErrors";
@@ -24,8 +26,14 @@ export type {
   ReadContextResult,
   ReasonerResult,
   SparqlResult,
+  SwrlResult,
+  FuzzyQueryResult,
   ProposedEdit,
   RenameIdentifierOperation,
+  InferredAxiomInput,
+  AddInferredAxiomsOperation,
+  FuzzyMembershipInput,
+  AddFuzzyMembershipOperation,
   ProposedEditGroupInput,
   ProposedDiffEntry,
   ProposedEditGroupResult,
@@ -46,6 +54,7 @@ export interface CreateAssistantSessionInput {
   provider?: string;
   model?: string;
   tokenBudget?: number;
+  retrievalAttempts?: number;
 }
 
 export async function createAssistantSession(
@@ -60,6 +69,7 @@ export async function createAssistantSession(
     provider: input.provider ?? getStoredProvider(),
     model: input.model ?? getStoredModel(),
     tokenBudget: input.tokenBudget ?? getStoredSessionTokenBudget(),
+    retrievalAttempts: input.retrievalAttempts ?? getStoredRetrievalAttempts(),
   };
   return postJson<AssistantSession>(
     apiBaseUrl,
@@ -129,6 +139,54 @@ export async function explainInconsistency(
     `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/tools/explain_inconsistency`,
     token,
     {},
+    signal,
+  );
+}
+
+export async function addSwrlRule(
+  apiBaseUrl: string,
+  token: string | undefined,
+  sessionId: string,
+  ruleName: string,
+  ruleText: string,
+  signal?: AbortSignal,
+): Promise<SwrlResult> {
+  return postJson<SwrlResult>(
+    apiBaseUrl,
+    `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/tools/add_swrl_rule`,
+    token,
+    { ruleName, ruleText },
+    signal,
+  );
+}
+
+export async function runSwrlRule(
+  apiBaseUrl: string,
+  token: string | undefined,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<SwrlResult> {
+  return postJson<SwrlResult>(
+    apiBaseUrl,
+    `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/tools/run_swrl_rule`,
+    token,
+    {},
+    signal,
+  );
+}
+
+export async function runFuzzyQuery(
+  apiBaseUrl: string,
+  token: string | undefined,
+  sessionId: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<FuzzyQueryResult> {
+  return postJson<FuzzyQueryResult>(
+    apiBaseUrl,
+    `/api/v1/code-assistant/sessions/${encodeURIComponent(sessionId)}/tools/run_fuzzy_query`,
+    token,
+    { query },
     signal,
   );
 }

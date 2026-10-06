@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodeAssistantModelSwitcher } from "../components/CodeAssistantModelSwitcher";
 import { getApiKey, resetApiKeyStoreForTests, setApiKey } from "../services/assistantKeyStore";
-import { getStoredModel, getStoredProvider } from "../services/LlmInsightsService";
+import { getStoredModel, getStoredProvider, getStoredRetrievalAttempts, getStoredSessionTokenBudget } from "../services/LlmInsightsService";
 import { buttonByText, click, flush, mount, typeInto } from "./hookHarness";
 
 const geminiModels = {
@@ -244,5 +244,45 @@ describe("CodeAssistantModelSwitcher", () => {
     await open();
     await open();
     expect(ui.container.textContent).not.toContain("Select a model");
+  });
+
+  it("lets you clear the retrieval attempts field and retype a new value instead of snapping back", async () => {
+    await renderSwitcher();
+    await open();
+    const input = ui.container.querySelector("#code-assistant-retrieval-attempts") as HTMLInputElement;
+    expect(input.value).toBe("8");
+
+    typeInto(input, "");
+    expect(input.value).toBe("");
+
+    typeInto(input, "12");
+    expect(input.value).toBe("12");
+    expect(getStoredRetrievalAttempts()).toBe(12);
+  });
+
+  it("resyncs the retrieval attempts field to the last valid value if left empty on blur", async () => {
+    await renderSwitcher();
+    await open();
+    const input = ui.container.querySelector("#code-assistant-retrieval-attempts") as HTMLInputElement;
+
+    typeInto(input, "");
+    act(() => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+
+    expect(input.value).toBe("8");
+    expect(getStoredRetrievalAttempts()).toBe(8);
+  });
+
+  it("lets you clear the session budget field and retype a new value instead of snapping back", async () => {
+    await renderSwitcher();
+    await open();
+    const input = ui.container.querySelector("#code-assistant-session-budget") as HTMLInputElement;
+    expect(input.value).toBe("8000");
+
+    typeInto(input, "");
+    expect(input.value).toBe("");
+
+    typeInto(input, "9500");
+    expect(input.value).toBe("9500");
+    expect(getStoredSessionTokenBudget()).toBe(9500);
   });
 });

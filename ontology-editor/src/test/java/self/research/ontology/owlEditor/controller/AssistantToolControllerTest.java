@@ -7,14 +7,19 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
+import self.research.ontology.owlEditor.dto.AddSwrlRuleRequest;
 import self.research.ontology.owlEditor.dto.ReadContextRequest;
 import self.research.ontology.owlEditor.dto.RunSparqlRequest;
 import self.research.ontology.owlEditor.service.AssistantContextToolService;
 import self.research.ontology.owlEditor.service.AssistantContextToolService.ContextToolResult;
+import self.research.ontology.owlEditor.service.AssistantFuzzyToolService;
+import self.research.ontology.owlEditor.service.AssistantFuzzyToolService.FuzzyToolResult;
 import self.research.ontology.owlEditor.service.AssistantReasonerToolService;
 import self.research.ontology.owlEditor.service.AssistantReasonerToolService.ReasonerToolResult;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService.SparqlToolResult;
+import self.research.ontology.owlEditor.service.AssistantSwrlToolService;
+import self.research.ontology.owlEditor.service.AssistantSwrlToolService.SwrlToolResult;
 
 import java.util.Base64;
 import java.util.List;
@@ -36,12 +41,19 @@ class AssistantToolControllerTest {
     @Mock
     private AssistantReasonerToolService reasonerToolService;
 
+    @Mock
+    private AssistantSwrlToolService swrlToolService;
+
+    @Mock
+    private AssistantFuzzyToolService fuzzyToolService;
+
     private AssistantToolController controller;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        controller = new AssistantToolController(sparqlToolService, contextToolService, reasonerToolService);
+        controller = new AssistantToolController(
+                sparqlToolService, contextToolService, reasonerToolService, swrlToolService, fuzzyToolService);
     }
 
     @Test
@@ -185,6 +197,86 @@ class AssistantToolControllerTest {
         Map<String, Object> body = (Map<String, Object>) response.getBody();
         assertEquals(false, body.get("ok"));
         assertEquals("REASONER_UNAVAILABLE", body.get("errorCode"));
+    }
+
+    @Test
+    void addSwrlRuleReturnsUnauthorizedWithoutBearerToken() {
+        ResponseEntity<?> response = controller.addSwrlRule(
+                "s1", new AddSwrlRuleRequest("rule1", "Person(?p) -> Human(?p)"), new MockHttpServletRequest());
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void addSwrlRuleReturnsOkEnvelopeOnSuccess() {
+        when(swrlToolService.addRule(anyString(), anyString(), any(), anyString(), anyString())).thenReturn(
+                SwrlToolResult.builder().ok(true).data(Map.of("ruleName", "rule1")).revision(42L).build());
+
+        ResponseEntity<?> response = controller.addSwrlRule(
+                "s1", new AddSwrlRuleRequest("rule1", "Person(?p) -> Human(?p)"), requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(true, body.get("ok"));
+    }
+
+    @Test
+    void runSwrlRuleReturnsUnauthorizedWithoutBearerToken() {
+        ResponseEntity<?> response = controller.runSwrlRule("s1", new MockHttpServletRequest());
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void runSwrlRuleReturnsErrorEnvelopeOnFailure() {
+        when(swrlToolService.runRule(anyString(), anyString(), any())).thenReturn(
+                SwrlToolResult.builder().ok(false).errorCode("PLUGIN_NOT_INSTALLED").message("not installed").build());
+
+        ResponseEntity<?> response = controller.runSwrlRule("s1", requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(false, body.get("ok"));
+        assertEquals("PLUGIN_NOT_INSTALLED", body.get("errorCode"));
+    }
+
+    @Test
+    void runFuzzyQueryReturnsUnauthorizedWithoutBearerToken() {
+        ResponseEntity<?> response = controller.runFuzzyQuery(
+                "s1", new RunSparqlRequest("FIND individuals WHERE memberOf(Diabetic) >= 0.8"), new MockHttpServletRequest());
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void runFuzzyQueryReturnsOkEnvelopeOnSuccess() {
+        when(fuzzyToolService.runQuery(anyString(), anyString(), anyString())).thenReturn(
+                FuzzyToolResult.builder().ok(true).data(Map.of("individuals", List.of(), "count", 0)).revision(42L).build());
+
+        ResponseEntity<?> response = controller.runFuzzyQuery(
+                "s1", new RunSparqlRequest("FIND individuals WHERE memberOf(Diabetic) >= 0.8"), requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(true, body.get("ok"));
+    }
+
+    @Test
+    void runFuzzyQueryReturnsErrorEnvelopeOnFailure() {
+        when(fuzzyToolService.runQuery(anyString(), anyString(), anyString())).thenReturn(
+                FuzzyToolResult.builder().ok(false).errorCode("UNSUPPORTED_QUERY").message("not supported").build());
+
+        ResponseEntity<?> response = controller.runFuzzyQuery(
+                "s1", new RunSparqlRequest("FIND individuals WHERE exists(hasSymptom, Fever)"), requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(false, body.get("ok"));
+        assertEquals("UNSUPPORTED_QUERY", body.get("errorCode"));
     }
 
     private MockHttpServletRequest requestWithBearerToken() {

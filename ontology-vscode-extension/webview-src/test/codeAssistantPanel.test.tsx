@@ -408,3 +408,26 @@ describe("CodeAssistantPanel proposal explanation", () => {
     expect(container.textContent).toContain("Dog has no label, so this adds one in English.");
   });
 });
+
+describe("CodeAssistantPanel help guide", () => {
+  it("opens the in-app guide from the header button and closes it again", async () => {
+    renderPanel();
+
+    expect(container.textContent).not.toContain("Ask AI Guide");
+
+    act(() => {
+      (container.querySelector('[title="Guide"]') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    expect(container.textContent).toContain("Ask AI Guide");
+    expect(container.textContent).toContain("add_fuzzy_membership");
+
+    act(() => {
+      (container.querySelector('.fixed [title="Close"]') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    expect(container.textContent).not.toContain("Ask AI Guide");
+  });
+});

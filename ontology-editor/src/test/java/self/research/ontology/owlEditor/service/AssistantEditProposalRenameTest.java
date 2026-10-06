@@ -89,11 +89,16 @@ class AssistantEditProposalRenameTest {
                 new AssistantEditSyntaxValidator(storageManager, spliceWriter),
                 new AssistantEditReferenceCoverageValidator(storageManager),
                 new AssistantRenameService(storageManager, lookup),
+                new AssistantSwrlAxiomInsertionService(storageManager, lookup),
+                new AssistantFuzzyMembershipInsertionService(storageManager, lookup,
+                        new FuzzyMembershipQueryService(datasetService)),
                 new AssistantEditSemanticValidator(storageManager, lookup), auditService, new ProjectWriteLockRegistry(),
                 new AssistantInsertionSnapper(storageManager));
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 2);
         ReflectionTestUtils.setField(proposalService, "maxRenameLines", 5000);
+        ReflectionTestUtils.setField(proposalService, "maxSwrlAxioms", 200);
+        ReflectionTestUtils.setField(proposalService, "maxFuzzyMemberships", 50);
         ReflectionTestUtils.setField(proposalService, "maxGroupsPerRequest", 10);
         ReflectionTestUtils.setField(proposalService, "ttlHours", 24L);
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(session()));
@@ -186,7 +191,7 @@ class AssistantEditProposalRenameTest {
     void groupWithBothEditsAndOperationIsRejected() {
         EditGroupInput group = new EditGroupInput("c1",
                 List.of(new EditInput("turtle", new EditRange(3, 1), ":Pizza a owl:Class .", ":Pie a owl:Class .")),
-                new EditOperation("rename_identifier", "turtle", ":Pizza", ":Pie"));
+                new EditOperation("rename_identifier", "turtle", ":Pizza", ":Pie", null));
 
         GroupProposalOutcome outcome = proposeOne(group);
 
@@ -297,7 +302,7 @@ class AssistantEditProposalRenameTest {
     }
 
     private EditGroupInput renameGroup(String targetPath, String target, String replacement) {
-        return new EditGroupInput("c1", null, new EditOperation("rename_identifier", targetPath, target, replacement));
+        return new EditGroupInput("c1", null, new EditOperation("rename_identifier", targetPath, target, replacement, null));
     }
 
     private CheckResult check(GroupProposalOutcome outcome, String name) {

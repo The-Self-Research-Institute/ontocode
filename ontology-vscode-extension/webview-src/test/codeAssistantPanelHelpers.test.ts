@@ -213,7 +213,7 @@ describe("buildSystemPrompt", () => {
   it("tells read-only modes that neither proposal tool will work", () => {
     for (const action of ["ask", "project-findings"] as const) {
       const prompt = buildSystemPrompt(action);
-      expect(prompt).toContain("propose_edit and propose_rename will always be rejected");
+      expect(prompt).toContain("propose_edit, propose_rename, add_inferred_axioms and add_fuzzy_membership will always be rejected");
       expect(prompt).not.toContain("\"statement\" target");
     }
   });

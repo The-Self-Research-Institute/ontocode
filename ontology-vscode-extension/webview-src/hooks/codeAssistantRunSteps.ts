@@ -1,5 +1,6 @@
 import type { MutableRefObject } from "react";
 import type { ProviderConfig } from "../services/codeAssistantProviderConfig";
+import type { DispatchBudget } from "../services/codeAssistantLoopDispatch";
 import { errorSignalFrom, toDeadEnd } from "../services/codeAssistantDeadEnd";
 import {
   buildConversationHistory,
@@ -44,6 +45,7 @@ export interface RunContext {
   runProjectRef: MutableRefObject<string | undefined>;
   setBusyNow: (value: boolean) => void;
   setStatusText: (text: string) => void;
+  setLiveBudget: (budget: DispatchBudget | undefined) => void;
   setDraftNow: (text: string) => void;
   resetRunUi: () => void;
 }
@@ -91,6 +93,7 @@ function prepareTurn(ctx: RunContext, turn: TurnInput, runProjectId: string) {
   ctx.optionsRef.current.setInput((current) => (!turn.fromRetry || current.trim() === turn.text ? "" : current));
   ctx.setBusyNow(true);
   ctx.setStatusText("Starting...");
+  ctx.setLiveBudget(undefined);
   return { prompt, loopText, actionContext, stillCurrent, history };
 }
 
@@ -115,7 +118,10 @@ export function makeSubmit(ctx: RunContext, mountedRef: MutableRefObject<boolean
         loopText,
         history,
         signal: controller.signal,
-        onStage: (event) => ctx.setStatusText(describeLoopStage(event)),
+        onStage: (event) => {
+          ctx.setStatusText(describeLoopStage(event));
+          if (event.budget) ctx.setLiveBudget(event.budget);
+        },
         onDraft: (text) => stillCurrent() && ctx.setDraftNow(text),
         onProviderConfig: (config) => mountedRef.current && ctx.optionsRef.current.setProviderConfig(config),
       });

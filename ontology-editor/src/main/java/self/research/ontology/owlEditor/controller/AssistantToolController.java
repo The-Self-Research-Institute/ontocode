@@ -12,14 +12,19 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.dto.AddSwrlRuleRequest;
 import self.research.ontology.owlEditor.dto.ReadContextRequest;
 import self.research.ontology.owlEditor.dto.RunSparqlRequest;
 import self.research.ontology.owlEditor.service.AssistantContextToolService;
 import self.research.ontology.owlEditor.service.AssistantContextToolService.ContextToolResult;
+import self.research.ontology.owlEditor.service.AssistantFuzzyToolService;
+import self.research.ontology.owlEditor.service.AssistantFuzzyToolService.FuzzyToolResult;
 import self.research.ontology.owlEditor.service.AssistantReasonerToolService;
 import self.research.ontology.owlEditor.service.AssistantReasonerToolService.ReasonerToolResult;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService;
 import self.research.ontology.owlEditor.service.AssistantSparqlToolService.SparqlToolResult;
+import self.research.ontology.owlEditor.service.AssistantSwrlToolService;
+import self.research.ontology.owlEditor.service.AssistantSwrlToolService.SwrlToolResult;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.LinkedHashMap;
@@ -41,13 +46,19 @@ public class AssistantToolController {
     private final AssistantSparqlToolService sparqlToolService;
     private final AssistantContextToolService contextToolService;
     private final AssistantReasonerToolService reasonerToolService;
+    private final AssistantSwrlToolService swrlToolService;
+    private final AssistantFuzzyToolService fuzzyToolService;
 
     public AssistantToolController(AssistantSparqlToolService sparqlToolService,
                                     AssistantContextToolService contextToolService,
-                                    AssistantReasonerToolService reasonerToolService) {
+                                    AssistantReasonerToolService reasonerToolService,
+                                    AssistantSwrlToolService swrlToolService,
+                                    AssistantFuzzyToolService fuzzyToolService) {
         this.sparqlToolService = sparqlToolService;
         this.contextToolService = contextToolService;
         this.reasonerToolService = reasonerToolService;
+        this.swrlToolService = swrlToolService;
+        this.fuzzyToolService = fuzzyToolService;
     }
 
     @PostMapping("/run_sparql")
@@ -99,6 +110,40 @@ public class AssistantToolController {
                 .orElseGet(AssistantToolController::unauthorized);
     }
 
+    @PostMapping("/add_swrl_rule")
+    public ResponseEntity<?> addSwrlRule(@PathVariable String sessionId, @RequestBody AddSwrlRuleRequest request,
+                                          HttpServletRequest httpRequest) {
+        return JwtIdentityExtractor.extractEmail(httpRequest)
+                .map(userEmail -> {
+                    SwrlToolResult result = swrlToolService.addRule(sessionId, userEmail,
+                            httpRequest.getHeader(HttpHeaders.AUTHORIZATION), request.ruleName(), request.ruleText());
+                    return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
+                })
+                .orElseGet(AssistantToolController::unauthorized);
+    }
+
+    @PostMapping("/run_swrl_rule")
+    public ResponseEntity<?> runSwrlRule(@PathVariable String sessionId, HttpServletRequest httpRequest) {
+        return JwtIdentityExtractor.extractEmail(httpRequest)
+                .map(userEmail -> {
+                    SwrlToolResult result = swrlToolService.runRule(
+                            sessionId, userEmail, httpRequest.getHeader(HttpHeaders.AUTHORIZATION));
+                    return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
+                })
+                .orElseGet(AssistantToolController::unauthorized);
+    }
+
+    @PostMapping("/run_fuzzy_query")
+    public ResponseEntity<?> runFuzzyQuery(@PathVariable String sessionId, @RequestBody RunSparqlRequest request,
+                                            HttpServletRequest httpRequest) {
+        return JwtIdentityExtractor.extractEmail(httpRequest)
+                .map(userEmail -> {
+                    FuzzyToolResult result = fuzzyToolService.runQuery(sessionId, userEmail, request.query());
+                    return respond(result.getErrorCode(), result.getRetryAfterSeconds(), toBody(result));
+                })
+                .orElseGet(AssistantToolController::unauthorized);
+    }
+
     private static String validate(ReadContextRequest request) {
         if (request == null) {
             return "A request body with targets and kind is required";
@@ -133,6 +178,15 @@ public class AssistantToolController {
         return body;
     }
 
+    private static Map<String, Object> provenance(Long revision, Integer retrievalAttemptsRemaining,
+                                                    Integer tokenBudgetRemaining) {
+        Map<String, Object> provenance = new LinkedHashMap<>();
+        provenance.put("revision", revision);
+        provenance.put("retrievalAttemptsRemaining", retrievalAttemptsRemaining);
+        provenance.put("tokenBudgetRemaining", tokenBudgetRemaining);
+        return provenance;
+    }
+
     private static Map<String, Object> toBody(SparqlToolResult result) {
         if (!result.isOk()) {
             return errorBody(result.getErrorCode(), result.getMessage(), result.getRetryAfterSeconds());
@@ -141,7 +195,8 @@ public class AssistantToolController {
                 "ok", true,
                 "result", Map.of("rows", result.getRows(), "truncated", result.isTruncated(),
                         "rowCount", result.getRowCount()),
-                "provenance", Map.of("revision", result.getRevision()));
+                "provenance", provenance(result.getRevision(), result.getRetrievalAttemptsRemaining(),
+                        result.getTokenBudgetRemaining()));
     }
 
     private static Map<String, Object> toBody(ReasonerToolResult result) {
@@ -152,7 +207,32 @@ public class AssistantToolController {
         body.put("ok", true);
         body.put("result", result.getData());
         body.put("truncated", result.isTruncated());
-        body.put("provenance", Map.of("revision", result.getRevision()));
+        body.put("provenance", provenance(result.getRevision(), result.getRetrievalAttemptsRemaining(),
+                result.getTokenBudgetRemaining()));
+        return body;
+    }
+
+    private static Map<String, Object> toBody(SwrlToolResult result) {
+        if (!result.isOk()) {
+            return errorBody(result.getErrorCode(), result.getMessage(), result.getRetryAfterSeconds());
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("result", result.getData());
+        body.put("provenance", provenance(result.getRevision(), result.getRetrievalAttemptsRemaining(),
+                result.getTokenBudgetRemaining()));
+        return body;
+    }
+
+    private static Map<String, Object> toBody(FuzzyToolResult result) {
+        if (!result.isOk()) {
+            return errorBody(result.getErrorCode(), result.getMessage(), result.getRetryAfterSeconds());
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("result", result.getData());
+        body.put("provenance", provenance(result.getRevision(), result.getRetrievalAttemptsRemaining(),
+                result.getTokenBudgetRemaining()));
         return body;
     }
 
@@ -160,10 +240,13 @@ public class AssistantToolController {
         if (!result.isOk()) {
             return errorBody(result.getErrorCode(), result.getMessage(), result.getRetryAfterSeconds());
         }
+        Map<String, Object> provenance = provenance(result.getRevision(), result.getRetrievalAttemptsRemaining(),
+                result.getTokenBudgetRemaining());
+        provenance.put("coverage", result.getCoverage());
         return Map.of(
                 "ok", true,
                 "result", Map.of("items", result.getItems()),
-                "provenance", Map.of("revision", result.getRevision(), "coverage", result.getCoverage()));
+                "provenance", provenance);
     }
 
     private static ResponseEntity<Map<String, Object>> unauthorized() {

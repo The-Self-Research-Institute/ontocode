@@ -32,7 +32,7 @@ public class AssistantSessionService {
     private static final int MIN_TOKEN_BUDGET = 2000;
     private static final int MAX_TOKEN_BUDGET = 20000;
     private static final int MIN_RETRIEVAL_ATTEMPTS = 2;
-    private static final int MAX_RETRIEVAL_ATTEMPTS = 10;
+    private static final int MAX_RETRIEVAL_ATTEMPTS = 30;
 
     public record SessionCreateOutcome(AssistantSessionDocument session, Integer retryAfterSeconds) {
         public boolean created() {
@@ -55,7 +55,7 @@ public class AssistantSessionService {
     private final MongoTemplate mongoTemplate;
     private final AssistantAuditService auditService;
 
-    @Value("${assistant.session.retrieval-attempts-default:5}")
+    @Value("${assistant.session.retrieval-attempts-default:8}")
     private int defaultRetrievalAttempts;
 
     @Value("${assistant.session.token-budget-default:8000}")
@@ -252,6 +252,13 @@ public class AssistantSessionService {
         AssistantSessionDocument updated = mongoTemplate.findAndModify(
                 query, update, FindAndModifyOptions.options().returnNew(true), AssistantSessionDocument.class);
         return updated != null;
+    }
+
+    public record BudgetSnapshot(int retrievalAttemptsRemaining, int tokenBudgetRemaining) {}
+
+    public Optional<BudgetSnapshot> currentBudgetSnapshot(String sessionId, String userEmail) {
+        return sessionRepository.findByIdAndUserEmail(sessionId, userEmail)
+                .map(s -> new BudgetSnapshot(s.getRetrievalAttemptsRemaining(), s.getTokenBudgetRemaining()));
     }
 
     public boolean isRevisionStale(AssistantSessionDocument session) {

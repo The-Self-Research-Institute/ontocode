@@ -31,24 +31,43 @@ export interface ReadContextResultItem {
   kind: string;
 }
 
+export interface ToolProvenance {
+  revision: number;
+  coverage?: "partial" | "complete";
+  retrievalAttemptsRemaining?: number;
+  tokenBudgetRemaining?: number;
+}
+
 export interface ReadContextResult {
   ok: true;
   result: { items: ReadContextResultItem[] };
-  provenance: { revision: number; coverage: "partial" | "complete" };
+  provenance: ToolProvenance;
   budget: AssistantBudget;
 }
 
 export interface SparqlResult {
   ok: true;
   result: { rows: unknown[]; truncated: boolean; rowCount: number };
-  provenance: { revision: number; coverage?: "partial" | "complete" };
+  provenance: ToolProvenance;
 }
 
 export interface ReasonerResult {
   ok: true;
   result: Record<string, unknown>;
   truncated: boolean;
-  provenance: { revision: number };
+  provenance: ToolProvenance;
+}
+
+export interface SwrlResult {
+  ok: true;
+  result: Record<string, unknown>;
+  provenance: ToolProvenance;
+}
+
+export interface FuzzyQueryResult {
+  ok: true;
+  result: { individuals: unknown[]; count: number };
+  provenance: ToolProvenance;
 }
 
 export interface ProposedEdit {
@@ -65,10 +84,38 @@ export interface RenameIdentifierOperation {
   replacementIdentifier: string;
 }
 
+export interface InferredAxiomInput {
+  axiomType: string;
+  subjectIri: string;
+  predicateIri: string;
+  objectIri?: string;
+  objectLiteral?: string;
+  literalDatatypeIri?: string;
+  literalLangTag?: string;
+}
+
+export interface AddInferredAxiomsOperation {
+  type: "add_inferred_axioms";
+  targetPath: string;
+  axioms: InferredAxiomInput[];
+}
+
+export interface FuzzyMembershipInput {
+  entityIri: string;
+  classIri: string;
+  degree: number;
+}
+
+export interface AddFuzzyMembershipOperation {
+  type: "add_fuzzy_membership";
+  targetPath: string;
+  memberships: FuzzyMembershipInput[];
+}
+
 export interface ProposedEditGroupInput {
   clientGroupId: string;
   edits?: ProposedEdit[];
-  operation?: RenameIdentifierOperation;
+  operation?: RenameIdentifierOperation | AddInferredAxiomsOperation | AddFuzzyMembershipOperation;
 }
 
 export interface ProposedDiffEntry {

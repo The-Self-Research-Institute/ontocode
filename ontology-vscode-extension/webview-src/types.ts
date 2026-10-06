@@ -40,6 +40,11 @@ export interface Property {
   usage?: PropertyUsage;
 }
 
+export interface FuzzyMembership {
+  classIri: string;
+  degree: number;
+}
+
 export interface Individual {
   id: string;
   iri?: string;
@@ -50,6 +55,7 @@ export interface Individual {
   sameIndividualAs?: string[];
   differentIndividualFrom?: string[];
   isInferred?: boolean;
+  fuzzyMemberships?: FuzzyMembership[];
 }
 
 export type AnnotationProperty = {

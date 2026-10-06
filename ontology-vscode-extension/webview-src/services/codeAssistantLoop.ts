@@ -16,7 +16,8 @@ import {
 } from "./codeAssistantSession";
 import { ASSISTANT_TOOLS, PROPOSAL_TOOLS } from "./codeAssistantLoopTools";
 import { buildToolProvenance } from "./codeAssistantLoopProvenance";
-import { describeToolFailure, dispatchToolCall, type DispatchOutcome, type LoopContext } from "./codeAssistantLoopDispatch";
+import { describeToolFailure, dispatchToolCall, lowestBudget, type DispatchBudget, type DispatchOutcome, type LoopContext } from "./codeAssistantLoopDispatch";
+import { delay } from "./codeAssistantProviderHttp";
 
 export type { HistoryTurn };
 export type { LoopContext } from "./codeAssistantLoopDispatch";
@@ -31,6 +32,7 @@ export { buildToolProvenance } from "./codeAssistantLoopProvenance";
 
 const MAX_LOOP_ITERATIONS = 12;
 const MAX_CALLS_PER_TURN = 8;
+const TOOL_CALL_STAGGER_MS = 150;
 
 function managedCallFor(ctx: LoopContext): ManagedProviderCall | undefined {
   const config = ctx.providerConfig;
@@ -48,6 +50,7 @@ export interface LoopStageEvent {
   detail?: string;
   step?: number;
   maxSteps?: number;
+  budget?: DispatchBudget;
 }
 
 export interface ContextEvent {
@@ -153,8 +156,11 @@ function proposalOutcome(scope: StepScope, proposeCall: ToolCallRequest, outcome
 
 async function runToolCalls(scope: StepScope, calls: ToolCallRequest[]): Promise<StepResult> {
   scope.emit({ stage: "calling-tool", detail: calls.map((c) => c.name).join(", ") });
-  const outcomes = await Promise.all(calls.map((call) => dispatchToolCall(scope.ctx, call.name, call.args, scope.signal)));
-  scope.emit({ stage: "tool-result", detail: calls.map((c) => c.name).join(", ") });
+  const outcomes = await Promise.all(calls.map(async (call, idx) => {
+    if (idx > 0) await delay(idx * TOOL_CALL_STAGGER_MS, scope.signal);
+    return dispatchToolCall(scope.ctx, call.name, call.args, scope.signal);
+  }));
+  scope.emit({ stage: "tool-result", detail: calls.map((c) => c.name).join(", "), budget: lowestBudget(outcomes) });
   calls.forEach((call, idx) => {
     scope.onContext?.({ tool: call.name, args: call.args, result: outcomes[idx].result, isError: outcomes[idx].isError });
   });

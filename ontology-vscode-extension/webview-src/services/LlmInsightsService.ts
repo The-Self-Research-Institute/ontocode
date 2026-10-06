@@ -161,12 +161,39 @@ export function getStoredSessionTokenBudget(): number {
   }
 }
 
-export function setStoredSessionTokenBudget(value: number): void {
+export function setStoredSessionTokenBudget(value: number): number {
+  const clamped = Math.round(Math.min(MAX_SESSION_TOKEN_BUDGET, Math.max(MIN_SESSION_TOKEN_BUDGET, value)));
   try {
-    const clamped = Math.round(Math.min(MAX_SESSION_TOKEN_BUDGET, Math.max(MIN_SESSION_TOKEN_BUDGET, value)));
     localStorage.setItem(SESSION_TOKEN_BUDGET_STORAGE, String(clamped));
   } catch {
   }
+  return clamped;
+}
+
+const RETRIEVAL_ATTEMPTS_STORAGE = 'ontocode_llm_retrieval_attempts';
+export const DEFAULT_RETRIEVAL_ATTEMPTS = 8;
+const MIN_RETRIEVAL_ATTEMPTS = 2;
+const MAX_RETRIEVAL_ATTEMPTS = 30;
+
+export function getStoredRetrievalAttempts(): number {
+  try {
+    const stored = Number(localStorage.getItem(RETRIEVAL_ATTEMPTS_STORAGE));
+    if (Number.isInteger(stored) && stored >= MIN_RETRIEVAL_ATTEMPTS && stored <= MAX_RETRIEVAL_ATTEMPTS) {
+      return stored;
+    }
+    return DEFAULT_RETRIEVAL_ATTEMPTS;
+  } catch {
+    return DEFAULT_RETRIEVAL_ATTEMPTS;
+  }
+}
+
+export function setStoredRetrievalAttempts(value: number): number {
+  const clamped = Math.round(Math.min(MAX_RETRIEVAL_ATTEMPTS, Math.max(MIN_RETRIEVAL_ATTEMPTS, value)));
+  try {
+    localStorage.setItem(RETRIEVAL_ATTEMPTS_STORAGE, String(clamped));
+  } catch {
+  }
+  return clamped;
 }
 
 function buildContextBlock(req: LlmInsightRequest): string {
