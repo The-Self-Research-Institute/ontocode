@@ -4,6 +4,7 @@ import { CodeAssistantMarkdown } from "./CodeAssistantMarkdown";
 import { CodeAssistantTranscriptEntry, type ReviewHandlers } from "./CodeAssistantTranscriptEntry";
 import type { CodeAssistantAction } from "./codeAssistantPanelHelpers";
 import type { ChatEntry, PromptToRetry } from "./codeAssistantChatEntries";
+import type { DispatchBudget } from "../services/codeAssistantLoopDispatch";
 
 interface CodeAssistantTranscriptProps {
   entries: ChatEntry[];
@@ -14,6 +15,7 @@ interface CodeAssistantTranscriptProps {
   editLockedMessage: string;
   busy: boolean;
   statusText: string;
+  liveBudget?: DispatchBudget;
   stageStartedAt: number | null;
   draft: string;
   now: number;
@@ -28,9 +30,19 @@ const EMPTY_NOT_READY = "Pick a model below to add your API key, then ask a ques
 
 const ELAPSED_DISPLAY_THRESHOLD_MS = 3_000;
 
-const BusyIndicator: React.FC<{ statusText: string; stageStartedAt: number | null; now: number; onCancel: () => void }> = ({
-  statusText, stageStartedAt, now, onCancel,
-}) => {
+const BudgetPill: React.FC<{ budget: DispatchBudget }> = ({ budget }) => (
+  <span className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-600 whitespace-nowrap">
+    {budget.retrievalAttemptsRemaining} calls left · {budget.tokenBudgetRemaining} tokens left
+  </span>
+);
+
+const BusyIndicator: React.FC<{
+  statusText: string;
+  stageStartedAt: number | null;
+  now: number;
+  liveBudget?: DispatchBudget;
+  onCancel: () => void;
+}> = ({ statusText, stageStartedAt, now, liveBudget, onCancel }) => {
   const elapsedMs = stageStartedAt ? now - stageStartedAt : 0;
   const elapsedSeconds = elapsedMs >= ELAPSED_DISPLAY_THRESHOLD_MS ? Math.round(elapsedMs / 1000) : null;
   return (
@@ -44,6 +56,7 @@ const BusyIndicator: React.FC<{ statusText: string; stageStartedAt: number | nul
         {statusText || "Working..."}
         {elapsedSeconds !== null && <span className="text-gray-400"> ({elapsedSeconds}s)</span>}
       </span>
+      {liveBudget && <BudgetPill budget={liveBudget} />}
       <button onClick={onCancel} className="ml-auto text-xs font-semibold text-purple-700 hover:underline">
         Cancel
       </button>
@@ -107,7 +120,15 @@ export const CodeAssistantTranscript: React.FC<CodeAssistantTranscriptProps> = (
           </div>
         </div>
       )}
-      {busy && <BusyIndicator statusText={statusText} stageStartedAt={stageStartedAt} now={now} onCancel={props.onCancel} />}
+      {busy && (
+        <BusyIndicator
+          statusText={statusText}
+          stageStartedAt={stageStartedAt}
+          now={now}
+          liveBudget={props.liveBudget}
+          onCancel={props.onCancel}
+        />
+      )}
       <div ref={endRef} />
     </div>
   );

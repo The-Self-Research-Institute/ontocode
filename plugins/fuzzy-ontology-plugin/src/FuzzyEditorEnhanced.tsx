@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Sparkles, Plus, Trash2, Save, Play, Download, Edit2, TrendingUp, Zap } from 'lucide-react';
 import MembershipFunctionCanvas from './components/MembershipFunctionCanvas';
+import { FuzzyOntology } from './core/FuzzyOntology';
+import { FuzzyQueryParser } from './query/FuzzyQueryDSL';
 
 declare global {
   interface Window { API_BASE_URL?: string; }
@@ -96,7 +98,39 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
   const [fuzzyQuery, setFuzzyQuery] = useState('');
   const [queryResults, setQueryResults] = useState<any[]>([]);
   const [queryError, setQueryError] = useState<string>('');
+  const [loadError, setLoadError] = useState<string>('');
 
+  const fuzzyOntology = useMemo(() => {
+    const ontology = new FuzzyOntology();
+    const classUris = new Set(memberships.map(m => m.fuzzyClass));
+    for (const uri of classUris) {
+      ontology.addConcept({ uri, instances: new Map() });
+    }
+    for (const m of memberships) {
+      ontology.setMembershipDegree(m.entity, m.fuzzyClass, getEffectiveDegree(m));
+    }
+    return ontology;
+  }, [memberships]);
+
+  const conceptNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of memberships) {
+      const hashIdx = m.fuzzyClass.lastIndexOf('#');
+      const slashIdx = m.fuzzyClass.lastIndexOf('/');
+      const splitIdx = Math.max(hashIdx, slashIdx);
+      const localName = splitIdx >= 0 ? m.fuzzyClass.slice(splitIdx + 1) : m.fuzzyClass;
+      map.set(localName, m.fuzzyClass);
+    }
+    return map;
+  }, [memberships]);
+
+  const resolveConceptNames = (query: string): string => {
+    let resolved = query;
+    for (const [localName, fullUri] of conceptNameMap) {
+      resolved = resolved.replace(new RegExp(`\\b${localName}\\b`, 'g'), fullUri);
+    }
+    return resolved;
+  };
 
   useEffect(() => {
     // Clear state when switching projects
@@ -117,6 +151,10 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       .replace(/\n/g, '\\n')     // Escape newlines
       .replace(/\r/g, '\\r')     // Escape carriage returns
       .replace(/\t/g, '\\t');    // Escape tabs
+  };
+
+  const isSafeIri = (iri: string): boolean => {
+    return /^[^<>"{}|\\^`\s]+$/.test(iri);
   };
 
   // Calculate effective degree with modifier
@@ -180,8 +218,8 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
   };
 
   const loadFuzzyData = async () => {
+    setLoadError('');
     try {
-      // Load memberships
       const membershipResponse = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
         method: 'POST',
         headers: authHeaders(),
@@ -231,9 +269,12 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
           setMemberships([]);
           console.log(`ℹ️ No fuzzy memberships found for project ${projectId}`);
         }
+      } else {
+        const errText = await membershipResponse.text().catch(() => '');
+        setLoadError(`Failed to load fuzzy memberships (${membershipResponse.status}): ${errText}`);
+        return;
       }
 
-      // Load rules
       const ruleResponse = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
         method: 'POST',
         headers: authHeaders(),
@@ -275,9 +316,13 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
           setRules([]);
           console.log(`ℹ️ No fuzzy rules found for project ${projectId}`);
         }
+      } else {
+        const errText = await ruleResponse.text().catch(() => '');
+        setLoadError(`Failed to load fuzzy rules (${ruleResponse.status}): ${errText}`);
       }
     } catch (error) {
       console.error('❌ Failed to load fuzzy data:', error);
+      setLoadError(`Network error while loading fuzzy data: ${error}`);
     }
   };
 
@@ -417,78 +462,47 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
   const saveFuzzyOntology = async () => {
     try {
+      if (loadError) {
+        setQueryError('Fix the load error above and reload before saving — saving now would overwrite existing data with an incomplete copy.');
+        return;
+      }
+
       // Check if there's anything to save
       if (memberships.length === 0 && rules.length === 0) {
         console.warn('⚠️ No fuzzy data to save. Add memberships or rules first.');
         return;
       }
 
-      // Step 1: Delete all existing fuzzy data to prevent duplicates
-      const deleteQuery = `
-        PREFIX fuzzy: <http://fuzzy.org/ontology#>
-        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-        
-        DELETE {
-          ?entity fuzzy:hasMembership ?membership .
-          ?membership ?p ?o .
-          ?rule ?rp ?ro .
-        }
-        WHERE {
-          {
-            ?entity fuzzy:hasMembership ?membership .
-            ?membership ?p ?o .
-          }
-          UNION
-          {
-            ?rule a fuzzy:Rule .
-            ?rule ?rp ?ro .
-          }
-        }
-      `;
-
-      console.log('🗑️ Deleting existing fuzzy data...');
-      
-      const deleteResponse = await fetch(apiUrl(`/api/sparql/update/${projectId}`), {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          query: deleteQuery
-        })
-      });
-
-      if (!deleteResponse.ok) {
-        console.error('❌ Failed to delete existing fuzzy data');
-        setQueryError('Failed to clear existing data before save. Try again.');
+      const unsafeEntity = memberships.find(m => !isSafeIri(m.entity) || !isSafeIri(m.fuzzyClass));
+      if (unsafeEntity) {
+        setQueryError(`Entity or class "${unsafeEntity.entity || unsafeEntity.fuzzyClass}" contains characters that aren't valid in an IRI (no spaces, <, >, ", {, }, |, \\, ^, or backtick).`);
         return;
       }
 
-      console.log('✅ Existing fuzzy data deleted');
-
-      // Step 2: Insert new fuzzy data
       const insertStatements = memberships.map((m, idx) => {
         const effectiveDegree = getEffectiveDegree(m);
         const bnodeId = `_:m${idx}`;
-        
+
         let statements = [];
         statements.push(`<${m.entity}> fuzzy:hasMembership ${bnodeId} .`);
         statements.push(`${bnodeId} fuzzy:inClass <${m.fuzzyClass}> .`);
         statements.push(`${bnodeId} fuzzy:degree "${effectiveDegree}"^^xsd:float .`);
         statements.push(`${bnodeId} fuzzy:originalDegree "${m.degree}"^^xsd:float .`);
-        
+
         if (m.modifier) {
           statements.push(`${bnodeId} fuzzy:modifier "${m.modifier}" .`);
         }
-        
+
         if (m.membershipFunction) {
           statements.push(`${bnodeId} fuzzy:functionType "${m.membershipFunction.type}" .`);
           const paramsJson = JSON.stringify(m.membershipFunction.parameters).replace(/"/g, '\\"');
           statements.push(`${bnodeId} fuzzy:functionParams "${paramsJson}" .`);
         }
-        
+
         if (m.dataValue !== undefined) {
           statements.push(`${bnodeId} fuzzy:dataValue "${m.dataValue}"^^xsd:float .`);
         }
-        
+
         return statements.join('\n          ');
       }).join('\n          ');
 
@@ -505,19 +519,34 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
         return statements.join('\n          ');
       }).join('\n          ');
 
-      // Combine statements, ensuring at least one exists
       const allStatements = [insertStatements, ruleStatements].filter(s => s.trim()).join('\n          ');
 
       const sparqlUpdate = `
         PREFIX fuzzy: <http://fuzzy.org/ontology#>
         PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-        
+
+        DELETE {
+          ?entity fuzzy:hasMembership ?membership .
+          ?membership ?p ?o .
+          ?rule ?rp ?ro .
+        }
+        WHERE {
+          {
+            ?entity fuzzy:hasMembership ?membership .
+            ?membership ?p ?o .
+          }
+          UNION
+          {
+            ?rule a fuzzy:Rule .
+            ?rule ?rp ?ro .
+          }
+        } ;
         INSERT DATA {
-          ${allStatements}
+          ${allStatements || '# nothing to insert — delete-only save'}
         }
       `;
 
-      console.log('📝 Inserting new fuzzy data...');
+      console.log('💾 Saving fuzzy data (single atomic delete+insert)...');
 
       const response = await fetch(apiUrl(`/api/sparql/update/${projectId}`), {
         method: 'POST',
@@ -551,6 +580,20 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
     if (trimmedQuery.startsWith('sparql') || trimmedQuery.startsWith('```')) {
       setQueryError('Invalid query: Remove "sparql" or "```" markdown markers. Query should start with PREFIX or SELECT.');
       console.error('⚠️ Query contains markdown code fence markers');
+      return;
+    }
+
+    if (/^(FIND|SELECT|GET)\s/i.test(trimmedQuery) && !trimmedQuery.toUpperCase().includes('WHERE {')) {
+      setQueryError('');
+      try {
+        const resolvedQuery = resolveConceptNames(trimmedQuery);
+        const result = FuzzyQueryParser.parse(resolvedQuery, fuzzyOntology);
+        setQueryResults(result.individuals);
+        console.log('✅ Fuzzy DSL query executed', result);
+      } catch (error) {
+        setQueryError(`Fuzzy query error: ${error}`);
+        setQueryResults([]);
+      }
       return;
     }
 
@@ -749,14 +792,25 @@ ${rules.map(r => `<http://example.org/rules/${r.id}> a fuzzy:Rule ;
           ✅ {successMessage}
         </div>
       )}
-      
+
+      {loadError && (
+        <div style={{ padding: '12px', marginBottom: '12px', backgroundColor: '#ff4444', color: 'white', borderRadius: '4px', fontSize: '14px' }}>
+          ⚠️ {loadError}
+        </div>
+      )}
+
       <div style={styles.header}>
         <div style={styles.headerLeft}>
           <Sparkles size={24} color="#a855f7" />
           <h2 style={styles.title}>Fuzzy Ontology Editor</h2>
         </div>
         <div style={styles.headerRight}>
-          <button onClick={saveFuzzyOntology} style={{...styles.button, ...styles.primaryButton}}>
+          <button
+            onClick={saveFuzzyOntology}
+            disabled={!!loadError}
+            title={loadError ? 'Fix the load error above before saving' : undefined}
+            style={{...styles.button, ...styles.primaryButton, ...(loadError ? { opacity: 0.5, cursor: 'not-allowed' } : {})}}
+          >
             <Save size={16} />
             Save to Ontology
           </button>
@@ -1156,6 +1210,9 @@ ${rules.map(r => `<http://example.org/rules/${r.id}> a fuzzy:Rule ;
             <Play size={20} />
             Fuzzy SPARQL Query Builder
           </h3>
+          <p style={{ fontSize: '13px', color: '#9ca3af', marginTop: '-8px' }}>
+            Also accepts FIND/SELECT/GET ... WHERE memberOf(ClassName) &gt;= 0.8 style queries, using class names directly (e.g. Diabetic, not the full IRI).
+          </p>
 
           <div>
             <label style={styles.label}>SPARQL Query with Fuzzy Extensions:</label>

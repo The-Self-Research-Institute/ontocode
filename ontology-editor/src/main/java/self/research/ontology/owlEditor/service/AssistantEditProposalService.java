@@ -35,6 +35,8 @@ public class AssistantEditProposalService {
 
     public static final String PROPOSE_OPERATION = "edit_propose";
     public static final String RENAME_CHECK = "rename_occurrences_complete";
+    public static final String SWRL_INSERT_CHECK = "swrl_inferred_axioms_resolved";
+    public static final String FUZZY_INSERT_CHECK = "fuzzy_memberships_resolved";
     public static final String INSERTION_MOVED_CHECK = "insertion_moved_to_statement_boundary";
 
     private static final int MAX_AUDIT_DETAIL_CHARS = 500;
@@ -45,6 +47,8 @@ public class AssistantEditProposalService {
     private final AssistantEditSyntaxValidator syntaxValidator;
     private final AssistantEditReferenceCoverageValidator referenceCoverageValidator;
     private final AssistantRenameService renameService;
+    private final AssistantSwrlAxiomInsertionService swrlAxiomInsertionService;
+    private final AssistantFuzzyMembershipInsertionService fuzzyMembershipInsertionService;
     private final AssistantEditSemanticValidator semanticValidator;
     private final ProjectWriteLockRegistry lockRegistry;
     private final AssistantAuditService auditService;
@@ -59,6 +63,12 @@ public class AssistantEditProposalService {
     @Value("${assistant.propose.max-rename-lines:5000}")
     private int maxRenameLines;
 
+    @Value("${assistant.propose.max-swrl-axioms:200}")
+    private int maxSwrlAxioms;
+
+    @Value("${assistant.propose.max-fuzzy-memberships:50}")
+    private int maxFuzzyMemberships;
+
     @Value("${assistant.propose.max-groups-per-request:10}")
     private int maxGroupsPerRequest;
 
@@ -71,6 +81,8 @@ public class AssistantEditProposalService {
                                          AssistantEditSyntaxValidator syntaxValidator,
                                          AssistantEditReferenceCoverageValidator referenceCoverageValidator,
                                          AssistantRenameService renameService,
+                                         AssistantSwrlAxiomInsertionService swrlAxiomInsertionService,
+                                         AssistantFuzzyMembershipInsertionService fuzzyMembershipInsertionService,
                                          AssistantEditSemanticValidator semanticValidator,
                                          AssistantAuditService auditService,
                                          ProjectWriteLockRegistry lockRegistry,
@@ -81,6 +93,8 @@ public class AssistantEditProposalService {
         this.syntaxValidator = syntaxValidator;
         this.referenceCoverageValidator = referenceCoverageValidator;
         this.renameService = renameService;
+        this.swrlAxiomInsertionService = swrlAxiomInsertionService;
+        this.fuzzyMembershipInsertionService = fuzzyMembershipInsertionService;
         this.semanticValidator = semanticValidator;
         this.auditService = auditService;
         this.lockRegistry = lockRegistry;
@@ -168,7 +182,8 @@ public class AssistantEditProposalService {
         String targetPath = sortedEdits.isEmpty() || sortedEdits.get(0).targetPath() == null
                 ? "" : sortedEdits.get(0).targetPath();
 
-        boolean structurallySound = addStructuralChecks(session, targetPath, sortedEdits, derived, checks);
+        int maxDerivedEdits = maxEditsForOperation(groupInput.operation());
+        boolean structurallySound = addStructuralChecks(session, targetPath, sortedEdits, derived, maxDerivedEdits, checks);
         perf.mark("structuralAndLiveMatch");
         sortedEdits = addContentChecks(session, targetPath, sortedEdits, structurallySound, derived,
                 introducedByOperation, checks, perf);
@@ -202,6 +217,14 @@ public class AssistantEditProposalService {
                             new CheckResult(RENAME_CHECK, false,
                                     "A group can carry either explicit edits or an operation, not both.")));
         }
+        if (AssistantSwrlAxiomInsertionService.ADD_INFERRED_AXIOMS.equals(operation.type())) {
+            return deriveSwrlInsertionEdits(session, groupInput, operation, operationPath, publicGraphVersion, now,
+                    expiresAt, perf, checks);
+        }
+        if (AssistantFuzzyMembershipInsertionService.ADD_FUZZY_MEMBERSHIP.equals(operation.type())) {
+            return deriveFuzzyMembershipEdits(session, groupInput, operation, operationPath, publicGraphVersion, now,
+                    expiresAt, perf, checks);
+        }
         AssistantRenameService.RenameDerivation derivation =
                 renameService.derive(session.getProjectId(), operation, maxRenameLines);
         perf.mark("renameDerive");
@@ -220,8 +243,59 @@ public class AssistantEditProposalService {
         return new OperationEdits(edits, Set.of(derivation.replacementIri()), summary, null);
     }
 
+    private OperationEdits deriveSwrlInsertionEdits(AssistantSessionDocument session, EditGroupInput groupInput,
+                                                     EditOperation operation, String operationPath,
+                                                     long publicGraphVersion, Instant now, Instant expiresAt,
+                                                     PerfPhases perf, List<CheckResult> checks) {
+        AssistantSwrlAxiomInsertionService.InsertionDerivation derivation =
+                swrlAxiomInsertionService.derive(session.getProjectId(), operation, maxSwrlAxioms);
+        perf.mark("swrlAxiomInsertionDerive");
+        if (!derivation.ok()) {
+            return new OperationEdits(null, null, null,
+                    rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
+                            new CheckResult(SWRL_INSERT_CHECK, false, derivation.detail())));
+        }
+        checks.add(new CheckResult(SWRL_INSERT_CHECK, true, derivation.detail()));
+        List<EditInput> edits = derivation.edits().stream()
+                .map(e -> new EditInput(operation.targetPath(), new EditRange(e.line(), 0), e.originalText(),
+                        e.newText()))
+                .toList();
+        return new OperationEdits(edits, Set.of(), derivation.detail(), null);
+    }
+
+    private OperationEdits deriveFuzzyMembershipEdits(AssistantSessionDocument session, EditGroupInput groupInput,
+                                                       EditOperation operation, String operationPath,
+                                                       long publicGraphVersion, Instant now, Instant expiresAt,
+                                                       PerfPhases perf, List<CheckResult> checks) {
+        AssistantFuzzyMembershipInsertionService.InsertionDerivation derivation =
+                fuzzyMembershipInsertionService.derive(session.getProjectId(), operation, maxFuzzyMemberships);
+        perf.mark("fuzzyMembershipInsertionDerive");
+        if (!derivation.ok()) {
+            return new OperationEdits(null, null, null,
+                    rejectGroup(session, groupInput, operationPath, publicGraphVersion, now, expiresAt,
+                            new CheckResult(FUZZY_INSERT_CHECK, false, derivation.detail())));
+        }
+        checks.add(new CheckResult(FUZZY_INSERT_CHECK, true, derivation.detail()));
+        List<EditInput> edits = derivation.edits().stream()
+                .map(e -> new EditInput(operation.targetPath(), new EditRange(e.line(), 0), e.originalText(),
+                        e.newText()))
+                .toList();
+        return new OperationEdits(edits, Set.of(), derivation.detail(), null);
+    }
+
+    private int maxEditsForOperation(EditOperation operation) {
+        if (operation != null && AssistantSwrlAxiomInsertionService.ADD_INFERRED_AXIOMS.equals(operation.type())) {
+            return maxSwrlAxioms;
+        }
+        if (operation != null && AssistantFuzzyMembershipInsertionService.ADD_FUZZY_MEMBERSHIP.equals(operation.type())) {
+            return maxFuzzyMemberships;
+        }
+        return maxRenameLines;
+    }
+
     private boolean addStructuralChecks(AssistantSessionDocument session, String targetPath,
-                                        List<EditInput> sortedEdits, boolean derived, List<CheckResult> checks) {
+                                        List<EditInput> sortedEdits, boolean derived, int maxDerivedEdits,
+                                        List<CheckResult> checks) {
         boolean hasEdits = !sortedEdits.isEmpty();
         checks.add(new CheckResult("has_edits", hasEdits));
 
@@ -235,7 +309,7 @@ public class AssistantEditProposalService {
         boolean noOverlap = sortedEdits.size() <= 1 || ProposedEdits.hasNoIntraGroupOverlap(sortedEdits);
         checks.add(new CheckResult("no_intra_group_overlap", noOverlap));
 
-        int maxEdits = derived ? maxRenameLines : maxEditsPerGroup;
+        int maxEdits = derived ? maxDerivedEdits : maxEditsPerGroup;
         boolean sizeOk = sortedEdits.size() <= maxEdits
                 && sortedEdits.stream().allMatch(e -> e.newText() != null && e.newText().length() <= maxEditBytes);
         checks.add(new CheckResult("size_limits", sizeOk));

@@ -8,7 +8,18 @@ public record ProposeEditRequest(List<EditGroupInput> groups) {
 
     public record EditInput(String targetPath, EditRange range, String originalText, String newText) {}
 
-    public record EditOperation(String type, String targetPath, String targetIdentifier, String replacementIdentifier) {}
+    public record InferredAxiomInput(String axiomType, String subjectIri, String predicateIri, String objectIri,
+                                      String objectLiteral, String literalDatatypeIri, String literalLangTag) {}
+
+    public record FuzzyMembershipInput(String entityIri, String classIri, Double degree) {}
+
+    public record EditOperation(String type, String targetPath, String targetIdentifier, String replacementIdentifier,
+                                 List<InferredAxiomInput> axioms, List<FuzzyMembershipInput> memberships) {
+        public EditOperation(String type, String targetPath, String targetIdentifier, String replacementIdentifier,
+                              List<InferredAxiomInput> axioms) {
+            this(type, targetPath, targetIdentifier, replacementIdentifier, axioms, null);
+        }
+    }
 
     public record EditGroupInput(String clientGroupId, List<EditInput> edits, EditOperation operation) {
         public EditGroupInput(String clientGroupId, List<EditInput> edits) {

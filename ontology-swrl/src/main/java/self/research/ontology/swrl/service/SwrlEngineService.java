@@ -849,8 +849,44 @@ public class SwrlEngineService {
         String axiomType = axiom.getAxiomType().getName();
         String description = axiom.toString();
         String readable = formatAxiomReadable(axiom);
-        
-        return new InferredAxiom(axiomType, description, readable);
+
+        String subjectIri = null;
+        String predicateIri = null;
+        String objectIri = null;
+        String objectLiteral = null;
+        String literalDatatypeIri = null;
+        String literalLangTag = null;
+
+        if (axiom instanceof OWLClassAssertionAxiom classAssertion) {
+            OWLIndividual individual = classAssertion.getIndividual();
+            OWLClassExpression classExpr = classAssertion.getClassExpression();
+            if (individual.isNamed() && !classExpr.isAnonymous()) {
+                subjectIri = individual.asOWLNamedIndividual().getIRI().toString();
+                predicateIri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+                objectIri = classExpr.asOWLClass().getIRI().toString();
+            }
+        } else if (axiom instanceof OWLObjectPropertyAssertionAxiom objectAssertion) {
+            OWLIndividual subject = objectAssertion.getSubject();
+            OWLIndividual object = objectAssertion.getObject();
+            if (subject.isNamed() && object.isNamed() && !objectAssertion.getProperty().isAnonymous()) {
+                subjectIri = subject.asOWLNamedIndividual().getIRI().toString();
+                predicateIri = objectAssertion.getProperty().asOWLObjectProperty().getIRI().toString();
+                objectIri = object.asOWLNamedIndividual().getIRI().toString();
+            }
+        } else if (axiom instanceof OWLDataPropertyAssertionAxiom dataAssertion) {
+            OWLIndividual subject = dataAssertion.getSubject();
+            if (subject.isNamed() && !dataAssertion.getProperty().isAnonymous()) {
+                subjectIri = subject.asOWLNamedIndividual().getIRI().toString();
+                predicateIri = dataAssertion.getProperty().asOWLDataProperty().getIRI().toString();
+                OWLLiteral literal = dataAssertion.getObject();
+                objectLiteral = literal.getLiteral();
+                literalDatatypeIri = literal.getDatatype().getIRI().toString();
+                literalLangTag = literal.hasLang() ? literal.getLang() : null;
+            }
+        }
+
+        return new InferredAxiom(axiomType, description, readable,
+                subjectIri, predicateIri, objectIri, objectLiteral, literalDatatypeIri, literalLangTag);
     }
 
     private String formatAxiomReadable(OWLAxiom axiom) {

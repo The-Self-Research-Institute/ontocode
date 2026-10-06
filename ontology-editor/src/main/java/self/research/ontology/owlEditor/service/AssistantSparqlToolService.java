@@ -89,7 +89,7 @@ public class AssistantSparqlToolService {
         if (!sessionService.tryConsumeRetrievalAttempt(sessionId)) {
             return SparqlToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
                     .message("Retrieval budget exhausted for this session")
-                    .retrievalCallsRemaining(0).build();
+                    .retrievalAttemptsRemaining(0).build();
         }
 
         try {
@@ -115,12 +115,16 @@ public class AssistantSparqlToolService {
                         .message("Retrieval token budget exhausted for this session").build();
             }
 
+            AssistantSessionService.BudgetSnapshot budget =
+                    sessionService.currentBudgetSnapshot(sessionId, session.getUserEmail()).orElse(null);
             return SparqlToolResult.builder()
                     .ok(true)
                     .rows(capped.rows())
                     .truncated(capped.truncated())
                     .rowCount(capped.rows().size())
                     .revision(session.getPinnedRevision())
+                    .retrievalAttemptsRemaining(budget == null ? null : budget.retrievalAttemptsRemaining())
+                    .tokenBudgetRemaining(budget == null ? null : budget.tokenBudgetRemaining())
                     .build();
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "";
@@ -181,7 +185,8 @@ public class AssistantSparqlToolService {
         private boolean truncated;
         private int rowCount;
         private Long revision;
-        private Integer retrievalCallsRemaining;
+        private Integer retrievalAttemptsRemaining;
+        private Integer tokenBudgetRemaining;
         private String errorCode;
         private String message;
         private Integer retryAfterSeconds;

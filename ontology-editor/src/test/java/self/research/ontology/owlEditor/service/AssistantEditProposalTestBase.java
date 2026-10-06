@@ -82,6 +82,9 @@ abstract class AssistantEditProposalTestBase {
         AssistantGraphIdentifierLookup lookup = new AssistantGraphIdentifierLookup(datasetService);
         proposalService = new AssistantEditProposalService(sessionService, groupRepository, storageManager,
                 syntaxValidator, referenceCoverageValidator, new AssistantRenameService(storageManager, lookup),
+                new AssistantSwrlAxiomInsertionService(storageManager, lookup),
+                new AssistantFuzzyMembershipInsertionService(storageManager, lookup,
+                        new FuzzyMembershipQueryService(datasetService)),
                 new AssistantEditSemanticValidator(storageManager, lookup), auditService, new ProjectWriteLockRegistry(),
                 new AssistantInsertionSnapper(storageManager));
         graph = FakeAssistantGraph.installOn(datasetService);

@@ -172,8 +172,8 @@ class AssistantSessionControllerTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         AssistantSessionResponse body = assertInstanceOf(AssistantSessionResponse.class, response.getBody());
-        assertEquals(10, body.getBudget().getRetrievalCallsRemaining());
-        assertEquals(10, body.getBudget().getMaxRetrievalCalls());
+        assertEquals(30, body.getBudget().getRetrievalCallsRemaining());
+        assertEquals(30, body.getBudget().getMaxRetrievalCalls());
     }
 
     @Test

@@ -106,11 +106,15 @@ public class AssistantContextToolService {
                     .message("Retrieval token budget exhausted for this session").build();
         }
 
+        AssistantSessionService.BudgetSnapshot budget =
+                sessionService.currentBudgetSnapshot(sessionId, session.getUserEmail()).orElse(null);
         return ContextToolResult.builder()
                 .ok(true)
                 .items(resolution.items())
                 .coverage(resolution.anyPartial() ? "partial" : "complete")
                 .revision(session.getPinnedRevision())
+                .retrievalAttemptsRemaining(budget == null ? null : budget.retrievalAttemptsRemaining())
+                .tokenBudgetRemaining(budget == null ? null : budget.tokenBudgetRemaining())
                 .build();
     }
 
@@ -266,6 +270,8 @@ public class AssistantContextToolService {
         private List<Item> items;
         private String coverage;
         private Long revision;
+        private Integer retrievalAttemptsRemaining;
+        private Integer tokenBudgetRemaining;
         private String errorCode;
         private String message;
         private Integer retryAfterSeconds;

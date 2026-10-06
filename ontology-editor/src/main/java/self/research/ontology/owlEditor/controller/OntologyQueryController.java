@@ -90,6 +90,9 @@ public class OntologyQueryController {
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.ReasonerIndividualAssertionMerger reasonerIndividualAssertionMerger;
 
+    @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.FuzzyMembershipQueryService fuzzyMembershipQueryService;
+
     /** Desktop: OWLAPI is authoritative; Fuseki may not be synced yet. */
     @Value("${ontocode.desktop.owlapi-first:false}")
     private boolean owlApiFirst;
@@ -944,7 +947,11 @@ public class OntologyQueryController {
             if (owlApiIndividualQueryService == null) {
                 throw new IllegalStateException("OWLAPI individual service unavailable");
             }
-            return ResponseEntity.ok(owlApiIndividualQueryService.details(projectId, individualIri));
+            Map<String, Object> details = owlApiIndividualQueryService.details(projectId, individualIri);
+            if (fuzzyMembershipQueryService != null && !details.isEmpty()) {
+                details.put("fuzzyMemberships", fuzzyMembershipQueryService.forIndividual(projectId, individualIri));
+            }
+            return ResponseEntity.ok(details);
         });
         if (owl.isPresent()) {
             return owl.get();
@@ -956,6 +963,9 @@ public class OntologyQueryController {
                     (List<Map<String, Object>>) details.getOrDefault("propertyAssertions", List.of());
             details.put("propertyAssertions",
                     reasonerIndividualAssertionMerger.mergeInferred(projectId, individualIri, assertions));
+        }
+        if (fuzzyMembershipQueryService != null) {
+            details.put("fuzzyMemberships", fuzzyMembershipQueryService.forIndividual(projectId, individualIri));
         }
         return ResponseEntity.ok(details);
     }
@@ -967,7 +977,11 @@ public class OntologyQueryController {
             if (owlApiIndividualQueryService == null) {
                 throw new IllegalStateException("OWLAPI individual service unavailable");
             }
-            return ResponseEntity.ok(owlApiIndividualQueryService.details(projectId, individualIri));
+            Map<String, Object> details = owlApiIndividualQueryService.details(projectId, individualIri);
+            if (fuzzyMembershipQueryService != null && !details.isEmpty()) {
+                details.put("fuzzyMemberships", fuzzyMembershipQueryService.forIndividual(projectId, individualIri));
+            }
+            return ResponseEntity.ok(details);
         });
         if (owl.isPresent()) {
             return owl.get();
@@ -979,6 +993,9 @@ public class OntologyQueryController {
                     (List<Map<String, Object>>) details.getOrDefault("propertyAssertions", List.of());
             details.put("propertyAssertions",
                     reasonerIndividualAssertionMerger.mergeInferred(projectId, individualIri, assertions));
+        }
+        if (fuzzyMembershipQueryService != null) {
+            details.put("fuzzyMemberships", fuzzyMembershipQueryService.forIndividual(projectId, individualIri));
         }
         return ResponseEntity.ok(details);
     }

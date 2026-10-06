@@ -7,6 +7,8 @@ import {
   getProviderModels,
   getStoredSessionTokenBudget,
   setStoredSessionTokenBudget,
+  getStoredRetrievalAttempts,
+  setStoredRetrievalAttempts,
   hasApiKey,
   type LlmProvider,
   type KnownModel,
@@ -14,33 +16,73 @@ import {
 import { useCodeAssistantModelSwitcher } from "../hooks/useCodeAssistantModelSwitcher";
 import { LabelOverlayToggleRow } from "./CodeAssistantLabelOverlayToggle";
 
-const SessionBudgetRow: React.FC = () => {
-  const [budget, setBudget] = useState(getStoredSessionTokenBudget());
+const ClampedNumberRow: React.FC<{
+  id: string;
+  label: string;
+  helperText: string;
+  min: number;
+  max: number;
+  step: number;
+  getStored: () => number;
+  setStored: (value: number) => number;
+}> = ({ id, label, helperText, min, max, step, getStored, setStored }) => {
+  const [value, setValue] = useState(getStored());
+  const [text, setText] = useState(String(value));
   return (
     <div className="px-3 py-2 border-t border-gray-100">
       <div className="flex items-center justify-between gap-2">
-        <label htmlFor="code-assistant-session-budget" className="text-xs font-medium text-gray-700">
-          Session budget (tokens)
+        <label htmlFor={id} className="text-xs font-medium text-gray-700">
+          {label}
         </label>
         <input
-          id="code-assistant-session-budget"
+          id={id}
           type="number"
-          min={2000}
-          max={20000}
-          step={1000}
-          value={budget}
+          min={min}
+          max={max}
+          step={step}
+          value={text}
           onChange={(e) => {
-            const next = Number(e.target.value) || budget;
-            setBudget(next);
-            setStoredSessionTokenBudget(next);
+            const raw = e.target.value;
+            setText(raw);
+            const parsed = Number(raw);
+            if (raw.trim() !== "" && Number.isFinite(parsed)) {
+              setValue(setStored(parsed));
+            }
           }}
+          onBlur={() => setText(String(value))}
           className="w-20 px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
         />
       </div>
-      <p className="text-[10px] text-gray-500 mt-1">Applies to your next message, not the current one.</p>
+      <p className="text-[10px] text-gray-500 mt-1">{helperText}</p>
     </div>
   );
 };
+
+const SessionBudgetRow: React.FC = () => (
+  <ClampedNumberRow
+    id="code-assistant-session-budget"
+    label="Session budget (tokens)"
+    helperText="Between 2,000 and 20,000 tokens. Applies to your next message, not the current one."
+    min={2000}
+    max={20000}
+    step={1000}
+    getStored={getStoredSessionTokenBudget}
+    setStored={setStoredSessionTokenBudget}
+  />
+);
+
+const RetrievalAttemptsRow: React.FC = () => (
+  <ClampedNumberRow
+    id="code-assistant-retrieval-attempts"
+    label="Retrieval attempts"
+    helperText="Between 2 and 30 tool calls (read_context, run_sparql, etc.) per session. Applies to your next message."
+    min={2}
+    max={30}
+    step={1}
+    getStored={getStoredRetrievalAttempts}
+    setStored={setStoredRetrievalAttempts}
+  />
+);
 
 const KEY_LINKS: Record<LlmProvider, string> = {
   gemini: "https://ai.google.dev/pricing",
@@ -189,6 +231,7 @@ const SwitcherPopover: React.FC<{ s: SwitcherState; providers: ProviderOption[] 
         />
       )}
       <SessionBudgetRow />
+      <RetrievalAttemptsRow />
       <LabelOverlayToggleRow />
     </div>
   );

@@ -38,20 +38,24 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
   const editable =
     action === "local-edit"
       ? [
-          "The user wants a concrete edit. For the exact text and line range of an entity, call read_context with a \"statement\" target (its full IRI or prefixed name), then call propose_edit with grouped, dependent replacements.",
-          "To rename an identifier, call propose_rename instead of editing each occurrence yourself.",
-          "Insert new statements only between complete statements (after a line ending in \" .\"), never inside one.",
+          "For an entity's exact text/range, use read_context with a \"statement\" target, then propose_edit with grouped edits.",
+          "To rename an identifier, use propose_rename instead of editing each occurrence.",
+          "Insert new statements only between complete statements (after a line ending \" .\"), never inside one.",
+          "add_inferred_axioms echoes back run_swrl_rule's results as new facts; add_fuzzy_membership adds a new " +
+            "degree (0-1, full IRIs) only if that pair doesn't already exist.",
           "Never claim an edit was applied — applying is a separate human-approved step.",
         ].join(" ")
-      : "This session cannot propose or apply edits — propose_edit and propose_rename will always be rejected. Answer the question directly. If the user is actually asking for a change, tell them to switch to Local edit mode and ask again there.";
+      : "This session can't propose or apply edits — propose_edit, propose_rename, add_inferred_axioms and add_fuzzy_membership will always be rejected. Answer directly; if they want a change, say to switch to Local edit mode.";
   return [
-    "You are an ontology-editing assistant with six tools: read_context, run_sparql (read-only), propose_edit, " +
-      "propose_rename, check_consistency and explain_inconsistency.",
+    "You are an ontology-editing assistant with eleven tools: read_context, run_sparql, propose_edit, " +
+      "propose_rename, check_consistency, explain_inconsistency, add_swrl_rule, run_swrl_rule, run_fuzzy_query, " +
+      "add_inferred_axioms and add_fuzzy_membership.",
     scope,
     editable,
-    "For consistency questions: call check_consistency first (cheap). Only call explain_inconsistency afterward, " +
-      "and only if that reported consistent: false — it's slower and pointless otherwise.",
-    "Ground every claim in an actual tool result. If you don't have enough information, say so instead of guessing.",
+    "For consistency: check_consistency first (cheap), explain_inconsistency only if false. SWRL: add_swrl_rule " +
+      "validates+creates, run_swrl_rule executes (slow) — not the fuzzy plugin's \"rules\". run_fuzzy_query " +
+      "answers memberOf(...), class short names.",
+    "Ground every claim in a real tool result, or say you don't know.",
   ].join("\n");
 }
 
@@ -151,6 +155,11 @@ export function clearStoredChatEntries(projectId: string): void {
 const FRIENDLY_TOOL_NAMES: Record<string, string> = {
   check_consistency: "Checking whether the ontology is consistent",
   explain_inconsistency: "Figuring out what's causing the inconsistency",
+  add_swrl_rule: "Adding the SWRL rule",
+  run_swrl_rule: "Running the SWRL rules",
+  run_fuzzy_query: "Running the fuzzy membership query",
+  add_inferred_axioms: "Preparing the inferred facts for review",
+  add_fuzzy_membership: "Preparing the fuzzy membership for review",
 };
 
 function describeStage(event: LoopStageEvent): string {

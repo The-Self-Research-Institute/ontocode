@@ -126,11 +126,15 @@ public class AssistantReasonerToolService {
                 return ReasonerToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
                         .message("Retrieval token budget exhausted for this session").build();
             }
+            AssistantSessionService.BudgetSnapshot budget =
+                    sessionService.currentBudgetSnapshot(sessionId, session.getUserEmail()).orElse(null);
             return ReasonerToolResult.builder()
                     .ok(true)
                     .data(result.data())
                     .truncated(result.truncated())
                     .revision(session.getPinnedRevision())
+                    .retrievalAttemptsRemaining(budget == null ? null : budget.retrievalAttemptsRemaining())
+                    .tokenBudgetRemaining(budget == null ? null : budget.tokenBudgetRemaining())
                     .build();
         } catch (ReasonerCallException e) {
             log.warn("[Assistant] reasoner tool call failed for session {}: {}", sessionId, e.getMessage());
@@ -246,6 +250,8 @@ public class AssistantReasonerToolService {
         private Map<String, Object> data;
         private boolean truncated;
         private Long revision;
+        private Integer retrievalAttemptsRemaining;
+        private Integer tokenBudgetRemaining;
         private String errorCode;
         private String message;
         private Integer retryAfterSeconds;

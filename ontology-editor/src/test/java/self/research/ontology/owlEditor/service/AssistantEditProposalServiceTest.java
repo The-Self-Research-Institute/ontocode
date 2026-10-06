@@ -13,7 +13,10 @@ import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument.AssistantSessionStatus;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditGroupInput;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditInput;
+import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditOperation;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditRange;
+import self.research.ontology.owlEditor.dto.ProposeEditRequest.InferredAxiomInput;
+import self.research.ontology.owlEditor.dto.ProposeEditRequest.FuzzyMembershipInput;
 import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService.GroupProposalOutcome;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService.ProposeEditResult;
@@ -263,5 +266,75 @@ class AssistantEditProposalServiceTest extends AssistantEditProposalTestBase {
         assertFalse(result.isOk());
         assertEquals("VALIDATION_FAILED", result.getErrorCode());
         verify(groupRepository, never()).save(any());
+    }
+
+    @Test
+    void addInferredAxiomsOperationDispatchesToSwrlInsertionAndPasses() throws Exception {
+        ReflectionTestUtils.setField(proposalService, "maxSwrlAxioms", 200);
+        mockLiveContent("turtle", 0, 0, "");
+        InferredAxiomInput axiom = new InferredAxiomInput("ClassAssertion", "http://example.org/pepperoni",
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", "http://example.org/Topping", null, null, null);
+        EditGroupInput group = new EditGroupInput("c1", null,
+                new EditOperation("add_inferred_axioms", "turtle", null, null, List.of(axiom)));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(outcome.isValidationPassed(), outcome.getChecks().toString());
+        assertTrue(checkNamed(outcome, "swrl_inferred_axioms_resolved").get().passed());
+        assertEquals(1, outcome.getDiff().size());
+        assertEquals("", outcome.getDiff().get(0).before());
+        assertTrue(outcome.getDiff().get(0).after().contains("http://example.org/pepperoni"));
+    }
+
+    @Test
+    void addInferredAxiomsWithUnsupportedFormatIsRejectedWithoutTouchingRenameCheck() {
+        EditGroupInput group = new EditGroupInput("c1", null,
+                new EditOperation("add_inferred_axioms", "rdfxml", null, null,
+                        List.of(new InferredAxiomInput("ClassAssertion", "http://example.org/pepperoni",
+                                "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", "http://example.org/Topping",
+                                null, null, null))));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertFalse(outcome.isValidationPassed());
+        assertFalse(checkNamed(outcome, "swrl_inferred_axioms_resolved").get().passed());
+        assertTrue(checkNamed(outcome, "swrl_inferred_axioms_resolved").get().detail().contains("turtle and ntriples"));
+        assertTrue(checkNamed(outcome, "rename_occurrences_complete").isEmpty());
+    }
+
+    @Test
+    void addFuzzyMembershipOperationDispatchesToFuzzyInsertionAndPasses() throws Exception {
+        ReflectionTestUtils.setField(proposalService, "maxFuzzyMemberships", 50);
+        mockLiveContent("turtle", 0, 0, "");
+        FuzzyMembershipInput membership = new FuzzyMembershipInput("http://example.org/alice",
+                "http://example.org/Diabetic", 0.9);
+        EditGroupInput group = new EditGroupInput("c1", null,
+                new EditOperation("add_fuzzy_membership", "turtle", null, null, null, List.of(membership)));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(outcome.isValidationPassed(), outcome.getChecks().toString());
+        assertTrue(checkNamed(outcome, "fuzzy_memberships_resolved").get().passed());
+        assertEquals(1, outcome.getDiff().size());
+        assertEquals("", outcome.getDiff().get(0).before());
+        assertTrue(outcome.getDiff().get(0).after().contains("http://example.org/alice"));
+    }
+
+    @Test
+    void addFuzzyMembershipWithOutOfRangeDegreeIsRejected() {
+        ReflectionTestUtils.setField(proposalService, "maxFuzzyMemberships", 50);
+        EditGroupInput group = new EditGroupInput("c1", null,
+                new EditOperation("add_fuzzy_membership", "turtle", null, null, null,
+                        List.of(new FuzzyMembershipInput("http://example.org/alice", "http://example.org/Diabetic", 1.5))));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertFalse(outcome.isValidationPassed());
+        assertFalse(checkNamed(outcome, "fuzzy_memberships_resolved").get().passed());
+        assertTrue(checkNamed(outcome, "fuzzy_memberships_resolved").get().detail().contains("not between 0.0 and 1.0"));
     }
 }

@@ -1,10 +1,12 @@
 import { useRef, useState } from "react";
 import { stoppedAnswerEntry } from "../components/codeAssistantTurn";
+import type { DispatchBudget } from "../services/codeAssistantLoopDispatch";
 import { makeSubmit, type RunContext, type RunOptions } from "./codeAssistantRunSteps";
 
 function useRunUiState() {
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusTextRaw] = useState("");
+  const [liveBudget, setLiveBudget] = useState<DispatchBudget | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const draftRef = useRef("");
   const busyRef = useRef(false);
@@ -31,12 +33,13 @@ function useRunUiState() {
   const resetRunUi = () => {
     setBusyNow(false);
     setStatusText("");
+    setLiveBudget(undefined);
     setDraftNow("");
   };
 
   return {
-    busy, statusText, draft, draftRef, busyRef, stageStartedAtRef,
-    setBusyNow, setStatusText, setDraftNow, resetRunUi,
+    busy, statusText, liveBudget, draft, draftRef, busyRef, stageStartedAtRef,
+    setBusyNow, setStatusText, setLiveBudget, setDraftNow, resetRunUi,
   };
 }
 
@@ -59,6 +62,7 @@ export function useCodeAssistantRun(options: RunOptions) {
     runProjectRef,
     setBusyNow: ui.setBusyNow,
     setStatusText: ui.setStatusText,
+    setLiveBudget: ui.setLiveBudget,
     setDraftNow: ui.setDraftNow,
     resetRunUi,
   };
@@ -88,7 +92,8 @@ export function useCodeAssistantRun(options: RunOptions) {
   const abortOnUnmount = () => abortControllerRef.current?.abort();
 
   return {
-    busy: ui.busy, statusText: ui.statusText, stageStartedAt: ui.stageStartedAtRef.current, draft: ui.draft,
+    busy: ui.busy, statusText: ui.statusText, liveBudget: ui.liveBudget,
+    stageStartedAt: ui.stageStartedAtRef.current, draft: ui.draft,
     submit, cancelRun, abandonRun, abandonRunFor, abortOnUnmount,
   };
 }

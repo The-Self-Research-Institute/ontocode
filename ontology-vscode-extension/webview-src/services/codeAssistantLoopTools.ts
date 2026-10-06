@@ -158,9 +158,128 @@ export const EXPLAIN_INCONSISTENCY_TOOL: ToolDefinition = {
   },
 };
 
+export const ADD_SWRL_RULE_TOOL: ToolDefinition = {
+  name: "add_swrl_rule",
+  description:
+    "Add a SWRL rule to the ontology, for human review. Validates the rule before creating it. Nothing is inferred until " +
+    "run_swrl_rule is called afterward — this only adds the rule.",
+  parameters: {
+    type: "object",
+    required: ["ruleName", "ruleText"],
+    properties: {
+      ruleName: { type: "string", description: "A short, descriptive name for the rule." },
+      ruleText: {
+        type: "string",
+        description:
+          "The rule in SWRL syntax, e.g. \"Person(?p) ^ hasParent(?p, ?m) ^ hasParent(?m, ?g) -> hasGrandparent(?p, ?g)\".",
+      },
+    },
+  },
+};
+
+export const RUN_SWRL_RULE_TOOL: ToolDefinition = {
+  name: "run_swrl_rule",
+  description:
+    "Execute the ontology's enabled SWRL rules and return the real inferred axioms. Can take up to a minute on a large " +
+    "rule set or ontology — if it times out, suggest the user try the SWRL tab directly instead.",
+  parameters: {
+    type: "object",
+    properties: {},
+  },
+};
+
+export const RUN_FUZZY_QUERY_TOOL: ToolDefinition = {
+  name: "run_fuzzy_query",
+  description:
+    "Run a read-only fuzzy membership query, e.g. \"FIND individuals WHERE memberOf(Diabetic) >= 0.8\". Uses class " +
+    "short names, not full IRIs. Only memberOf conditions (with AND/OR/NOT and ORDER BY/LIMIT) are supported — no " +
+    "exists()/forall() and no write capability.",
+  parameters: {
+    type: "object",
+    required: ["query"],
+    properties: {
+      query: { type: "string" },
+    },
+  },
+};
+
+export const ADD_INFERRED_AXIOMS_TOOL: ToolDefinition = {
+  name: "add_inferred_axioms",
+  description:
+    "Add SWRL-inferred axioms to the ontology as new asserted statements, for human review. Pass axiom objects " +
+    "exactly as returned by run_swrl_rule's inferredAxioms list (don't re-derive the fields yourself) — axioms " +
+    "whose subject/object aren't already in the graph are skipped. Only turtle and ntriples documents are " +
+    "supported. Call it alone in its turn. Nothing is applied until the user approves it.",
+  parameters: {
+    type: "object",
+    required: ["targetPath", "axioms"],
+    properties: {
+      targetPath: {
+        type: "string",
+        description: "The serialization format to add the axioms to: turtle or ntriples.",
+      },
+      axioms: {
+        type: "array",
+        description: "Axiom objects from run_swrl_rule's inferredAxioms list.",
+        items: {
+          type: "object",
+          required: ["axiomType", "subjectIri", "predicateIri"],
+          properties: {
+            axiomType: { type: "string" },
+            subjectIri: { type: "string" },
+            predicateIri: { type: "string" },
+            objectIri: { type: "string" },
+            objectLiteral: { type: "string" },
+            literalDatatypeIri: { type: "string" },
+            literalLangTag: { type: "string" },
+          },
+        },
+      },
+    },
+  },
+};
+
+export const ADD_FUZZY_MEMBERSHIP_TOOL: ToolDefinition = {
+  name: "add_fuzzy_membership",
+  description:
+    "Add new fuzzy class-membership degrees to the ontology, for human review. Degree must be between 0.0 and 1.0. " +
+    "Only adds new memberships — if the entity already has a membership in that class, it's skipped (the user must " +
+    "change it by hand in the Fuzzy plugin's tab). Only turtle and ntriples documents are supported. Call it alone " +
+    "in its turn. Nothing is applied until the user approves it.",
+  parameters: {
+    type: "object",
+    required: ["targetPath", "memberships"],
+    properties: {
+      targetPath: {
+        type: "string",
+        description: "The serialization format to add the memberships to: turtle or ntriples.",
+      },
+      memberships: {
+        type: "array",
+        description: "Memberships to add, as full IRIs (not short names).",
+        items: {
+          type: "object",
+          required: ["entityIri", "classIri", "degree"],
+          properties: {
+            entityIri: { type: "string" },
+            classIri: { type: "string" },
+            degree: { type: "number" },
+          },
+        },
+      },
+    },
+  },
+};
+
 export const ASSISTANT_TOOLS: ToolDefinition[] = [
   READ_CONTEXT_TOOL, RUN_SPARQL_TOOL, PROPOSE_EDIT_TOOL, PROPOSE_RENAME_TOOL,
   CHECK_CONSISTENCY_TOOL, EXPLAIN_INCONSISTENCY_TOOL,
+  ADD_SWRL_RULE_TOOL, RUN_SWRL_RULE_TOOL,
+  RUN_FUZZY_QUERY_TOOL,
+  ADD_INFERRED_AXIOMS_TOOL,
+  ADD_FUZZY_MEMBERSHIP_TOOL,
 ];
 
-export const PROPOSAL_TOOLS = new Set([PROPOSE_EDIT_TOOL.name, PROPOSE_RENAME_TOOL.name]);
+export const PROPOSAL_TOOLS = new Set([
+  PROPOSE_EDIT_TOOL.name, PROPOSE_RENAME_TOOL.name, ADD_INFERRED_AXIOMS_TOOL.name, ADD_FUZZY_MEMBERSHIP_TOOL.name,
+]);

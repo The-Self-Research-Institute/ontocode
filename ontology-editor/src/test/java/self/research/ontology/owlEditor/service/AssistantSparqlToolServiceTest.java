@@ -50,6 +50,8 @@ class AssistantSparqlToolServiceTest {
         when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
         when(sessionService.isRevisionStale(any())).thenReturn(false);
         when(ontologyMetadataService.getPrefixes(anyString())).thenReturn(List.of());
+        when(sessionService.currentBudgetSnapshot(anyString(), any()))
+                .thenReturn(Optional.of(new AssistantSessionService.BudgetSnapshot(5, 7500)));
     }
 
     @Test
@@ -141,6 +143,24 @@ class AssistantSparqlToolServiceTest {
         assertFalse(result.isTruncated());
         assertEquals(1, result.getRowCount());
         assertEquals(42L, result.getRevision());
+        assertEquals(5, result.getRetrievalAttemptsRemaining());
+        assertEquals(7500, result.getTokenBudgetRemaining());
+    }
+
+    @Test
+    void leavesBudgetFieldsNullWhenTheSnapshotLookupComesUpEmpty() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(sessionService.currentBudgetSnapshot(anyString(), any())).thenReturn(Optional.empty());
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("s"), List.of(), false, null));
+
+        AssistantSparqlToolService.SparqlToolResult result =
+                toolService.runSparql("s1", "u@x.com", "SELECT ?s WHERE { ?s ?p ?o }");
+
+        assertTrue(result.isOk());
+        assertEquals(null, result.getRetrievalAttemptsRemaining());
+        assertEquals(null, result.getTokenBudgetRemaining());
     }
 
     @Test

@@ -6,6 +6,9 @@ import {
   runSparql,
   checkConsistency,
   explainInconsistency,
+  addSwrlRule,
+  runSwrlRule,
+  runFuzzyQuery,
   proposeEditGroups,
   AssistantApiError,
   type AssistantErrorCode,
@@ -14,6 +17,8 @@ import {
   type ProposedEdit,
   type ReadContextTarget,
   type ProposeResult,
+  type InferredAxiomInput,
+  type FuzzyMembershipInput,
 } from "./codeAssistantSession";
 
 export interface LoopContext {
@@ -21,6 +26,11 @@ export interface LoopContext {
   token: string | undefined;
   session: AssistantSession;
   providerConfig?: ProviderConfig;
+}
+
+export interface DispatchBudget {
+  retrievalAttemptsRemaining: number;
+  tokenBudgetRemaining: number;
 }
 
 export interface DispatchOutcome {
@@ -31,6 +41,31 @@ export interface DispatchOutcome {
   errorMessage?: string;
   retryAfterSeconds?: number;
   revision?: number;
+  budget?: DispatchBudget;
+}
+
+function provenanceBudget(provenance?: { retrievalAttemptsRemaining?: number; tokenBudgetRemaining?: number }): DispatchBudget | undefined {
+  if (!provenance || provenance.retrievalAttemptsRemaining == null || provenance.tokenBudgetRemaining == null) {
+    return undefined;
+  }
+  return {
+    retrievalAttemptsRemaining: provenance.retrievalAttemptsRemaining,
+    tokenBudgetRemaining: provenance.tokenBudgetRemaining,
+  };
+}
+
+/** Both fields only ever decrease during a session, so the lowest value seen across a
+ * concurrently-dispatched batch is the true state after every call in it has landed,
+ * regardless of which call happened to finish last. */
+export function lowestBudget(outcomes: DispatchOutcome[]): DispatchBudget | undefined {
+  return outcomes.reduce<DispatchBudget | undefined>((lowest, o) => {
+    if (!o.budget) return lowest;
+    if (!lowest) return o.budget;
+    return {
+      retrievalAttemptsRemaining: Math.min(lowest.retrievalAttemptsRemaining, o.budget.retrievalAttemptsRemaining),
+      tokenBudgetRemaining: Math.min(lowest.tokenBudgetRemaining, o.budget.tokenBudgetRemaining),
+    };
+  }, undefined);
 }
 
 function newClientGroupId(): string {
@@ -58,22 +93,39 @@ async function dispatchReadContext(ctx: LoopContext, args: Record<string, unknow
   });
   const kind = args.kind === "diagnostics" || args.kind === "references" ? args.kind : "definitions";
   const res = await readContext(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, { targets, kind }, signal);
-  return { result: res.result, isError: false, revision: res.provenance?.revision };
+  return { result: res.result, isError: false, revision: res.provenance?.revision, budget: provenanceBudget(res.provenance) };
 }
 
 async function dispatchRunSparql(ctx: LoopContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
   const res = await runSparql(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, String(args.query ?? ""), signal);
-  return { result: res.result, isError: false, revision: res.provenance?.revision };
+  return { result: res.result, isError: false, revision: res.provenance?.revision, budget: provenanceBudget(res.provenance) };
 }
 
 async function dispatchCheckConsistency(ctx: LoopContext, _args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
   const res = await checkConsistency(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, signal);
-  return { result: res.result, isError: false, revision: res.provenance?.revision };
+  return { result: res.result, isError: false, revision: res.provenance?.revision, budget: provenanceBudget(res.provenance) };
 }
 
 async function dispatchExplainInconsistency(ctx: LoopContext, _args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
   const res = await explainInconsistency(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, signal);
-  return { result: res.result, isError: false, revision: res.provenance?.revision };
+  return { result: res.result, isError: false, revision: res.provenance?.revision, budget: provenanceBudget(res.provenance) };
+}
+
+async function dispatchAddSwrlRule(ctx: LoopContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
+  const ruleName = String(args.ruleName ?? "");
+  const ruleText = String(args.ruleText ?? "");
+  const res = await addSwrlRule(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, ruleName, ruleText, signal);
+  return { result: res.result, isError: false, revision: res.provenance?.revision, budget: provenanceBudget(res.provenance) };
+}
+
+async function dispatchRunSwrlRule(ctx: LoopContext, _args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
+  const res = await runSwrlRule(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, signal);
+  return { result: res.result, isError: false, revision: res.provenance?.revision, budget: provenanceBudget(res.provenance) };
+}
+
+async function dispatchRunFuzzyQuery(ctx: LoopContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
+  const res = await runFuzzyQuery(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, String(args.query ?? ""), signal);
+  return { result: res.result, isError: false, revision: res.provenance?.revision, budget: provenanceBudget(res.provenance) };
 }
 
 async function submitGroups(ctx: LoopContext, groups: ProposedEditGroupInput[], signal?: AbortSignal): Promise<DispatchOutcome> {
@@ -117,6 +169,52 @@ async function dispatchProposeRename(ctx: LoopContext, args: Record<string, unkn
   return submitGroups(ctx, [group], signal);
 }
 
+async function dispatchAddInferredAxioms(ctx: LoopContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
+  const targetPath = String(args.targetPath ?? "").trim();
+  const axiomsRaw = Array.isArray(args.axioms) ? args.axioms : [];
+  if (!targetPath || axiomsRaw.length === 0) {
+    return { result: { error: "targetPath and a non-empty axioms array are required." }, isError: true };
+  }
+  const axioms: InferredAxiomInput[] = axiomsRaw.map((a) => {
+    const rec = a as Record<string, unknown>;
+    return {
+      axiomType: String(rec.axiomType ?? ""),
+      subjectIri: String(rec.subjectIri ?? ""),
+      predicateIri: String(rec.predicateIri ?? ""),
+      objectIri: rec.objectIri == null ? undefined : String(rec.objectIri),
+      objectLiteral: rec.objectLiteral == null ? undefined : String(rec.objectLiteral),
+      literalDatatypeIri: rec.literalDatatypeIri == null ? undefined : String(rec.literalDatatypeIri),
+      literalLangTag: rec.literalLangTag == null ? undefined : String(rec.literalLangTag),
+    };
+  });
+  const group: ProposedEditGroupInput = {
+    clientGroupId: newClientGroupId(),
+    operation: { type: "add_inferred_axioms", targetPath, axioms },
+  };
+  return submitGroups(ctx, [group], signal);
+}
+
+async function dispatchAddFuzzyMembership(ctx: LoopContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<DispatchOutcome> {
+  const targetPath = String(args.targetPath ?? "").trim();
+  const membershipsRaw = Array.isArray(args.memberships) ? args.memberships : [];
+  if (!targetPath || membershipsRaw.length === 0) {
+    return { result: { error: "targetPath and a non-empty memberships array are required." }, isError: true };
+  }
+  const memberships: FuzzyMembershipInput[] = membershipsRaw.map((m) => {
+    const rec = m as Record<string, unknown>;
+    return {
+      entityIri: String(rec.entityIri ?? ""),
+      classIri: String(rec.classIri ?? ""),
+      degree: Number(rec.degree),
+    };
+  });
+  const group: ProposedEditGroupInput = {
+    clientGroupId: newClientGroupId(),
+    operation: { type: "add_fuzzy_membership", targetPath, memberships },
+  };
+  return submitGroups(ctx, [group], signal);
+}
+
 type ToolDispatcher = (ctx: LoopContext, args: Record<string, unknown>, signal?: AbortSignal) => Promise<DispatchOutcome>;
 
 const DISPATCHERS: Record<string, ToolDispatcher> = {
@@ -126,6 +224,11 @@ const DISPATCHERS: Record<string, ToolDispatcher> = {
   propose_rename: dispatchProposeRename,
   check_consistency: dispatchCheckConsistency,
   explain_inconsistency: dispatchExplainInconsistency,
+  add_swrl_rule: dispatchAddSwrlRule,
+  run_swrl_rule: dispatchRunSwrlRule,
+  run_fuzzy_query: dispatchRunFuzzyQuery,
+  add_inferred_axioms: dispatchAddInferredAxioms,
+  add_fuzzy_membership: dispatchAddFuzzyMembership,
 };
 
 function toolErrorOutcome(e: unknown): DispatchOutcome {

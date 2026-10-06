@@ -212,6 +212,7 @@ describe("propose_rename and read_context tool surface", () => {
     expect(names).toEqual([
       "read_context", "run_sparql", "propose_edit", "propose_rename",
       "check_consistency", "explain_inconsistency",
+      "add_swrl_rule", "run_swrl_rule", "run_fuzzy_query", "add_inferred_axioms", "add_fuzzy_membership",
     ]);
     expect(PROPOSE_RENAME_TOOL.parameters.required).toEqual(["targetPath", "targetIdentifier", "replacementIdentifier"]);
     expect(ASSISTANT_TOOLS.find((t) => t.name === "propose_edit")!.description).toMatch(/propose_rename/);
@@ -404,6 +405,58 @@ describe("runAssistantLoop — tool result provenance", () => {
       reason: "references for identifier http://ex.org/A",
       step: 1,
     });
+  });
+});
+
+describe("runAssistantLoop — live budget stage events", () => {
+  it("attaches the lowest remaining budget across a batch to the tool-result stage event", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({
+        turn: {
+          kind: "tool_calls",
+          calls: [sparqlCall("c1"), sparqlCall("c2")],
+        },
+        advance: advanceSpy,
+      })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: advanceSpy });
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        call += 1;
+        const snapshot = call === 1
+          ? { retrievalAttemptsRemaining: 6, tokenBudgetRemaining: 7000 }
+          : { retrievalAttemptsRemaining: 5, tokenBudgetRemaining: 7400 };
+        return jsonResponse(200, {
+          ok: true,
+          result: { rows: [], truncated: false, rowCount: 0 },
+          provenance: { revision: 1, ...snapshot },
+        });
+      }),
+    );
+    const onStage = vi.fn();
+
+    await runAssistantLoop(baseCtx(), "system", "hi", onStage);
+
+    const toolResultEvent = onStage.mock.calls.map(([event]) => event).find((e) => e.stage === "tool-result");
+    expect(toolResultEvent.budget).toEqual({ retrievalAttemptsRemaining: 5, tokenBudgetRemaining: 7000 });
+  });
+
+  it("omits budget from the stage event when the result carries no budget fields", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [sparqlCall("c1")] }, advance: advanceSpy })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "done" }, advance: advanceSpy });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true, rows: [], rowCount: 0, revision: 1 })));
+    const onStage = vi.fn();
+
+    await runAssistantLoop(baseCtx(), "system", "hi", onStage);
+
+    const toolResultEvent = onStage.mock.calls.map(([event]) => event).find((e) => e.stage === "tool-result");
+    expect(toolResultEvent.budget).toBeUndefined();
   });
 });
 

@@ -257,7 +257,7 @@ class AssistantRenameServiceTest {
     @Test
     void unsupportedOperationTypeIsRefused() {
         RenameDerivation result = renameService.derive("proj-1",
-                new EditOperation("delete_identifier", "turtle", ":Pizza", ":Pie"), 5000);
+                new EditOperation("delete_identifier", "turtle", ":Pizza", ":Pie", null), 5000);
 
         assertFalse(result.ok());
         assertTrue(result.detail().contains("rename_identifier"));
@@ -526,7 +526,7 @@ class AssistantRenameServiceTest {
     }
 
     private EditOperation rename(String targetPath, String target, String replacement) {
-        return new EditOperation("rename_identifier", targetPath, target, replacement);
+        return new EditOperation("rename_identifier", targetPath, target, replacement, null);
     }
 
     private Path write(String name, String content) throws Exception {
