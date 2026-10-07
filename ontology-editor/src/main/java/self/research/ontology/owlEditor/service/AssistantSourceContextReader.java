@@ -94,21 +94,15 @@ class AssistantSourceContextReader {
         }
         Path file = scope.draft() ? storageManager.resolveCodeViewFile(projectId, format, scope)
                                   : storageManager.ensureCodeViewFile(projectId, format);
-        try {
-            SubjectBlocks blocks = scope.draft() ? null : indexedStatements(projectId, format, file, target.value());
-            if (blocks == null) {
-                try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-                    blocks = turtleLike
-                            ? TurtleSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS)
-                            : RdfXmlSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS);
-                }
-            }
-            return statementItems(format, target, blocks);
-        } finally {
-            if (scope.draft()) {
-                Files.deleteIfExists(file);
+        SubjectBlocks blocks = scope.draft() ? null : indexedStatements(projectId, format, file, target.value());
+        if (blocks == null) {
+            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                blocks = turtleLike
+                        ? TurtleSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS)
+                        : RdfXmlSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS);
             }
         }
+        return statementItems(format, target, blocks);
     }
 
     private SourceRead statementItems(String format, FormatAndValue target, SubjectBlocks blocks) {
@@ -205,10 +199,6 @@ class AssistantSourceContextReader {
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             return IdentifierMentionLines.scan(reader, identifier.value(),
                     rdfFormatFor(identifier.format()) == RDFFormat.RDFXML, MAX_MENTION_LINES);
-        } finally {
-            if (scope.draft()) {
-                Files.deleteIfExists(file);
-            }
         }
     }
 
@@ -230,39 +220,33 @@ class AssistantSourceContextReader {
         LongPredicate union = line -> filters.stream().anyMatch(filter -> filter.accepts().test(line));
         Path file = scope.draft() ? storageManager.resolveCodeViewFile(projectId, format, scope)
                                   : storageManager.ensureCodeViewFile(projectId, format);
-        try {
-            RdfSourceDiagnostics.Result result =
-                    RdfSourceDiagnostics.collect(file, rdfFormat, union, MAX_DIAGNOSTICS, diagnosticsTimeout);
-            boolean fatalShown = false;
-            for (RdfSourceDiagnostics.Issue issue : result.issues()) {
-                boolean fatal = issue.level() == RdfSourceDiagnostics.Level.FATAL;
-                fatalShown |= fatal;
-                String text = (issue.level() == RdfSourceDiagnostics.Level.WARNING ? "WARNING: " : "ERROR: ")
-                        + issue.message()
-                        + (fatal ? " Parsing stopped here, so nothing after this point was checked." : "");
-                items.add(Item.builder().source(format).range(issue.line() > 0 ? (issue.line() - 1) + "-1" : null)
-                        .text(text).kind("diagnostic").build());
-            }
-            if (result.capped()) {
-                items.add(note(format, "Only the first " + MAX_DIAGNOSTICS + " issues are shown; there are more."));
-            }
-            if (result.timedOut()) {
-                items.add(note(format, "The document took too long to check, so only its first part was checked."));
-            }
-            long fatalLine = result.fatalLine();
-            boolean stopMatters = result.stoppedEarly()
-                    && (fatalLine < 0 || filters.stream().anyMatch(filter -> filter.extendsBeyond().test(fatalLine)));
-            if (stopMatters && !fatalShown) {
-                items.add(note(format, "Parsing stopped early on an error"
-                        + (fatalLine > 0 ? " at line " + (fatalLine - 1) : "")
-                        + " outside the requested lines, so later lines were not checked."));
-            }
-            return result.capped() || result.timedOut() || stopMatters;
-        } finally {
-            if (scope.draft()) {
-                Files.deleteIfExists(file);
-            }
+        RdfSourceDiagnostics.Result result =
+                RdfSourceDiagnostics.collect(file, rdfFormat, union, MAX_DIAGNOSTICS, diagnosticsTimeout);
+        boolean fatalShown = false;
+        for (RdfSourceDiagnostics.Issue issue : result.issues()) {
+            boolean fatal = issue.level() == RdfSourceDiagnostics.Level.FATAL;
+            fatalShown |= fatal;
+            String text = (issue.level() == RdfSourceDiagnostics.Level.WARNING ? "WARNING: " : "ERROR: ")
+                    + issue.message()
+                    + (fatal ? " Parsing stopped here, so nothing after this point was checked." : "");
+            items.add(Item.builder().source(format).range(issue.line() > 0 ? (issue.line() - 1) + "-1" : null)
+                    .text(text).kind("diagnostic").build());
         }
+        if (result.capped()) {
+            items.add(note(format, "Only the first " + MAX_DIAGNOSTICS + " issues are shown; there are more."));
+        }
+        if (result.timedOut()) {
+            items.add(note(format, "The document took too long to check, so only its first part was checked."));
+        }
+        long fatalLine = result.fatalLine();
+        boolean stopMatters = result.stoppedEarly()
+                && (fatalLine < 0 || filters.stream().anyMatch(filter -> filter.extendsBeyond().test(fatalLine)));
+        if (stopMatters && !fatalShown) {
+            items.add(note(format, "Parsing stopped early on an error"
+                    + (fatalLine > 0 ? " at line " + (fatalLine - 1) : "")
+                    + " outside the requested lines, so later lines were not checked."));
+        }
+        return result.capped() || result.timedOut() || stopMatters;
     }
 
     static RDFFormat rdfFormatFor(String format) {

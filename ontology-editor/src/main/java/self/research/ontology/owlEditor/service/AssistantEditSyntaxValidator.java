@@ -80,34 +80,20 @@ public class AssistantEditSyntaxValidator {
                 } catch (Exception ignored) {
                 }
             }
-            if (scope.draft() && sourceFile != null) {
-                try {
-                    Files.deleteIfExists(sourceFile);
-                } catch (Exception ignored) {
-                }
-            }
         }
     }
 
     public boolean regionParses(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits,
                                 StorageManager.ContentScope scope) {
-        Path sourceFile = null;
         try {
             if (!isRdf4jParseable(targetPath)) {
                 return false;
             }
-            sourceFile = scope.draft() ? storageManager.resolveCodeViewFile(projectId, targetPath, scope)
+            Path sourceFile = scope.draft() ? storageManager.resolveCodeViewFile(projectId, targetPath, scope)
                                        : storageManager.ensureCodeViewFile(projectId, targetPath);
             return RegionSyntaxCheck.parses(sourceFile, targetPath, edits);
         } catch (Exception e) {
             return false;
-        } finally {
-            if (scope.draft() && sourceFile != null) {
-                try {
-                    Files.deleteIfExists(sourceFile);
-                } catch (Exception ignored) {
-                }
-            }
         }
     }
 

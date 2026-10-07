@@ -228,9 +228,6 @@ public class AssistantEditApplyService {
                 return commitApplied(group, outcome.written(), perf);
             } finally {
                 Files.deleteIfExists(splicedFile);
-                if (scope.draft()) {
-                    Files.deleteIfExists(sourceFile);
-                }
             }
         } finally {
             SparqlQueryContext.clear();

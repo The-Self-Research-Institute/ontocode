@@ -112,10 +112,6 @@ public class AssistantEditReferenceCoverageValidator {
                 }
                 lineNo++;
             }
-        } finally {
-            if (scope.draft()) {
-                Files.deleteIfExists(sourceFile);
-            }
         }
     }
 

@@ -79,8 +79,12 @@ public class StorageManager {
     }
 
     public Path resolveCodeViewFile(String projectId, String format, ContentScope scope) throws IOException {
-        return scope.draft() ? exporter.exportDraftCodeViewFile(projectId, scope.userId(), format)
+        return scope.draft() ? ensureDraftCodeViewFile(projectId, scope.userId(), format)
                              : ensureCodeViewFile(projectId, format);
+    }
+
+    public Path ensureDraftCodeViewFile(String projectId, String userId, String format) throws IOException {
+        return codeViewFiles.ensureDraftCodeViewFile(projectId, userId, format);
     }
 
     public long resolveGraphVersion(String projectId, ContentScope scope) {
@@ -92,12 +96,8 @@ public class StorageManager {
         if (!scope.draft()) {
             return readCodeViewPage(projectId, format, startLine, lineCount);
         }
-        Path file = exporter.exportDraftCodeViewFile(projectId, scope.userId(), format);
-        try {
-            return readPageSequential(file, startLine, lineCount);
-        } finally {
-            Files.deleteIfExists(file);
-        }
+        Path file = ensureDraftCodeViewFile(projectId, scope.userId(), format);
+        return readPageSequential(file, startLine, lineCount);
     }
 
     private static CodeViewPage readPageSequential(Path file, long startLine, int lineCount) throws IOException {

@@ -108,6 +108,7 @@ final class CodeViewFileStore {
             return;
         }
         draftGraphVersions.put(projectId + "::" + userId, graphVersionCounter.incrementAndGet());
+        clearDraftCodeViewCache(projectId, userId);
     }
 
     public long getDraftGraphVersion(String projectId, String userId) {
@@ -148,6 +149,54 @@ final class CodeViewFileStore {
     private Path getCodeViewCachePath(String projectId, String format) {
         String extension = OntologyExporter.extensionFor(format);
         return projectDirs.apply(projectId).resolve("codeview-cache").resolve("content." + extension);
+    }
+
+    public Path ensureDraftCodeViewFile(String projectId, String userId, String format) throws IOException {
+        Path cacheFile = getDraftCodeViewCachePath(projectId, userId, format);
+        if (Files.exists(cacheFile)) {
+            return cacheFile;
+        }
+        Path exportPath = exporter.exportDraftCodeViewFile(projectId, userId, format);
+        Files.createDirectories(cacheFile.getParent());
+        AtomicFiles.copy(exportPath, cacheFile);
+        return cacheFile;
+    }
+
+    public void clearDraftCodeViewCache(String projectId, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return;
+        }
+        Path cacheDir = getDraftCodeViewCacheDir(projectId, userId);
+        if (!Files.exists(cacheDir)) {
+            return;
+        }
+        try (Stream<Path> files = Files.list(cacheDir)) {
+            files.forEach(file -> {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException e) {
+                    log.warn("Failed to delete draft code view cache file: {}", file, e);
+                }
+            });
+        } catch (IOException e) {
+            log.error("Failed to clear draft code view cache for project {} user {}", projectId, userId, e);
+        }
+    }
+
+    private Path getDraftCodeViewCachePath(String projectId, String userId, String format) {
+        String extension = OntologyExporter.extensionFor(format);
+        return getDraftCodeViewCacheDir(projectId, userId).resolve("content." + extension);
+    }
+
+    private Path getDraftCodeViewCacheDir(String projectId, String userId) {
+        return projectDirs.apply(projectId).resolve("codeview-cache-draft").resolve(sanitizeUserId(userId));
+    }
+
+    private static String sanitizeUserId(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return "anonymous";
+        }
+        return userId.replaceAll("[^a-zA-Z0-9._@-]", "_");
     }
 
     private final ConcurrentHashMap<String, long[]> codeViewLineCounts = new ConcurrentHashMap<>();

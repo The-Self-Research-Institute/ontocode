@@ -54,22 +54,14 @@ public class CodeViewRangeMatcher {
         if (overlaps(sorted)) {
             return false;
         }
-        Path file = null;
         try {
-            file = storageManager.resolveCodeViewFile(projectId, format, scope);
+            Path file = storageManager.resolveCodeViewFile(projectId, format, scope);
             try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
                 return matchSequentially(reader, sorted);
             }
         } catch (Exception e) {
             log.warn("[Assistant] Live-content check failed for {} {}: {}", projectId, format, e.getMessage());
             return false;
-        } finally {
-            if (file != null) {
-                try {
-                    Files.deleteIfExists(file);
-                } catch (IOException ignored) {
-                }
-            }
         }
     }
 
