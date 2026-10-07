@@ -18,6 +18,22 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
+    version: "1.2.5-beta.1",
+    webVersion: "1.2.5",
+    date: "October 7, 2026",
+    title: "Code View AI Assistant",
+    highlights: [
+      "Code View AI Assistant — Ask questions about your ontology, or have the AI propose edits directly in Code View (Turtle, RDF/XML, OWL/XML, Manchester, and Functional syntax). Review each proposed change before applying it, and undo or roll back applied changes individually or as a group.",
+      "Code View AI Assistant — The assistant can read specific ranges, identifiers, or statements from your document, run SPARQL queries, check consistency and explain inconsistencies, add and run SWRL rules, and add fuzzy class memberships, all as part of the conversation.",
+      "Code View AI Assistant — Works with your own OpenAI, Gemini, or Claude API key, or your organization's managed provider. A live status indicator shows what the assistant is doing, and a configurable session budget controls how much it reads before answering.",
+      "Code View AI Assistant — Supports Draft Mode: AI-assisted edits apply privately to your own draft copy instead of the shared project, and class/individual counts update immediately once a change is applied.",
+      "ONTOCODE-89: Every change the assistant applies is recorded in the Change Assistant's history alongside manual edits, so you can see exactly what changed and when.",
+      "ONTOCODE-93: Ontology Prefixes — Draft Mode now applies to prefixes too: adding, editing, or deleting a prefix while in Draft Mode stays private to your draft, and shows up in the Change Assistant's history like any other edit.",
+    ],
+    videoUrl: "",
+  },
+
+  {
     version: "1.2.4-beta.1",
     webVersion: "1.2.4",
     date: "September 25, 2026",
