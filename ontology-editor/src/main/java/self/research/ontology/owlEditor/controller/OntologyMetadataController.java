@@ -404,7 +404,9 @@ public class OntologyMetadataController {
             String prefix = request.get("prefix");
             String iri = request.get("iri");
             String oldPrefix = request.get("oldPrefix");
-            metadataService.updatePrefix(projectId, prefix, iri, oldPrefix);
+            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            String userId = request.get("userId");
+            metadataService.updatePrefix(projectId, prefix, iri, oldPrefix, draft, userId);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error updating prefix", e);
@@ -414,9 +416,11 @@ public class OntologyMetadataController {
 
     @DeleteMapping("/{projectId}/prefixes")
     public ResponseEntity<?> deletePrefix(@PathVariable String projectId,
-                                         @RequestParam String prefix) {
+                                         @RequestParam String prefix,
+                                         @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                         @RequestParam(required = false) String userId) {
         try {
-            metadataService.deletePrefix(projectId, prefix);
+            metadataService.deletePrefix(projectId, prefix, draft, userId);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error deleting prefix", e);

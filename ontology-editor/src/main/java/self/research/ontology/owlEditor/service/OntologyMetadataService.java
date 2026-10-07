@@ -942,8 +942,11 @@ public class OntologyMetadataService {
      * Get all prefixes
      */
     public List<Map<String, String>> getPrefixes(String projectId) {
+        String ctxUserId = SparqlQueryContext.getUserId();
+        boolean hasDraft = ctxUserId != null && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
+
         Map<String, String> prefixMap = new HashMap<>();
-        
+
         // 1. Try to get from MongoDB metadata
         boolean hasCachedPrefixes = false;
         Optional<Map<String, Object>> meta = projectMetadataService.readMeta(projectId);
@@ -988,6 +991,10 @@ public class OntologyMetadataService {
             log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
         }
 
+        if (hasDraft) {
+            prefixMap.putAll(datasetService.readProjectPrefixes(projectId, true, ctxUserId));
+        }
+
         // Always include the standard OWL/RDF/RDFS/XSD prefixes .
         // User-defined prefixes take precedence; we only add a standard one if not already present.
         STANDARD_PREFIXES.forEach(prefixMap::putIfAbsent);
@@ -1011,6 +1018,15 @@ public class OntologyMetadataService {
      * Update or add a prefix
      */
     public void updatePrefix(String projectId, String prefix, String iri, String oldPrefix) {
+        updatePrefix(projectId, prefix, iri, oldPrefix, false, null);
+    }
+
+    public void updatePrefix(String projectId, String prefix, String iri, String oldPrefix,
+                             boolean draft, String userId) {
+        if (draft) {
+            datasetService.updateDraftPrefix(projectId, userId, prefix, iri, oldPrefix);
+            return;
+        }
         // 1. Update in MongoDB
         Optional<Map<String, Object>> metaOpt = projectMetadataService.readMeta(projectId);
         Map<String, Object> meta = metaOpt.orElse(new HashMap<>());
@@ -1058,6 +1074,14 @@ public class OntologyMetadataService {
      * Delete a prefix
      */
     public void deletePrefix(String projectId, String prefix) {
+        deletePrefix(projectId, prefix, false, null);
+    }
+
+    public void deletePrefix(String projectId, String prefix, boolean draft, String userId) {
+        if (draft) {
+            datasetService.deleteDraftPrefix(projectId, userId, prefix);
+            return;
+        }
         // 1. Update in MongoDB
         Optional<Map<String, Object>> metaOpt = projectMetadataService.readMeta(projectId);
         if (metaOpt.isPresent()) {

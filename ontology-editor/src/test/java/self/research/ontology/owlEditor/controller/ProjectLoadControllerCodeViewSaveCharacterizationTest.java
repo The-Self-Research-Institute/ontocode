@@ -48,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -178,7 +179,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
         assertEquals(7L, body.get("sourceVersion"));
 
         verify(datasetService).bulkLoadChunked(eq(projectId), any(InputStream.class), eq(RDFFormat.TURTLE),
-                anyLong(), any(ImportOptions.class), isNull(), isNull());
+                anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
         verify(metadataService).incrementMutationVersion(projectId);
         verify(storageManager).clearCodeViewCache(projectId);
         verify(storageManager).storeCodeViewCache(eq(projectId), any(), eq("turtle"));
@@ -204,7 +205,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             verify(datasetService).bulkLoadChunked(eq(projectId), any(InputStream.class), eq(RDFFormat.RDFXML),
-                    anyLong(), any(ImportOptions.class), isNull(), isNull());
+                    anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
             verify(storageManager).storeCodeViewCache(eq(projectId), eq(originalContent), eq("functional"));
         } finally {
             Files.deleteIfExists(convertedFile);
@@ -227,7 +228,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
         Map<String, Object> body = response.getBody();
         assertEquals(false, body.get("success"));
         assertEquals(true, body.get("conflictBlocked"));
-        verify(datasetService, never()).bulkLoadChunked(any(), any(), any(), anyLong(), any(), any(), any());
+        verify(datasetService, never()).bulkLoadChunked(any(), any(), any(), anyLong(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -244,7 +245,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals(true, response.getBody().get("conflictBlocked"));
-        verify(datasetService, never()).bulkLoadChunked(any(), any(), any(), anyLong(), any(), any(), any());
+        verify(datasetService, never()).bulkLoadChunked(any(), any(), any(), anyLong(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -260,7 +261,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         verify(datasetService).bulkLoadChunked(eq(projectId), any(InputStream.class), eq(RDFFormat.TURTLE),
-                anyLong(), any(ImportOptions.class), isNull(), isNull());
+                anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
     }
 
     @Test
@@ -300,7 +301,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals(false, response.getBody().get("success"));
-        verify(datasetService, never()).bulkLoadChunked(any(), any(), any(), anyLong(), any(), any(), any());
+        verify(datasetService, never()).bulkLoadChunked(any(), any(), any(), anyLong(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -319,7 +320,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         verify(datasetService).bulkLoadChunked(eq(projectId), any(InputStream.class), eq(RDFFormat.TURTLE),
-                anyLong(), any(ImportOptions.class), isNull(), eq(draftGraphUri));
+                anyLong(), any(ImportOptions.class), isNull(), eq(draftGraphUri), eq(true), eq(userId));
     }
 
     @Test
@@ -332,7 +333,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
         doThrow(new RuntimeException("Unexpected end of file"))
                 .doNothing()
                 .when(datasetService).bulkLoadChunked(eq(projectId), any(InputStream.class), eq(RDFFormat.RDFXML),
-                        anyLong(), any(ImportOptions.class), isNull(), isNull());
+                        anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
 
         try (MockedStatic<OWLFormatConverter> mockedConverter = mockStatic(OWLFormatConverter.class)) {
             mockedConverter.when(() -> OWLFormatConverter.convertToRDFXML(any(Path.class))).thenReturn(convertedFile);
@@ -346,7 +347,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
 
             assertEquals(HttpStatus.OK, response.getStatusCode());
             verify(datasetService, times(2)).bulkLoadChunked(eq(projectId), any(InputStream.class), eq(RDFFormat.RDFXML),
-                    anyLong(), any(ImportOptions.class), isNull(), isNull());
+                    anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
         } finally {
             Files.deleteIfExists(convertedFile);
         }
@@ -357,7 +358,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
         String projectId = "proj-rdfxml-fatal";
         doThrow(new RuntimeException("GraphDB connection refused"))
                 .when(datasetService).bulkLoadChunked(eq(projectId), any(InputStream.class), eq(RDFFormat.RDFXML),
-                        anyLong(), any(ImportOptions.class), isNull(), isNull());
+                        anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
 
         Map<String, Object> request = new HashMap<>();
         request.put("content", "<rdf:RDF></rdf:RDF>");
@@ -385,7 +386,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
             intervals.add(new long[]{start, System.nanoTime()});
             return null;
         }).when(datasetService).bulkLoadChunked(eq(projectId), any(InputStream.class), eq(RDFFormat.TURTLE),
-                anyLong(), any(ImportOptions.class), isNull(), isNull());
+                anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);

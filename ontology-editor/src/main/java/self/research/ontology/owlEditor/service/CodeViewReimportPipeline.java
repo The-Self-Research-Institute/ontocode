@@ -217,7 +217,8 @@ public class CodeViewReimportPipeline {
 
     private void importWithRetry(ReimportRequest req, ReimportFiles files) throws IOException {
         try {
-            streamIntoGraphDb(req.projectId(), files.importSourceFile, files.rdfFormat, req.targetGraphOverride());
+            streamIntoGraphDb(req.projectId(), files.importSourceFile, files.rdfFormat, req.targetGraphOverride(),
+                    req.draft(), req.userId());
         } catch (RuntimeException bulkEx) {
             if (files.rdfFormat == RDFFormat.RDFXML && isXmlStructuralError(bulkEx)) {
                 log.warn("[CODE-VIEW-SAVE] RDF/XML reimport failed with structural XML error; retrying after OWL API re-serialization for project: {}. Error: {}",
@@ -229,7 +230,8 @@ public class CodeViewReimportPipeline {
                 files.importSourceFile = retryConverted;
                 files.generatedFile = retryConverted;
                 files.reserializedOnRetry = true;
-                streamIntoGraphDb(req.projectId(), files.importSourceFile, RDFFormat.RDFXML, req.targetGraphOverride());
+                streamIntoGraphDb(req.projectId(), files.importSourceFile, RDFFormat.RDFXML, req.targetGraphOverride(),
+                        req.draft(), req.userId());
                 log.info("[CODE-VIEW-SAVE] OWL API re-serialization retry succeeded ({} bytes)", Files.size(files.importSourceFile));
             } else {
                 throw bulkEx;
@@ -272,7 +274,7 @@ public class CodeViewReimportPipeline {
         log.warn("[CODE-VIEW-SAVE] Restoring project {} from pre-apply snapshot {} ({} bytes, draft={})",
                 projectId, snapshot.getFileName(), Files.size(snapshot), draft);
         String targetGraphOverride = draft ? datasetService.getDraftGraphUri(projectId, userId) : null;
-        streamIntoGraphDb(projectId, snapshot, RdfFiles.snapshotFormat(snapshot), targetGraphOverride);
+        streamIntoGraphDb(projectId, snapshot, RdfFiles.snapshotFormat(snapshot), targetGraphOverride, false, null);
         invalidateReasonerCaches(projectId);
         if (draft) {
             invalidateAfterDraftReplaced(projectId, userId);
@@ -390,10 +392,12 @@ public class CodeViewReimportPipeline {
         }
     }
 
-    private void streamIntoGraphDb(String projectId, Path file, RDFFormat rdfFormat, String targetGraphOverride) throws IOException {
+    private void streamIntoGraphDb(String projectId, Path file, RDFFormat rdfFormat, String targetGraphOverride,
+                                   boolean draft, String userId) throws IOException {
         long size = Files.size(file);
         try (InputStream is = Files.newInputStream(file)) {
-            datasetService.bulkLoadChunked(projectId, is, rdfFormat, size, ImportOptions.defaults(), null, targetGraphOverride);
+            datasetService.bulkLoadChunked(projectId, is, rdfFormat, size, ImportOptions.defaults(), null,
+                    targetGraphOverride, draft, userId);
         }
     }
 
