@@ -92,6 +92,8 @@ function sortModelsTopFirst(models: KnownModel[]): KnownModel[] {
   return [...flagship, ...budget];
 }
 
+const GEMINI_NON_CHAT = /banana|image|tts|audio|embedding|aqa/i;
+
 async function listGeminiModels(key: string): Promise<KnownModel[]> {
   const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
     headers: { 'x-goog-api-key': key },
@@ -101,6 +103,7 @@ async function listGeminiModels(key: string): Promise<KnownModel[]> {
   const models = Array.isArray(data?.models) ? data.models : [];
   const known = models
     .filter((m: any) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+    .filter((m: any) => !GEMINI_NON_CHAT.test(`${m?.name ?? ''} ${m?.displayName ?? ''}`))
     .map((m: any) => ({
       id: String(m.name ?? '').replace(/^models\//, ''),
       label: String(m.displayName ?? m.name ?? '').replace(/^models\//, ''),
@@ -139,7 +142,7 @@ async function listOpenAIModels(key: string): Promise<KnownModel[]> {
   const data = await res.json().catch(() => null);
   const models = Array.isArray(data?.data) ? data.data : [];
 
-  const NON_CHAT = /audio|embedding|whisper|tts|instruct|realtime|transcribe|search|moderation|davinci|babbage|image|vision-preview$/i;
+  const NON_CHAT = /audio|embedding|whisper|tts|instruct|realtime|transcribe|search|moderation|davinci|babbage|image|dall-e|sora|vision-preview$/i;
   return sortModelsTopFirst(
     models
       .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.id ?? '') }))
