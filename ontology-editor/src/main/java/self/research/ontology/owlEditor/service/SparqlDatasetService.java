@@ -263,9 +263,31 @@ public class SparqlDatasetService {
     }
 
    
-    private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces) {
+    private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces, RDFFormat format) {
+        persistCapturedNamespaces(projectId, capturedNamespaces, false, null, format);
+    }
+
+    private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces,
+                                           boolean draft, String userId, RDFFormat format) {
         if (capturedNamespaces.isEmpty()) {
-            log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
+            if (!format.supportsNamespaces()) {
+                log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
+                return;
+            }
+            log.info("[NAMESPACES] Document now declares no prefixes for project {} — clearing stored prefixes", projectId);
+        }
+        if (draft) {
+            if (draftSessionRepository == null || userId == null || userId.isBlank()) {
+                log.warn("[NAMESPACES] Cannot persist draft prefixes for project {} — no draft session repository or userId", projectId);
+                return;
+            }
+            draftSessionRepository.findByProjectIdAndUserId(projectId, userId).ifPresentOrElse(session -> {
+                session.setPrefixes(capturedNamespaces);
+                draftSessionRepository.save(session);
+                log.info("[NAMESPACES] Persisted {} draft prefix mappings for project {} user {}: {}",
+                        capturedNamespaces.size(), projectId, userId, capturedNamespaces.keySet());
+            }, () -> log.warn("[NAMESPACES] No draft session found for project {} user {} — draft prefixes not persisted",
+                    projectId, userId));
             return;
         }
         if (projectMetadataService != null) {
@@ -282,6 +304,58 @@ public class SparqlDatasetService {
             }
         } else {
             log.warn("[NAMESPACES] projectMetadataService unavailable — prefixes not persisted for project {}", projectId);
+        }
+    }
+
+    public void captureAndPersistPrefixesFromFile(String projectId, Path file, String format,
+                                                  boolean draft, String userId) {
+        Path converted = null;
+        try {
+            RDFFormat rdfFormat;
+            Path sourceForCapture;
+            if (OwlFormatPatchPlanner.supports(format)) {
+                converted = self.research.ontology.owlEditor.util.OWLFormatConverter.convertToRDFXML(file);
+                sourceForCapture = converted;
+                rdfFormat = RDFFormat.RDFXML;
+            } else {
+                sourceForCapture = file;
+                rdfFormat = switch (format.toLowerCase(java.util.Locale.ROOT)) {
+                    case "turtle", "ttl" -> RDFFormat.TURTLE;
+                    case "ntriples", "nt" -> RDFFormat.NTRIPLES;
+                    case "jsonld" -> RDFFormat.JSONLD;
+                    default -> RDFFormat.RDFXML;
+                };
+            }
+            Map<String, String> capturedNamespaces = new LinkedHashMap<>();
+            try (InputStream in = Files.newInputStream(sourceForCapture)) {
+                RDFParser parser = Rio.createParser(rdfFormat);
+                parser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
+                parser.setRDFHandler(new AbstractRDFHandler() {
+                    @Override
+                    public void handleNamespace(String prefix, String uri) {
+                        if (prefix != null && uri != null && !uri.isBlank()) {
+                            capturedNamespaces.putIfAbsent(prefix, uri);
+                        }
+                    }
+                });
+                parser.parse(in, "");
+            }
+            byte[] head;
+            try (InputStream headStream = Files.newInputStream(sourceForCapture)) {
+                head = headStream.readNBytes(32768);
+            }
+            self.research.ontology.owlEditor.util.XmlnsDeclarations.mergeRootDeclarations(capturedNamespaces, head, head.length);
+            persistCapturedNamespaces(projectId, capturedNamespaces, draft, userId, rdfFormat);
+        } catch (Exception e) {
+            log.warn("[NAMESPACES] Failed to extract/persist prefixes after patch for project {}: {}",
+                    projectId, e.getMessage());
+        } finally {
+            if (converted != null) {
+                try {
+                    Files.deleteIfExists(converted);
+                } catch (java.io.IOException ignored) {
+                }
+            }
         }
     }
 
@@ -312,6 +386,49 @@ public class SparqlDatasetService {
             log.warn("[NAMESPACES] Failed to read prefixes from MongoDB for project {}: {}", projectId, e.getMessage());
         }
         return prefixes;
+    }
+
+    Map<String, String> readProjectPrefixes(String projectId, boolean draft, String userId) {
+        Map<String, String> prefixes = new LinkedHashMap<>(readProjectPrefixes(projectId));
+        if (draft && draftSessionRepository != null && userId != null && !userId.isBlank()) {
+            draftSessionRepository.findByProjectIdAndUserId(projectId, userId)
+                    .map(self.research.ontology.owlEditor.model.DraftSession::getPrefixes)
+                    .ifPresent(prefixes::putAll);
+        }
+        return prefixes;
+    }
+
+    public void updateDraftPrefix(String projectId, String userId, String prefix, String iri, String oldPrefix) {
+        if (draftSessionRepository == null || userId == null || userId.isBlank()) {
+            log.warn("[NAMESPACES] Cannot update draft prefix for project {} — no draft session repository or userId", projectId);
+            return;
+        }
+        draftSessionRepository.findByProjectIdAndUserId(projectId, userId).ifPresentOrElse(session -> {
+            Map<String, String> prefixes = session.getPrefixes() != null
+                    ? new LinkedHashMap<>(session.getPrefixes()) : new LinkedHashMap<>();
+            if (oldPrefix != null && !oldPrefix.equals(prefix)) {
+                prefixes.remove(oldPrefix);
+            }
+            prefixes.put(prefix, iri);
+            session.setPrefixes(prefixes);
+            draftSessionRepository.save(session);
+        }, () -> log.warn("[NAMESPACES] No draft session found for project {} user {} — draft prefix not updated",
+                projectId, userId));
+    }
+
+    public void deleteDraftPrefix(String projectId, String userId, String prefix) {
+        if (draftSessionRepository == null || userId == null || userId.isBlank()) {
+            return;
+        }
+        draftSessionRepository.findByProjectIdAndUserId(projectId, userId).ifPresent(session -> {
+            if (session.getPrefixes() == null || !session.getPrefixes().containsKey(prefix)) {
+                return;
+            }
+            Map<String, String> prefixes = new LinkedHashMap<>(session.getPrefixes());
+            prefixes.remove(prefix);
+            session.setPrefixes(prefixes);
+            draftSessionRepository.save(session);
+        });
     }
 
     private static String normalizePrefixKey(String prefix) {
@@ -1205,7 +1322,7 @@ public class SparqlDatasetService {
     }
 
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {
-        return exportDraftGraphContent(projectId, userId, rdfFormat, java.util.Map.of());
+        return exportDraftGraphContent(projectId, userId, rdfFormat, readProjectPrefixes(projectId, true, userId));
     }
 
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat,
@@ -1596,6 +1713,19 @@ public class SparqlDatasetService {
                                 ImportOptions options,
                                 ProgressListener progressListener,
                                 String targetGraphUriOverride) {
+        bulkLoadChunked(projectId, inputStream, rdfFormat, fileSizeBytes, options, progressListener,
+                targetGraphUriOverride, false, null);
+    }
+
+    public void bulkLoadChunked(String projectId,
+                                InputStream inputStream,
+                                RDFFormat rdfFormat,
+                                long fileSizeBytes,
+                                ImportOptions options,
+                                ProgressListener progressListener,
+                                String targetGraphUriOverride,
+                                boolean draft,
+                                String draftUserId) {
         long bulkLoadStart = System.nanoTime();
         int batchSize = resolveBatchSize(fileSizeBytes);
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
@@ -1792,7 +1922,7 @@ public class SparqlDatasetService {
                     long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
                     log.info("[TIMING] RDF parsing completed in {} ms ({} triples parsed)", elapsedMillis(parseStart), totalTriples.get());
-                    persistCapturedNamespaces(projectId, capturedNamespaces);
+                    persistCapturedNamespaces(projectId, capturedNamespaces, draft, draftUserId, rdfFormat);
 
                     // Upload remaining triples
                     if (partitionByNamespace) {
@@ -2054,7 +2184,7 @@ public class SparqlDatasetService {
                 } catch (Exception headEx) {
                     log.debug("[NAMESPACES] Could not read file head for xmlns scan: {}", headEx.getMessage());
                 }
-                persistCapturedNamespaces(projectId, capturedNamespaces);
+                persistCapturedNamespaces(projectId, capturedNamespaces, rdfFormat);
             } catch (Exception nsEx) {
                 log.warn("[NAMESPACES] Failed to extract/register namespaces after DirectUpload for project {}: {}",
                         projectId, nsEx.getMessage());
@@ -2634,8 +2764,9 @@ public class SparqlDatasetService {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long exportStart = System.nanoTime();
+            boolean draft = userId != null && !userId.isBlank() && shouldScopeReadsToDraftCopy(projectId, userId);
             List<IRI> contexts = new ArrayList<>();
-            if (userId != null && !userId.isBlank() && shouldScopeReadsToDraftCopy(projectId, userId)) {
+            if (draft) {
                 contexts.add(conn.getValueFactory().createIRI(getDraftGraphUri(projectId, userId)));
             } else {
                 for (String g : getAllGraphUris(conn, projectId)) {
@@ -2643,7 +2774,8 @@ public class SparqlDatasetService {
                 }
             }
             conn.export(
-                projectScopedWriter(projectId, Rio.createWriter(format, new OutputStreamWriter(out, StandardCharsets.UTF_8))),
+                projectScopedWriter(projectId, Rio.createWriter(format, new OutputStreamWriter(out, StandardCharsets.UTF_8)),
+                        draft, userId),
                 contexts.toArray(new IRI[0])
             );
             log.info("[TIMING] exportDatasetToStream for project {}: {} ms (format: {}, draftSession: {})",
@@ -2663,7 +2795,14 @@ public class SparqlDatasetService {
      * system prefixes and the default prefix (which would come from whichever project set it last).
      */
     private RDFHandler projectScopedWriter(String projectId, RDFWriter writer) {
-        Map<String, String> ownPrefixes = readProjectPrefixes(projectId);
+        return projectScopedWriter(writer, readProjectPrefixes(projectId));
+    }
+
+    private RDFHandler projectScopedWriter(String projectId, RDFWriter writer, boolean draft, String userId) {
+        return projectScopedWriter(writer, readProjectPrefixes(projectId, draft, userId));
+    }
+
+    private RDFHandler projectScopedWriter(RDFWriter writer, Map<String, String> ownPrefixes) {
         return new org.eclipse.rdf4j.rio.helpers.RDFHandlerWrapper(writer) {
             @Override
             public void startRDF() {

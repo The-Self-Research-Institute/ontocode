@@ -5,8 +5,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -64,6 +66,58 @@ public class StorageManager {
 
     public void writeRestoreSnapshot(String projectId, Path target) throws IOException  {
         exporter.writeRestoreSnapshot(projectId, target);
+    }
+
+    public void writeRestoreSnapshot(String projectId, String userId, Path target) throws IOException  {
+        exporter.writeRestoreSnapshot(projectId, userId, target);
+    }
+
+    public record ContentScope(boolean draft, String userId) {
+        public static ContentScope publicScope() {
+            return new ContentScope(false, null);
+        }
+    }
+
+    public Path resolveCodeViewFile(String projectId, String format, ContentScope scope) throws IOException {
+        return scope.draft() ? exporter.exportDraftCodeViewFile(projectId, scope.userId(), format)
+                             : ensureCodeViewFile(projectId, format);
+    }
+
+    public long resolveGraphVersion(String projectId, ContentScope scope) {
+        return scope.draft() ? getDraftGraphVersion(projectId, scope.userId()) : getPublicGraphVersion(projectId);
+    }
+
+    public CodeViewPage resolveCodeViewPage(String projectId, String format, long startLine, int lineCount,
+                                            ContentScope scope) throws IOException {
+        if (!scope.draft()) {
+            return readCodeViewPage(projectId, format, startLine, lineCount);
+        }
+        Path file = exporter.exportDraftCodeViewFile(projectId, scope.userId(), format);
+        try {
+            return readPageSequential(file, startLine, lineCount);
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    private static CodeViewPage readPageSequential(Path file, long startLine, int lineCount) throws IOException {
+        StringBuilder page = new StringBuilder();
+        long line = 0;
+        int collected = 0;
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            String current;
+            while ((current = reader.readLine()) != null) {
+                if (line >= startLine && collected < lineCount) {
+                    if (collected > 0) {
+                        page.append('\n');
+                    }
+                    page.append(current);
+                    collected++;
+                }
+                line++;
+            }
+        }
+        return new CodeViewPage(page.toString(), startLine, collected, line, Files.size(file));
     }
 
     public Path exportOntology(String projectId, String format) throws IOException  {

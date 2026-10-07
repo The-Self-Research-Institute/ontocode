@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -81,7 +82,7 @@ class CodeViewReimportPipelineTest {
         assertEquals(RDFFormat.TURTLE, result.rdfFormat());
         assertEquals(9L, result.sourceVersion());
         verify(datasetService).bulkLoadChunked(eq("proj-1"), any(InputStream.class), eq(RDFFormat.TURTLE),
-                anyLong(), any(ImportOptions.class), isNull(), isNull());
+                anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), eq("u1"));
         verify(metadataService).incrementMutationVersion("proj-1");
         verify(storageManager).clearCodeViewCache("proj-1");
         verify(storageManager).storeCodeViewCache(eq("proj-1"), any(), eq("turtle"));
@@ -120,7 +121,7 @@ class CodeViewReimportPipelineTest {
         doThrow(new RuntimeException("XML document structures must be terminated"))
                 .doNothing()
                 .when(datasetService).bulkLoadChunked(anyString(), any(InputStream.class), eq(RDFFormat.RDFXML),
-                        anyLong(), any(ImportOptions.class), isNull(), isNull());
+                        anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), eq("u1"));
 
         try (MockedStatic<OWLFormatConverter> mocked = mockStatic(OWLFormatConverter.class)) {
             mocked.when(() -> OWLFormatConverter.sanitizeFileOnDisk(any(Path.class))).thenAnswer(inv -> null);
@@ -131,7 +132,7 @@ class CodeViewReimportPipelineTest {
 
             assertEquals(RDFFormat.RDFXML, result.rdfFormat());
             verify(datasetService, times(2)).bulkLoadChunked(anyString(), any(InputStream.class),
-                    eq(RDFFormat.RDFXML), anyLong(), any(ImportOptions.class), isNull(), isNull());
+                    eq(RDFFormat.RDFXML), anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), eq("u1"));
         }
     }
 
@@ -141,7 +142,7 @@ class CodeViewReimportPipelineTest {
         Path contentFile = fileWith("ttl", ":A a owl:Class .");
         doThrow(new RuntimeException("connection refused"))
                 .when(datasetService).bulkLoadChunked(anyString(), any(InputStream.class), eq(RDFFormat.TURTLE),
-                        anyLong(), any(ImportOptions.class), isNull(), isNull());
+                        anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), eq("u1"));
 
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () ->
                 pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
@@ -213,7 +214,7 @@ class CodeViewReimportPipelineTest {
         pipeline.restoreSnapshot("proj-1", snapshot);
 
         verify(datasetService).bulkLoadChunked(eq("proj-1"), any(InputStream.class), eq(RDFFormat.NTRIPLES),
-                anyLong(), any(ImportOptions.class), isNull(), isNull());
+                anyLong(), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
     }
 
     @Test
@@ -225,7 +226,7 @@ class CodeViewReimportPipelineTest {
                 true, "u1", "User", "urn:draft:graph:u1", null, false));
 
         verify(datasetService).bulkLoadChunked(eq("proj-1"), any(InputStream.class), eq(RDFFormat.TURTLE),
-                anyLong(), any(ImportOptions.class), isNull(), eq("urn:draft:graph:u1"));
+                anyLong(), any(ImportOptions.class), isNull(), eq("urn:draft:graph:u1"), eq(true), eq("u1"));
     }
 
     @Test
@@ -252,7 +253,7 @@ class CodeViewReimportPipelineTest {
 
         assertEquals(9L, version);
         verify(datasetService).bulkLoadChunked(eq("proj-1"), any(InputStream.class), eq(RDFFormat.RDFXML),
-                eq(Files.size(snapshot)), any(ImportOptions.class), isNull(), isNull());
+                eq(Files.size(snapshot)), any(ImportOptions.class), isNull(), isNull(), eq(false), isNull());
         verify(datasetService).markProjectDirty("proj-1");
         verify(metadataService).incrementMutationVersion("proj-1");
         verify(storageManager).clearCodeViewCache("proj-1");
@@ -268,7 +269,7 @@ class CodeViewReimportPipelineTest {
                 () -> pipeline.restoreSnapshot("proj-1", missing));
 
         verify(datasetService, never()).bulkLoadChunked(anyString(), any(InputStream.class), any(RDFFormat.class),
-                anyLong(), any(ImportOptions.class), any(), any());
+                anyLong(), any(ImportOptions.class), any(), any(), anyBoolean(), any());
         verify(metadataService, never()).incrementMutationVersion(anyString());
     }
 
@@ -276,7 +277,8 @@ class CodeViewReimportPipelineTest {
     void restoreSnapshotPropagatesAGraphFailureAndLeavesCachesAlone() throws Exception {
         Path snapshot = fileWith("owl", "<rdf:RDF/>");
         doThrow(new RuntimeException("GraphDB down")).when(datasetService).bulkLoadChunked(anyString(),
-                any(InputStream.class), any(RDFFormat.class), anyLong(), any(ImportOptions.class), any(), any());
+                any(InputStream.class), any(RDFFormat.class), anyLong(), any(ImportOptions.class), any(), any(),
+                anyBoolean(), any());
 
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> pipeline.restoreSnapshot("proj-1", snapshot));
@@ -308,7 +310,7 @@ class CodeViewReimportPipelineTest {
     }
 
     @Test
-    void anAssistantApplyRefreshesTheCachedCountsInTheBackground() throws Exception {
+    void anAssistantApplyRefreshesTheCachedCountsImmediately() throws Exception {
         OntologyIndexService indexService = withMetadataRefresh();
         Map<String, Object> meta = Map.of("classes", 3);
         when(indexService.computeMetadata("proj-1")).thenReturn(meta);
@@ -316,10 +318,8 @@ class CodeViewReimportPipelineTest {
         pipeline.reimport(new ReimportRequest("proj-1", "turtle", fileWith("ttl", ":A a owl:Class ."),
                 false, "u1", "User", null, null, false, ChangeOrigin.ai("g1", "claude", "m", "s1", "add A")));
 
-        verify(metadataService, never()).writeMeta(anyString(), any());
-        assertEquals(1, queuedRefreshes.size());
-        queuedRefreshes.poll().run();
         verify(metadataService).writeMeta("proj-1", meta);
+        assertTrue(queuedRefreshes.isEmpty());
     }
 
     @Test

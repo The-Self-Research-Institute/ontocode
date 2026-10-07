@@ -47,6 +47,27 @@ final class OntologyExporter {
         }
     }
 
+    public void writeRestoreSnapshot(String projectId, String userId, Path target) throws IOException {
+        try (OutputStream out = Files.newOutputStream(target)) {
+            datasetService.exportDatasetToStream(projectId, userId, org.eclipse.rdf4j.rio.RDFFormat.NTRIPLES, out);
+        }
+    }
+
+    public Path exportDraftCodeViewFile(String projectId, String userId, String format) throws IOException {
+        String extension = extensionFor(format);
+        Path tempFile = Files.createTempFile("codeview-draft-", "." + extension);
+        if (requiresOwlApiFormat(format)) {
+            String rdfXmlContent = datasetService.exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
+            String converted = convertRdfXmlToOwlApiFormat(rdfXmlContent, format);
+            AtomicFileWrite.writeString(tempFile, converted);
+            return tempFile;
+        }
+        RDFFormat rdfFormat = resolveLang(format);
+        String content = datasetService.exportDraftGraphContent(projectId, userId, rdfFormat);
+        AtomicFileWrite.writeString(tempFile, content);
+        return tempFile;
+    }
+
     public Path exportOntology(String projectId, String format) throws IOException {
         log.info("Exporting ontology from GraphDB for project: {}", projectId);
         if (requiresOwlApiFormat(format)) {

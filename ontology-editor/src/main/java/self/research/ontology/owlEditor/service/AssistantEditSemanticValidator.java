@@ -72,6 +72,11 @@ public class AssistantEditSemanticValidator {
 
     public List<CheckResult> check(String projectId, String targetPath, List<SemanticEdit> edits,
                                    Set<String> introducedByOperation) {
+        return check(projectId, targetPath, edits, introducedByOperation, StorageManager.ContentScope.publicScope());
+    }
+
+    public List<CheckResult> check(String projectId, String targetPath, List<SemanticEdit> edits,
+                                   Set<String> introducedByOperation, StorageManager.ContentScope scope) {
         if (!AssistantRenameService.isSupportedFormat(targetPath)) {
             return notApplicable(targetPath);
         }
@@ -79,8 +84,10 @@ public class AssistantEditSemanticValidator {
                 .sorted(Comparator.comparingLong(SemanticEdit::startLine))
                 .toList();
         Extracted extracted;
+        Path file = null;
         try {
-            Path file = storageManager.ensureCodeViewFile(projectId, targetPath);
+            file = scope.draft() ? storageManager.resolveCodeViewFile(projectId, targetPath, scope)
+                                 : storageManager.ensureCodeViewFile(projectId, targetPath);
             extracted = AssistantRenameService.isRdfXml(targetPath)
                     ? extractRdfXml(file, sorted)
                     : extractTurtle(file, sorted);
@@ -90,6 +97,13 @@ public class AssistantEditSemanticValidator {
             String detail = "Could not read the document to check this group (" + e.getMessage() + ").";
             return List.of(new CheckResult(REFERENCES_RESOLVE, false, detail),
                     new CheckResult(NO_CONFLICTING_DECLARATION, false, detail));
+        } finally {
+            if (scope.draft() && file != null) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (Exception ignored) {
+                }
+            }
         }
         Set<String> introduced = introducedByOperation == null ? Set.of() : introducedByOperation;
         List<CheckResult> results = new ArrayList<>();

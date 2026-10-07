@@ -27,6 +27,9 @@ public class AssistantEditGroupDocument {
     private String clientGroupId;
     private String targetPath;
 
+    private boolean draft;
+    private String draftUserId;
+
     private List<EditEntry> edits;
 
     private AssistantEditGroupStatus status;

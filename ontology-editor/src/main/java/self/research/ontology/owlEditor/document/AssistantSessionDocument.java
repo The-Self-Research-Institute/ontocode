@@ -27,6 +27,9 @@ public class AssistantSessionDocument {
     private String provider;
     private String model;
 
+    private boolean draft;
+    private String draftUserId;
+
     private Long pinnedRevision;
 
     private AssistantSessionStatus status;

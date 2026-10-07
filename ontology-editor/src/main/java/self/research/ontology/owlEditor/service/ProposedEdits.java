@@ -22,12 +22,12 @@ final class ProposedEdits {
     }
 
     static boolean matchesLiveContentInOnePass(StorageManager storageManager, String projectId, String targetPath,
-                                               List<EditInput> sortedEdits) {
+                                               List<EditInput> sortedEdits, StorageManager.ContentScope scope) {
         List<CodeViewRangeMatcher.ExpectedRange> expected = sortedEdits.stream()
                 .map(e -> new CodeViewRangeMatcher.ExpectedRange(e.range().startLine(), e.range().lineCount(),
                         e.originalText()))
                 .toList();
-        return new CodeViewRangeMatcher(storageManager).allMatch(projectId, targetPath, expected);
+        return new CodeViewRangeMatcher(storageManager).allMatch(projectId, targetPath, expected, scope);
     }
 
     static boolean isRangeWellFormed(EditInput edit) {
@@ -54,13 +54,17 @@ final class ProposedEdits {
         return true;
     }
 
-    static boolean matchesLiveContent(StorageManager storageManager, String projectId, EditInput edit) {
+    static boolean matchesLiveContent(StorageManager storageManager, String projectId, EditInput edit,
+                                      StorageManager.ContentScope scope) {
         if (edit.range().lineCount() == 0) {
             return true;
         }
         try {
-            StorageManager.CodeViewPage page = storageManager.readCodeViewPage(
-                    projectId, edit.targetPath(), edit.range().startLine(), edit.range().lineCount());
+            StorageManager.CodeViewPage page = scope.draft()
+                    ? storageManager.resolveCodeViewPage(projectId, edit.targetPath(), edit.range().startLine(),
+                            edit.range().lineCount(), scope)
+                    : storageManager.readCodeViewPage(
+                            projectId, edit.targetPath(), edit.range().startLine(), edit.range().lineCount());
             return page.content().equals(edit.originalText());
         } catch (Exception e) {
             log.warn("[Assistant] Live-content check failed for {}:{}-{}: {}",

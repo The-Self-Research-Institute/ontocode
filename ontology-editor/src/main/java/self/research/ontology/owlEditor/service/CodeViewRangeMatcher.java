@@ -24,10 +24,7 @@ public class CodeViewRangeMatcher {
     }
 
     public boolean allMatch(String projectId, String format, List<ExpectedRange> ranges) {
-        List<ExpectedRange> sorted = ranges.stream()
-                .filter(r -> r.lineCount() > 0)
-                .sorted(Comparator.comparingLong(ExpectedRange::startLine))
-                .toList();
+        List<ExpectedRange> sorted = sortAndFilter(ranges);
         if (sorted.isEmpty()) {
             return true;
         }
@@ -36,9 +33,6 @@ public class CodeViewRangeMatcher {
         }
         try {
             Path file = storageManager.ensureCodeViewFile(projectId, format);
-            if (file == null) {
-                return false;
-            }
             try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
                 return matchSequentially(reader, sorted);
             }
@@ -46,6 +40,44 @@ public class CodeViewRangeMatcher {
             log.warn("[Assistant] Live-content check failed for {} {}: {}", projectId, format, e.getMessage());
             return false;
         }
+    }
+
+    public boolean allMatch(String projectId, String format, List<ExpectedRange> ranges,
+                            StorageManager.ContentScope scope) {
+        if (!scope.draft()) {
+            return allMatch(projectId, format, ranges);
+        }
+        List<ExpectedRange> sorted = sortAndFilter(ranges);
+        if (sorted.isEmpty()) {
+            return true;
+        }
+        if (overlaps(sorted)) {
+            return false;
+        }
+        Path file = null;
+        try {
+            file = storageManager.resolveCodeViewFile(projectId, format, scope);
+            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                return matchSequentially(reader, sorted);
+            }
+        } catch (Exception e) {
+            log.warn("[Assistant] Live-content check failed for {} {}: {}", projectId, format, e.getMessage());
+            return false;
+        } finally {
+            if (file != null) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    private static List<ExpectedRange> sortAndFilter(List<ExpectedRange> ranges) {
+        return ranges.stream()
+                .filter(r -> r.lineCount() > 0)
+                .sorted(Comparator.comparingLong(ExpectedRange::startLine))
+                .toList();
     }
 
     private static boolean overlaps(List<ExpectedRange> sorted) {

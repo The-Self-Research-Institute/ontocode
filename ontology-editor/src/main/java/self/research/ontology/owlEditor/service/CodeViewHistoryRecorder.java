@@ -3,6 +3,7 @@ package self.research.ontology.owlEditor.service;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Model;
+import org.eclipse.rdf4j.model.Namespace;
 import org.eclipse.rdf4j.model.Resource;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.vocabulary.RDF;
@@ -56,6 +57,7 @@ final class CodeViewHistoryRecorder {
     void record(String projectId, String userId, String username, Model oldModel, Model newModel, boolean draft,
                 ChangeOrigin origin) {
         Actor actor = new Actor(projectId, userId, username, draft, origin != null ? origin : ChangeOrigin.manual());
+        recordPrefixChanges(actor, oldModel.getNamespaces(), newModel.getNamespaces());
         Set<Statement> added = new LinkedHashSet<>(newModel);
         added.removeAll(oldModel);
         Set<Statement> removed = new LinkedHashSet<>(oldModel);
@@ -88,6 +90,37 @@ final class CodeViewHistoryRecorder {
         }
         if (draftOps != null && !draftOps.isEmpty()) {
             draftTrackingService.recordDrafts(projectId, userId, username, draftOps, UUID.randomUUID().toString());
+        }
+    }
+
+    private void recordPrefixChanges(Actor actor, Set<Namespace> oldNamespaces, Set<Namespace> newNamespaces) {
+        Map<String, String> oldPrefixes = new LinkedHashMap<>();
+        oldNamespaces.forEach(ns -> oldPrefixes.put(ns.getPrefix(), ns.getName()));
+        Map<String, String> newPrefixes = new LinkedHashMap<>();
+        newNamespaces.forEach(ns -> newPrefixes.put(ns.getPrefix(), ns.getName()));
+
+        for (Map.Entry<String, String> entry : newPrefixes.entrySet()) {
+            String oldNamespace = oldPrefixes.get(entry.getKey());
+            if (oldNamespace == null) {
+                historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), "prefixAdded",
+                        null, entry.getKey(), null, entry.getValue(),
+                        "Code View save added prefix " + entry.getKey() + ": <" + entry.getValue() + ">",
+                        null, null, actor.draft(), actor.origin());
+            } else if (!oldNamespace.equals(entry.getValue())) {
+                historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), "prefixModified",
+                        null, entry.getKey(), oldNamespace, entry.getValue(),
+                        "Code View save changed prefix " + entry.getKey() + " from <" + oldNamespace
+                                + "> to <" + entry.getValue() + ">",
+                        null, null, actor.draft(), actor.origin());
+            }
+        }
+        for (String prefix : oldPrefixes.keySet()) {
+            if (!newPrefixes.containsKey(prefix)) {
+                historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), "prefixDeleted",
+                        null, prefix, oldPrefixes.get(prefix), null,
+                        "Code View save removed prefix " + prefix,
+                        null, null, actor.draft(), actor.origin());
+            }
         }
     }
 

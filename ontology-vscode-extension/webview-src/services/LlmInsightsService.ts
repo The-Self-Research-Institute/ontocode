@@ -87,9 +87,9 @@ export function getStoredModel(): string {
     const stored = localStorage.getItem(MODEL_STORAGE);
 
     const isKnownModel = stored != null && getProviderModels(provider).some((m) => m.id === stored);
-    return isKnownModel ? stored : PROVIDERS[provider].defaultModel;
+    return isKnownModel ? stored : "";
   } catch {
-    return PROVIDERS[DEFAULT_PROVIDER].defaultModel;
+    return "";
   }
 }
 
@@ -391,17 +391,8 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
   const provider = getStoredProvider();
   const model = getStoredModel();
 
-  try {
-    return await callModel(provider, key, model, prompt, signal);
-  } catch (e) {
-    if (!(e instanceof LlmModelNotFoundError)) {
-      if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
-      throw new LlmRequestError(
-        'Could not reach the AI provider. Check your connection and firewall settings.',
-      );
-    }
-
-    const tried = new Set([model]);
+  const findWorkingModel = async (seedError: LlmModelNotFoundError | null): Promise<string> => {
+    const tried = new Set(model ? [model] : []);
     const attemptAll = async (ids: string[]): Promise<string | null> => {
       for (const candidate of ids) {
         if (tried.has(candidate)) continue;
@@ -409,11 +400,11 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
         try {
           const text = await callModel(provider, key, candidate, prompt, signal);
           setStoredModel(candidate); // remember what actually works for this key
-          return (
-            `_Note: "${model}" isn't available for your API key — switched to ` +
-            `${PROVIDERS[provider].displayName}'s "${candidate}" and saved it as your model. ` +
-            `You can change this any time in AI settings._\n\n${text}`
-          );
+          return model
+            ? `_Note: "${model}" isn't available for your API key — switched to ` +
+              `${PROVIDERS[provider].displayName}'s "${candidate}" and saved it as your model. ` +
+              `You can change this any time in AI settings._\n\n${text}`
+            : text;
         } catch (candidateError) {
           if (candidateError instanceof LlmModelNotFoundError) {
             lastError = candidateError;
@@ -426,7 +417,7 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
       return null;
     };
 
-    let lastError: LlmModelNotFoundError = e;
+    let lastError = seedError;
     const cachedResult = await attemptAll(getProviderModels(provider).map(m => m.id));
     if (cachedResult) return cachedResult;
 
@@ -434,10 +425,30 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
     const liveResult = await attemptAll(liveModels.map(m => m.id));
     if (liveResult) return liveResult;
 
+    if (lastError) {
+      throw new LlmRequestError(
+        `${lastError.message} None of ${PROVIDERS[provider].displayName}'s known models worked for this ` +
+        'API key. Double-check the key at the provider\'s console, or try a different provider.',
+      );
+    }
     throw new LlmRequestError(
-      `${lastError.message} None of ${PROVIDERS[provider].displayName}'s known models worked for this ` +
-      'API key. Double-check the key at the provider\'s console, or try a different provider.',
+      `No ${PROVIDERS[provider].displayName} model is available yet. Open the model picker to refresh ` +
+      'the list, or double-check your API key.',
     );
+  };
+
+  if (!model) return findWorkingModel(null);
+
+  try {
+    return await callModel(provider, key, model, prompt, signal);
+  } catch (e) {
+    if (!(e instanceof LlmModelNotFoundError)) {
+      if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
+      throw new LlmRequestError(
+        'Could not reach the AI provider. Check your connection and firewall settings.',
+      );
+    }
+    return findWorkingModel(e);
   }
 }
 

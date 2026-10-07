@@ -55,6 +55,8 @@ export interface CreateAssistantSessionInput {
   model?: string;
   tokenBudget?: number;
   retrievalAttempts?: number;
+  draft?: boolean;
+  userId?: string;
 }
 
 export async function createAssistantSession(

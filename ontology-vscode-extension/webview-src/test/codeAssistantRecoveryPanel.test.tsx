@@ -15,6 +15,7 @@ vi.mock("../hooks/useSubscription", () => ({
 vi.mock("../services/LlmInsightsService", () => ({
   hasApiKey: () => true,
   setStoredApiKey: () => {},
+  getStoredModel: () => "stub-model",
 }));
 
 vi.mock("../components/CodeAssistantModelSwitcher", () => ({

@@ -83,7 +83,7 @@ class AssistantSourceContextReader {
         return new FormatAndValue(DEFAULT_FORMAT, trimmed);
     }
 
-    SourceRead statements(String projectId, String value) throws IOException {
+    SourceRead statements(String projectId, String value, StorageManager.ContentScope scope) throws IOException {
         FormatAndValue target = splitFormat(value);
         String format = target.format();
         boolean turtleLike = format.equals("turtle") || format.equals("ttl") || format.equals("ntriples")
@@ -92,15 +92,26 @@ class AssistantSourceContextReader {
             return new SourceRead(List.of(note(format, "Statement blocks can only be read from the turtle or rdfxml "
                     + "source, not " + format + ". Ask for turtle:" + target.value() + " instead.")), true);
         }
-        Path file = storageManager.ensureCodeViewFile(projectId, format);
-        SubjectBlocks blocks = indexedStatements(projectId, format, file, target.value());
-        if (blocks == null) {
-            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-                blocks = turtleLike
-                        ? TurtleSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS)
-                        : RdfXmlSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS);
+        Path file = scope.draft() ? storageManager.resolveCodeViewFile(projectId, format, scope)
+                                  : storageManager.ensureCodeViewFile(projectId, format);
+        try {
+            SubjectBlocks blocks = scope.draft() ? null : indexedStatements(projectId, format, file, target.value());
+            if (blocks == null) {
+                try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                    blocks = turtleLike
+                            ? TurtleSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS)
+                            : RdfXmlSubjectBlockReader.read(reader, target.value(), STATEMENT_LIMITS);
+                }
+            }
+            return statementItems(format, target, blocks);
+        } finally {
+            if (scope.draft()) {
+                Files.deleteIfExists(file);
             }
         }
+    }
+
+    private SourceRead statementItems(String format, FormatAndValue target, SubjectBlocks blocks) {
         List<Item> items = new ArrayList<>();
         boolean partial = blocks.moreBlocks();
         for (SubjectBlocks.Block block : blocks.blocks()) {
@@ -150,7 +161,7 @@ class AssistantSourceContextReader {
         return new SubjectBlocks(blocks, matches.size() > STATEMENT_LIMITS.maxBlocks());
     }
 
-    SourceRead diagnostics(String projectId, List<Target> targets) throws IOException {
+    SourceRead diagnostics(String projectId, List<Target> targets, StorageManager.ContentScope scope) throws IOException {
         Map<String, List<LineFilter>> filtersByFormat = new LinkedHashMap<>();
         List<Item> items = new ArrayList<>();
         boolean partial = false;
@@ -166,7 +177,7 @@ class AssistantSourceContextReader {
                     filtersByFormat.computeIfAbsent(identifier.format(), k -> new ArrayList<>());
                     continue;
                 }
-                IdentifierMentionLines.Result mentions = mentionLines(projectId, identifier);
+                IdentifierMentionLines.Result mentions = mentionLines(projectId, identifier, scope);
                 if (mentions.capped()) {
                     partial = true;
                     items.add(note(identifier.format(), identifier.value() + " is mentioned on more than "
@@ -181,21 +192,28 @@ class AssistantSourceContextReader {
             filtersByFormat.put(DEFAULT_FORMAT, List.of(new LineFilter(line -> true, fatal -> true)));
         }
         for (Map.Entry<String, List<LineFilter>> entry : filtersByFormat.entrySet()) {
-            partial |= diagnoseFormat(projectId, entry.getKey(), entry.getValue(), items);
+            partial |= diagnoseFormat(projectId, entry.getKey(), entry.getValue(), items, scope);
         }
         return new SourceRead(items, partial);
     }
 
-    private IdentifierMentionLines.Result mentionLines(String projectId, FormatAndValue identifier)
+    private IdentifierMentionLines.Result mentionLines(String projectId, FormatAndValue identifier,
+                                                        StorageManager.ContentScope scope)
             throws IOException {
-        Path file = storageManager.ensureCodeViewFile(projectId, identifier.format());
+        Path file = scope.draft() ? storageManager.resolveCodeViewFile(projectId, identifier.format(), scope)
+                                  : storageManager.ensureCodeViewFile(projectId, identifier.format());
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             return IdentifierMentionLines.scan(reader, identifier.value(),
                     rdfFormatFor(identifier.format()) == RDFFormat.RDFXML, MAX_MENTION_LINES);
+        } finally {
+            if (scope.draft()) {
+                Files.deleteIfExists(file);
+            }
         }
     }
 
-    private boolean diagnoseFormat(String projectId, String format, List<LineFilter> filters, List<Item> items)
+    private boolean diagnoseFormat(String projectId, String format, List<LineFilter> filters, List<Item> items,
+                                   StorageManager.ContentScope scope)
             throws IOException {
         RDFFormat rdfFormat = rdfFormatFor(format);
         if (rdfFormat == null) {
@@ -210,34 +228,41 @@ class AssistantSourceContextReader {
             return false;
         }
         LongPredicate union = line -> filters.stream().anyMatch(filter -> filter.accepts().test(line));
-        Path file = storageManager.ensureCodeViewFile(projectId, format);
-        RdfSourceDiagnostics.Result result =
-                RdfSourceDiagnostics.collect(file, rdfFormat, union, MAX_DIAGNOSTICS, diagnosticsTimeout);
-        boolean fatalShown = false;
-        for (RdfSourceDiagnostics.Issue issue : result.issues()) {
-            boolean fatal = issue.level() == RdfSourceDiagnostics.Level.FATAL;
-            fatalShown |= fatal;
-            String text = (issue.level() == RdfSourceDiagnostics.Level.WARNING ? "WARNING: " : "ERROR: ")
-                    + issue.message()
-                    + (fatal ? " Parsing stopped here, so nothing after this point was checked." : "");
-            items.add(Item.builder().source(format).range(issue.line() > 0 ? (issue.line() - 1) + "-1" : null)
-                    .text(text).kind("diagnostic").build());
+        Path file = scope.draft() ? storageManager.resolveCodeViewFile(projectId, format, scope)
+                                  : storageManager.ensureCodeViewFile(projectId, format);
+        try {
+            RdfSourceDiagnostics.Result result =
+                    RdfSourceDiagnostics.collect(file, rdfFormat, union, MAX_DIAGNOSTICS, diagnosticsTimeout);
+            boolean fatalShown = false;
+            for (RdfSourceDiagnostics.Issue issue : result.issues()) {
+                boolean fatal = issue.level() == RdfSourceDiagnostics.Level.FATAL;
+                fatalShown |= fatal;
+                String text = (issue.level() == RdfSourceDiagnostics.Level.WARNING ? "WARNING: " : "ERROR: ")
+                        + issue.message()
+                        + (fatal ? " Parsing stopped here, so nothing after this point was checked." : "");
+                items.add(Item.builder().source(format).range(issue.line() > 0 ? (issue.line() - 1) + "-1" : null)
+                        .text(text).kind("diagnostic").build());
+            }
+            if (result.capped()) {
+                items.add(note(format, "Only the first " + MAX_DIAGNOSTICS + " issues are shown; there are more."));
+            }
+            if (result.timedOut()) {
+                items.add(note(format, "The document took too long to check, so only its first part was checked."));
+            }
+            long fatalLine = result.fatalLine();
+            boolean stopMatters = result.stoppedEarly()
+                    && (fatalLine < 0 || filters.stream().anyMatch(filter -> filter.extendsBeyond().test(fatalLine)));
+            if (stopMatters && !fatalShown) {
+                items.add(note(format, "Parsing stopped early on an error"
+                        + (fatalLine > 0 ? " at line " + (fatalLine - 1) : "")
+                        + " outside the requested lines, so later lines were not checked."));
+            }
+            return result.capped() || result.timedOut() || stopMatters;
+        } finally {
+            if (scope.draft()) {
+                Files.deleteIfExists(file);
+            }
         }
-        if (result.capped()) {
-            items.add(note(format, "Only the first " + MAX_DIAGNOSTICS + " issues are shown; there are more."));
-        }
-        if (result.timedOut()) {
-            items.add(note(format, "The document took too long to check, so only its first part was checked."));
-        }
-        long fatalLine = result.fatalLine();
-        boolean stopMatters = result.stoppedEarly()
-                && (fatalLine < 0 || filters.stream().anyMatch(filter -> filter.extendsBeyond().test(fatalLine)));
-        if (stopMatters && !fatalShown) {
-            items.add(note(format, "Parsing stopped early on an error"
-                    + (fatalLine > 0 ? " at line " + (fatalLine - 1) : "")
-                    + " outside the requested lines, so later lines were not checked."));
-        }
-        return result.capped() || result.timedOut() || stopMatters;
     }
 
     static RDFFormat rdfFormatFor(String format) {

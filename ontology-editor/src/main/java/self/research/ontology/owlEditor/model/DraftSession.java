@@ -6,6 +6,7 @@ import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Document(collection = "draft_sessions")
 @CompoundIndexes({
@@ -26,6 +27,8 @@ public class DraftSession {
     private String baselineSnapshotPath;
 
     private DraftCopyStatus copyStatus;
+
+    private Map<String, String> prefixes;
 
     public DraftSession() {
         this.baselineAt = LocalDateTime.now();
@@ -62,4 +65,7 @@ public class DraftSession {
 
     public DraftCopyStatus getCopyStatus() { return copyStatus; }
     public void setCopyStatus(DraftCopyStatus copyStatus) { this.copyStatus = copyStatus; }
+
+    public Map<String, String> getPrefixes() { return prefixes; }
+    public void setPrefixes(Map<String, String> prefixes) { this.prefixes = prefixes; }
 }

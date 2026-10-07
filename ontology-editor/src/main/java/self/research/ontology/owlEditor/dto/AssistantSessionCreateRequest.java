@@ -12,4 +12,5 @@ public class AssistantSessionCreateRequest {
     private String model;
     private Integer tokenBudget;
     private Integer retrievalAttempts;
+    private boolean draft;
 }

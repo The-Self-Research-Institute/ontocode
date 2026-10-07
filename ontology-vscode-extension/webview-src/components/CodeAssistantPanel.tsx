@@ -3,6 +3,8 @@ import { BookOpen, X } from "lucide-react";
 import { AskAiIcon } from "./AskAiIcon";
 import CodeAssistantHelpGuide from "./CodeAssistantHelpGuide";
 import { setStoredApiKey } from "../services/LlmInsightsService";
+import { ontologyMutationService } from "../services/ontologyMutationService";
+import { resolveMutationActor } from "../utils/mutationActor";
 import { ProviderFooter, RecoveryNotice } from "./CodeAssistantPanelParts";
 import { CodeAssistantActionChips } from "./CodeAssistantActionChips";
 import { CodeAssistantTranscript } from "./CodeAssistantTranscript";
@@ -39,9 +41,15 @@ export interface PanelEditorSelection extends EditorSelectionContext {
   pageStartLine: number;
 }
 
-function composerPlaceholder(recoveryLocked: boolean, ready: boolean, action: CodeAssistantAction): string {
+function composerPlaceholder(
+  recoveryLocked: boolean,
+  ready: boolean,
+  modelUnavailable: boolean,
+  action: CodeAssistantAction,
+): string {
   if (recoveryLocked) return "Paused until the recovery notice above is resolved...";
   if (!ready) return "Add an API key using the model picker below...";
+  if (modelUnavailable) return "Couldn't load available models — check your API key below...";
   return action === "local-edit" ? "Describe the change you want..." : "Type your question...";
 }
 
@@ -146,8 +154,8 @@ const PanelFooter: React.FC<{
       input={c.input}
       setInput={c.setInput}
       commands={buildPanelCommands(c, projectId)}
-      disabled={c.run.busy || !projectId || !c.ready || c.recoveryLocked}
-      placeholder={composerPlaceholder(c.recoveryLocked, c.ready, c.action)}
+      disabled={c.run.busy || !projectId || !c.ready || c.modelUnavailable || c.recoveryLocked}
+      placeholder={composerPlaceholder(c.recoveryLocked, c.ready, c.modelUnavailable, c.action)}
       onSubmit={onSubmit}
     />
     <ProviderFooter c={c} />
@@ -159,7 +167,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => 
   const c = useCodeAssistantPanel(props);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
 
-  const submitMessage = (override?: PromptToRetry) =>
+  const submitMessage = (override?: PromptToRetry) => {
+    const draft = ontologyMutationService.isPrivateEditMode();
     void c.run.submit({
       text: (override?.text ?? c.input).trim(),
       action: override?.action ?? c.action,
@@ -169,7 +178,10 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => 
       selection: override ? null : editorSelection,
       fromRetry: Boolean(override),
       onSelectionUsed: props.onClearEditorSelection,
+      draft,
+      userId: draft ? resolveMutationActor().userId : undefined,
     });
+  };
 
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--color-background)" }}>

@@ -71,6 +71,11 @@ public class AssistantContextToolService {
         }
     }
 
+    private static StorageManager.ContentScope scopeFor(AssistantSessionDocument session) {
+        return session.isDraft() ? new StorageManager.ContentScope(true, session.getDraftUserId())
+                                 : StorageManager.ContentScope.publicScope();
+    }
+
     private ContextToolResult readAdmitted(String sessionId, AssistantSessionDocument session,
                                            List<Target> targets, String kind) {
         if (!sessionService.tryConsumeRetrievalAttempt(sessionId)) {
@@ -78,13 +83,26 @@ public class AssistantContextToolService {
                     .message("Retrieval budget exhausted for this session").build();
         }
 
+        StorageManager.ContentScope scope = scopeFor(session);
+        SparqlQueryContext.setUserId(scope.userId());
+        SparqlQueryContext.setWantsDraft(scope.draft());
+        try {
+            return readAdmittedInScope(sessionId, session, targets, kind, scope);
+        } finally {
+            SparqlQueryContext.clear();
+        }
+    }
+
+    private ContextToolResult readAdmittedInScope(String sessionId, AssistantSessionDocument session,
+                                                  List<Target> targets, String kind,
+                                                  StorageManager.ContentScope scope) {
         PerfPhases perf = new PerfPhases();
         long lockRequestedAt = System.nanoTime();
         Optional<TargetResolution> readResult;
         try {
             readResult = lockRegistry.runShared(session.getProjectId(), () -> {
                 perf.add("lockWait", (System.nanoTime() - lockRequestedAt) / 1_000_000);
-                TargetResolution read = resolveTargets(session.getProjectId(), dedupeTargets(targets), kind, perf);
+                TargetResolution read = resolveTargets(session.getProjectId(), dedupeTargets(targets), kind, perf, scope);
                 return sessionService.isRevisionStale(session) ? Optional.empty() : Optional.of(read);
             });
         } catch (Exception e) {
@@ -134,7 +152,8 @@ public class AssistantContextToolService {
                         + "Start a new request to get a fresh snapshot before reading further.").build();
     }
 
-    private TargetResolution resolveTargets(String projectId, List<Target> targets, String kind, PerfPhases perf) {
+    private TargetResolution resolveTargets(String projectId, List<Target> targets, String kind, PerfPhases perf,
+                                            StorageManager.ContentScope scope) {
         List<Item> items = new ArrayList<>();
         boolean anyPartial = false;
         List<Target> diagnosticTargets = new ArrayList<>();
@@ -149,13 +168,13 @@ public class AssistantContextToolService {
             long targetStart = System.nanoTime();
             try {
                 if (TYPE_STATEMENT.equals(target.type())) {
-                    AssistantSourceContextReader.SourceRead read = sourceReader.statements(projectId, target.value());
+                    AssistantSourceContextReader.SourceRead read = sourceReader.statements(projectId, target.value(), scope);
                     items.addAll(read.items());
                     anyPartial |= read.partial();
                 } else if ("diagnostics".equals(kind)) {
                     diagnosticTargets.add(target);
                 } else if (TYPE_RANGE.equals(target.type())) {
-                    anyPartial |= addRange(projectId, target.value(), items);
+                    anyPartial |= addRange(projectId, target.value(), items, scope);
                 } else {
                     items.add(resolveIdentifier(projectId, target.value(), kind));
                 }
@@ -172,7 +191,7 @@ public class AssistantContextToolService {
         if ("diagnostics".equals(kind) && (!diagnosticTargets.isEmpty() || targets.isEmpty())) {
             long diagnosticsStart = System.nanoTime();
             try {
-                AssistantSourceContextReader.SourceRead read = sourceReader.diagnostics(projectId, diagnosticTargets);
+                AssistantSourceContextReader.SourceRead read = sourceReader.diagnostics(projectId, diagnosticTargets, scope);
                 items.addAll(read.items());
                 anyPartial |= read.partial();
                 perf.add("diagnostics", (System.nanoTime() - diagnosticsStart) / 1_000_000);
@@ -210,10 +229,12 @@ public class AssistantContextToolService {
         return sb.toString();
     }
 
-    private boolean addRange(String projectId, String encodedRange, List<Item> items) throws IOException {
+    private boolean addRange(String projectId, String encodedRange, List<Item> items,
+                             StorageManager.ContentScope scope) throws IOException {
         AssistantSourceContextReader.RangeSpec range = AssistantSourceContextReader.parseRange(encodedRange);
-        StorageManager.CodeViewPage page = storageManager.readCodeViewPage(
-                projectId, range.format(), range.startLine(), range.lineCount());
+        StorageManager.CodeViewPage page = scope.draft()
+                ? storageManager.resolveCodeViewPage(projectId, range.format(), range.startLine(), range.lineCount(), scope)
+                : storageManager.readCodeViewPage(projectId, range.format(), range.startLine(), range.lineCount());
         items.add(Item.builder()
                 .source(range.format())
                 .range(range.startLine() + "-" + page.lineCount())

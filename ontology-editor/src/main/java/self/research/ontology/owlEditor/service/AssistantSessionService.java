@@ -100,6 +100,16 @@ public class AssistantSessionService {
                                               String provider, String model,
                                               Integer tokenBudgetOverride, Integer retrievalAttemptsOverride,
                                               Supplier<Optional<Integer>> rateAdmission) {
+        return createSession(projectId, userEmail, documentPath, actionType, actionContext, provider, model,
+                tokenBudgetOverride, retrievalAttemptsOverride, false, null, rateAdmission);
+    }
+
+    public SessionCreateOutcome createSession(String projectId, String userEmail, String documentPath,
+                                              String actionType, String actionContext,
+                                              String provider, String model,
+                                              Integer tokenBudgetOverride, Integer retrievalAttemptsOverride,
+                                              boolean draft, String draftUserId,
+                                              Supplier<Optional<Integer>> rateAdmission) {
         ReentrantLock lock = createLocks[Math.floorMod(String.valueOf(userEmail).hashCode(), CREATE_LOCK_STRIPES)];
         lock.lock();
         try {
@@ -114,7 +124,7 @@ public class AssistantSessionService {
             }
             return new SessionCreateOutcome(
                     createSession(projectId, userEmail, documentPath, actionType, actionContext, provider, model,
-                            tokenBudgetOverride, retrievalAttemptsOverride),
+                            tokenBudgetOverride, retrievalAttemptsOverride, draft, draftUserId),
                     null);
         } finally {
             lock.unlock();
@@ -137,6 +147,15 @@ public class AssistantSessionService {
                                                    String actionType, String actionContext,
                                                    String provider, String model,
                                                    Integer tokenBudgetOverride, Integer retrievalAttemptsOverride) {
+        return createSession(projectId, userEmail, documentPath, actionType, actionContext, provider, model,
+                tokenBudgetOverride, retrievalAttemptsOverride, false, null);
+    }
+
+    public AssistantSessionDocument createSession(String projectId, String userEmail, String documentPath,
+                                                   String actionType, String actionContext,
+                                                   String provider, String model,
+                                                   Integer tokenBudgetOverride, Integer retrievalAttemptsOverride,
+                                                   boolean draft, String draftUserId) {
         long pinnedRevision = metadataService.getMutationVersion(projectId);
         Instant now = Instant.now();
         int tokenBudget = clampOrDefault(tokenBudgetOverride, MIN_TOKEN_BUDGET, MAX_TOKEN_BUDGET, defaultTokenBudget);
@@ -150,6 +169,8 @@ public class AssistantSessionService {
                 .actionContext(actionContext)
                 .provider(provider)
                 .model(model)
+                .draft(draft)
+                .draftUserId(draftUserId)
                 .pinnedRevision(pinnedRevision)
                 .status(AssistantSessionStatus.ACTIVE)
                 .retrievalAttemptsRemaining(retrievalAttempts)

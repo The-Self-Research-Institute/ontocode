@@ -177,6 +177,11 @@ public class AssistantEditApplyService {
                 && sessionId != null && sessionId.equals(group.getSessionId());
     }
 
+    private static StorageManager.ContentScope scopeFor(AssistantEditGroupDocument group) {
+        return group.isDraft() ? new StorageManager.ContentScope(true, group.getDraftUserId())
+                               : StorageManager.ContentScope.publicScope();
+    }
+
     private ApplyResult applyLocked(String sessionId, String serverGroupId, String userEmail, PerfPhases perf,
                                     String summary)
             throws IOException {
@@ -193,30 +198,42 @@ public class AssistantEditApplyService {
             return rejected;
         }
 
-        List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = toSpliceEdits(group);
-        perf.mark("preChecks");
-
-        String conflictMessage = findConflict(group, spliceEdits);
-        perf.mark("conflictCheck");
-        if (conflictMessage != null) {
-            markConflict(group, conflictMessage);
-            return errorResult("CONFLICT", conflictMessage);
-        }
-
-        Path sourceFile = storageManager.ensureCodeViewFile(group.getProjectId(), group.getTargetPath());
-        perf.mark("ensureSource");
-        Path splicedFile = spliceWriter.splice(sourceFile, storageManager.extensionFor(group.getTargetPath()), spliceEdits);
-        perf.mark("splice");
-
+        StorageManager.ContentScope scope = scopeFor(group);
+        SparqlQueryContext.setUserId(scope.userId());
+        SparqlQueryContext.setWantsDraft(scope.draft());
         try {
-            AssistantGraphWriter.Outcome outcome = graphWriter.write(group, sourceFile, splicedFile, userEmail,
-                    triplePatchEnabled, perf, aiOrigin(group, userEmail, summary));
-            if (outcome.failure() != null) {
-                return outcome.failure();
+            List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = toSpliceEdits(group);
+            perf.mark("preChecks");
+
+            String conflictMessage = findConflict(group, spliceEdits, scope);
+            perf.mark("conflictCheck");
+            if (conflictMessage != null) {
+                markConflict(group, conflictMessage);
+                return errorResult("CONFLICT", conflictMessage);
             }
-            return commitApplied(group, outcome.written(), perf);
+
+            Path sourceFile = scope.draft()
+                    ? storageManager.resolveCodeViewFile(group.getProjectId(), group.getTargetPath(), scope)
+                    : storageManager.ensureCodeViewFile(group.getProjectId(), group.getTargetPath());
+            perf.mark("ensureSource");
+            Path splicedFile = spliceWriter.splice(sourceFile, storageManager.extensionFor(group.getTargetPath()), spliceEdits);
+            perf.mark("splice");
+
+            try {
+                AssistantGraphWriter.Outcome outcome = graphWriter.write(group, sourceFile, splicedFile, userEmail,
+                        triplePatchEnabled, perf, aiOrigin(group, userEmail, summary));
+                if (outcome.failure() != null) {
+                    return outcome.failure();
+                }
+                return commitApplied(group, outcome.written(), perf);
+            } finally {
+                Files.deleteIfExists(splicedFile);
+                if (scope.draft()) {
+                    Files.deleteIfExists(sourceFile);
+                }
+            }
         } finally {
-            Files.deleteIfExists(splicedFile);
+            SparqlQueryContext.clear();
         }
     }
 
@@ -313,9 +330,11 @@ public class AssistantEditApplyService {
     }
 
     private String findConflict(AssistantEditGroupDocument group,
-                                List<LineRangeSpliceWriter.SpliceEdit> spliceEdits) throws IOException {
+                                List<LineRangeSpliceWriter.SpliceEdit> spliceEdits,
+                                StorageManager.ContentScope scope) throws IOException {
         Long versionAtPropose = group.getPublicGraphVersionAtPropose();
-        long currentVersion = storageManager.getPublicGraphVersion(group.getProjectId());
+        long currentVersion = scope.draft() ? storageManager.resolveGraphVersion(group.getProjectId(), scope)
+                                            : storageManager.getPublicGraphVersion(group.getProjectId());
         boolean versionUnchanged = versionAtPropose != null && currentVersion == versionAtPropose;
         Long verifiedAt = group.getPositionsVerifiedAtVersion();
         boolean positionsTrusted = versionUnchanged || (verifiedAt != null && currentVersion == verifiedAt);
@@ -323,28 +342,35 @@ public class AssistantEditApplyService {
             return "Document changed since this group was checked, and the position of its inserted lines "
                     + "can't be re-verified";
         }
-        if (hasLiveMismatch(group)) {
+        if (hasLiveMismatch(group, scope)) {
             return "Document changed since this group was checked";
         }
         if (versionUnchanged) {
             return null;
         }
-        if (!syntaxValidator.isValid(group.getProjectId(), group.getTargetPath(), spliceEdits)) {
+        boolean syntaxOk = scope.draft()
+                ? syntaxValidator.isValid(group.getProjectId(), group.getTargetPath(), spliceEdits, scope)
+                : syntaxValidator.isValid(group.getProjectId(), group.getTargetPath(), spliceEdits);
+        if (!syntaxOk) {
             return "Document changed since this group was checked, and the edit no longer parses against it";
         }
-        if (!referenceCoverageValidator.check(group.getProjectId(), group.getTargetPath(),
-                toCoverageEdits(group)).covered()) {
+        boolean coverageOk = scope.draft()
+                ? referenceCoverageValidator.check(group.getProjectId(), group.getTargetPath(),
+                        toCoverageEdits(group), scope).covered()
+                : referenceCoverageValidator.check(group.getProjectId(), group.getTargetPath(),
+                        toCoverageEdits(group)).covered();
+        if (!coverageOk) {
             return "Document changed since this group was checked, and the edit no longer covers every "
                     + "reference it needs to";
         }
         return null;
     }
 
-    private boolean hasLiveMismatch(AssistantEditGroupDocument group) {
+    private boolean hasLiveMismatch(AssistantEditGroupDocument group, StorageManager.ContentScope scope) {
         List<CodeViewRangeMatcher.ExpectedRange> expected = group.getEdits().stream()
                 .map(e -> new CodeViewRangeMatcher.ExpectedRange(e.getStartLine(), e.getLineCount(), e.getOriginalText()))
                 .toList();
-        return !rangeMatcher.allMatch(group.getProjectId(), group.getTargetPath(), expected);
+        return !rangeMatcher.allMatch(group.getProjectId(), group.getTargetPath(), expected, scope);
     }
 
     private ApplyResult idempotentReplay(AssistantEditGroupDocument group) {

@@ -19,6 +19,8 @@ export interface TurnRequest {
   onStage: (event: LoopStageEvent) => void;
   onProviderConfig: (config: ProviderConfig) => void;
   onDraft?: (text: string) => void;
+  draft?: boolean;
+  userId?: string;
 }
 
 export interface TurnResult {
@@ -43,6 +45,7 @@ export async function runAssistantTurn(request: TurnRequest): Promise<TurnResult
       actionType: request.action,
       actionContext: request.actionContext,
       ...(config.managed ? { provider: config.provider, model: config.model } : {}),
+      ...(request.draft ? { draft: true, userId: request.userId } : {}),
     },
     signal,
   );
