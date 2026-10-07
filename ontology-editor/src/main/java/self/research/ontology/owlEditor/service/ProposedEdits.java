@@ -3,8 +3,10 @@ package self.research.ontology.owlEditor.service;
 import lombok.extern.slf4j.Slf4j;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.EditEntry;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditInput;
+import self.research.ontology.owlEditor.dto.ProposeEditRequest.EditRange;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService.DiffEntry;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
@@ -40,18 +42,57 @@ final class ProposedEdits {
         return true;
     }
 
-    static boolean hasNoIntraGroupOverlap(List<EditInput> sortedEdits) {
-        for (int i = 0; i < sortedEdits.size() - 1; i++) {
-            if (sortedEdits.get(i).range() == null || sortedEdits.get(i + 1).range() == null) {
-                return false;
+    record SiblingSnapResult(List<EditInput> edits, String detail) {}
+
+    static SiblingSnapResult snapInsertsPastSiblingEdits(List<EditInput> sortedEdits) {
+        List<EditInput> result = new ArrayList<>(sortedEdits);
+        List<String> moves = new ArrayList<>();
+        for (int i = 0; i < result.size() - 1; i++) {
+            EditInput a = result.get(i);
+            EditInput b = result.get(i + 1);
+            if (a.range() == null || b.range() == null || b.range().lineCount() != 0) {
+                continue;
             }
-            long thisEnd = sortedEdits.get(i).range().startLine() + sortedEdits.get(i).range().lineCount();
-            long nextStart = sortedEdits.get(i + 1).range().startLine();
-            if (thisEnd > nextStart) {
-                return false;
+            long thisEnd = a.range().startLine() + a.range().lineCount();
+            if (thisEnd > b.range().startLine()) {
+                moves.add("line " + (b.range().startLine() + 1) + " to line " + (thisEnd + 1));
+                result.set(i + 1, new EditInput(b.targetPath(), new EditRange(thisEnd, 0), b.originalText(), b.newText()));
             }
         }
-        return true;
+        if (moves.isEmpty()) {
+            return new SiblingSnapResult(sortedEdits, null);
+        }
+        String detail = moves.size() == 1
+                ? "Moved the insertion at " + moves.get(0)
+                        + " so it lands after the edit right before it instead of inside it."
+                : "Moved " + moves.size() + " insertions (" + String.join(", ", moves)
+                        + ") so they land after the edit right before them instead of inside it.";
+        return new SiblingSnapResult(result, detail);
+    }
+
+    record OverlapCheck(boolean ok, String detail) {}
+
+    static OverlapCheck checkNoIntraGroupOverlap(List<EditInput> sortedEdits) {
+        for (int i = 0; i < sortedEdits.size() - 1; i++) {
+            EditInput a = sortedEdits.get(i);
+            EditInput b = sortedEdits.get(i + 1);
+            if (a.range() == null || b.range() == null) {
+                return new OverlapCheck(false, "One of the edits in this group is missing a line range.");
+            }
+            long thisEnd = a.range().startLine() + a.range().lineCount();
+            long nextStart = b.range().startLine();
+            if (thisEnd > nextStart) {
+                String first = a.range().lineCount() == 0
+                        ? "the insertion at line " + a.range().startLine()
+                        : "the edit covering lines " + a.range().startLine() + "-" + (thisEnd - 1);
+                String second = b.range().lineCount() == 0
+                        ? "the insertion at line " + nextStart
+                        : "the edit starting at line " + nextStart;
+                return new OverlapCheck(false, "In this group, " + second + " overlaps " + first
+                        + ". Move it to start at line " + thisEnd + " or later, or combine the two into one edit.");
+            }
+        }
+        return new OverlapCheck(true, null);
     }
 
     static boolean matchesLiveContent(StorageManager storageManager, String projectId, EditInput edit,

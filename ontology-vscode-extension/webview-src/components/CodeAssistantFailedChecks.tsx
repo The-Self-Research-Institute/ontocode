@@ -19,9 +19,12 @@ const CHECK_LABELS: Record<string, string> = {
   no_conflicting_declaration: "No conflicting declaration",
   rename_occurrences_complete: "The rename covers every occurrence",
   insertion_moved_to_statement_boundary: "Insertion point adjusted",
+  insertion_moved_past_sibling_edit: "Insertion point adjusted",
 };
 
 export const INSERTION_MOVED_CHECK = "insertion_moved_to_statement_boundary";
+export const INSERTION_MOVED_PAST_SIBLING_CHECK = "insertion_moved_past_sibling_edit";
+const NOTE_CHECKS = new Set([INSERTION_MOVED_CHECK, INSERTION_MOVED_PAST_SIBLING_CHECK]);
 
 export function checkLabel(name: string): string {
   return CHECK_LABELS[name] ?? name.replace(/_/g, " ");
@@ -43,7 +46,7 @@ export const CodeAssistantFailedChecks: React.FC<{ checks: Check[] }> = ({ check
 };
 
 export const CodeAssistantCheckNotes: React.FC<{ checks: Check[] }> = ({ checks }) => {
-  const notes = checks.filter((c) => c.passed && c.name === INSERTION_MOVED_CHECK && c.detail);
+  const notes = checks.filter((c) => c.passed && NOTE_CHECKS.has(c.name) && c.detail);
   if (notes.length === 0) return null;
   return (
     <ul className="space-y-1 text-xs text-gray-600" aria-label="Adjustments">

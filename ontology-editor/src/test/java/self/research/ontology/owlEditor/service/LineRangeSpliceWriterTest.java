@@ -97,6 +97,22 @@ class LineRangeSpliceWriterTest {
     }
 
     @Test
+    void editsSharingTheSameStartLineBothApplyInsertFirst() throws Exception {
+        Path source = sourceWith("a", "b", "c", "d");
+        Path result = writer.splice(source, "ttl",
+                List.of(new SpliceEdit(1, 0, "NEW"), new SpliceEdit(1, 1, "")));
+        assertEquals("a\nNEW\nc\nd\n", readAll(result));
+    }
+
+    @Test
+    void editsSharingTheSameStartLineBothApplyDeleteFirst() throws Exception {
+        Path source = sourceWith("a", "b", "c", "d");
+        Path result = writer.splice(source, "ttl",
+                List.of(new SpliceEdit(1, 1, ""), new SpliceEdit(1, 0, "NEW")));
+        assertEquals("a\nNEW\nc\nd\n", readAll(result));
+    }
+
+    @Test
     void noEditsCopiesFileVerbatim() throws Exception {
         Path source = sourceWith("a", "b", "c");
         Path result = writer.splice(source, "ttl", List.of());

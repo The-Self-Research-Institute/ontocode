@@ -38,6 +38,7 @@ public class AssistantEditProposalService {
     public static final String SWRL_INSERT_CHECK = "swrl_inferred_axioms_resolved";
     public static final String FUZZY_INSERT_CHECK = "fuzzy_memberships_resolved";
     public static final String INSERTION_MOVED_CHECK = "insertion_moved_to_statement_boundary";
+    public static final String INSERTION_MOVED_PAST_SIBLING_CHECK = "insertion_moved_past_sibling_edit";
 
     private static final int MAX_AUDIT_DETAIL_CHARS = 500;
 
@@ -192,6 +193,11 @@ public class AssistantEditProposalService {
         List<EditInput> sortedEdits = inputEdits.stream()
                 .sorted(Comparator.comparingLong(e -> e.range() == null ? Long.MAX_VALUE : e.range().startLine()))
                 .toList();
+        ProposedEdits.SiblingSnapResult siblingSnap = ProposedEdits.snapInsertsPastSiblingEdits(sortedEdits);
+        sortedEdits = siblingSnap.edits();
+        if (siblingSnap.detail() != null) {
+            checks.add(new CheckResult(INSERTION_MOVED_PAST_SIBLING_CHECK, true, siblingSnap.detail()));
+        }
         String targetPath = sortedEdits.isEmpty() || sortedEdits.get(0).targetPath() == null
                 ? "" : sortedEdits.get(0).targetPath();
 
@@ -320,8 +326,11 @@ public class AssistantEditProposalService {
         boolean rangeWellFormed = sortedEdits.stream().allMatch(ProposedEdits::isRangeWellFormed);
         checks.add(new CheckResult("range_well_formed", rangeWellFormed));
 
-        boolean noOverlap = sortedEdits.size() <= 1 || ProposedEdits.hasNoIntraGroupOverlap(sortedEdits);
-        checks.add(new CheckResult("no_intra_group_overlap", noOverlap));
+        ProposedEdits.OverlapCheck overlapCheck = sortedEdits.size() <= 1
+                ? new ProposedEdits.OverlapCheck(true, null)
+                : ProposedEdits.checkNoIntraGroupOverlap(sortedEdits);
+        boolean noOverlap = overlapCheck.ok();
+        checks.add(new CheckResult("no_intra_group_overlap", noOverlap, overlapCheck.detail()));
 
         int maxEdits = derived ? maxDerivedEdits : maxEditsPerGroup;
         boolean sizeOk = sortedEdits.size() <= maxEdits

@@ -154,7 +154,28 @@ class AssistantEditProposalServiceTest extends AssistantEditProposalTestBase {
         ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
 
         GroupProposalOutcome outcome = result.getGroups().get(0);
-        assertFalse(checkNamed(outcome, "no_intra_group_overlap").get().passed());
+        AssistantEditProposalService.CheckResult check = checkNamed(outcome, "no_intra_group_overlap").get();
+        assertFalse(check.passed());
+        assertTrue(check.detail().contains("line 2"));
+        assertTrue(check.detail().contains("line 3"));
+    }
+
+    @Test
+    void insertionLandingInsidePrecedingDeleteIsAutoSnappedPastIt() throws Exception {
+        mockLiveContent("turtle", 307, 3, "old\nold\nold");
+        EditInput delete = new EditInput("turtle", new EditRange(307, 3), "old\nold\nold", "");
+        EditInput insert = new EditInput("turtle", new EditRange(309, 0), "", ":NewClass a owl:Class .");
+        EditGroupInput group = new EditGroupInput("c1", List.of(delete, insert));
+
+        ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(group));
+
+        GroupProposalOutcome outcome = result.getGroups().get(0);
+        assertTrue(checkNamed(outcome, "no_intra_group_overlap").get().passed());
+        AssistantEditProposalService.CheckResult note =
+                checkNamed(outcome, AssistantEditProposalService.INSERTION_MOVED_PAST_SIBLING_CHECK).get();
+        assertTrue(note.passed());
+        assertTrue(note.detail().contains("line 310"));
+        assertTrue(note.detail().contains("line 311"));
     }
 
     @Test

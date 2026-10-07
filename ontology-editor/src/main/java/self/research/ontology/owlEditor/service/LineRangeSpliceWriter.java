@@ -26,10 +26,10 @@ public class LineRangeSpliceWriter {
             long skipUntil = -1;
             String line;
             while ((line = reader.readLine()) != null) {
-                if (editPos < edits.size() && index == edits.get(editPos).startLine()) {
+                while (editPos < edits.size() && index == edits.get(editPos).startLine()) {
                     SpliceEdit edit = edits.get(editPos);
                     writeText(writer, edit.newText());
-                    skipUntil = edit.startLine() + edit.lineCount();
+                    skipUntil = Math.max(skipUntil, edit.startLine() + edit.lineCount());
                     editPos++;
                 }
                 if (skipUntil <= index) {
