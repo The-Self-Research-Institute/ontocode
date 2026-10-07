@@ -45,7 +45,8 @@ public class AxiomAnnotationController {
     public ResponseEntity<?> addAnnotation(@PathVariable String projectId,
                                            @RequestBody AxiomAnnotationRequest request,
                                            @RequestParam(required = false, defaultValue = "false") boolean draft,
-                                           @RequestParam(required = false) String userId) {
+                                           @RequestParam(required = false) String userId,
+                                           @RequestParam(required = false) String username) {
         try {
             axiomAnnotationService.addAnnotation(
                     projectId,
@@ -56,7 +57,8 @@ public class AxiomAnnotationController {
                     request.value,
                     request.language,
                     draft,
-                    userId);
+                    userId,
+                    username);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
@@ -76,10 +78,11 @@ public class AxiomAnnotationController {
                                               @RequestParam String value,
                                               @RequestParam(required = false) String sectionName,
                                               @RequestParam(required = false, defaultValue = "false") boolean draft,
-                                              @RequestParam(required = false) String userId) {
+                                              @RequestParam(required = false) String userId,
+                                              @RequestParam(required = false) String username) {
         try {
             axiomAnnotationService.deleteAnnotation(
-                    projectId, entityIri, relatedIri, sectionName, annotationProperty, value, draft, userId);
+                    projectId, entityIri, relatedIri, sectionName, annotationProperty, value, draft, userId, username);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));

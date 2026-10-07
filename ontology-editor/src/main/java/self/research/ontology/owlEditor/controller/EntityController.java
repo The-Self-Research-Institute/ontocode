@@ -44,9 +44,9 @@ public class EntityController {
         String effectiveUsername = username != null ? username : "Anonymous";
         try {
             if (draft) {
-                renameService.renameEntityDraft(projectId, effectiveUserId, request.oldIri.trim(), request.newIri.trim());
+                renameService.renameEntityDraft(projectId, effectiveUserId, effectiveUsername, request.oldIri.trim(), request.newIri.trim());
             } else {
-                renameService.renameEntity(projectId, request.oldIri.trim(), request.newIri.trim());
+                renameService.renameEntity(projectId, request.oldIri.trim(), request.newIri.trim(), effectiveUserId, effectiveUsername);
             }
             collaborativeEditService.broadcastMutation(projectId,
                     new OntologyMutationService.MutationOp(

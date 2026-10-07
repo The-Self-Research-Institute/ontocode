@@ -923,7 +923,7 @@ public class SparqlDatasetService {
      * The caller MUST close the returned {@link GraphQueryResult} which in
      * turn closes its RepositoryConnection.
      */
-    private GraphQueryResult execConstructAll(String projectId) {
+    GraphQueryResult execConstructAll(String projectId) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         final RepositoryConnection conn = binding.repository().getConnection();
         try {

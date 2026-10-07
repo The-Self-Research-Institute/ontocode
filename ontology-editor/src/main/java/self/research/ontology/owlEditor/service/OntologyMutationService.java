@@ -385,6 +385,27 @@ public class OntologyMutationService {
     /**
      * Apply a pre-built SPARQL update (optionally to the user's draft graph).
      */
+    public void applyRawUpdateWithHistory(String projectId, String sparql, boolean draft,
+                                           String userId, String username) {
+        org.eclipse.rdf4j.model.Model oldModel = null;
+        if (!draft && historyService != null) {
+            try (var result = datasetService.execConstructAll(projectId)) {
+                oldModel = org.eclipse.rdf4j.query.QueryResults.asModel(result);
+            }
+        }
+
+        applyRawUpdate(projectId, sparql, draft, userId);
+
+        if (oldModel != null) {
+            org.eclipse.rdf4j.model.Model newModel;
+            try (var result = datasetService.execConstructAll(projectId)) {
+                newModel = org.eclipse.rdf4j.query.QueryResults.asModel(result);
+            }
+            new CodeViewHistoryRecorder(historyService, null)
+                    .record(projectId, userId, username, oldModel, newModel, false, ChangeOrigin.manual());
+        }
+    }
+
     public void applyRawUpdate(String projectId, String sparql, boolean draft, String userId) {
         if (sparql == null || sparql.isBlank()) {
             log.warn("[MUTATION] Empty raw SPARQL update for project={}", projectId);
