@@ -41,6 +41,9 @@ public class OntologyMetadataService {
     private final OntologyCountQueries countQueries;
     private final OntologyMetrics metrics;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private OntologyHistoryService historyService;
+
 
     public static final Map<String, String> STANDARD_PREFIXES;
     static {
@@ -311,17 +314,17 @@ public class OntologyMetadataService {
      * Add an ontology annotation
      */
     public void addOntologyAnnotation(String projectId, String propertyIri, String value, String language, String datatype) {
-        addOntologyAnnotation(projectId, propertyIri, value, language, datatype, false, null);
+        addOntologyAnnotation(projectId, propertyIri, value, language, datatype, false, null, null);
     }
 
     public void addOntologyAnnotation(String projectId, String propertyIri, String value, String language, String datatype,
-                                      boolean draft, String userId) {
+                                      boolean draft, String userId, String username) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             // If no ontology triple exists, create one using a stable IRI based on project ID
             ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
             String initUpdate = PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri);
-            mutationService.applyRawUpdate(projectId, initUpdate, draft, userId);
+            mutationService.applyRawUpdateWithHistory(projectId, initUpdate, draft, userId, username);
             if (!draft) {
                 ontologyIriCache.put(projectId, ontologyIri);
             }
@@ -340,7 +343,7 @@ public class OntologyMetadataService {
             }
             """, ontologyIri, prop, literal);
 
-        mutationService.applyRawUpdate(projectId, update, draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
     }
 
     /**
@@ -355,7 +358,7 @@ public class OntologyMetadataService {
                         String datatype,
                         String originalPropertyIri) {
         updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype, originalPropertyIri,
-                false, null);
+                false, null, null);
     }
 
     public void updateOntologyAnnotation(
@@ -367,7 +370,8 @@ public class OntologyMetadataService {
                     String datatype,
                     String originalPropertyIri,
                     boolean draft,
-                    String userId) {
+                    String userId,
+                    String username) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             throw new RuntimeException("Ontology IRI not found for project " + projectId);
@@ -396,18 +400,18 @@ public class OntologyMetadataService {
                                  ontologyIri, insertProp, newLiteral,
                                  ontologyIri, deleteProp, escapeString(oldValue));
 
-        mutationService.applyRawUpdate(projectId, update, draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
     }
 
     /**
      * Delete an ontology annotation
      */
     public void deleteOntologyAnnotation(String projectId, String propertyIri, String value, String language) {
-        deleteOntologyAnnotation(projectId, propertyIri, value, language, false, null);
+        deleteOntologyAnnotation(projectId, propertyIri, value, language, false, null, null);
     }
 
     public void deleteOntologyAnnotation(String projectId, String propertyIri, String value, String language,
-                                         boolean draft, String userId) {
+                                         boolean draft, String userId, String username) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             throw new RuntimeException("Ontology IRI not found for project " + projectId);
@@ -425,10 +429,10 @@ public class OntologyMetadataService {
               %s %s ?v .
               FILTER(STR(?v) = "%s")
             }
-            """, ontologyIri, prop, 
+            """, ontologyIri, prop,
                  ontologyIri, prop, escapeString(value));
 
-        mutationService.applyRawUpdate(projectId, update, draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
     }
 
     private String formatLiteral(String value, String language, String datatype) {
@@ -544,18 +548,18 @@ public class OntologyMetadataService {
      * Add an ontology import
      */
     public void addOntologyImport(String projectId, String importIri) {
-        addOntologyImport(projectId, importIri, false, null);
+        addOntologyImport(projectId, importIri, false, null, null);
     }
 
-    public void addOntologyImport(String projectId, String importIri, boolean draft, String userId) {
+    public void addOntologyImport(String projectId, String importIri, boolean draft, String userId, String username) {
         log.info("Adding import '{}' to project {} (draft={})", importIri, projectId, draft);
-        
+
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             // If no ontology triple exists, create one using a stable IRI
             ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
             String initUpdate = PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri);
-            mutationService.applyRawUpdate(projectId, initUpdate, draft, userId);
+            mutationService.applyRawUpdateWithHistory(projectId, initUpdate, draft, userId, username);
             ontologyIri = "<" + ontologyIri + ">";
             log.info("Created new ontology IRI: {}", ontologyIri);
         } else {
@@ -591,7 +595,7 @@ public class OntologyMetadataService {
             """, ontologyIri, formattedImportIri);
 
         log.debug("SPARQL Update: {}", update);
-        mutationService.applyRawUpdate(projectId, update, draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
         log.info("✅ Successfully added import '{}' to project {}", importIri, projectId);
     }
 
@@ -599,10 +603,10 @@ public class OntologyMetadataService {
      * Delete an ontology import
      */
     public void deleteOntologyImport(String projectId, String importIri) {
-        deleteOntologyImport(projectId, importIri, false, null);
+        deleteOntologyImport(projectId, importIri, false, null, null);
     }
 
-    public void deleteOntologyImport(String projectId, String importIri, boolean draft, String userId) {
+    public void deleteOntologyImport(String projectId, String importIri, boolean draft, String userId, String username) {
         String ontologyIri = getOntologyIri(projectId);
         if (ontologyIri == null) {
             throw new RuntimeException("Ontology IRI not found");
@@ -629,7 +633,7 @@ public class OntologyMetadataService {
             }
             """, ontologyIri, formattedImportIri, ontologyIri, formattedImportIri);
 
-        mutationService.applyRawUpdate(projectId, update, draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
     }
 
     /**
@@ -718,14 +722,14 @@ public class OntologyMetadataService {
      * Add a General Class Axiom (GCI) as a real OWL blank-node SubClassOf axiom.
      */
     public void addGCI(String projectId, String subClassExpr, String superClassExpr) {
-        addGCI(projectId, subClassExpr, superClassExpr, false, null);
+        addGCI(projectId, subClassExpr, superClassExpr, false, null, null);
     }
 
     /**
      * Draft-aware variant: when {@code draft} is true, the axiom is written to the user's
      * private draft graph instead of the shared/public ontology.
      */
-    public void addGCI(String projectId, String subClassExpr, String superClassExpr, boolean draft, String userId) {
+    public void addGCI(String projectId, String subClassExpr, String superClassExpr, boolean draft, String userId, String username) {
         if (subClassExpr == null || subClassExpr.isBlank()) {
             throw new IllegalArgumentException("GCA sub-class expression is required");
         }
@@ -735,7 +739,7 @@ public class OntologyMetadataService {
 
         try {
             generalClassAxiomService.addGeneralClassAxiom(
-                    projectId, subClassExpr.trim(), superClassExpr.trim(), draft, userId);
+                    projectId, subClassExpr.trim(), superClassExpr.trim(), draft, userId, username);
             return;
         } catch (IllegalArgumentException e) {
             throw e;
@@ -771,20 +775,23 @@ public class OntologyMetadataService {
         } else {
             mutationService.apply(projectId, List.of(op));
         }
+        if (historyService != null) {
+            historyService.recordGroupedMutations(projectId, userId, username, List.of(op), draft);
+        }
     }
 
     /**
      * Delete a General Class Axiom — supports legacy string literals and real blank-node GCIs.
      */
     public void deleteGCI(String projectId, String gciValue) {
-        deleteGCI(projectId, gciValue, false, null);
+        deleteGCI(projectId, gciValue, false, null, null);
     }
 
     /**
      * Draft-aware variant: when {@code draft} is true, the deletion is applied to the user's
      * private draft graph instead of the shared/public ontology.
      */
-    public void deleteGCI(String projectId, String gciValue, boolean draft, String userId) {
+    public void deleteGCI(String projectId, String gciValue, boolean draft, String userId, String username) {
         if (gciValue == null || gciValue.isBlank()) return;
 
         // Legacy custom-predicate string storage
@@ -804,7 +811,7 @@ public class OntologyMetadataService {
                     }
                     """, formattedOntologyIri, escapeString(legacyValue),
                         formattedOntologyIri, escapeString(legacyValue));
-                mutationService.applyRawUpdate(projectId, update, draft, userId);
+                mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
             }
         }
 
@@ -825,6 +832,9 @@ public class OntologyMetadataService {
                 mutationService.applyDraft(projectId, userId, ops);
             } else {
                 mutationService.apply(projectId, ops);
+            }
+            if (historyService != null) {
+                historyService.recordGroupedMutations(projectId, userId, username, ops, draft);
             }
         }
     }
@@ -880,11 +890,11 @@ public class OntologyMetadataService {
      * Update ontology IRI and version IRI
      */
     public void updateOntologyIRIs(String projectId, String newOntologyIri, String newVersionIri) {
-        updateOntologyIRIs(projectId, newOntologyIri, newVersionIri, false, null);
+        updateOntologyIRIs(projectId, newOntologyIri, newVersionIri, false, null, null);
     }
 
     public void updateOntologyIRIs(String projectId, String newOntologyIri, String newVersionIri,
-                                   boolean draft, String userId) {
+                                   boolean draft, String userId, String username) {
         String oldOntologyIri = getOntologyIri(projectId);
         String formattedOld = oldOntologyIri != null ? formatResource(oldOntologyIri) : null;
         String formattedNew = formatResource(newOntologyIri);
@@ -905,7 +915,7 @@ public class OntologyMetadataService {
             update.append("\nINSERT DATA { ").append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . }");
         }
 
-        mutationService.applyRawUpdate(projectId, update.toString(), draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, update.toString(), draft, userId, username);
 
         // The IRI cache and shared Mongo metadata reflect the PUBLIC graph only — a draft
         // IRI change must not leak into what other users (or this user's public view) see.

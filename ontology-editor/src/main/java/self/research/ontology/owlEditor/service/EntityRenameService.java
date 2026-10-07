@@ -32,21 +32,24 @@ public class EntityRenameService {
 private final ProjectMetadataService metadataService;
 private final HierarchyIndexService hierarchyIndexService;
 private final SparqlDatasetService datasetService;
+private final OntologyHistoryService historyService;
 public EntityRenameService(StorageManager storageManager,
                            OntologyMutationService ontologyMutationService,
                            DraftCopyService draftCopyService,
                            ProjectMetadataService metadataService,
                            HierarchyIndexService hierarchyIndexService,
-                           SparqlDatasetService datasetService) {
+                           SparqlDatasetService datasetService,
+                           OntologyHistoryService historyService) {
     this.storageManager = storageManager;
     this.ontologyMutationService = ontologyMutationService;
     this.draftCopyService = draftCopyService;
     this.metadataService = metadataService;
     this.hierarchyIndexService = hierarchyIndexService;
     this.datasetService = datasetService;
+    this.historyService = historyService;
 }
 
-public void renameEntity(String projectId, String oldIri, String newIri) throws Exception {
+public void renameEntity(String projectId, String oldIri, String newIri, String userId, String username) throws Exception {
     if (oldIri == null || oldIri.isBlank() || newIri == null || newIri.isBlank()) {
         throw new IllegalArgumentException("oldIri and newIri are required");
     }
@@ -73,6 +76,9 @@ public void renameEntity(String projectId, String oldIri, String newIri) throws 
 
     hierarchyIndexService.scheduleBuild(projectId);
 
+    historyService.recordEdit(projectId, userId, username, "renameEntity", newIri, null,
+            oldIri, newIri, "Renamed " + oldIri + " to " + newIri);
+
     log.info("Renamed entity {} -> {} in project {}", oldIri, newIri, projectId);
 }
 
@@ -89,7 +95,7 @@ private boolean isDeclaredEntity(String projectId, String iri) {
     /**
      * Draft-mode rename on the user's full copy-on-switch draft graph.
      */
-    public void renameEntityDraft(String projectId, String userId, String oldIri, String newIri) throws Exception {
+    public void renameEntityDraft(String projectId, String userId, String username, String oldIri, String newIri) throws Exception {
         if (oldIri == null || oldIri.isBlank() || newIri == null || newIri.isBlank()) {
             throw new IllegalArgumentException("oldIri and newIri are required");
         }
@@ -140,6 +146,9 @@ datasetService.replaceNamedGraphFromRdf(
         projectId, draftGraph, out.toString(java.nio.charset.StandardCharsets.UTF_8), RDFFormat.RDFXML);
 
 hierarchyIndexService.markStale(projectId);
+
+historyService.recordEdit(projectId, userId, username, "renameEntity", newIri, null,
+        oldIri, newIri, "Renamed " + oldIri + " to " + newIri, null, null, true);
 
 log.info("Draft rename {} -> {} for project {} user {}", oldIri, newIri, projectId, userId);
     }

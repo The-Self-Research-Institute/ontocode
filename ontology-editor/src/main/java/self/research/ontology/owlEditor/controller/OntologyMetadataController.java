@@ -121,7 +121,8 @@ public class OntologyMetadataController {
             String datatype = request.get("datatype");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
             String userId = request.get("userId");
-            metadataService.addOntologyAnnotation(projectId, propertyIri, value, language, datatype, draft, userId);
+            String username = request.get("username");
+            metadataService.addOntologyAnnotation(projectId, propertyIri, value, language, datatype, draft, userId, username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_ADDED, propertyIri, httpRequest);
             }
@@ -145,8 +146,9 @@ public class OntologyMetadataController {
             String datatype = request.get("datatype");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
             String userId = request.get("userId");
+            String username = request.get("username");
             metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype,
-                    originalPropertyIri, draft, userId);
+                    originalPropertyIri, draft, userId, username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_MODIFIED, propertyIri, httpRequest);
             }
@@ -164,9 +166,10 @@ public class OntologyMetadataController {
                                              @RequestParam(required = false) String language,
                                              @RequestParam(required = false, defaultValue = "false") boolean draft,
                                              @RequestParam(required = false) String userId,
+                                             @RequestParam(required = false) String username,
                                              HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteOntologyAnnotation(projectId, propertyIri, value, language, draft, userId);
+            metadataService.deleteOntologyAnnotation(projectId, propertyIri, value, language, draft, userId, username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_DELETED, propertyIri, httpRequest);
             }
@@ -219,9 +222,10 @@ public class OntologyMetadataController {
             String importIri = request.get("importIri");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
             String userId = request.get("userId");
-            metadataService.addOntologyImport(projectId, importIri, draft, userId);
+            String username = request.get("username");
+            metadataService.addOntologyImport(projectId, importIri, draft, userId, username);
 
-            Map<String, Object> resolution = resolveManualImportContent(projectId, importIri, draft, userId);
+            Map<String, Object> resolution = resolveManualImportContent(projectId, importIri, draft, userId, username);
 
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_ADDED, importIri, httpRequest);
@@ -233,14 +237,14 @@ public class OntologyMetadataController {
         }
     }
 
-    private Map<String, Object> resolveManualImportContent(String projectId, String importIri, boolean draft, String userId) {
+    private Map<String, Object> resolveManualImportContent(String projectId, String importIri, boolean draft, String userId, String username) {
         Map<String, Object> resolution = new HashMap<>();
         try {
             ProjectImportService.ImportFetchResult fetch = projectImportService.fetchImportContent(projectId, importIri);
             switch (fetch.status()) {
                 case LOADED -> {
                     String insertSparql = "INSERT DATA {\n" + fetch.insertTriplesBody() + "\n}";
-                    mutationService.applyRawUpdate(projectId, insertSparql, draft, userId);
+                    mutationService.applyRawUpdateWithHistory(projectId, insertSparql, draft, userId, username);
                     resolution.put("status", "loaded");
                     resolution.put("tripleCount", fetch.tripleCount());
                 }
@@ -270,9 +274,10 @@ public class OntologyMetadataController {
                                          @RequestParam String importIri,
                                          @RequestParam(required = false, defaultValue = "false") boolean draft,
                                          @RequestParam(required = false) String userId,
+                                         @RequestParam(required = false) String username,
                                          HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteOntologyImport(projectId, importIri, draft, userId);
+            metadataService.deleteOntologyImport(projectId, importIri, draft, userId, username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_REMOVED, importIri, httpRequest);
             }
@@ -291,7 +296,8 @@ public class OntologyMetadataController {
             String versionIri = request.get("versionIri");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
             String userId = request.get("userId");
-            metadataService.updateOntologyIRIs(projectId, ontologyIri, versionIri, draft, userId);
+            String username = request.get("username");
+            metadataService.updateOntologyIRIs(projectId, ontologyIri, versionIri, draft, userId, username);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error updating ontology IRIs", e);
@@ -321,7 +327,8 @@ public class OntologyMetadataController {
             String superClass = request.get("superClass");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
             String userId = request.get("userId");
-            metadataService.addGCI(projectId, subClass, superClass, draft, userId);
+            String username = request.get("username");
+            metadataService.addGCI(projectId, subClass, superClass, draft, userId, username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
             }
@@ -343,11 +350,12 @@ public class OntologyMetadataController {
             String superClass = request.get("superClass");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
             String userId = request.get("userId");
+            String username = request.get("username");
 
             if (oldValue != null) {
-                metadataService.deleteGCI(projectId, oldValue, draft, userId);
+                metadataService.deleteGCI(projectId, oldValue, draft, userId, username);
             }
-            metadataService.addGCI(projectId, subClass, superClass, draft, userId);
+            metadataService.addGCI(projectId, subClass, superClass, draft, userId, username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
             }
@@ -363,9 +371,10 @@ public class OntologyMetadataController {
                                       @RequestParam String value,
                                       @RequestParam(required = false, defaultValue = "false") boolean draft,
                                       @RequestParam(required = false) String userId,
+                                      @RequestParam(required = false) String username,
                                       HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteGCI(projectId, value, draft, userId);
+            metadataService.deleteGCI(projectId, value, draft, userId, username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_REMOVED, value, httpRequest);
             }

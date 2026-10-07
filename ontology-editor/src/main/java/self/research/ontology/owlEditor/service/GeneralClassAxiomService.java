@@ -16,7 +16,7 @@ public class GeneralClassAxiomService {
     }
 
     public void addGeneralClassAxiom(String projectId, String subClassExpr, String superClassExpr,
-                                     boolean draft, String userId) throws Exception {
-        manchesterExpressionService.addGeneralClassAxiom(projectId, subClassExpr, superClassExpr, draft, userId);
+                                     boolean draft, String userId, String username) throws Exception {
+        manchesterExpressionService.addGeneralClassAxiom(projectId, subClassExpr, superClassExpr, draft, userId, username);
     }
 }

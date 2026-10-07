@@ -51,7 +51,7 @@ public class ManchesterExpressionService {
     }
 
     public void addGeneralClassAxiom(String projectId, String subClassExpr, String superClassExpr) throws Exception {
-        addGeneralClassAxiom(projectId, subClassExpr, superClassExpr, false, null);
+        addGeneralClassAxiom(projectId, subClassExpr, superClassExpr, false, null, null);
     }
 
     /**
@@ -59,7 +59,7 @@ public class ManchesterExpressionService {
      * private draft graph instead of the shared/public ontology.
      */
     public void addGeneralClassAxiom(String projectId, String subClassExpr, String superClassExpr,
-                                     boolean draft, String userId) throws Exception {
+                                     boolean draft, String userId, String username) throws Exception {
         OWLOntology ontology = loadOntology(projectId, draft, userId);
         OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
 
@@ -75,17 +75,17 @@ public class ManchesterExpressionService {
         }
 
         OWLSubClassOfAxiom axiom = df.getOWLSubClassOfAxiom(subClass, superClass);
-        persistAxioms(projectId, Set.of(axiom), draft, userId);
+        persistAxioms(projectId, Set.of(axiom), draft, userId, username);
         log.info("Added GCA for project {}: {} SubClassOf {} (draft={})", projectId, subClassExpr, superClassExpr, draft);
     }
 
     public void addClassExpressionAxiom(String projectId, String classIri, String axiomType, String expression)
             throws Exception {
-        addClassExpressionAxiom(projectId, classIri, axiomType, expression, false, null);
+        addClassExpressionAxiom(projectId, classIri, axiomType, expression, false, null, null);
     }
 
     public void addClassExpressionAxiom(String projectId, String classIri, String axiomType, String expression,
-                                        boolean draft, String userId)
+                                        boolean draft, String userId, String username)
             throws Exception {
         if (classIri == null || classIri.isBlank()) {
             throw new IllegalArgumentException("classIri is required");
@@ -109,17 +109,17 @@ public class ManchesterExpressionService {
             default -> throw new IllegalArgumentException("Unsupported axiomType: " + axiomType);
         };
 
-        persistAxioms(projectId, Set.of(axiom), draft, userId);
+        persistAxioms(projectId, Set.of(axiom), draft, userId, username);
         log.info("Added {} axiom for {} in project {} (draft={}): {}", axiomType, classIri, projectId, draft, expression);
     }
 
     public void addPropertyDomainAxiom(String projectId, String propertyIri, String expression, boolean isDataProperty)
             throws Exception {
-        addPropertyDomainAxiom(projectId, propertyIri, expression, isDataProperty, false, null);
+        addPropertyDomainAxiom(projectId, propertyIri, expression, isDataProperty, false, null, null);
     }
 
     public void addPropertyDomainAxiom(String projectId, String propertyIri, String expression, boolean isDataProperty,
-                                       boolean draft, String userId)
+                                       boolean draft, String userId, String username)
             throws Exception {
         if (propertyIri == null || propertyIri.isBlank()) {
             throw new IllegalArgumentException("propertyIri is required");
@@ -136,17 +136,17 @@ public class ManchesterExpressionService {
                 ? df.getOWLDataPropertyDomainAxiom(df.getOWLDataProperty(IRI.create(propertyIri.trim())), domain)
                 : df.getOWLObjectPropertyDomainAxiom(df.getOWLObjectProperty(IRI.create(propertyIri.trim())), domain);
 
-        persistAxioms(projectId, Set.of(axiom), draft, userId);
+        persistAxioms(projectId, Set.of(axiom), draft, userId, username);
         log.info("Added property domain axiom for {} in project {} (draft={}): {}", propertyIri, projectId, draft, expression);
     }
 
     public void addPropertyRangeAxiom(String projectId, String propertyIri, String expression, boolean isDataProperty)
             throws Exception {
-        addPropertyRangeAxiom(projectId, propertyIri, expression, isDataProperty, false, null);
+        addPropertyRangeAxiom(projectId, propertyIri, expression, isDataProperty, false, null, null);
     }
 
     public void addPropertyRangeAxiom(String projectId, String propertyIri, String expression, boolean isDataProperty,
-                                      boolean draft, String userId)
+                                      boolean draft, String userId, String username)
             throws Exception {
         if (propertyIri == null || propertyIri.isBlank()) {
             throw new IllegalArgumentException("propertyIri is required");
@@ -168,32 +168,32 @@ public class ManchesterExpressionService {
             axiom = df.getOWLObjectPropertyRangeAxiom(df.getOWLObjectProperty(propIri), range);
         }
 
-        persistAxioms(projectId, Set.of(axiom), draft, userId);
+        persistAxioms(projectId, Set.of(axiom), draft, userId, username);
         log.info("Added property range axiom for {} in project {} (draft={}): {}", propertyIri, projectId, draft, expression);
     }
 
     public void deletePropertyDomainAxiom(String projectId, String propertyIri, String expression, boolean isDataProperty)
             throws Exception {
-        deletePropertyDomainAxiom(projectId, propertyIri, expression, isDataProperty, false, null);
+        deletePropertyDomainAxiom(projectId, propertyIri, expression, isDataProperty, false, null, null);
     }
 
     public void deletePropertyDomainAxiom(String projectId, String propertyIri, String expression, boolean isDataProperty,
-                                          boolean draft, String userId)
+                                          boolean draft, String userId, String username)
             throws Exception {
         OWLAxiom axiom = buildPropertyDomainAxiom(projectId, propertyIri, expression, isDataProperty, draft, userId);
-        deleteAxioms(projectId, Set.of(axiom), draft, userId);
+        deleteAxioms(projectId, Set.of(axiom), draft, userId, username);
     }
 
     public void deletePropertyRangeAxiom(String projectId, String propertyIri, String expression, boolean isDataProperty)
             throws Exception {
-        deletePropertyRangeAxiom(projectId, propertyIri, expression, isDataProperty, false, null);
+        deletePropertyRangeAxiom(projectId, propertyIri, expression, isDataProperty, false, null, null);
     }
 
     public void deletePropertyRangeAxiom(String projectId, String propertyIri, String expression, boolean isDataProperty,
-                                         boolean draft, String userId)
+                                         boolean draft, String userId, String username)
             throws Exception {
         OWLAxiom axiom = buildPropertyRangeAxiom(projectId, propertyIri, expression, isDataProperty, draft, userId);
-        deleteAxioms(projectId, Set.of(axiom), draft, userId);
+        deleteAxioms(projectId, Set.of(axiom), draft, userId, username);
     }
 
     private OWLAxiom buildPropertyDomainAxiom(String projectId, String propertyIri, String expression,
@@ -220,30 +220,30 @@ public class ManchesterExpressionService {
     }
 
     private void persistAxioms(String projectId, Set<? extends OWLAxiom> axioms) throws Exception {
-        persistAxioms(projectId, axioms, false, null);
+        persistAxioms(projectId, axioms, false, null, null);
     }
 
-    private void persistAxioms(String projectId, Set<? extends OWLAxiom> axioms, boolean draft, String userId)
+    private void persistAxioms(String projectId, Set<? extends OWLAxiom> axioms, boolean draft, String userId, String username)
             throws Exception {
         String sparql = OwlAxiomSparqlWriter.toInsertData(axioms);
         if (sparql.isBlank()) {
             throw new IllegalStateException("Failed to serialize OWL axiom");
         }
-        mutationService.applyRawUpdate(projectId, sparql, draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, sparql, draft, userId, username);
 
     }
 
     private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms) throws Exception {
-        deleteAxioms(projectId, axioms, false, null);
+        deleteAxioms(projectId, axioms, false, null, null);
     }
 
-private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, boolean draft, String userId)
+private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, boolean draft, String userId, String username)
         throws Exception {
     String sparql = OwlAxiomSparqlWriter.toDeleteWhere(axioms);
     if (sparql.isBlank()) {
         throw new IllegalStateException("Failed to serialize OWL axiom for deletion");
     }
-    mutationService.applyRawUpdate(projectId, sparql, draft, userId);
+    mutationService.applyRawUpdateWithHistory(projectId, sparql, draft, userId, username);
 }
      OWLOntology loadOntology(String projectId) throws Exception {
         return loadOntology(projectId, false, null);
