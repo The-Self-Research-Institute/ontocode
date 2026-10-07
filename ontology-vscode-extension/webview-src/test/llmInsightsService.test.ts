@@ -35,6 +35,14 @@ function reply(status: number, body: unknown = {}) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 
+function seedKnownModel(provider: string, ...ids: string[]) {
+  localStorage.setItem(
+    "ontocode_llm_models_cache",
+    JSON.stringify({ [provider]: { fetchedAt: Date.now(), models: ids.map((id) => ({ id, label: id })) } }),
+  );
+  localStorage.setItem("ontocode_llm_model", ids[0]);
+}
+
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
@@ -113,26 +121,26 @@ describe("refreshAvailableModels", () => {
     expect(result.models.map((m) => m.id)).toEqual(["gpt-5.6-sol", "gpt-5.6-nano"]);
   });
 
-  it("falls back to the defaults on an HTTP error, bad JSON or a network failure", async () => {
+  it("returns nothing on an HTTP error, bad JSON or a network failure — never a guessed model", async () => {
     fetchMock.mockResolvedValueOnce(reply(401));
-    expect(await refreshAvailableModels("claude", "k")).toEqual({ models: getProviderModels("claude"), live: false });
+    expect(await refreshAvailableModels("claude", "k")).toEqual({ models: [], live: false });
 
     fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => Promise.reject(new Error("bad")) });
     expect((await refreshAvailableModels("openai", "k")).live).toBe(false);
 
     fetchMock.mockRejectedValueOnce(new TypeError("offline"));
     expect((await refreshAvailableModels("gemini", "k")).live).toBe(false);
-    expect(getProviderModels("gemini")[0].id).toBe("gemini-2.5-flash-lite");
+    expect(getProviderModels("gemini")).toEqual([]);
   });
 
-  it("ignores a stale model cache", async () => {
+  it("ignores a stale or corrupt model cache, returning nothing rather than a guessed model", async () => {
     localStorage.setItem(
       "ontocode_llm_models_cache",
       JSON.stringify({ claude: { fetchedAt: Date.now() - 13 * 60 * 60 * 1000, models: [{ id: "old", label: "Old" }] } }),
     );
-    expect(getProviderModels("claude")[0].id).toBe("claude-haiku-4-5");
+    expect(getProviderModels("claude")).toEqual([]);
     localStorage.setItem("ontocode_llm_models_cache", "{not json");
-    expect(getProviderModels("claude")[0].id).toBe("claude-haiku-4-5");
+    expect(getProviderModels("claude")).toEqual([]);
   });
 });
 
@@ -191,12 +199,19 @@ describe("generateGraphInsights", () => {
     await expect(generateGraphInsights(req)).rejects.toBeInstanceOf(LlmConfigError);
   });
 
-  it("sends the prompt to Gemini and returns the trimmed text", async () => {
+  it("discovers a live model and sends the prompt to Gemini, returning the trimmed text", async () => {
     await setApiKey("gk");
+    fetchMock.mockResolvedValueOnce(
+      reply(200, {
+        models: [
+          { name: "models/gemini-2.5-flash-lite", displayName: "Lite", supportedGenerationMethods: ["generateContent"] },
+        ],
+      }),
+    );
     fetchMock.mockResolvedValueOnce(reply(200, { candidates: [{ content: { parts: [{ text: " a" }, { text: "b " }] } }] }));
 
     expect(await generateGraphInsights(req)).toBe("ab");
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[1];
     expect(url).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
     );
@@ -204,8 +219,14 @@ describe("generateGraphInsights", () => {
     expect(JSON.parse(init.body).contents[0].parts[0].text).toContain("Ontology: Pets");
   });
 
+  it("needs a known model to send a request at all", async () => {
+    await setApiKey("gk");
+    await expect(generateGraphInsights(req)).rejects.toThrow("No Google Gemini model is available yet");
+  });
+
   it("maps Gemini status codes to readable errors", async () => {
     await setApiKey("gk");
+    seedKnownModel("gemini", "gemini-2.5-flash-lite");
     fetchMock.mockResolvedValueOnce(reply(403));
     await expect(generateGraphInsights(req)).rejects.toThrow("Invalid or unauthorized API key. Check your Gemini key.");
     fetchMock.mockResolvedValueOnce(reply(429));
@@ -218,6 +239,7 @@ describe("generateGraphInsights", () => {
 
   it("switches to the next known model when the stored one is retired", async () => {
     await setApiKey("gk");
+    seedKnownModel("gemini", "gemini-2.5-flash-lite", "gemini-2.5-pro");
     fetchMock
       .mockResolvedValueOnce(reply(404))
       .mockResolvedValueOnce(reply(200, { candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
@@ -231,6 +253,7 @@ describe("generateGraphInsights", () => {
 
   it("gives up after every known and live model 404s", async () => {
     await setApiKey("gk");
+    seedKnownModel("gemini", "gemini-2.5-flash-lite");
     fetchMock.mockImplementation(async (url: string) => (url.endsWith("/models") ? reply(500) : reply(404)));
 
     const error = await generateGraphInsights(req).catch((e) => e);
@@ -242,6 +265,7 @@ describe("generateGraphInsights", () => {
   it("calls Claude and maps its errors", async () => {
     localStorage.setItem("ontocode_llm_provider", "claude");
     await setApiKey("ck");
+    seedKnownModel("claude", "claude-sonnet-5");
     fetchMock.mockResolvedValueOnce(reply(200, { content: [{ text: "hi" }] }));
     expect(await generateGraphInsights(req)).toBe("hi");
     const [url, init] = fetchMock.mock.calls[0];

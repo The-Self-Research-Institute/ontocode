@@ -308,7 +308,7 @@ class CodeViewReimportPipelineTest {
     }
 
     @Test
-    void anAssistantApplyRefreshesTheCachedCountsInTheBackground() throws Exception {
+    void anAssistantApplyRefreshesTheCachedCountsImmediately() throws Exception {
         OntologyIndexService indexService = withMetadataRefresh();
         Map<String, Object> meta = Map.of("classes", 3);
         when(indexService.computeMetadata("proj-1")).thenReturn(meta);
@@ -316,10 +316,8 @@ class CodeViewReimportPipelineTest {
         pipeline.reimport(new ReimportRequest("proj-1", "turtle", fileWith("ttl", ":A a owl:Class ."),
                 false, "u1", "User", null, null, false, ChangeOrigin.ai("g1", "claude", "m", "s1", "add A")));
 
-        verify(metadataService, never()).writeMeta(anyString(), any());
-        assertEquals(1, queuedRefreshes.size());
-        queuedRefreshes.poll().run();
         verify(metadataService).writeMeta("proj-1", meta);
+        assertTrue(queuedRefreshes.isEmpty());
     }
 
     @Test

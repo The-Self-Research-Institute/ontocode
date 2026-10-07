@@ -20,6 +20,7 @@ import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import self.research.ontology.owlEditor.service.AssistantAdmissionLimiter;
 import self.research.ontology.owlEditor.service.AssistantAuditService;
 import self.research.ontology.owlEditor.service.AssistantSessionService;
+import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 
 import java.time.Instant;
@@ -56,6 +57,9 @@ class AssistantSessionControllerTest {
     @Mock
     private ProjectAccessService projectAccessService;
 
+    @Mock
+    private DraftCopyService draftCopyService;
+
     private AssistantSessionController controller;
     private final AtomicInteger ids = new AtomicInteger();
 
@@ -69,7 +73,7 @@ class AssistantSessionControllerTest {
         ReflectionTestUtils.setField(service, "deadlineSeconds", 300L);
         ReflectionTestUtils.setField(service, "maxActiveSessionsPerUser", 20);
         controller = new AssistantSessionController(service, new AssistantAdmissionLimiter(4, 8, 32, 30, 1),
-                projectAccessService);
+                projectAccessService, draftCopyService);
         when(metadataService.getMutationVersion("proj-1")).thenReturn(42L);
         when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(0L);
         when(sessionRepository.save(any())).thenAnswer(inv -> {

@@ -54,7 +54,11 @@ public class AssistantApplyOperationService {
         Files.createDirectories(snapshotDir);
         Path snapshot = snapshotDir.resolve(operationId + SNAPSHOT_EXTENSION);
         try {
-            storageManager.writeRestoreSnapshot(group.getProjectId(), snapshot);
+            if (group.isDraft()) {
+                storageManager.writeRestoreSnapshot(group.getProjectId(), group.getDraftUserId(), snapshot);
+            } else {
+                storageManager.writeRestoreSnapshot(group.getProjectId(), snapshot);
+            }
         } catch (IOException | RuntimeException e) {
             Files.deleteIfExists(snapshot);
             throw e;

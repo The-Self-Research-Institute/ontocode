@@ -125,14 +125,19 @@ public class AssistantEditProposalService {
 
         Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(ttlHours * 3600);
+        StorageManager.ContentScope scope = scopeFor(session);
 
         List<GroupProposalOutcome> outcomes;
+        SparqlQueryContext.setUserId(scope.userId());
+        SparqlQueryContext.setWantsDraft(scope.draft());
         try {
             outcomes = lockRegistry.runShared(session.getProjectId(), () -> {
-                long publicGraphVersion = storageManager.getPublicGraphVersion(session.getProjectId());
+                long publicGraphVersion = scope.draft()
+                        ? storageManager.resolveGraphVersion(session.getProjectId(), scope)
+                        : storageManager.getPublicGraphVersion(session.getProjectId());
                 List<GroupProposalOutcome> proposed = new ArrayList<>();
                 for (EditGroupInput groupInput : groups) {
-                    proposed.add(proposeOneGroup(session, groupInput, publicGraphVersion, now, expiresAt));
+                    proposed.add(proposeOneGroup(session, groupInput, publicGraphVersion, now, expiresAt, scope));
                 }
                 return proposed;
             });
@@ -140,6 +145,8 @@ public class AssistantEditProposalService {
             log.warn("[Assistant] propose failed for session {}: {}", session.getId(), e.getMessage());
             return ProposeEditResult.builder().ok(false).errorCode("QUERY_ERROR")
                     .message(e.getMessage() != null ? e.getMessage() : "propose failed").build();
+        } finally {
+            SparqlQueryContext.clear();
         }
 
         return ProposeEditResult.builder().ok(true).groups(outcomes).build();
@@ -152,8 +159,14 @@ public class AssistantEditProposalService {
         return ProposeEditResult.builder().ok(false).errorCode("VALIDATION_FAILED").message(message).build();
     }
 
+    private StorageManager.ContentScope scopeFor(AssistantSessionDocument session) {
+        return session.isDraft() ? new StorageManager.ContentScope(true, session.getDraftUserId())
+                                 : StorageManager.ContentScope.publicScope();
+    }
+
     private GroupProposalOutcome proposeOneGroup(AssistantSessionDocument session, EditGroupInput groupInput,
-                                                  long publicGraphVersion, Instant now, Instant expiresAt) {
+                                                  long publicGraphVersion, Instant now, Instant expiresAt,
+                                                  StorageManager.ContentScope scope) {
         PerfPhases perf = new PerfPhases();
         List<CheckResult> checks = new ArrayList<>();
         List<EditInput> inputEdits = groupInput.edits() == null ? List.of() : groupInput.edits();
@@ -183,10 +196,11 @@ public class AssistantEditProposalService {
                 ? "" : sortedEdits.get(0).targetPath();
 
         int maxDerivedEdits = maxEditsForOperation(groupInput.operation());
-        boolean structurallySound = addStructuralChecks(session, targetPath, sortedEdits, derived, maxDerivedEdits, checks);
+        boolean structurallySound = addStructuralChecks(session, targetPath, sortedEdits, derived, maxDerivedEdits,
+                checks, scope);
         perf.mark("structuralAndLiveMatch");
         sortedEdits = addContentChecks(session, targetPath, sortedEdits, structurallySound, derived,
-                introducedByOperation, checks, perf);
+                introducedByOperation, checks, perf, scope);
         boolean passed = checks.stream().allMatch(CheckResult::passed);
 
         List<EditEntry> editEntries = sortedEdits.stream().map(ProposedEdits::toEditEntry).toList();
@@ -295,7 +309,7 @@ public class AssistantEditProposalService {
 
     private boolean addStructuralChecks(AssistantSessionDocument session, String targetPath,
                                         List<EditInput> sortedEdits, boolean derived, int maxDerivedEdits,
-                                        List<CheckResult> checks) {
+                                        List<CheckResult> checks, StorageManager.ContentScope scope) {
         boolean hasEdits = !sortedEdits.isEmpty();
         checks.add(new CheckResult("has_edits", hasEdits));
 
@@ -317,8 +331,8 @@ public class AssistantEditProposalService {
         String projectId = session.getProjectId();
         boolean liveMatch = singleTargetPath && rangeWellFormed
                 && (derived ? noOverlap
-                        && ProposedEdits.matchesLiveContentInOnePass(storageManager, projectId, targetPath, sortedEdits)
-                : sortedEdits.stream().allMatch(e -> ProposedEdits.matchesLiveContent(storageManager, projectId, e)));
+                        && ProposedEdits.matchesLiveContentInOnePass(storageManager, projectId, targetPath, sortedEdits, scope)
+                : sortedEdits.stream().allMatch(e -> ProposedEdits.matchesLiveContent(storageManager, projectId, e, scope)));
         checks.add(new CheckResult("original_text_matches_live", liveMatch));
 
         return hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
@@ -327,14 +341,16 @@ public class AssistantEditProposalService {
     private List<EditInput> addContentChecks(AssistantSessionDocument session, String targetPath,
                                              List<EditInput> proposedEdits, boolean structurallySound,
                                              boolean derived, Set<String> introducedByOperation,
-                                             List<CheckResult> checks, PerfPhases perf) {
+                                             List<CheckResult> checks, PerfPhases perf,
+                                             StorageManager.ContentScope scope) {
         List<EditInput> sortedEdits = proposedEdits;
         CheckResult syntax;
         if (structurallySound) {
             AssistantEditSyntaxValidator.SyntaxResult result = syntaxValidator.check(session.getProjectId(),
-                    targetPath, ProposedEdits.toSpliceEdits(sortedEdits));
+                    targetPath, ProposedEdits.toSpliceEdits(sortedEdits), scope);
             if (!result.valid() && !derived) {
-                SnappedInsert snapped = snapInsertToStatementBoundary(session.getProjectId(), targetPath, sortedEdits);
+                SnappedInsert snapped = snapInsertToStatementBoundary(session.getProjectId(), targetPath, sortedEdits,
+                        scope);
                 if (snapped != null) {
                     sortedEdits = snapped.edits();
                     result = snapped.syntax();
@@ -351,7 +367,7 @@ public class AssistantEditProposalService {
         CheckResult referenceCoverage = !structurallySound
                 ? new CheckResult("complete_reference_coverage", true)
                 : toCheckResult(referenceCoverageValidator.check(
-                        session.getProjectId(), targetPath, ProposedEdits.toCoverageEdits(sortedEdits)));
+                        session.getProjectId(), targetPath, ProposedEdits.toCoverageEdits(sortedEdits), scope));
         checks.add(referenceCoverage);
         perf.mark("referenceCoverage");
 
@@ -363,7 +379,7 @@ public class AssistantEditProposalService {
                     "Skipped because the edited document does not parse."));
         } else {
             checks.addAll(semanticValidator.check(session.getProjectId(), targetPath,
-                    ProposedEdits.toSemanticEdits(sortedEdits), introducedByOperation));
+                    ProposedEdits.toSemanticEdits(sortedEdits), introducedByOperation, scope));
         }
 
         perf.mark("semantic");
@@ -373,7 +389,8 @@ public class AssistantEditProposalService {
     private record SnappedInsert(List<EditInput> edits, AssistantEditSyntaxValidator.SyntaxResult syntax,
                                  CheckResult note) {}
 
-    private SnappedInsert snapInsertToStatementBoundary(String projectId, String targetPath, List<EditInput> edits) {
+    private SnappedInsert snapInsertToStatementBoundary(String projectId, String targetPath, List<EditInput> edits,
+                                                        StorageManager.ContentScope scope) {
         long insertLine = edits.get(0).range().startLine();
         boolean singleInsertPoint = edits.stream()
                 .allMatch(e -> e.range().lineCount() == 0 && e.range().startLine() == insertLine);
@@ -388,7 +405,7 @@ public class AssistantEditProposalService {
                 .map(e -> new EditInput(e.targetPath(), new EditRange(boundary.getAsLong(), 0), e.originalText(),
                         e.newText()))
                 .toList();
-        if (!syntaxValidator.regionParses(projectId, targetPath, ProposedEdits.toSpliceEdits(moved))) {
+        if (!syntaxValidator.regionParses(projectId, targetPath, ProposedEdits.toSpliceEdits(moved), scope)) {
             return null;
         }
         AssistantEditSyntaxValidator.SyntaxResult retry = new AssistantEditSyntaxValidator.SyntaxResult(true, null);
@@ -422,6 +439,8 @@ public class AssistantEditProposalService {
                 .userEmail(session.getUserEmail())
                 .clientGroupId(groupInput.clientGroupId())
                 .targetPath(targetPath)
+                .draft(session.isDraft())
+                .draftUserId(session.getDraftUserId())
                 .edits(editEntries)
                 .status(passed ? AssistantEditGroupStatus.PENDING : AssistantEditGroupStatus.VALIDATION_FAILED)
                 .publicGraphVersionAtPropose(publicGraphVersion)

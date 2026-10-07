@@ -29,17 +29,29 @@ public class AssistantEditSyntaxValidator {
     public record SyntaxResult(boolean valid, String detail) {}
 
     public boolean isValid(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits) {
-        return check(projectId, targetPath, edits).valid();
+        return isValid(projectId, targetPath, edits, StorageManager.ContentScope.publicScope());
+    }
+
+    public boolean isValid(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits,
+                           StorageManager.ContentScope scope) {
+        return check(projectId, targetPath, edits, scope).valid();
     }
 
     public SyntaxResult check(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits) {
+        return check(projectId, targetPath, edits, StorageManager.ContentScope.publicScope());
+    }
+
+    public SyntaxResult check(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits,
+                              StorageManager.ContentScope scope) {
         if (!isRdf4jParseable(targetPath)) {
             return new SyntaxResult(true, "Not parsed at propose time for " + targetPath
                     + "; the OWL API import on apply validates it.");
         }
+        Path sourceFile = null;
         Path splicedFile = null;
         try {
-            Path sourceFile = storageManager.ensureCodeViewFile(projectId, targetPath);
+            sourceFile = scope.draft() ? storageManager.resolveCodeViewFile(projectId, targetPath, scope)
+                                       : storageManager.ensureCodeViewFile(projectId, targetPath);
             long started = System.nanoTime();
             if (RegionSyntaxCheck.parses(sourceFile, targetPath, edits)) {
                 log.info("[PERF] Syntax check parsed only the edited region in {}ms",
@@ -68,15 +80,34 @@ public class AssistantEditSyntaxValidator {
                 } catch (Exception ignored) {
                 }
             }
+            if (scope.draft() && sourceFile != null) {
+                try {
+                    Files.deleteIfExists(sourceFile);
+                } catch (Exception ignored) {
+                }
+            }
         }
     }
 
-    public boolean regionParses(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits) {
+    public boolean regionParses(String projectId, String targetPath, List<LineRangeSpliceWriter.SpliceEdit> edits,
+                                StorageManager.ContentScope scope) {
+        Path sourceFile = null;
         try {
-            return isRdf4jParseable(targetPath)
-                    && RegionSyntaxCheck.parses(storageManager.ensureCodeViewFile(projectId, targetPath), targetPath, edits);
+            if (!isRdf4jParseable(targetPath)) {
+                return false;
+            }
+            sourceFile = scope.draft() ? storageManager.resolveCodeViewFile(projectId, targetPath, scope)
+                                       : storageManager.ensureCodeViewFile(projectId, targetPath);
+            return RegionSyntaxCheck.parses(sourceFile, targetPath, edits);
         } catch (Exception e) {
             return false;
+        } finally {
+            if (scope.draft() && sourceFile != null) {
+                try {
+                    Files.deleteIfExists(sourceFile);
+                } catch (Exception ignored) {
+                }
+            }
         }
     }
 

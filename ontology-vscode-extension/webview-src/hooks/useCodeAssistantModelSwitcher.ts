@@ -41,7 +41,12 @@ function makeRefreshModels(s: SwitcherSetters) {
     try {
       const { models: live, live: isLive } = await refreshAvailableModels(s.provider, key.trim());
       if (!isLive) {
-        s.setError("Could not reach the provider — showing default models.");
+        s.setModels(getProviderModels(s.provider));
+        s.setError(
+          getProviderModels(s.provider).length
+            ? "Could not reach the provider — showing the last known models."
+            : "Could not reach the provider, and no models are available yet. Check your API key.",
+        );
         return;
       }
       s.setModels(live);
@@ -73,7 +78,13 @@ function makeSaveKey(s: SwitcherSetters, keyInput: string, setKeyInput: (v: stri
         s.setModel(list[0].id);
         setStoredModel(list[0].id);
       }
-      if (!isLive) s.setError("Could not verify the key with the provider — saved anyway.");
+      if (!isLive) {
+        s.setError(
+          list.length
+            ? "Could not verify the key with the provider — saved anyway, showing the last known models."
+            : "Could not verify the key with the provider, and no models are available yet — saved anyway.",
+        );
+      }
       setKeyInput("");
       setForceKeyInput(false);
       s.onChange();
@@ -126,9 +137,13 @@ export function useCodeAssistantModelSwitcher(onChange: () => void) {
     onChange();
   };
 
+  const handleRetryModels = () => {
+    if (hasApiKey()) refreshModels(getStoredApiKey());
+  };
+
   return {
     open, setOpen, provider, setProvider, model, models, keyInput, setKeyInput, loadingModels, error,
     forceKeyInput, setForceKeyInput, popoverRef, handleSaveKey: makeSaveKey(setters, keyInput, setKeyInput, setForceKeyInput),
-    handleClearKey, selectModel,
+    handleClearKey, selectModel, handleRetryModels,
   };
 }

@@ -34,7 +34,7 @@ final class AssistantApplyFailureHandler {
         log.error("[Assistant] Reimport failed for project {} while applying group {}; trying to roll back to the "
                 + "pre-apply snapshot. Original error: {}", group.getProjectId(), group.getId(), baseMessage, reimportEx);
 
-        String restoreFailure = tryRestore(group.getProjectId(), operation);
+        String restoreFailure = tryRestore(group, operation);
         if (restoreFailure == null) {
             operationService.markRolledBack(operation, baseMessage, "AUTOMATIC_ROLLBACK");
             String message = "Apply failed and was rolled back: " + baseMessage + ". The project is back to how it "
@@ -65,12 +65,18 @@ final class AssistantApplyFailureHandler {
                 + "it is restored or the lock is cleared.");
     }
 
-    private String tryRestore(String projectId, AssistantApplyOperationDocument operation) {
+    private String tryRestore(AssistantEditGroupDocument group, AssistantApplyOperationDocument operation) {
         if (!operationService.snapshotExists(operation)) {
             return "the pre-apply snapshot is missing";
         }
+        String projectId = group.getProjectId();
         try {
-            reimportPipeline.restoreSnapshot(projectId, operationService.snapshotOf(operation));
+            if (group.isDraft()) {
+                reimportPipeline.restoreSnapshot(projectId, operationService.snapshotOf(operation),
+                        true, group.getDraftUserId());
+            } else {
+                reimportPipeline.restoreSnapshot(projectId, operationService.snapshotOf(operation));
+            }
             return null;
         } catch (Exception restoreEx) {
             log.error("[Assistant] Rollback of project {} to snapshot {} failed: {}",

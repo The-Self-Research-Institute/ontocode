@@ -138,8 +138,7 @@ public class CodeViewReimportPipeline {
                 return new ReimportResult(format, files.rdfFormat,
                         storageManager.getDraftGraphVersion(req.projectId(), req.userId()), false);
             }
-            invalidateAfterGraphReplaced(req.projectId(),
-                    req.origin() == null ? MetadataRefresh.NOW : MetadataRefresh.BACKGROUND);
+            invalidateAfterGraphReplaced(req.projectId(), MetadataRefresh.NOW);
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
             perf.mark("invalidate");
 
@@ -263,13 +262,23 @@ public class CodeViewReimportPipeline {
     }
 
     public long restoreSnapshot(String projectId, Path snapshot) throws IOException {
+        return restoreSnapshot(projectId, snapshot, false, null);
+    }
+
+    public long restoreSnapshot(String projectId, Path snapshot, boolean draft, String userId) throws IOException {
         if (snapshot == null || !Files.isRegularFile(snapshot)) {
             throw new IOException("The pre-apply snapshot is missing, so the project can't be restored from it");
         }
-        log.warn("[CODE-VIEW-SAVE] Restoring project {} from pre-apply snapshot {} ({} bytes)",
-                projectId, snapshot.getFileName(), Files.size(snapshot));
-        streamIntoGraphDb(projectId, snapshot, RdfFiles.snapshotFormat(snapshot), null);
+        log.warn("[CODE-VIEW-SAVE] Restoring project {} from pre-apply snapshot {} ({} bytes, draft={})",
+                projectId, snapshot.getFileName(), Files.size(snapshot), draft);
+        String targetGraphOverride = draft ? datasetService.getDraftGraphUri(projectId, userId) : null;
+        streamIntoGraphDb(projectId, snapshot, RdfFiles.snapshotFormat(snapshot), targetGraphOverride);
         invalidateReasonerCaches(projectId);
+        if (draft) {
+            invalidateAfterDraftReplaced(projectId, userId);
+            log.info("[CODE-VIEW-SAVE] Project {} draft (user {}) restored from its pre-apply snapshot", projectId, userId);
+            return storageManager.getDraftGraphVersion(projectId, userId);
+        }
         invalidateAfterGraphReplaced(projectId, MetadataRefresh.BACKGROUND);
         log.info("[CODE-VIEW-SAVE] Project {} restored from its pre-apply snapshot", projectId);
         return storageManager.getPublicGraphVersion(projectId);

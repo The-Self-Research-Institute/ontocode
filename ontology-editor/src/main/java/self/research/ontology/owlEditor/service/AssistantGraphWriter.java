@@ -43,7 +43,7 @@ final class AssistantGraphWriter {
 
     Outcome write(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile, String userEmail,
                   boolean patchEnabled, PerfPhases perf, ChangeOrigin origin) {
-        if (patchEnabled) {
+        if (patchEnabled && !group.isDraft()) {
             Optional<Written> patched = tryPatch(group, sourceFile, splicedFile, userEmail, perf, origin);
             if (patched.isPresent()) {
                 return new Outcome(patched.get(), null);
@@ -122,11 +122,15 @@ final class AssistantGraphWriter {
                             + "Nothing was modified; try again.").build());
         }
         operationService.markImporting(operation);
+        boolean draft = group.isDraft();
+        String draftUserId = group.getDraftUserId();
+        String targetGraphOverride = draft ? datasetService.getDraftGraphUri(group.getProjectId(), draftUserId) : null;
         CodeViewReimportPipeline.ReimportResult result;
         try {
             result = reimportPipeline.reimport(new CodeViewReimportPipeline.ReimportRequest(
-                    group.getProjectId(), group.getTargetPath(), splicedFile, false,
-                    userEmail, userEmail, null, operationService.snapshotOf(operation), true, origin));
+                    group.getProjectId(), group.getTargetPath(), splicedFile, draft,
+                    draft ? draftUserId : userEmail, userEmail, targetGraphOverride,
+                    operationService.snapshotOf(operation), true, origin));
         } catch (Exception reimportEx) {
             perf.mark("reimportFailed");
             ApplyResult failed = failureHandler.handle(group, operation, reimportEx);

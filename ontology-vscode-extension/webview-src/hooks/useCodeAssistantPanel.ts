@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import { hasApiKey } from "../services/LlmInsightsService";
-import { onApiKeyChange } from "../services/assistantKeyStore";
+import { useRef, useState } from "react";
 import { useAuth } from "../custom-hook/useAuth";
 import { useSubscription } from "./useSubscription";
 import { useCodeAssistantRecovery } from "./useCodeAssistantRecovery";
@@ -8,50 +6,9 @@ import { useCodeAssistantEntries } from "./useCodeAssistantEntries";
 import { useCodeAssistantRun } from "./useCodeAssistantRun";
 import { useCodeAssistantApply } from "./useCodeAssistantApply";
 import { useCodeAssistantUndo } from "./useCodeAssistantUndo";
-import { getApiBaseUrl, resolveApplyBlock, type CodeAssistantAction } from "../components/codeAssistantPanelHelpers";
-import { getCachedProviderConfig, getProviderConfig, type ProviderConfig } from "../services/codeAssistantProviderConfig";
+import { resolveApplyBlock, type CodeAssistantAction } from "../components/codeAssistantPanelHelpers";
+import { useLatestRef, useProviderState, usePanelLifecycle } from "./useCodeAssistantPanelLifecycle";
 import type { CodeAssistantPanelProps } from "../components/CodeAssistantPanel";
-
-function useLatestRef<T>(value: T): MutableRefObject<T> {
-  const ref = useRef(value);
-  ref.current = value;
-  return ref;
-}
-
-function useProviderState() {
-  const [configured, setConfigured] = useState(hasApiKey());
-  const [providerConfig, setProviderConfig] = useState<ProviderConfig | null>(() => getCachedProviderConfig());
-  const managedProvider = providerConfig?.managed ? providerConfig : null;
-  const ready = managedProvider !== null || configured;
-  return { configured, setConfigured, setProviderConfig, managedProvider, ready };
-}
-
-function usePanelLifecycle(
-  mountedRef: MutableRefObject<boolean>,
-  run: { abortOnUnmount: () => void },
-  token: string | undefined,
-  provider: ReturnType<typeof useProviderState>,
-) {
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      run.abortOnUnmount();
-    };
-  }, []);
-
-  useEffect(() => onApiKeyChange(() => provider.setConfigured(hasApiKey())), []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void getProviderConfig(getApiBaseUrl(), token).then((config) => {
-      if (!cancelled) provider.setProviderConfig(config);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-}
 
 export function useCodeAssistantPanel(props: CodeAssistantPanelProps) {
   const { projectId, hasUnsavedCodeViewChanges = false } = props;

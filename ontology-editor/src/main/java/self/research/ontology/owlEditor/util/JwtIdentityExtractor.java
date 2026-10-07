@@ -87,4 +87,43 @@ public final class JwtIdentityExtractor {
             return Optional.empty();
         }
     }
+
+    public static Optional<String> extractUserId(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return desktopUser(request);
+        }
+        String token = authHeader.substring(7).trim();
+        SecretKey key = signatureKey;
+        return key != null ? verifiedUserId(token, key) : unverifiedUserId(token);
+    }
+
+    private static Optional<String> verifiedUserId(String token, SecretKey key) {
+        try {
+            Claims claims = Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();
+            Object userId = claims.get("userId");
+            String identity = userId != null ? userId.toString() : null;
+            return identity == null || identity.isBlank() ? Optional.empty() : Optional.of(identity);
+        } catch (Exception e) {
+            log.warn("[Assistant] Rejected a bearer token that failed signature verification: {}", e.getClass().getSimpleName());
+            return Optional.empty();
+        }
+    }
+
+    private static Optional<String> unverifiedUserId(String token) {
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length < 2) {
+                return Optional.empty();
+            }
+            String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> claims = MAPPER.readValue(payload, Map.class);
+            Object userId = claims.get("userId");
+            return userId != null ? Optional.of(userId.toString()) : Optional.empty();
+        } catch (Exception e) {
+            log.warn("[Assistant] Failed to decode JWT for identity extraction: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
 }

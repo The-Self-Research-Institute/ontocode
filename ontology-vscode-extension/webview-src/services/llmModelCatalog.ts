@@ -76,7 +76,7 @@ export function getProviderModels(provider: LlmProvider): KnownModel[] {
   if (entry && entry.models.length && Date.now() - entry.fetchedAt < MODELS_CACHE_TTL_MS) {
     return entry.models;
   }
-  return PROVIDERS[provider]?.models ?? [];
+  return [];
 }
 
 const BUDGET_TIER = /(^|-)(lite|mini|nano|8b|small)(-|$)/i;

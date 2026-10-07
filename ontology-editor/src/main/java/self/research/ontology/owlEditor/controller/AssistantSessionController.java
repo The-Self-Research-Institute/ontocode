@@ -17,6 +17,7 @@ import self.research.ontology.owlEditor.dto.AssistantSessionCreateRequest;
 import self.research.ontology.owlEditor.dto.AssistantSessionResponse;
 import self.research.ontology.owlEditor.service.AssistantAdmissionLimiter;
 import self.research.ontology.owlEditor.service.AssistantSessionService;
+import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.ProjectAccessService;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
@@ -36,13 +37,16 @@ public class AssistantSessionController {
     private final AssistantSessionService sessionService;
     private final AssistantAdmissionLimiter admissionLimiter;
     private final ProjectAccessService projectAccessService;
+    private final DraftCopyService draftCopyService;
 
     public AssistantSessionController(AssistantSessionService sessionService,
                                       AssistantAdmissionLimiter admissionLimiter,
-                                      ProjectAccessService projectAccessService) {
+                                      ProjectAccessService projectAccessService,
+                                      DraftCopyService draftCopyService) {
         this.sessionService = sessionService;
         this.admissionLimiter = admissionLimiter;
         this.projectAccessService = projectAccessService;
+        this.draftCopyService = draftCopyService;
     }
 
     @PostMapping
@@ -72,10 +76,26 @@ public class AssistantSessionController {
                             + MAX_MODEL_LENGTH));
         }
 
+        String draftUserId = null;
+        if (request.isDraft()) {
+            draftUserId = JwtIdentityExtractor.extractUserId(httpRequest).orElse(null);
+            if (draftUserId == null) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(Map.of("ok", false, "errorCode", "UNAUTHORIZED",
+                                "message", "Could not verify who this draft session belongs to"));
+            }
+            if (!draftCopyService.isReady(request.getProjectId(), draftUserId)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(Map.of("ok", false, "errorCode", "DRAFT_NOT_READY",
+                                "message", "Your draft copy isn't ready yet. Try again in a moment."));
+            }
+        }
+
         AssistantSessionService.SessionCreateOutcome outcome = sessionService.createSession(
                 request.getProjectId(), userEmail, request.getDocumentPath(),
                 request.getActionType(), request.getActionContext(), provider, model,
                 request.getTokenBudget(), request.getRetrievalAttempts(),
+                request.isDraft(), draftUserId,
                 () -> admissionLimiter.tryAdmitSessionCreate(userEmail));
         if (!outcome.created()) {
             return rateLimited(outcome.retryAfterSeconds());

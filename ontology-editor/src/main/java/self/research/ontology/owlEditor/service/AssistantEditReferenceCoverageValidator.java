@@ -34,6 +34,11 @@ public class AssistantEditReferenceCoverageValidator {
     public record CoverageResult(boolean covered, String detail) {}
 
     public CoverageResult check(String projectId, String targetPath, List<CoverageEdit> edits) {
+        return check(projectId, targetPath, edits, StorageManager.ContentScope.publicScope());
+    }
+
+    public CoverageResult check(String projectId, String targetPath, List<CoverageEdit> edits,
+                                StorageManager.ContentScope scope) {
         Set<String> removedTokens = removedSubjectTokens(edits);
         if (removedTokens.isEmpty()) {
             return new CoverageResult(true, null);
@@ -48,7 +53,7 @@ public class AssistantEditReferenceCoverageValidator {
         Set<String> unresolved = new LinkedHashSet<>(removedTokens);
         TurtleLineScanner scanner = AssistantRenameService.isTurtleFamily(targetPath) ? new TurtleLineScanner() : null;
         try {
-            scanOutsideEditedRanges(projectId, targetPath, editedRanges, scanner, unresolved, missed);
+            scanOutsideEditedRanges(projectId, targetPath, editedRanges, scanner, unresolved, missed, scope);
         } catch (Exception e) {
             log.warn("[Assistant] complete_reference_coverage scan failed for project {} targetPath {}: {}",
                     projectId, targetPath, e.getMessage());
@@ -83,10 +88,12 @@ public class AssistantEditReferenceCoverageValidator {
     }
 
     private void scanOutsideEditedRanges(String projectId, String targetPath, List<long[]> editedRanges,
-                                         TurtleLineScanner scanner, Set<String> unresolved, List<String> missed)
+                                         TurtleLineScanner scanner, Set<String> unresolved, List<String> missed,
+                                         StorageManager.ContentScope scope)
             throws Exception {
         int rangeCursor = 0;
-        Path sourceFile = storageManager.ensureCodeViewFile(projectId, targetPath);
+        Path sourceFile = scope.draft() ? storageManager.resolveCodeViewFile(projectId, targetPath, scope)
+                                        : storageManager.ensureCodeViewFile(projectId, targetPath);
         try (BufferedReader reader = Files.newBufferedReader(sourceFile)) {
             String line;
             long lineNo = 0;
@@ -104,6 +111,10 @@ public class AssistantEditReferenceCoverageValidator {
                     collectMisses(unresolved, lineTokens, lineNo, missed);
                 }
                 lineNo++;
+            }
+        } finally {
+            if (scope.draft()) {
+                Files.deleteIfExists(sourceFile);
             }
         }
     }

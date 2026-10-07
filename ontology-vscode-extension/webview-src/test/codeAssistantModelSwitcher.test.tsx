@@ -104,7 +104,7 @@ describe("CodeAssistantModelSwitcher", () => {
     expect(trigger().textContent).toContain("Google Gemini · Gemini 3.5 Flash");
   });
 
-  it("saves the key with the default models when the provider can't be reached", async () => {
+  it("saves the key but offers no model when the provider can't be reached and nothing is cached", async () => {
     await renderSwitcher();
     await open();
     typeInto(keyInput()!, "sk-offline");
@@ -114,9 +114,11 @@ describe("CodeAssistantModelSwitcher", () => {
     await flush();
 
     expect(getApiKey()).toBe("sk-offline");
-    expect(getStoredModel()).toBe("gemini-2.5-flash-lite");
-    expect(ui.container.textContent).toContain("Could not verify the key with the provider — saved anyway.");
-    expect(ui.container.textContent).toContain("Gemini 2.5 Flash Lite (fast, free)");
+    expect(getStoredModel()).toBe("");
+    expect(ui.container.textContent).toContain(
+      "Could not verify the key with the provider, and no models are available yet — saved anyway.",
+    );
+    expect(ui.container.textContent).toContain("Couldn't load available models for this provider.");
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
@@ -136,7 +138,7 @@ describe("CodeAssistantModelSwitcher", () => {
     await storeKey("claude", "sk-ant");
     respondWith(claudeModels);
     await renderSwitcher();
-    expect(trigger().textContent).toContain("Anthropic Claude · Claude Sonnet 5 (balanced)");
+    expect(trigger().textContent).toContain("Anthropic Claude · no model available");
 
     await open();
     expect(fetchMock).toHaveBeenCalledWith(
@@ -145,7 +147,7 @@ describe("CodeAssistantModelSwitcher", () => {
     );
     const opus = buttonByText(ui.container, "Opus live")!;
     expect(buttonByText(ui.container, "Haiku live")).toBeDefined();
-    expect(getStoredModel()).toBe("claude-sonnet-5");
+    expect(getStoredModel()).toBe("");
 
     click(opus);
     await flush();
@@ -158,20 +160,23 @@ describe("CodeAssistantModelSwitcher", () => {
 
   it("marks the current model with a check", async () => {
     await storeKey("claude", "sk-ant", "claude-haiku-4-5");
+    respondWith(claudeModels);
     await renderSwitcher();
     await open();
-    const haiku = buttonByText(ui.container, "Claude Haiku 4.5")!;
-    const opus = buttonByText(ui.container, "Claude Opus 4.8")!;
+    const haiku = buttonByText(ui.container, "Haiku live")!;
+    const opus = buttonByText(ui.container, "Opus live")!;
     expect(haiku.querySelector("svg")).not.toBeNull();
     expect(opus.querySelector("svg")).toBeNull();
   });
 
-  it("warns when the refresh can't reach the provider and keeps the defaults", async () => {
+  it("warns when the refresh can't reach the provider and no models are cached", async () => {
     await storeKey("openai", "sk-oai");
     await renderSwitcher();
     await open();
-    expect(ui.container.textContent).toContain("Could not reach the provider — showing default models.");
-    expect(buttonByText(ui.container, "GPT-5.6 Terra (balanced)")).toBeDefined();
+    expect(ui.container.textContent).toContain(
+      "Could not reach the provider, and no models are available yet. Check your API key.",
+    );
+    expect(ui.container.textContent).toContain("Couldn't load available models for this provider.");
   });
 
   it("moves off a paid-only Gemini model to the first live one", async () => {
@@ -193,7 +198,7 @@ describe("CodeAssistantModelSwitcher", () => {
     expect(keyInput()).not.toBeNull();
     click(buttonByText(ui.container, "Cancel"));
     expect(keyInput()).toBeNull();
-    expect(buttonByText(ui.container, "Claude Sonnet 5")).toBeDefined();
+    expect(ui.container.textContent).toContain("Couldn't load available models for this provider.");
   });
 
   it("clears the key and goes back to key entry", async () => {

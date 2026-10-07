@@ -39,9 +39,15 @@ export interface PanelEditorSelection extends EditorSelectionContext {
   pageStartLine: number;
 }
 
-function composerPlaceholder(recoveryLocked: boolean, ready: boolean, action: CodeAssistantAction): string {
+function composerPlaceholder(
+  recoveryLocked: boolean,
+  ready: boolean,
+  modelUnavailable: boolean,
+  action: CodeAssistantAction,
+): string {
   if (recoveryLocked) return "Paused until the recovery notice above is resolved...";
   if (!ready) return "Add an API key using the model picker below...";
+  if (modelUnavailable) return "Couldn't load available models — check your API key below...";
   return action === "local-edit" ? "Describe the change you want..." : "Type your question...";
 }
 
@@ -146,8 +152,8 @@ const PanelFooter: React.FC<{
       input={c.input}
       setInput={c.setInput}
       commands={buildPanelCommands(c, projectId)}
-      disabled={c.run.busy || !projectId || !c.ready || c.recoveryLocked}
-      placeholder={composerPlaceholder(c.recoveryLocked, c.ready, c.action)}
+      disabled={c.run.busy || !projectId || !c.ready || c.modelUnavailable || c.recoveryLocked}
+      placeholder={composerPlaceholder(c.recoveryLocked, c.ready, c.modelUnavailable, c.action)}
       onSubmit={onSubmit}
     />
     <ProviderFooter c={c} />
