@@ -45,7 +45,7 @@ export async function runAssistantTurn(request: TurnRequest): Promise<TurnResult
       actionType: request.action,
       actionContext: request.actionContext,
       ...(config.managed ? { provider: config.provider, model: config.model } : {}),
-      ...(request.draft ? { draft: true, userId: request.userId } : {}),
+      ...(request.draft ? { draft: true } : {}),
     },
     signal,
   );
