@@ -76,6 +76,16 @@ describe("permissionMessage", () => {
     const dead = toDeadEnd(errorSignalFrom({ status: 403, viewOnly: true, error: "View only" }, ""));
     expect(dead?.message).toMatch(/view-only/);
   });
+
+  it("reads the interceptor's flags from a real AssistantApiError, not just a plain object", () => {
+    const error = new AssistantApiError("You can view this project and edit via draft mode.", "FORBIDDEN", undefined, {
+      status: 403,
+      viewOnly: true,
+      draftAllowed: true,
+    });
+    const dead = toDeadEnd(errorSignalFrom(error, ""));
+    expect(dead?.message).toMatch(/draft/);
+  });
 });
 
 describe("helpers", () => {

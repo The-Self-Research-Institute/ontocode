@@ -142,7 +142,10 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
                         || "true".equalsIgnoreCase(request.getParameter("useDraft"));
                 boolean isDraftEndpoint = path.contains("/draft") || path.contains("/pull-from-public/")
                         || path.contains("/rollback") || path.contains("/change-sets/") || path.contains("/undos/");
-                if ((isDraftMutation || isDraftEndpoint) && !isCodeAssistantWrite(path)) {
+                boolean allowed = isCodeAssistantWrite(path)
+                        ? isCodeAssistantSessionDraft(path)
+                        : (isDraftMutation || isDraftEndpoint);
+                if (allowed) {
                     return true;
                 }
                 log.debug("DRAFT_EDITOR direct-write block: userId={} projectId={} path={}", userId, projectId, path);
@@ -189,6 +192,22 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     private static boolean isCodeAssistantWrite(String path) {
         return PATH.match(RECOVERY_PATTERN, path) || PATH.match(APPLY_PATTERN, path)
                 || PATH.match(PROPOSE_PATTERN, path);
+    }
+
+    private boolean isCodeAssistantSessionDraft(String path) {
+        if (PATH.match(APPLY_PATTERN, path)) {
+            Map<String, String> vars = PATH.extractUriTemplateVariables(APPLY_PATTERN, path);
+            return assistantEditGroupRepository.findById(vars.get("serverGroupId"))
+                    .map(AssistantEditGroupDocument::isDraft)
+                    .orElse(false);
+        }
+        if (PATH.match(PROPOSE_PATTERN, path)) {
+            Map<String, String> vars = PATH.extractUriTemplateVariables(PROPOSE_PATTERN, path);
+            return assistantSessionRepository.findById(vars.get("sessionId"))
+                    .map(AssistantSessionDocument::isDraft)
+                    .orElse(false);
+        }
+        return false;
     }
 
     private static String decodeSegment(String value) {

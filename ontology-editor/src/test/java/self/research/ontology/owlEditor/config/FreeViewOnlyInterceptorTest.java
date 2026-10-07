@@ -196,6 +196,32 @@ class FreeViewOnlyInterceptorTest {
     }
 
     @Test
+    void draftEditorAllowedOnProposeWhenTheSessionIsActuallyADraftSession() throws Exception {
+        AssistantSessionDocument draftSession = AssistantSessionDocument.builder()
+                .id("s1").projectId("proj-77").draft(true).build();
+        when(assistantSessionRepository.findById("s1")).thenReturn(Optional.of(draftSession));
+        when(workspaceOwnershipService.isDraftEditorInProject("u1", "proj-77")).thenReturn(true);
+        MockHttpServletRequest request = postRequest("/api/v1/code-assistant/sessions/s1/propose", "PRO");
+
+        boolean allowed = interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
+
+        assertTrue(allowed);
+    }
+
+    @Test
+    void draftEditorAllowedOnApplyWhenTheGroupIsActuallyADraftGroup() throws Exception {
+        AssistantEditGroupDocument draftGroup = AssistantEditGroupDocument.builder()
+                .id("g1").sessionId("s1").projectId("proj-77").draft(true).build();
+        when(assistantEditGroupRepository.findById("g1")).thenReturn(Optional.of(draftGroup));
+        when(workspaceOwnershipService.isDraftEditorInProject("u1", "proj-77")).thenReturn(true);
+        MockHttpServletRequest request = postRequest("/api/v1/code-assistant/sessions/s1/groups/g1/apply", "PRO");
+
+        boolean allowed = interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
+
+        assertTrue(allowed);
+    }
+
+    @Test
     void normalEditorOnResolvedProjectAllowedOnProposeAndApply() throws Exception {
         when(assistantSessionRepository.findById("s1")).thenReturn(Optional.of(sessionFor("proj-77")));
         when(assistantEditGroupRepository.findById("g1")).thenReturn(Optional.of(groupFor("s1", "proj-77")));

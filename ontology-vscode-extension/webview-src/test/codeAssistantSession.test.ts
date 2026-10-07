@@ -231,6 +231,19 @@ describe("codeAssistantSession HTTP status mapping", () => {
     const err = await captureError(readContext("http://api", "token", "s1", { targets: [], kind: "definitions" }));
     expect(err.errorCode).toBe("FORBIDDEN");
     expect(err.message).toBe("This project is view-only for you.");
+    expect(err.viewOnly).toBe(true);
+  });
+
+  it("carries the draftAllowed flag through from a 403 so the UI can show the specific message", async () => {
+    mockFetchOnce(403, {
+      error: "You can view this project and edit via draft mode.",
+      viewOnly: true,
+      draftAllowed: true,
+    });
+    const err = await captureError(runSparql("http://api", "token", "s1", SPARQL));
+    expect(err.errorCode).toBe("FORBIDDEN");
+    expect(err.viewOnly).toBe(true);
+    expect(err.draftAllowed).toBe(true);
   });
 
   it("keeps a more specific errorCode that a 403 body carries", async () => {

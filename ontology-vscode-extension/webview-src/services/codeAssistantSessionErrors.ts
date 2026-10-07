@@ -26,12 +26,18 @@ export interface AssistantApiErrorDetails {
   status?: number;
   retryAfterSeconds?: number;
   recoveryLocked?: boolean;
+  viewOnly?: boolean;
+  draftAllowed?: boolean;
+  requiresUpgrade?: boolean;
 }
 
 export class AssistantApiError extends Error {
   readonly status?: number;
   readonly retryAfterSeconds?: number;
   readonly recoveryLocked?: boolean;
+  readonly viewOnly?: boolean;
+  readonly draftAllowed?: boolean;
+  readonly requiresUpgrade?: boolean;
 
   constructor(
     message: string,
@@ -44,6 +50,9 @@ export class AssistantApiError extends Error {
     this.status = details.status;
     this.retryAfterSeconds = details.retryAfterSeconds;
     this.recoveryLocked = details.recoveryLocked;
+    this.viewOnly = details.viewOnly;
+    this.draftAllowed = details.draftAllowed;
+    this.requiresUpgrade = details.requiresUpgrade;
   }
 }
 
@@ -69,6 +78,9 @@ export interface ErrorEnvelope {
   budget?: AssistantBudget;
   retryAfterSeconds?: number;
   recoveryLocked?: boolean;
+  viewOnly?: boolean;
+  draftAllowed?: boolean;
+  requiresUpgrade?: boolean;
 }
 
 function parseRetryAfter(res: Response, envelope: ErrorEnvelope | null): number | undefined {
@@ -113,7 +125,12 @@ export function toAssistantApiError(res: Response, data: unknown, path: string):
       bodyMessage ?? "You don't have permission to do this in this project.",
       bodyCode ?? "FORBIDDEN",
       envelope?.budget,
-      details,
+      {
+        ...details,
+        viewOnly: envelope?.viewOnly === true,
+        draftAllowed: envelope?.draftAllowed === true,
+        requiresUpgrade: envelope?.requiresUpgrade === true,
+      },
     );
   }
   if (status === 404 && isSessionScopedPath(path)) {
