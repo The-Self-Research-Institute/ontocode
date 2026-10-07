@@ -34,6 +34,8 @@ export interface TurnInput {
   selection: PanelEditorSelection | null;
   fromRetry: boolean;
   onSelectionUsed?: () => void;
+  draft?: boolean;
+  userId?: string;
 }
 
 export interface RunContext {
@@ -118,6 +120,8 @@ export function makeSubmit(ctx: RunContext, mountedRef: MutableRefObject<boolean
         loopText,
         history,
         signal: controller.signal,
+        draft: turn.draft,
+        userId: turn.userId,
         onStage: (event) => {
           ctx.setStatusText(describeLoopStage(event));
           if (event.budget) ctx.setLiveBudget(event.budget);

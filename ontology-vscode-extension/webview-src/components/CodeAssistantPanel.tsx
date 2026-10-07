@@ -3,6 +3,8 @@ import { BookOpen, X } from "lucide-react";
 import { AskAiIcon } from "./AskAiIcon";
 import CodeAssistantHelpGuide from "./CodeAssistantHelpGuide";
 import { setStoredApiKey } from "../services/LlmInsightsService";
+import { ontologyMutationService } from "../services/ontologyMutationService";
+import { resolveMutationActor } from "../utils/mutationActor";
 import { ProviderFooter, RecoveryNotice } from "./CodeAssistantPanelParts";
 import { CodeAssistantActionChips } from "./CodeAssistantActionChips";
 import { CodeAssistantTranscript } from "./CodeAssistantTranscript";
@@ -165,7 +167,8 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => 
   const c = useCodeAssistantPanel(props);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
 
-  const submitMessage = (override?: PromptToRetry) =>
+  const submitMessage = (override?: PromptToRetry) => {
+    const draft = ontologyMutationService.isPrivateEditMode();
     void c.run.submit({
       text: (override?.text ?? c.input).trim(),
       action: override?.action ?? c.action,
@@ -175,7 +178,10 @@ export const CodeAssistantPanel: React.FC<CodeAssistantPanelProps> = (props) => 
       selection: override ? null : editorSelection,
       fromRetry: Boolean(override),
       onSelectionUsed: props.onClearEditorSelection,
+      draft,
+      userId: draft ? resolveMutationActor().userId : undefined,
     });
+  };
 
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: "var(--color-background)" }}>
