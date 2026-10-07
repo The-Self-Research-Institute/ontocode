@@ -263,15 +263,18 @@ public class SparqlDatasetService {
     }
 
    
-    private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces) {
-        persistCapturedNamespaces(projectId, capturedNamespaces, false, null);
+    private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces, RDFFormat format) {
+        persistCapturedNamespaces(projectId, capturedNamespaces, false, null, format);
     }
 
     private void persistCapturedNamespaces(String projectId, Map<String, String> capturedNamespaces,
-                                           boolean draft, String userId) {
+                                           boolean draft, String userId, RDFFormat format) {
         if (capturedNamespaces.isEmpty()) {
-            log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
-            return;
+            if (!format.supportsNamespaces()) {
+                log.warn("[NAMESPACES] No prefix declarations found for project {}", projectId);
+                return;
+            }
+            log.info("[NAMESPACES] Document now declares no prefixes for project {} — clearing stored prefixes", projectId);
         }
         if (draft) {
             if (draftSessionRepository == null || userId == null || userId.isBlank()) {
@@ -301,6 +304,58 @@ public class SparqlDatasetService {
             }
         } else {
             log.warn("[NAMESPACES] projectMetadataService unavailable — prefixes not persisted for project {}", projectId);
+        }
+    }
+
+    public void captureAndPersistPrefixesFromFile(String projectId, Path file, String format,
+                                                  boolean draft, String userId) {
+        Path converted = null;
+        try {
+            RDFFormat rdfFormat;
+            Path sourceForCapture;
+            if (OwlFormatPatchPlanner.supports(format)) {
+                converted = self.research.ontology.owlEditor.util.OWLFormatConverter.convertToRDFXML(file);
+                sourceForCapture = converted;
+                rdfFormat = RDFFormat.RDFXML;
+            } else {
+                sourceForCapture = file;
+                rdfFormat = switch (format.toLowerCase(java.util.Locale.ROOT)) {
+                    case "turtle", "ttl" -> RDFFormat.TURTLE;
+                    case "ntriples", "nt" -> RDFFormat.NTRIPLES;
+                    case "jsonld" -> RDFFormat.JSONLD;
+                    default -> RDFFormat.RDFXML;
+                };
+            }
+            Map<String, String> capturedNamespaces = new LinkedHashMap<>();
+            try (InputStream in = Files.newInputStream(sourceForCapture)) {
+                RDFParser parser = Rio.createParser(rdfFormat);
+                parser.getParserConfig().set(BasicParserSettings.VERIFY_URI_SYNTAX, false);
+                parser.setRDFHandler(new AbstractRDFHandler() {
+                    @Override
+                    public void handleNamespace(String prefix, String uri) {
+                        if (prefix != null && uri != null && !uri.isBlank()) {
+                            capturedNamespaces.putIfAbsent(prefix, uri);
+                        }
+                    }
+                });
+                parser.parse(in, "");
+            }
+            byte[] head;
+            try (InputStream headStream = Files.newInputStream(sourceForCapture)) {
+                head = headStream.readNBytes(32768);
+            }
+            self.research.ontology.owlEditor.util.XmlnsDeclarations.mergeRootDeclarations(capturedNamespaces, head, head.length);
+            persistCapturedNamespaces(projectId, capturedNamespaces, draft, userId, rdfFormat);
+        } catch (Exception e) {
+            log.warn("[NAMESPACES] Failed to extract/persist prefixes after patch for project {}: {}",
+                    projectId, e.getMessage());
+        } finally {
+            if (converted != null) {
+                try {
+                    Files.deleteIfExists(converted);
+                } catch (java.io.IOException ignored) {
+                }
+            }
         }
     }
 
@@ -1867,7 +1922,7 @@ public class SparqlDatasetService {
                     long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
                     log.info("[TIMING] RDF parsing completed in {} ms ({} triples parsed)", elapsedMillis(parseStart), totalTriples.get());
-                    persistCapturedNamespaces(projectId, capturedNamespaces, draft, draftUserId);
+                    persistCapturedNamespaces(projectId, capturedNamespaces, draft, draftUserId, rdfFormat);
 
                     // Upload remaining triples
                     if (partitionByNamespace) {
@@ -2129,7 +2184,7 @@ public class SparqlDatasetService {
                 } catch (Exception headEx) {
                     log.debug("[NAMESPACES] Could not read file head for xmlns scan: {}", headEx.getMessage());
                 }
-                persistCapturedNamespaces(projectId, capturedNamespaces);
+                persistCapturedNamespaces(projectId, capturedNamespaces, rdfFormat);
             } catch (Exception nsEx) {
                 log.warn("[NAMESPACES] Failed to extract/register namespaces after DirectUpload for project {}: {}",
                         projectId, nsEx.getMessage());
