@@ -814,6 +814,7 @@ async function startDesktop() {
     const args = [
         `-Xmx${heaps.desktopXmx}`,
         '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
+        ...(process.platform === 'win32' ? ['-Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.WindowsSelectorProvider'] : []),
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
         '-jar', launchJar,

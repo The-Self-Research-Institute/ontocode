@@ -44,9 +44,11 @@ public class ProjectController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectController.class);
 
-    private static final java.net.http.HttpClient HTTP_CLIENT = java.net.http.HttpClient.newBuilder()
-            .connectTimeout(java.time.Duration.ofSeconds(10))
-            .build();
+    private static final class HttpClientHolder {
+        static final java.net.http.HttpClient INSTANCE = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(10))
+                .build();
+    }
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
@@ -1393,7 +1395,7 @@ public class ProjectController {
                     .timeout(java.time.Duration.ofSeconds(5))
                     .build();
 
-                java.net.http.HttpResponse<String> response = HTTP_CLIENT.send(request,
+                java.net.http.HttpResponse<String> response = HttpClientHolder.INSTANCE.send(request,
                     java.net.http.HttpResponse.BodyHandlers.ofString());
                 
                 if (response.statusCode() == 200) {
@@ -1490,7 +1492,7 @@ public class ProjectController {
                         .timeout(java.time.Duration.ofSeconds(5))
                         .build();
 
-                    java.net.http.HttpResponse<String> checkResponse = HTTP_CLIENT.send(checkRequest,
+                    java.net.http.HttpResponse<String> checkResponse = HttpClientHolder.INSTANCE.send(checkRequest,
                         java.net.http.HttpResponse.BodyHandlers.ofString());
                     
                     if (checkResponse.statusCode() == 200) {
