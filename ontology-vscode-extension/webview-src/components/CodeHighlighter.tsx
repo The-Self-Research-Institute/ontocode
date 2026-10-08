@@ -3,6 +3,7 @@ import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from '../utils/doi
 import type { EditorSelectionContext } from "./codeSelection";
 import { useCodeSelectionReporting, useUnsavedChangesReporting } from "./useCodeSelectionReporting";
 import { escapeRegex, markChangedRange, parseErrorLines, type ChangedLineRange } from "./codeHighlighterMarks";
+import { searchLines } from "./codeSearch";
 import {
   Search,
   X,
@@ -53,6 +54,7 @@ interface CodeHighlighterProps {
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
   highlightedLineNumbers?: Map<number, ChangedLineRange>;
   onSelectionChange?: (selection: EditorSelectionContext | null) => void;
+  searchScopeNote?: string;
 }
 
 /** Imperative handle so callers outside the editor (e.g. a Problems panel) can jump to a line. */
@@ -73,9 +75,6 @@ const GUTTER_PADDING_TOP = 16; // matches the textarea's own padding-top
 const GUTTER_OVERSCAN_ROWS = 30; // rendered above/below the viewport so fast scrolls don't flash blank
 const FOLD_RECOMPUTE_DEBOUNCE_MS = 300; // defer the O(n) bracket-matching scan while the user is actively typing
 const CONTEXT_LINES = 500; // Lines to show above and below selection
-const MAX_SEARCH_LINES = 10000; // Limit search to prevent hanging on huge files
-const SEARCH_CHUNK_SIZE = 100; // Process 100 lines per chunk for search
-const SEARCH_CHUNK_DELAY = 8; // 8ms delay between search chunks
 
 export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighlighterProps>(({
   content,
@@ -95,6 +94,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   onUnsavedChangesChange,
   highlightedLineNumbers,
   onSelectionChange,
+  searchScopeNote,
 }, forwardedRef) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -362,65 +362,28 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     setSearchProgress(0);
     searchCancelRef.current = false;
 
-    let searchTimeout: NodeJS.Timeout;
-    let animationFrameId: number;
-
-    const startSearch = () => {
-      const lines = content.split(/\r?\n/);
-      const matches: number[] = [];
-      const query = caseSensitive ? debouncedSearchQuery : debouncedSearchQuery.toLowerCase();
-      const maxLines = Math.min(lines.length, MAX_SEARCH_LINES);
-
-      // Process in smaller chunks with progress updates
-      let processed = 0;
-
-      const processChunk = () => {
-        // Check if search was cancelled
-        if (searchCancelRef.current) {
-          setIsSearching(false);
-          setSearchProgress(0);
-          return;
-        }
-
-        const end = Math.min(processed + SEARCH_CHUNK_SIZE, maxLines);
-
-        for (let i = processed; i < end; i++) {
-          const searchLine = caseSensitive ? lines[i] : lines[i].toLowerCase();
-          if (searchLine.includes(query)) {
-            matches.push(i);
-          }
-        }
-
-        processed = end;
-        const progress = Math.floor((processed / maxLines) * 100);
-        setSearchProgress(progress);
-
-        if (processed < maxLines) {
-          // Continue processing with delay to prevent hanging
-          searchTimeout = setTimeout(() => {
-            animationFrameId = requestAnimationFrame(processChunk);
-          }, SEARCH_CHUNK_DELAY);
-        } else {
-          // Done
+    let progressResetTimeout: ReturnType<typeof setTimeout> | undefined;
+    const search = searchLines(
+      content,
+      debouncedSearchQuery,
+      caseSensitive,
+      {
+        onProgress: setSearchProgress,
+        onDone: (matches) => {
           setSearchResults(matches);
           setCurrentMatchIndex(0);
           setIsSearching(false);
           setSearchProgress(100);
           setShowSearchPanel(matches.length > 0);
-
-          // Clear progress after a delay
-          setTimeout(() => setSearchProgress(0), 500);
-        }
-      };
-
-      animationFrameId = requestAnimationFrame(processChunk);
-    };
-
-    searchTimeout = setTimeout(startSearch, 100);
+          progressResetTimeout = setTimeout(() => setSearchProgress(0), 500);
+        },
+      },
+      { isCancelled: () => searchCancelRef.current },
+    );
 
     return () => {
-      if (searchTimeout) clearTimeout(searchTimeout);
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      search.cancel();
+      if (progressResetTimeout) clearTimeout(progressResetTimeout);
       searchCancelRef.current = true;
     };
   }, [debouncedSearchQuery, content, caseSensitive]);
@@ -1355,6 +1318,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
             </button>
           )}
         </div>
+
+        {searchQuery && searchScopeNote && (
+          <span className="text-xs text-amber-300 whitespace-nowrap" title={searchScopeNote}>
+            {searchScopeNote}
+          </span>
+        )}
 
         {isSearching && (
           <div className="flex items-center gap-2">

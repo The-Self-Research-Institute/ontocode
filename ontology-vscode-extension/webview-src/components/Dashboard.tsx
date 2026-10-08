@@ -147,6 +147,8 @@ import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
 import { useAskAiCodeViewSync } from "./dashboard-parts/hooks/useAskAiCodeViewSync";
+import { entityDetailsUrl, entityKindOf, mergeFreshDetails, unwrapDetails } from "./dashboard-parts/entityRefresh";
+import { searchScopeNoteFor } from "./codeSearch";
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
 import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
@@ -8780,6 +8782,8 @@ const updateItemInState = useCallback(
             console.log("[Dashboard] No API endpoint matched, doing full refresh");
             if (projectId) fetchData(projectId, false);
           }
+        } else if (detail?.source !== "AI") {
+          refreshAfterBulkWriteRef.current("rollback");
         }
       }, 1500); // Increased delay to ensure GraphDB fully processes the rollback
     };
@@ -12433,9 +12437,49 @@ const updateItemInState = useCallback(
   }, []);
 
 
+  const [entityDetailsRefreshKey, setEntityDetailsRefreshKey] = useState(0);
+
+  const refreshSelectedEntity = async () => {
+    const current = selectedItem;
+    if (!projectId || !current?.id) return;
+    const kind = entityKindOf(current as any, entitiesTab);
+    try {
+      const response = await apiClient.get<any>(withDraftScope(entityDetailsUrl(kind, projectId, current.id)));
+      const details = unwrapDetails(response);
+      if (!details || details.success === false) return;
+      const merged = mergeFreshDetails(kind, current as any, details) as SelectableItem;
+      setSelectedItem((prev) => (prev?.id === current.id ? merged : prev));
+      updateItemInState(merged, false);
+    } catch (error: any) {
+      console.warn("[Dashboard] Could not refresh the selected entity after a bulk write:", error?.message);
+    }
+  };
+
+  const refreshAfterBulkWrite = (op: string) => {
+    lastClassHierarchyRefreshAt.current = 0;
+    refreshClassHierarchy();
+    refreshProperties();
+    handleRefreshAnnotationProperties();
+    handleRefreshIndividuals();
+    handleRefreshDatatypes();
+    silentRefreshMetadata();
+    try {
+      window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: [op] } }));
+    } catch {
+      /* non-fatal */
+    }
+    void refreshSelectedEntity();
+    setEntityDetailsRefreshKey((key) => key + 1);
+  };
+  const refreshAfterBulkWriteRef = useRef(refreshAfterBulkWrite);
+  refreshAfterBulkWriteRef.current = refreshAfterBulkWrite;
+
   const recovery = useProjectRecovery(projectId || undefined, user?.token, {
     onRecoveryChanged: () => setRecoveryVersion((v) => v + 1),
-    onProjectRestored: () => void fetchCodeViewContent(codeViewFormat, false, true),
+    onProjectRestored: () => {
+      void fetchCodeViewContent(codeViewFormat, false, true);
+      refreshAfterBulkWriteRef.current("projectRestored");
+    },
   });
 
   // Navigate to another window of a large document in paged Code View mode.
@@ -12480,6 +12524,14 @@ const updateItemInState = useCallback(
     fetchCodeViewContent,
     loadCodeViewPage,
   });
+
+  const handleCodeAssistantApplied = useCallback(
+    (...args: Parameters<typeof handleAskAiApplySuccess>) => {
+      handleAskAiApplySuccess(...args);
+      refreshAfterBulkWriteRef.current("codeAssistantApply");
+    },
+    [handleAskAiApplySuccess],
+  );
 
   const { isDownloading: isDownloadingCodeView, download: downloadFullCodeViewFile } = useCodeViewDownload(projectId, codeViewFormat);
 
@@ -12720,24 +12772,7 @@ const updateItemInState = useCallback(
             setCodeViewSourceVersion(Number(response.sourceVersion));
           }
           // The ontology file was rewritten — reload all entity views to reflect the new state
-          lastClassHierarchyRefreshAt.current = 0;
-          refreshClassHierarchy();
-          refreshProperties();
-          handleRefreshAnnotationProperties();
-          handleRefreshIndividuals();
-          handleRefreshDatatypes();
-          silentRefreshMetadata();
-          // Let other open views (Graph View plugin, etc.) know the ontology changed so they
-          // can drop their caches and refetch too — mirrors ontologyMutationService's broadcast
-          // for normal entity-editor mutations, which this save path bypasses (it POSTs directly
-          // to code-view-save, not through applyMutations()).
-          try {
-            window.dispatchEvent(new CustomEvent("ontology:mutated", {
-              detail: { projectId, ops: ["codeViewSave"] },
-            }));
-          } catch {
-            /* non-fatal */
-          }
+          refreshAfterBulkWriteRef.current("codeViewSave");
           void (async () => {
             try {
               const followUpParams = new URLSearchParams({ userId: codeViewEffectiveUserId });
@@ -15292,6 +15327,7 @@ const updateItemInState = useCallback(
                         onUnsavedChangesChange={setCodeViewHasUnsavedEdits}
                         highlightedLineNumbers={highlightedLineNumbers}
                         onSelectionChange={setCodeViewSelection}
+                        searchScopeNote={searchScopeNoteFor(codeViewPage, codeViewTruncation)}
                       />
                     )}
                   </div>
@@ -15328,11 +15364,14 @@ const updateItemInState = useCallback(
                   documentPath={activeFileName || undefined}
                   hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
                   onClose={() => setShowCodeAssistant(false)}
-                  onApplySuccess={handleAskAiApplySuccess}
+                  onApplySuccess={handleCodeAssistantApplied}
                   onShowInCodeView={handleShowInCodeView}
                   recoveryVersion={recoveryVersion}
                   onRecoveryChanged={() => void recovery.refreshRecovery()}
-                  onProjectRestored={() => void fetchCodeViewContent(codeViewFormat, false, true)}
+                  onProjectRestored={() => {
+                    void fetchCodeViewContent(codeViewFormat, false, true);
+                    refreshAfterBulkWriteRef.current("projectRestored");
+                  }}
                   editorSelection={
                     codeViewSelection
                       ? { ...codeViewSelection, format: codeViewFormat, pageStartLine: codeViewPage?.startLine ?? 0 }
@@ -18699,6 +18738,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
               <section className="flex-1 min-w-0 min-h-[90dvh] md:min-h-[600px] overflow-hidden p-2 bg-slate-200 flex flex-col">
                 <div className="flex-1 min-w-0 min-h-0 overflow-y-auto flex flex-col">
                   <DetailsPanel
+                    key={entityDetailsRefreshKey}
                     selectedItem={selectedItem}
                     entitiesTab={entitiesTab}
                     activeTheme={activeTheme}
