@@ -92,6 +92,7 @@ public class ProjectImportService {
     private final SimpMessagingTemplate messagingTemplate;
     private final ImportQueueManager queueManager;
     private final ImportTimeEstimator timeEstimator;
+    private final OntologyHistoryService historyService;
 
     // Desktop-only — null in cloud deployments (optional injection)
     @Autowired(required = false) @Nullable
@@ -150,7 +151,8 @@ public class ProjectImportService {
                                 StorageManager storageManager,
                                 SimpMessagingTemplate messagingTemplate,
                                 ImportQueueManager queueManager,
-                                ImportTimeEstimator timeEstimator) {
+                                ImportTimeEstimator timeEstimator,
+                                OntologyHistoryService historyService) {
         this.owlParsingExecutor = owlParsingExecutor;
         this.metadataExecutor = metadataExecutor;
         this.datasetService = datasetService;
@@ -160,6 +162,7 @@ public class ProjectImportService {
         this.messagingTemplate = messagingTemplate;
         this.queueManager = queueManager;
         this.timeEstimator = timeEstimator;
+        this.historyService = historyService;
     }
 
     @PostConstruct
@@ -839,6 +842,14 @@ public class ProjectImportService {
             long durationMs = elapsedMillis(importStart);
             metadataService.writeStatus(projectId, ProjectStatus.completed(filename));
             importMarkedCompleted.set(true);  // Prevent catch block from overwriting to ERROR
+
+            try {
+                historyService.recordEdit(projectId, item.getOwnerEmail(), item.getOwnerEmail(),
+                        "projectImported", null, null, null, null, "Imported " + filename);
+            } catch (Exception historyEx) {
+                log.warn("[Import {}] Failed to record import history entry (non-fatal): {}",
+                        projectId, historyEx.getMessage());
+            }
 
             if (ontologyMutationService != null) {
                 try {

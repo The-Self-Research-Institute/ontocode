@@ -59,6 +59,9 @@ abstract class AssistantEditProposalTestBase {
     @Mock
     AssistantAuditService auditService;
 
+    @Mock
+    AssistantConsistencyCheckService consistencyCheckService;
+
     @TempDir
     Path tempDir;
 
@@ -86,7 +89,7 @@ abstract class AssistantEditProposalTestBase {
                 new AssistantFuzzyMembershipInsertionService(storageManager, lookup,
                         new FuzzyMembershipQueryService(datasetService)),
                 new AssistantEditSemanticValidator(storageManager, lookup), auditService, new ProjectWriteLockRegistry(),
-                new AssistantInsertionSnapper(storageManager));
+                new AssistantInsertionSnapper(storageManager), consistencyCheckService);
         graph = FakeAssistantGraph.installOn(datasetService);
         graph.everythingExists = true;
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
@@ -94,6 +97,10 @@ abstract class AssistantEditProposalTestBase {
         ReflectionTestUtils.setField(proposalService, "maxGroupsPerRequest", 10);
         ReflectionTestUtils.setField(proposalService, "ttlHours", 24L);
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(consistencyCheckService.gateCheck(anyString(), anyString(), any())).thenReturn(
+                new AssistantEditProposalService.CheckResult(
+                        AssistantConsistencyCheckService.CONSISTENCY_PRESERVED_CHECK, true,
+                        "Skipped — this edit doesn't appear to touch class axioms."));
         when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(7L);
         when(storageManager.ensureCodeViewFile(anyString(), anyString())).thenReturn(write("default.ttl", DEFAULT_DOC));
         when(storageManager.extensionFor(anyString())).thenReturn("ttl");

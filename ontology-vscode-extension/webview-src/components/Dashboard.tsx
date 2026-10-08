@@ -5251,6 +5251,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Refresh prefixes from server
       await refreshPrefixes();
       void silentRefreshMetadata();
+      void fetchCodeViewContent(codeViewFormat, false, true);
 
       notificationService.success(
         isEdit ? "Prefix Updated" : "Prefix Added",
@@ -5277,6 +5278,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Refresh from server
       await refreshPrefixes();
       void silentRefreshMetadata();
+      void fetchCodeViewContent(codeViewFormat, false, true);
 
       notificationService.success("Prefix Deleted", "Prefix deleted successfully.");
     } catch (error) {

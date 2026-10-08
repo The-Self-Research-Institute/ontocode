@@ -57,6 +57,9 @@ public class ReasonerController {
     @Value("${ontology.editor.url:http://owl-editor:8083}")
     private String editorServiceUrl;
 
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
     private final RestTemplate restTemplate = buildRestTemplate();
 
     @Autowired(required = false)
@@ -481,6 +484,10 @@ public class ReasonerController {
     ) {
         try {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
+            String whatIfKey = request.get("whatIfKey");
+            if (whatIfKey != null && !whatIfKey.isBlank()) {
+                return checkWhatIfConsistency(projectId, whatIfKey, reasonerType);
+            }
             if (workerAvailable()) {
                 return submitToWorker("REASONER_CONSISTENCY", projectId, reasonerType);
             }
@@ -513,10 +520,80 @@ public class ReasonerController {
             }
             
             return ResponseEntity.ok(result);
-            
+
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "checking consistency");
         }
+    }
+
+    private ResponseEntity<Map<String, Object>> checkWhatIfConsistency(String projectId, String whatIfKey,
+                                                                        String reasonerType) {
+        OWLOntology ontology = null;
+        try {
+            log.info("Checking what-if consistency for project {} key {} with {}", projectId, whatIfKey, reasonerType);
+            ontology = loadWhatIfOntology(projectId, whatIfKey);
+            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+
+            long startTime = System.currentTimeMillis();
+            boolean isConsistent = reasonerService.isConsistent(ontology, type);
+            long duration = System.currentTimeMillis() - startTime;
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("consistent", isConsistent);
+            result.put("reasonerType", type.getDisplayName());
+            result.put("durationMs", duration);
+            result.put("projectId", projectId);
+
+            if (!isConsistent) {
+                OWLOntology loaded = ontology;
+                Set<OWLClass> unsatisfiable = reasonerService.getUnsatisfiableClasses(ontology, type);
+                List<Map<String, String>> unsatisfiableList = unsatisfiable.stream()
+                        .map(cls -> Map.of("iri", cls.getIRI().toString(), "label", getLabel(cls, loaded)))
+                        .collect(Collectors.toList());
+                result.put("unsatisfiableClasses", unsatisfiableList);
+            }
+
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return reasoningFailure(e, projectId, "checking what-if consistency");
+        } finally {
+            if (ontology != null) {
+                try {
+                    reasonerService.disposeReasoners(ontology);
+                } catch (Exception disposeEx) {
+                    log.warn("Failed to dispose what-if reasoner for project {} key {}: {}",
+                            projectId, whatIfKey, disposeEx.getMessage());
+                }
+            }
+        }
+    }
+
+    private OWLOntology loadWhatIfOntology(String projectId, String whatIfKey) throws Exception {
+        String url = editorWhatIfExportUrl(projectId, whatIfKey);
+        log.info("Fetching what-if ontology from editor service: {}", url);
+        ResponseEntity<byte[]> response = restTemplate.exchange(
+                url, org.springframework.http.HttpMethod.GET, editorInternalAuthEntity(), byte[].class);
+        if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
+            throw new OntologyNotFoundException("Editor service returned " + response.getStatusCode()
+                    + " for what-if export of project " + projectId);
+        }
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        try (InputStream inputStream = new java.io.ByteArrayInputStream(response.getBody())) {
+            return manager.loadOntologyFromOntologyDocument(inputStream);
+        }
+    }
+
+    private String editorWhatIfExportUrl(String projectId, String whatIfKey) {
+        String encodedProject = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
+        String encodedKey = java.net.URLEncoder.encode(whatIfKey, StandardCharsets.UTF_8).replace("+", "%20");
+        String base = editorServiceUrl.endsWith("/") ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
+        return base + "/internal/reasoning/" + encodedProject + "/whatif/" + encodedKey + "/export.nt";
+    }
+
+    private org.springframework.http.HttpEntity<Void> editorInternalAuthEntity() {
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.set("X-Ontocode-Internal-Token", internalToken);
+        return new org.springframework.http.HttpEntity<>(headers);
     }
 
     /**

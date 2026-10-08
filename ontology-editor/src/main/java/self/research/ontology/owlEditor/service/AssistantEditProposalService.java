@@ -54,6 +54,7 @@ public class AssistantEditProposalService {
     private final ProjectWriteLockRegistry lockRegistry;
     private final AssistantAuditService auditService;
     private final AssistantInsertionSnapper insertionSnapper;
+    private final AssistantConsistencyCheckService consistencyCheckService;
 
     @Value("${assistant.propose.max-edit-bytes:200000}")
     private int maxEditBytes;
@@ -87,7 +88,8 @@ public class AssistantEditProposalService {
                                          AssistantEditSemanticValidator semanticValidator,
                                          AssistantAuditService auditService,
                                          ProjectWriteLockRegistry lockRegistry,
-                                         AssistantInsertionSnapper insertionSnapper) {
+                                         AssistantInsertionSnapper insertionSnapper,
+                                         AssistantConsistencyCheckService consistencyCheckService) {
         this.sessionService = sessionService;
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
@@ -100,6 +102,7 @@ public class AssistantEditProposalService {
         this.auditService = auditService;
         this.lockRegistry = lockRegistry;
         this.insertionSnapper = insertionSnapper;
+        this.consistencyCheckService = consistencyCheckService;
     }
 
     public ProposeEditResult propose(String sessionId, String userEmail, List<EditGroupInput> groups) {
@@ -217,6 +220,14 @@ public class AssistantEditProposalService {
         GroupProposalOutcome outcome = persistGroup(session, groupInput, targetPath, editEntries, passed,
                 publicGraphVersion, now, expiresAt, checks, diff, summary);
         perf.mark("persist");
+
+        boolean consistencyCheckDispatched = checks.stream()
+                .anyMatch(c -> AssistantConsistencyCheckService.CONSISTENCY_PRESERVED_CHECK.equals(c.name())
+                        && AssistantConsistencyCheckService.PENDING_STATUS.equals(c.status()));
+        if (consistencyCheckDispatched) {
+            consistencyCheckService.startAsyncCheck(outcome.getServerGroupId(), session.getProjectId(), targetPath,
+                    editEntries, scope);
+        }
         log.info("[Assistant] [PERF] propose project={} session={} format={} edits={} rename={} passed={} {}",
                 session.getProjectId(), session.getId(), targetPath, sortedEdits.size(), derived, passed,
                 perf.summary());
@@ -392,6 +403,14 @@ public class AssistantEditProposalService {
         }
 
         perf.mark("semantic");
+
+        CheckResult consistencyGate = (!structurallySound || !syntax.passed())
+                ? new CheckResult(AssistantConsistencyCheckService.CONSISTENCY_PRESERVED_CHECK, true,
+                        "Skipped because the group failed an earlier check.")
+                : consistencyCheckService.gateCheck(session.getProjectId(), targetPath, sortedEdits);
+        checks.add(consistencyGate);
+        perf.mark("consistencyGate");
+
         return sortedEdits;
     }
 
@@ -498,9 +517,13 @@ public class AssistantEditProposalService {
         return new CheckResult("complete_reference_coverage", result.covered(), result.detail());
     }
 
-    public record CheckResult(String name, boolean passed, String detail) {
+    public record CheckResult(String name, boolean passed, String detail, String status) {
         public CheckResult(String name, boolean passed) {
-            this(name, passed, null);
+            this(name, passed, null, null);
+        }
+
+        public CheckResult(String name, boolean passed, String detail) {
+            this(name, passed, detail, null);
         }
     }
 

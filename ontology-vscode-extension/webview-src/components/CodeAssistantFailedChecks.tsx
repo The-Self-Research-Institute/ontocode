@@ -1,9 +1,11 @@
 import React from "react";
+import { Loader2 } from "lucide-react";
 
 interface Check {
   name: string;
   passed: boolean;
   detail?: string;
+  status?: "pending";
 }
 
 const CHECK_LABELS: Record<string, string> = {
@@ -17,6 +19,7 @@ const CHECK_LABELS: Record<string, string> = {
   complete_reference_coverage: "Every other reference is updated too",
   references_resolve: "Referenced names exist in the ontology",
   no_conflicting_declaration: "No conflicting declaration",
+  consistency_preserved: "This change keeps the ontology logically consistent",
   rename_occurrences_complete: "The rename covers every occurrence",
   insertion_moved_to_statement_boundary: "Insertion point adjusted",
   insertion_moved_past_sibling_edit: "Insertion point adjusted",
@@ -39,6 +42,21 @@ export const CodeAssistantFailedChecks: React.FC<{ checks: Check[] }> = ({ check
         <li key={check.name}>
           <span className="font-semibold">{checkLabel(check.name)}</span>
           {check.detail ? `: ${check.detail}` : ""}
+        </li>
+      ))}
+    </ul>
+  );
+};
+
+export const CodeAssistantPendingChecks: React.FC<{ checks: Check[] }> = ({ checks }) => {
+  const pending = checks.filter((c) => c.status === "pending");
+  if (pending.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-xs text-gray-600" aria-label="Checks still running">
+      {pending.map((check) => (
+        <li key={check.name} className="flex items-center gap-1.5">
+          <Loader2 size={12} className="animate-spin flex-shrink-0" aria-hidden="true" />
+          <span>{checkLabel(check.name)}{check.detail ? `: ${check.detail}` : ""}</span>
         </li>
       ))}
     </ul>

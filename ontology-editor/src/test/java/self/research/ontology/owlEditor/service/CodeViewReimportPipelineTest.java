@@ -230,6 +230,37 @@ class CodeViewReimportPipelineTest {
     }
 
     @Test
+    void scratchReimportSkipsCacheInvalidationAndHistoryRecording() throws Exception {
+        when(storageManager.extensionFor("turtle")).thenReturn("ttl");
+        when(storageManager.getDraftGraphVersion("proj-1", "assistant-whatif-g1")).thenReturn(1L);
+        Path contentFile = fileWith("ttl", ":A a owl:Class .");
+
+        ReimportResult result = pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
+                true, "assistant-whatif-g1", "User", "urn:draft:graph:assistant-whatif-g1", null, false, true));
+
+        assertEquals(1L, result.sourceVersion());
+        verify(datasetService).bulkLoadChunked(eq("proj-1"), any(InputStream.class), eq(RDFFormat.TURTLE),
+                anyLong(), any(ImportOptions.class), isNull(), eq("urn:draft:graph:assistant-whatif-g1"), eq(true),
+                eq("assistant-whatif-g1"));
+        verify(metadataService, never()).incrementMutationVersion(anyString());
+        verify(storageManager, never()).bumpDraftGraphVersion(anyString(), anyString());
+        verify(datasetService, never()).markProjectDirty(anyString());
+    }
+
+    @Test
+    void nonScratchDraftReimportStillInvalidatesCachesAsBefore() throws Exception {
+        when(storageManager.extensionFor("turtle")).thenReturn("ttl");
+        Path contentFile = fileWith("ttl", ":A a owl:Class .");
+
+        pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
+                true, "u1", "User", "urn:draft:graph:u1", null, false));
+
+        verify(metadataService).incrementMutationVersion("proj-1");
+        verify(storageManager).bumpDraftGraphVersion("proj-1", "u1");
+        verify(datasetService).markProjectDirty("proj-1");
+    }
+
+    @Test
     void oldContentFileForDiffTriggersDiffRecording() throws Exception {
         when(storageManager.extensionFor("turtle")).thenReturn("ttl");
         Path contentFile = fileWith("ttl", ":A a owl:Class .");

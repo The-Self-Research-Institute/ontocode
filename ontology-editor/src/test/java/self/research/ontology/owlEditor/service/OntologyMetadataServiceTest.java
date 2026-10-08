@@ -116,6 +116,26 @@ class OntologyMetadataServiceTest {
     }
 
     @Test
+    void updatePrefixInPublicModeInvalidatesTheCodeViewCache() {
+        when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.empty());
+        when(datasetService.getPrefixes("proj-1")).thenReturn(Map.of());
+
+        service.updatePrefix("proj-1", "ex", "http://ex.org/", null);
+
+        verify(storageManager).clearCodeViewCache("proj-1");
+    }
+
+    @Test
+    void deletePrefixInPublicModeInvalidatesTheCodeViewCache() {
+        when(projectMetadataService.readMeta("proj-1"))
+                .thenReturn(Optional.of(new java.util.HashMap<>(Map.of("prefixes", new java.util.HashMap<>(Map.of("ex", "http://ex.org/"))))));
+
+        service.deletePrefix("proj-1", "ex");
+
+        verify(storageManager).clearCodeViewCache("proj-1");
+    }
+
+    @Test
     void updatePrefixInDraftModeRoutesToTheDraftOverridesNotThePublicMetadata() {
         service.updatePrefix("proj-1", "ex", "http://ex.org/", null, true, "u1");
 

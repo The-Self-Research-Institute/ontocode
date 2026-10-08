@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
+import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 
@@ -13,6 +14,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Single endpoint for add / edit / delete of any entity relation.
@@ -29,16 +33,21 @@ public class EntityRelationController {
     private static final Logger log = LoggerFactory.getLogger(EntityRelationController.class);
     private static final String DESKTOP_USER_ID = "desktop-user-local";
 
+    private static final ExecutorService historyExecutor = Executors.newFixedThreadPool(4);
+
     private final OntologyMutationService mutationService;
     private final DraftTrackingService draftTrackingService;
+    private final OntologyHistoryService historyService;
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
     public EntityRelationController(OntologyMutationService mutationService,
-                                    DraftTrackingService draftTrackingService) {
+                                    DraftTrackingService draftTrackingService,
+                                    OntologyHistoryService historyService) {
         this.mutationService = mutationService;
         this.draftTrackingService = draftTrackingService;
+        this.historyService = historyService;
     }
 
     @PutMapping("/{projectId}/relation")
@@ -63,8 +72,20 @@ public class EntityRelationController {
                 mutationService.applyDraft(projectId, userId, ops);
                 draftTrackingService.recordDrafts(projectId, userId, username, ops,
                         "relation_" + UUID.randomUUID());
+                try {
+                    historyService.recordGroupedMutations(projectId, userId, username, ops, true);
+                } catch (Exception e) {
+                    log.warn("[RELATION] Failed to record draft history for project={}: {}", projectId, e.getMessage());
+                }
             } else {
                 mutationService.apply(projectId, ops);
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        historyService.recordGroupedMutations(projectId, userId, username, ops, false);
+                    } catch (Exception e) {
+                        log.warn("[RELATION] Failed to record history for project={}: {}", projectId, e.getMessage());
+                    }
+                }, historyExecutor);
             }
             return ResponseEntity.ok(Map.of("success", true, "draft", draft));
         } catch (IllegalArgumentException e) {

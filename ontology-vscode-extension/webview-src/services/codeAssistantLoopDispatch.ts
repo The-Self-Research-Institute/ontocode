@@ -91,7 +91,9 @@ async function dispatchReadContext(ctx: LoopContext, args: Record<string, unknow
     const type: ReadContextTarget["type"] = rec.type === "range" || rec.type === "statement" ? rec.type : "identifier";
     return { type, value: String(rec.value ?? "") };
   });
-  const kind = args.kind === "diagnostics" || args.kind === "references" ? args.kind : "definitions";
+  const kind = args.kind === "diagnostics" || args.kind === "references" || args.kind === "guidance"
+    ? args.kind
+    : "definitions";
   const res = await readContext(ctx.apiBaseUrl, ctx.token, ctx.session.sessionId, { targets, kind }, signal);
   return { result: res.result, isError: false, revision: res.provenance?.revision, budget: provenanceBudget(res.provenance) };
 }

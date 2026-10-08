@@ -16,7 +16,9 @@ import self.research.ontology.owlEditor.util.SparqlSafety;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -78,6 +80,9 @@ public class AssistantContextToolService {
 
     private ContextToolResult readAdmitted(String sessionId, AssistantSessionDocument session,
                                            List<Target> targets, String kind) {
+        if ("guidance".equals(kind)) {
+            return resolveGuidance(sessionId, session, targets);
+        }
         if (!sessionService.tryConsumeRetrievalAttempt(sessionId)) {
             return ContextToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
                     .message("Retrieval budget exhausted for this session").build();
@@ -176,7 +181,7 @@ public class AssistantContextToolService {
                 } else if (TYPE_RANGE.equals(target.type())) {
                     anyPartial |= addRange(projectId, target.value(), items, scope);
                 } else {
-                    items.add(resolveIdentifier(projectId, target.value(), kind));
+                    items.add(resolveIdentifier(projectId, target.value(), kind, scope));
                 }
             } catch (Exception e) {
                 log.warn("[Assistant] read_context target {} failed: {}", target.value(), e.getMessage());
@@ -203,6 +208,64 @@ public class AssistantContextToolService {
             }
         }
         return new TargetResolution(items, anyPartial);
+    }
+
+    private static final Map<String, String> GUIDANCE_TOPICS = buildGuidanceTopics();
+
+    private static Map<String, String> buildGuidanceTopics() {
+        Map<String, String> topics = new LinkedHashMap<>();
+        topics.put("prefixes", "Prefixes are stored in Mongo per project and tracked separately for the draft graph and the " +
+                "public graph — editing a prefix in draft mode never changes what public viewers see until the draft is " +
+                "published, and the Active Ontology panel and Code View always reflect the scope (draft or public) the " +
+                "session is currently in, not a mix of both.");
+        topics.put("drafts", "Every project has one public graph and, per user, an optional draft graph that starts as a " +
+                "copy-on-write snapshot of the public graph. Edits in draft mode only ever touch that user's own draft — " +
+                "other users and the public view are unaffected until the draft is explicitly published or discarded.");
+        topics.put("delete", "Before proposing to delete or remove an identifier, check every place it's used first (read_context " +
+                "with kind \"references\") and include all of them in the same edit group — a group that deletes a declaration " +
+                "but leaves another part of the document still pointing at it will fail validation and have to be redone.");
+        topics.put("rename", "Always use propose_rename for renaming an identifier instead of editing occurrences by hand — it " +
+                "finds and rewrites every occurrence itself, including ones you might not think to search for.");
+        topics.put("swrl", "SWRL rules are added with add_swrl_rule but do nothing on their own — nothing is inferred until " +
+                "run_swrl_rule actually executes the ontology's enabled rules and returns the new facts.");
+        topics.put("consistency", "check_consistency is cheap and usually fast; call it before relying on the ontology being " +
+                "logically sound, and only call the slower explain_inconsistency afterward if it reports consistent: false.");
+        return topics;
+    }
+
+    private ContextToolResult resolveGuidance(String sessionId, AssistantSessionDocument session, List<Target> targets) {
+        List<Item> items = new ArrayList<>();
+        boolean anyPartial = false;
+        List<Target> deduped = dedupeTargets(targets);
+        if (deduped.isEmpty()) {
+            anyPartial = true;
+            items.add(unknownGuidanceTopicNote(""));
+        }
+        for (Target target : deduped) {
+            String topic = target.value() == null ? "" : target.value().trim().toLowerCase(Locale.ROOT);
+            String text = GUIDANCE_TOPICS.get(topic);
+            if (text != null) {
+                items.add(Item.builder().source(topic).kind("guidance").text(text).build());
+            } else {
+                anyPartial = true;
+                items.add(unknownGuidanceTopicNote(topic));
+            }
+        }
+        AssistantSessionService.BudgetSnapshot budget =
+                sessionService.currentBudgetSnapshot(sessionId, session.getUserEmail()).orElse(null);
+        return ContextToolResult.builder()
+                .ok(true)
+                .items(items)
+                .coverage(anyPartial ? "partial" : "complete")
+                .revision(session.getPinnedRevision())
+                .retrievalAttemptsRemaining(budget == null ? null : budget.retrievalAttemptsRemaining())
+                .tokenBudgetRemaining(budget == null ? null : budget.tokenBudgetRemaining())
+                .build();
+    }
+
+    private Item unknownGuidanceTopicNote(String topic) {
+        return Item.builder().kind("note").text("NOTE: No guidance topic \"" + topic + "\". Valid topics: "
+                + String.join(", ", GUIDANCE_TOPICS.keySet()) + ".").build();
     }
 
     private List<Target> dedupeTargets(List<Target> targets) {
@@ -244,13 +307,17 @@ public class AssistantContextToolService {
         return range.clamped();
     }
 
-    private Item resolveIdentifier(String projectId, String iri, String kind) {
+    private static final int DEFINITIONS_ROW_CAP = 10;
+    private static final int REFERENCES_ROW_CAP = 50;
+
+    private Item resolveIdentifier(String projectId, String iri, String kind, StorageManager.ContentScope scope) {
+        boolean isReferences = "references".equals(kind);
         String safe = SparqlSafety.safeIri(iri);
         String query = "definitions".equals(kind)
                 ? "SELECT ?p ?o WHERE { <" + safe + "> ?p ?o }"
                 : "SELECT ?s ?p WHERE { ?s ?p <" + safe + "> }";
-        SparqlDatasetService.CappedSparqlResult result =
-                datasetService.execSelectCapped(projectId, query, 10, 100, 50_000);
+        SparqlDatasetService.CappedSparqlResult result = datasetService.execSelectCapped(
+                projectId, query, isReferences ? REFERENCES_ROW_CAP : DEFINITIONS_ROW_CAP, 100, 50_000);
         if (result.capExceeded() != null) {
             throw new IllegalStateException("Identifier " + iri + " has more " + kind
                     + " than the assistant's read cap allows (" + result.capExceeded() + ")");
@@ -259,6 +326,9 @@ public class AssistantContextToolService {
         StringBuilder text = new StringBuilder();
         for (Map<String, String> row : result.rows()) {
             row.forEach((var, value) -> text.append(var).append("=").append(value).append("; "));
+            if (isReferences && row.get("s") != null) {
+                appendLineLocation(projectId, row.get("s"), scope, text);
+            }
             text.append("\n");
         }
         return Item.builder()
@@ -267,6 +337,16 @@ public class AssistantContextToolService {
                 .text(text.toString())
                 .kind(kind)
                 .build();
+    }
+
+    private void appendLineLocation(String projectId, String subjectIri, StorageManager.ContentScope scope, StringBuilder text) {
+        try {
+            AssistantSourceContextReader.SourceRead read = sourceReader.statements(projectId, subjectIri, scope);
+            read.items().stream().filter(item -> item.getRange() != null).findFirst()
+                    .ifPresent(item -> text.append("(line ").append(item.getRange()).append(") "));
+        } catch (Exception e) {
+            log.debug("[Assistant] Could not resolve a line location for {}: {}", subjectIri, e.getMessage());
+        }
     }
 
     public record Target(String type, String value) {}

@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
@@ -10,6 +11,9 @@ import self.research.ontology.owlEditor.service.AssistantContextToolService.Cont
 import self.research.ontology.owlEditor.service.AssistantContextToolService.Target;
 import self.research.ontology.owlEditor.service.SparqlDatasetService.CappedSparqlResult;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +45,9 @@ class AssistantContextToolServiceTest {
 
     @Mock
     private StorageManager storageManager;
+
+    @TempDir
+    private Path tempDir;
 
     private AssistantContextToolService toolService;
     private AssistantAdmissionLimiter limiter;
@@ -157,6 +164,103 @@ class AssistantContextToolServiceTest {
         assertEquals(1, result.getItems().size());
         assertEquals("note", result.getItems().get(0).getKind());
         assertTrue(result.getItems().get(0).getText().contains("ROW_CAP_EXCEEDED"));
+    }
+
+    @Test
+    void referencesToleratesMoreThanTenRowsNowThatTheCapIsRaised() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            rows.add(Map.of("s", "http://ex.org/Class" + i, "p", "rdfs:subClassOf"));
+        }
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("s", "p"), rows, false, null));
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "references");
+
+        assertTrue(result.isOk());
+        assertEquals("complete", result.getCoverage());
+        org.mockito.Mockito.verify(datasetService)
+                .execSelectCapped(eq("proj-1"), anyString(), eq(50), anyInt(), anyLong());
+    }
+
+    @Test
+    void referencesAnnotatesEachMatchWithItsRealLineLocation() throws Exception {
+        Path turtleFile = tempDir.resolve("ontology.ttl");
+        Files.writeString(turtleFile, String.join("\n",
+                "@prefix : <http://ex.org/> .",
+                "@prefix owl: <http://www.w3.org/2002/07/owl#> .",
+                "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+                "",
+                ":A a owl:Class .",
+                "",
+                ":B a owl:Class ;",
+                "  rdfs:subClassOf :A .",
+                ""), StandardCharsets.UTF_8);
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(turtleFile);
+        when(storageManager.readCodeViewPage(eq("proj-1"), eq("turtle"), anyLong(), anyInt()))
+                .thenReturn(new StorageManager.CodeViewPage(":B a owl:Class ;\n  rdfs:subClassOf :A .", 6L, 2, 8L, 12345L));
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("s", "p"),
+                        List.of(Map.of("s", "http://ex.org/B", "p", "http://www.w3.org/2000/01/rdf-schema#subClassOf")),
+                        false, null));
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "references");
+
+        assertTrue(result.isOk());
+        String text = result.getItems().get(0).getText();
+        assertTrue(text.contains("s=http://ex.org/B"));
+        assertTrue(text.contains("(line 6-2)"), "expected a resolved line location, got: " + text);
+    }
+
+    @Test
+    void guidanceReturnsStaticTextWithoutTouchingTheRetrievalOrTokenBudget() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "delete")), "guidance");
+
+        assertTrue(result.isOk());
+        assertEquals("complete", result.getCoverage());
+        assertEquals(1, result.getItems().size());
+        assertEquals("guidance", result.getItems().get(0).getKind());
+        org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never()).tryConsumeRetrievalAttempt(anyString());
+        org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never()).tryConsumeTokenBudget(anyString(), anyInt());
+    }
+
+    @Test
+    void guidanceReturnsAHelpfulNoteForAnUnknownTopic() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "not-a-real-topic")), "guidance");
+
+        assertTrue(result.isOk());
+        assertEquals("partial", result.getCoverage());
+        assertEquals("note", result.getItems().get(0).getKind());
+        assertTrue(result.getItems().get(0).getText().contains("delete"));
+    }
+
+    @Test
+    void referencesDegradesGracefullyWhenTheSourceFileCannotBeResolved() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new CappedSparqlResult(List.of("s", "p"),
+                        List.of(Map.of("s", "http://ex.org/Other", "p", "rdfs:subClassOf")), false, null));
+
+        ContextToolResult result = toolService.readContext(
+                "s1", "u@x.com", List.of(new Target("identifier", "http://ex.org/A")), "references");
+
+        assertTrue(result.isOk());
+        String text = result.getItems().get(0).getText();
+        assertTrue(text.contains("s=http://ex.org/Other"));
+        assertFalse(text.contains("(line"));
     }
 
     @Test

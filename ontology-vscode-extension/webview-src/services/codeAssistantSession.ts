@@ -87,7 +87,7 @@ export async function readContext(
   apiBaseUrl: string,
   token: string | undefined,
   sessionId: string,
-  input: { targets: ReadContextTarget[]; kind: "definitions" | "diagnostics" | "references" },
+  input: { targets: ReadContextTarget[]; kind: "definitions" | "diagnostics" | "references" | "guidance" },
   signal?: AbortSignal,
 ): Promise<ReadContextResult> {
   return postJson<ReadContextResult>(

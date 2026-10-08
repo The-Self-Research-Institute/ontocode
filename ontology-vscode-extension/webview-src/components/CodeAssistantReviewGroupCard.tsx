@@ -3,7 +3,11 @@ import { Loader2, CheckCircle, AlertCircle, ShieldAlert } from "lucide-react";
 import type { ProposedEditGroupResult } from "../services/codeAssistantSession";
 import type { GroupDecision } from "../services/codeAssistantApplyQueue";
 import { CodeAssistantDiffEntry } from "./CodeAssistantDiffEntry";
-import { CodeAssistantCheckNotes, CodeAssistantFailedChecks } from "./CodeAssistantFailedChecks";
+import { CodeAssistantCheckNotes, CodeAssistantFailedChecks, CodeAssistantPendingChecks } from "./CodeAssistantFailedChecks";
+
+function hasPendingCheck(group: ProposedEditGroupResult): boolean {
+  return group.validation.checks.some((c) => c.status === "pending");
+}
 import { CodeAssistantUndoControls, type UndoControlsProps } from "./CodeAssistantUndoControls";
 
 const PendingGroupActions: React.FC<{
@@ -104,6 +108,7 @@ const GroupBody: React.FC<{ group: ProposedEditGroupResult; dimmed: boolean; onS
       </div>
     )}
     {group.validation.passed && <CodeAssistantCheckNotes checks={group.validation.checks} />}
+    <CodeAssistantPendingChecks checks={group.validation.checks} />
     {group.diff.map((d, i) => (
       <CodeAssistantDiffEntry key={i} entry={d} onShowInCodeView={onShowInCodeView} />
     ))}
@@ -116,7 +121,7 @@ export const ReviewGroupCard: React.FC<GroupCardProps> = ({ group, decision, err
     <div className="border-2 border-gray-200 rounded-lg p-4 space-y-2" data-undone={undone ? "true" : undefined}>
       <GroupBody group={group} dimmed={undone} onShowInCodeView={onShowInCodeView} />
       <div className="flex flex-wrap items-center gap-2 pt-1">
-        {decision === "pending" && group.validation.passed && (
+        {decision === "pending" && group.validation.passed && !hasPendingCheck(group) && (
           <PendingGroupActions serverGroupId={group.serverGroupId} error={error} {...actions} />
         )}
         {!undone && <DecisionStatus decision={decision} error={error} />}

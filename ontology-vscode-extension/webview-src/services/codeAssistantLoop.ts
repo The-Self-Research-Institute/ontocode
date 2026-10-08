@@ -61,11 +61,16 @@ export interface ContextEvent {
 }
 
 const MAX_ARGUMENT_RETRIES = 1;
+const MAX_PROPOSAL_VALIDATION_RETRIES = 1;
 
 interface ArgumentRetries {
   left: number;
   retried?: boolean;
   firstExplanation?: string;
+}
+
+interface ProposalValidationRetries {
+  left: number;
 }
 
 function stoppedByDeadEnd(reason: string, outcome: DispatchOutcome): LoopOutcome {
@@ -92,6 +97,7 @@ interface StepScope {
   onContext?: (event: ContextEvent) => void;
   emit: (event: LoopStageEvent) => void;
   argumentRetries: ArgumentRetries;
+  proposalValidationRetries: ProposalValidationRetries;
   resultFor: (call: ToolCallRequest, result: unknown, isError: boolean, revision?: number) => ToolResultForModel;
 }
 
@@ -106,12 +112,14 @@ function stepScope(
   signal?: AbortSignal,
   onContext?: (event: ContextEvent) => void,
   argumentRetries: ArgumentRetries = { left: 0 },
+  proposalValidationRetries: ProposalValidationRetries = { left: 0 },
 ): StepScope {
   return {
     ctx,
     signal,
     onContext,
     argumentRetries,
+    proposalValidationRetries,
     emit: (event) => onStage({ ...event, step, maxSteps: MAX_LOOP_ITERATIONS }),
     resultFor: (call, result, isError, revision) => ({
       toolCallId: call.toolCallId,
@@ -138,10 +146,20 @@ async function runProposal(scope: StepScope, proposeCall: ToolCallRequest, expla
     }
     return { results: [scope.resultFor(proposeCall, outcome.result, true)] };
   }
-  return { outcome: proposalOutcome(scope, proposeCall, outcome, scope.argumentRetries.retried ? scope.argumentRetries.firstExplanation : explanation) };
+  const resolved = proposalOutcome(scope, proposeCall, outcome, scope.argumentRetries.retried ? scope.argumentRetries.firstExplanation : explanation);
+  return "results" in resolved ? resolved : { outcome: resolved };
 }
 
-function proposalOutcome(scope: StepScope, proposeCall: ToolCallRequest, outcome: DispatchOutcome, explanation?: string): LoopOutcome {
+function failedGroupsSummary(result: ProposeResult): Array<{ clientGroupId: string; failedChecks: Array<{ name: string; detail?: string }> }> {
+  return result.groups
+    .filter((g) => !g.validation.passed)
+    .map((g) => ({
+      clientGroupId: g.clientGroupId,
+      failedChecks: g.validation.checks.filter((c) => !c.passed).map((c) => ({ name: c.name, detail: c.detail })),
+    }));
+}
+
+function proposalOutcome(scope: StepScope, proposeCall: ToolCallRequest, outcome: DispatchOutcome, explanation?: string): LoopOutcome | { results: ToolResultForModel[] } {
   if (outcome.isError || !outcome.proposeResult) {
     const detail = describeToolFailure(outcome.result);
     scope.emit({ stage: "stopped", detail: `${proposeCall.name} failed` });
@@ -150,6 +168,19 @@ function proposalOutcome(scope: StepScope, proposeCall: ToolCallRequest, outcome
     }
     return { kind: "stopped", reason: `The proposed edit couldn't be prepared for review: ${detail}`, errorCode: outcome.errorCode };
   }
+
+  const failedGroups = failedGroupsSummary(outcome.proposeResult);
+  if (failedGroups.length > 0 && scope.proposalValidationRetries.left > 0) {
+    scope.proposalValidationRetries.left--;
+    const retryResult = {
+      error: "validation_failed",
+      groups: failedGroups,
+      message: "Fix these edit groups and call propose again — include every occurrence this would leave " +
+        "dangling, or explicitly say it should stay.",
+    };
+    return { results: [scope.resultFor(proposeCall, retryResult, true)] };
+  }
+
   scope.emit({ stage: "propose" });
   return { kind: "propose", result: outcome.proposeResult, explanation };
 }
@@ -212,9 +243,10 @@ export async function runAssistantLoop(
   const managedProvider = ctx.providerConfig?.managed ? ctx.providerConfig.provider : undefined;
   let conversation: ConversationState = await startAssistantConversation(systemPrompt, userMessage, history, managedProvider);
   const argumentRetries: ArgumentRetries = { left: MAX_ARGUMENT_RETRIES };
+  const proposalValidationRetries: ProposalValidationRetries = { left: MAX_PROPOSAL_VALIDATION_RETRIES };
 
   for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
-    const scope = stepScope(ctx, i + 1, onStage, signal, onContext, argumentRetries);
+    const scope = stepScope(ctx, i + 1, onStage, signal, onContext, argumentRetries, proposalValidationRetries);
     scope.emit({ stage: "calling-provider" });
     const onRetry = (attempt: number, maxAttempts: number, status: number) => {
       scope.emit({ stage: "calling-provider", detail: `Provider busy (HTTP ${status}) — retrying ${attempt}/${maxAttempts}...` });

@@ -1075,7 +1075,7 @@ public class OntologyMetadataService {
         meta.put("prefixes", prefixes);
         meta.put("prefixCount", prefixes.size());
         projectMetadataService.writeMeta(projectId, meta);
-        
+        storageManager.clearCodeViewCache(projectId);
     }
 
     /**
@@ -1121,6 +1121,7 @@ public class OntologyMetadataService {
                 meta.put("prefixes", prefixes);
                 meta.put("prefixCount", prefixes.size());
                 projectMetadataService.writeMeta(projectId, meta);
+                storageManager.clearCodeViewCache(projectId);
             }
         }
     }

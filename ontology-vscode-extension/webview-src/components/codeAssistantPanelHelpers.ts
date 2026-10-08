@@ -40,6 +40,7 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
       ? [
           "For an entity's exact text/range, use read_context with a \"statement\" target, then propose_edit with grouped edits.",
           "To rename an identifier, use propose_rename instead of editing each occurrence.",
+          "Before deleting an identifier, check its references via read_context so the removal covers every occurrence.",
           "Insert new statements only between complete statements (after a line ending \" .\"), never inside one.",
           "add_inferred_axioms echoes back run_swrl_rule's results as new facts; add_fuzzy_membership adds a new " +
             "degree (0-1, full IRIs) only if that pair doesn't already exist.",

@@ -93,12 +93,27 @@ public class CodeViewReimportPipeline {
 
     public record ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
                                    String userId, String username, String targetGraphOverride,
-                                   Path oldContentFileForDiff, boolean skipSanitization, ChangeOrigin origin) {
+                                   Path oldContentFileForDiff, boolean skipSanitization, ChangeOrigin origin,
+                                   boolean scratch) {
         public ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
                                String userId, String username, String targetGraphOverride,
                                Path oldContentFileForDiff, boolean skipSanitization) {
             this(projectId, format, contentFile, draft, userId, username, targetGraphOverride,
-                    oldContentFileForDiff, skipSanitization, null);
+                    oldContentFileForDiff, skipSanitization, null, false);
+        }
+
+        public ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
+                               String userId, String username, String targetGraphOverride,
+                               Path oldContentFileForDiff, boolean skipSanitization, ChangeOrigin origin) {
+            this(projectId, format, contentFile, draft, userId, username, targetGraphOverride,
+                    oldContentFileForDiff, skipSanitization, origin, false);
+        }
+
+        public ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
+                               String userId, String username, String targetGraphOverride,
+                               Path oldContentFileForDiff, boolean skipSanitization, boolean scratch) {
+            this(projectId, format, contentFile, draft, userId, username, targetGraphOverride,
+                    oldContentFileForDiff, skipSanitization, null, scratch);
         }
     }
 
@@ -125,20 +140,26 @@ public class CodeViewReimportPipeline {
             importWithRetry(req, files);
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
-            invalidateReasonerCaches(req.projectId());
+            if (!req.scratch()) {
+                invalidateReasonerCaches(req.projectId());
+            }
 
             perf.mark("graphImport");
             ChangeOrigin origin = recordHistoryDiff(req, files);
 
             perf.mark("historyDiff");
             if (req.draft()) {
-                invalidateAfterDraftReplaced(req.projectId(), req.userId());
+                if (!req.scratch()) {
+                    invalidateAfterDraftReplaced(req.projectId(), req.userId());
+                }
                 perf.mark("invalidate");
                 completed = true;
                 return new ReimportResult(format, files.rdfFormat,
                         storageManager.getDraftGraphVersion(req.projectId(), req.userId()), false);
             }
-            invalidateAfterGraphReplaced(req.projectId(), MetadataRefresh.NOW);
+            if (!req.scratch()) {
+                invalidateAfterGraphReplaced(req.projectId(), MetadataRefresh.NOW);
+            }
             log.info("[CODE-VIEW-SAVE] All format caches cleared");
             perf.mark("invalidate");
 

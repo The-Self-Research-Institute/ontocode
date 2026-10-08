@@ -220,7 +220,7 @@ describe("buildSystemPrompt", () => {
 
   it("stays short", () => {
     for (const action of ["ask", "local-edit", "project-findings"] as const) {
-      expect(buildSystemPrompt(action, "a.ttl").length).toBeLessThan(1200);
+      expect(buildSystemPrompt(action, "a.ttl").length).toBeLessThan(1350);
     }
   });
 });

@@ -308,6 +308,35 @@ describe("propose_rename and read_context tool surface", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("passes kind \"guidance\" through to the backend instead of coercing it to \"definitions\"", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({
+        turn: {
+          kind: "tool_calls",
+          calls: [{ toolCallId: "c1", name: "read_context", args: { targets: [{ type: "identifier", value: "delete" }], kind: "guidance" } }],
+        },
+        advance: advanceSpy,
+      })
+      .mockResolvedValueOnce({ turn: { kind: "answer", text: "ok" }, advance: advanceSpy });
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        ok: true,
+        result: { items: [{ source: "delete", text: "Check references before deleting.", kind: "guidance" }] },
+        provenance: { revision: 1, coverage: "complete" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runAssistantLoop(baseCtx(), "system", "x", vi.fn());
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).kind).toBe("guidance");
+    const [results] = advanceSpy.mock.calls[0] as [Array<{ isError: boolean; result: { items: Array<{ kind: string }> } }>];
+    expect(results[0].isError).toBe(false);
+    expect(results[0].result.items[0].kind).toBe("guidance");
+  });
+
   it("passes a statement target through to the backend", async () => {
     stubConversation();
     const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
@@ -617,6 +646,89 @@ describe("runAssistantLoop — managed provider", () => {
 
     expect(start.mock.calls[0][3]).toBeUndefined();
     expect(next.mock.calls[0][4]).toBeUndefined();
+  });
+});
+
+describe("runAssistantLoop — propose validation auto-retry", () => {
+  function proposeEditCall(id: string) {
+    return {
+      toolCallId: id,
+      name: "propose_edit",
+      args: { groups: [{ edits: [{ targetPath: "turtle", range: { startLine: 280, lineCount: 2 }, originalText: "a", newText: "" }] }] },
+    };
+  }
+
+  const failingResult = {
+    ok: true,
+    groups: [{
+      clientGroupId: "g1",
+      serverGroupId: "srv_1",
+      validation: {
+        passed: false,
+        checks: [{ name: "complete_reference_coverage", passed: false, detail: "prov:Entity still appears at line 205." }],
+      },
+      diff: [],
+    }],
+  };
+
+  const passingResult = {
+    ok: true,
+    groups: [{ clientGroupId: "g2", serverGroupId: "srv_2", validation: { passed: true, checks: [] }, diff: [] }],
+  };
+
+  it("retries once when a group fails validation, then ends with the passing result", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [proposeEditCall("p1")] }, advance: advanceSpy })
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [proposeEditCall("p2")] }, advance: advanceSpy });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, failingResult))
+      .mockResolvedValueOnce(jsonResponse(200, passingResult));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "delete a class", vi.fn());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    const [results] = advanceSpy.mock.calls[0] as [Array<{ isError: boolean; result: { error: string; groups: unknown } } >];
+    expect(results[0].isError).toBe(true);
+    expect(results[0].result.error).toBe("validation_failed");
+    expect(results[0].result.groups).toEqual([
+      { clientGroupId: "g1", failedChecks: [{ name: "complete_reference_coverage", detail: "prov:Entity still appears at line 205." }] },
+    ]);
+    expect(outcome).toEqual({ kind: "propose", result: passingResult });
+  });
+
+  it("stops after one retry and surfaces the still-failing result instead of looping forever", async () => {
+    stubConversation();
+    const advanceSpy = vi.fn().mockReturnValue({ provider: "claude", systemPrompt: "s", nativeMessages: [] });
+    vi.spyOn(providers, "requestNextTurn")
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [proposeEditCall("p1")] }, advance: advanceSpy })
+      .mockResolvedValueOnce({ turn: { kind: "tool_calls", calls: [proposeEditCall("p2")] }, advance: advanceSpy });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, failingResult));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "delete a class", vi.fn());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(advanceSpy).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ kind: "propose", result: failingResult });
+  });
+
+  it("ends immediately with no retry when every group already passes", async () => {
+    stubConversation();
+    vi.spyOn(providers, "requestNextTurn").mockResolvedValueOnce({
+      turn: { kind: "tool_calls", calls: [proposeEditCall("p1")] },
+      advance: vi.fn(),
+    });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, passingResult));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const outcome = await runAssistantLoop(baseCtx(), "system", "delete a class", vi.fn());
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ kind: "propose", result: passingResult });
   });
 });
 

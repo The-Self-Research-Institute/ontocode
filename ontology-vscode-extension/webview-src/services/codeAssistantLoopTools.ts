@@ -35,13 +35,16 @@ export const READ_CONTEXT_TOOL: ToolDefinition = {
       },
       kind: {
         type: "string",
-        enum: ["definitions", "diagnostics", "references"],
+        enum: ["definitions", "diagnostics", "references", "guidance"],
         description:
           "\"definitions\" returns the declarations and axioms of the targets. " +
           "\"diagnostics\" returns the real parse errors and warnings the document currently has, each item's text starting with " +
           "\"ERROR:\" or \"WARNING:\" and carrying the line range it applies to, 1-indexed (unlike \"statement\" and \"range\", " +
           "which are 0-indexed). \"references\" returns where the targets are used. " +
-          "Only these three values are valid here — there is no \"statements\" kind. To read an entity's statement " +
+          "\"guidance\" looks up short, hand-written notes on how this app works, by topic key (set targets[].type to " +
+          "\"identifier\" and value to the topic, e.g. \"delete\", \"drafts\", \"rename\", \"swrl\", \"consistency\") — use it " +
+          "before deleting or removing an identifier, and whenever you're unsure how a feature here is meant to be used. " +
+          "Only these four values are valid here — there is no \"statements\" kind. To read an entity's statement " +
           "block, set targets[].type to \"statement\" instead and use kind \"definitions\".",
       },
     },

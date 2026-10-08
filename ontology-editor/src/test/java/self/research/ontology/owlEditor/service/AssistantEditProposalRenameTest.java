@@ -31,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -75,6 +76,9 @@ class AssistantEditProposalRenameTest {
     @Mock
     private AssistantAuditService auditService;
 
+    @Mock
+    private AssistantConsistencyCheckService consistencyCheckService;
+
     @TempDir
     Path tempDir;
 
@@ -93,7 +97,10 @@ class AssistantEditProposalRenameTest {
                 new AssistantFuzzyMembershipInsertionService(storageManager, lookup,
                         new FuzzyMembershipQueryService(datasetService)),
                 new AssistantEditSemanticValidator(storageManager, lookup), auditService, new ProjectWriteLockRegistry(),
-                new AssistantInsertionSnapper(storageManager));
+                new AssistantInsertionSnapper(storageManager), consistencyCheckService);
+        when(consistencyCheckService.gateCheck(anyString(), anyString(), any())).thenReturn(
+                new CheckResult(AssistantConsistencyCheckService.CONSISTENCY_PRESERVED_CHECK, true,
+                        "Skipped — this edit doesn't appear to touch class axioms."));
         ReflectionTestUtils.setField(proposalService, "maxEditBytes", 200000);
         ReflectionTestUtils.setField(proposalService, "maxEditsPerGroup", 2);
         ReflectionTestUtils.setField(proposalService, "maxRenameLines", 5000);

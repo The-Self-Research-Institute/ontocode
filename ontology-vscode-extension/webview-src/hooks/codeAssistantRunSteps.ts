@@ -9,8 +9,10 @@ import {
   type CodeAssistantAction,
 } from "../components/codeAssistantPanelHelpers";
 import { withSelection } from "../components/codeSelection";
-import { nextEntryId, type PromptToRetry } from "../components/codeAssistantChatEntries";
+import { getApiBaseUrl } from "../components/codeAssistantPanelHelpers";
+import { nextEntryId, type PromptToRetry, type ReviewEntry } from "../components/codeAssistantChatEntries";
 import { deadEndEntry, outcomeToEntry, runAssistantTurn, type TurnResult } from "../components/codeAssistantTurn";
+import { pollConsistencyCheck } from "../services/assistantConsistencyCheckPoll";
 import type { PanelEditorSelection } from "../components/CodeAssistantPanel";
 import type { CodeAssistantEntries } from "./useCodeAssistantEntries";
 
@@ -68,16 +70,34 @@ export function reportFailure(ctx: RunContext, source: unknown, fallbackMessage:
   ctx.optionsRef.current.setAction(prompt.action);
 }
 
-export function appendOutcome(ctx: RunContext, turn: TurnResult, runProjectId: string, prompt: PromptToRetry) {
+export function appendOutcome(ctx: RunContext, turn: TurnResult, runProjectId: string, prompt: PromptToRetry, token?: string) {
   const entry = outcomeToEntry(turn, runProjectId);
   if (entry) {
     ctx.chat.commitEntries((prev) => [...prev, entry]);
+    if (entry.role === "assistant" && entry.kind === "review") startPendingConsistencyChecks(ctx, entry, token);
     return;
   }
   const { outcome } = turn;
   if (outcome.kind !== "stopped") return;
   if (outcome.errorCode) reportFailure(ctx, outcome, outcome.reason, prompt);
   else ctx.chat.appendError(toFriendlyErrorMessage(outcome.reason));
+}
+
+function startPendingConsistencyChecks(ctx: RunContext, entry: ReviewEntry, token: string | undefined) {
+  const apiBaseUrl = getApiBaseUrl();
+  for (const group of entry.groups) {
+    if (!group.validation.checks.some((c) => c.status === "pending")) continue;
+    void pollConsistencyCheck(apiBaseUrl, token, entry.sessionId, group.serverGroupId, (resolved) => {
+      ctx.chat.updateReviewEntry(entry.id, (current) => ({
+        ...current,
+        groups: current.groups.map((g) => {
+          if (g.serverGroupId !== group.serverGroupId) return g;
+          const checks = g.validation.checks.map((c) => (c.name === resolved.name ? resolved : c));
+          return { ...g, validation: { passed: checks.every((c) => c.passed), checks } };
+        }),
+      }));
+    });
+  }
 }
 
 function prepareTurn(ctx: RunContext, turn: TurnInput, runProjectId: string) {
@@ -130,7 +150,7 @@ export function makeSubmit(ctx: RunContext, mountedRef: MutableRefObject<boolean
         onProviderConfig: (config) => mountedRef.current && ctx.optionsRef.current.setProviderConfig(config),
       });
       if (!result || controller.signal.aborted || !stillCurrent()) return;
-      appendOutcome(ctx, result, runProjectId, prompt);
+      appendOutcome(ctx, result, runProjectId, prompt, turn.token);
     } catch (e) {
       if (controller.signal.aborted || !stillCurrent()) return;
       reportFailure(ctx, e, "Something went wrong talking to the assistant.", prompt);

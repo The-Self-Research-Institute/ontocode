@@ -4,13 +4,17 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.ConsistencyCheckRecord;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.ConsistencyCheckState;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest;
+import self.research.ontology.owlEditor.service.AssistantConsistencyCheckService;
 import self.research.ontology.owlEditor.service.AssistantEditApplyService;
 import self.research.ontology.owlEditor.service.AssistantEditApplyService.ApplyResult;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService;
@@ -22,6 +26,7 @@ import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -34,11 +39,14 @@ public class AssistantEditController {
 
     private final AssistantEditProposalService proposalService;
     private final AssistantEditApplyService applyService;
+    private final AssistantConsistencyCheckService consistencyCheckService;
 
     public AssistantEditController(AssistantEditProposalService proposalService,
-                                    AssistantEditApplyService applyService) {
+                                    AssistantEditApplyService applyService,
+                                    AssistantConsistencyCheckService consistencyCheckService) {
         this.proposalService = proposalService;
         this.applyService = applyService;
+        this.consistencyCheckService = consistencyCheckService;
     }
 
     @PostMapping("/propose")
@@ -64,6 +72,37 @@ public class AssistantEditController {
                     return ResponseEntity.status(status).body(toBody(result));
                 })
                 .orElseGet(AssistantEditController::unauthorized);
+    }
+
+    @GetMapping("/groups/{serverGroupId}/consistency-check")
+    public ResponseEntity<?> consistencyCheck(@PathVariable String sessionId, @PathVariable String serverGroupId,
+                                              HttpServletRequest httpRequest) {
+        return JwtIdentityExtractor.extractEmail(httpRequest)
+                .map(userEmail -> {
+                    Optional<ConsistencyCheckRecord> record =
+                            consistencyCheckService.getRecord(sessionId, serverGroupId, userEmail);
+                    if (record.isEmpty()) {
+                        return ResponseEntity.status(404).body(errorBody("PROPOSAL_NOT_FOUND",
+                                "Unknown or unauthorized proposal, or no consistency check was run for it"));
+                    }
+                    return ResponseEntity.ok(toBody(record.get()));
+                })
+                .orElseGet(AssistantEditController::unauthorized);
+    }
+
+    private static Map<String, Object> toBody(ConsistencyCheckRecord record) {
+        boolean failed = record.getState() == ConsistencyCheckState.FAILED;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("name", AssistantConsistencyCheckService.CONSISTENCY_PRESERVED_CHECK);
+        body.put("passed", !failed);
+        if (record.getState() == ConsistencyCheckState.PENDING) {
+            body.put("status", AssistantConsistencyCheckService.PENDING_STATUS);
+        }
+        if (record.getDetail() != null) {
+            body.put("detail", record.getDetail());
+        }
+        return body;
     }
 
     private static Map<String, Object> toBody(ProposeEditResult result) {
@@ -95,6 +134,9 @@ public class AssistantEditController {
         body.put("passed", check.passed());
         if (check.detail() != null) {
             body.put("detail", check.detail());
+        }
+        if (check.status() != null) {
+            body.put("status", check.status());
         }
         return body;
     }
