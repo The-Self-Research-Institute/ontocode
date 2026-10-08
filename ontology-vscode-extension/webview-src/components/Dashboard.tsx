@@ -9127,6 +9127,7 @@ const updateItemInState = useCallback(
       // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
       const metaDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}?userId=${encodeURIComponent(metaUserId)}${metaDraftScopeParam}`);
+      void refreshPrefixes();
       const data = res?.data || res;
       if (data) {
         setMetadata((prev) => prev ? {

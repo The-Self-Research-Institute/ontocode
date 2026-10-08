@@ -37,6 +37,7 @@ public class OntologyMetadataService {
     private final GeneralClassAxiomService generalClassAxiomService;
     private final ProjectImportService importService;
     private final ManchesterExpressionService manchesterExpressionService;
+    private final StorageManager storageManager;
     private final Map<String, String> ontologyIriCache = new java.util.concurrent.ConcurrentHashMap<>();
     private final OntologyCountQueries countQueries;
     private final OntologyMetrics metrics;
@@ -67,13 +68,15 @@ public class OntologyMetadataService {
                                    @Lazy OntologyMutationService mutationService,
                                    GeneralClassAxiomService generalClassAxiomService,
                                     @Lazy ProjectImportService importService,
-                                   @Lazy ManchesterExpressionService manchesterExpressionService) {
+                                   @Lazy ManchesterExpressionService manchesterExpressionService,
+                                   StorageManager storageManager) {
         this.datasetService = datasetService;
         this.projectMetadataService = projectMetadataService;
         this.mutationService = mutationService;
         this.generalClassAxiomService = generalClassAxiomService;
          this.importService = importService;
         this.manchesterExpressionService = manchesterExpressionService;
+        this.storageManager = storageManager;
         this.countQueries = new OntologyCountQueries(datasetService);
         this.metrics = new OntologyMetrics(datasetService, projectMetadataService, importService,
                 manchesterExpressionService, countQueries, this::getOntologyIri);
@@ -938,6 +941,10 @@ public class OntologyMetadataService {
         return metrics.getDynamicMetrics(projectId);
     }
 
+    private static String stripTrailingColon(String prefix) {
+        return prefix != null && prefix.endsWith(":") ? prefix.substring(0, prefix.length() - 1) : prefix;
+    }
+
     /**
      * Get all prefixes
      */
@@ -955,7 +962,7 @@ public class OntologyMetadataService {
             if (prefixesObj instanceof Map) {
                 Map<?, ?> rawMap = (Map<?, ?>) prefixesObj;
                 for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
-                    prefixMap.put(entry.getKey().toString(), entry.getValue().toString());
+                    prefixMap.put(stripTrailingColon(entry.getKey().toString()), entry.getValue().toString());
                 }
                 hasCachedPrefixes = !prefixMap.isEmpty();
             } else if (prefixesObj instanceof List) {
@@ -967,7 +974,7 @@ public class OntologyMetadataService {
                         Object p = map.get("prefix");
                         Object n = map.get("namespace");
                         if (p != null && n != null) {
-                            prefixMap.put(p.toString(), n.toString());
+                            prefixMap.put(stripTrailingColon(p.toString()), n.toString());
                         }
                     }
                 }
@@ -985,8 +992,8 @@ public class OntologyMetadataService {
             if (importService != null) {
                 importService.syncProjectToFuseki(projectId);
             }
-            Map<String, String> graphdbPrefixes = datasetService.getPrefixes(projectId);
-            prefixMap.putAll(graphdbPrefixes);
+            datasetService.getPrefixes(projectId)
+                    .forEach((p, ns) -> prefixMap.put(stripTrailingColon(p), ns));
         } else {
             log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
         }
@@ -1025,6 +1032,7 @@ public class OntologyMetadataService {
                              boolean draft, String userId) {
         if (draft) {
             datasetService.updateDraftPrefix(projectId, userId, prefix, iri, oldPrefix);
+            storageManager.bumpDraftGraphVersion(projectId, userId);
             return;
         }
         // 1. Update in MongoDB
@@ -1036,7 +1044,7 @@ public class OntologyMetadataService {
         if (existingPrefixes instanceof Map) {
             Map<?, ?> rawMap = (Map<?, ?>) existingPrefixes;
             for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
-                prefixes.put(entry.getKey().toString(), entry.getValue().toString());
+                prefixes.put(stripTrailingColon(entry.getKey().toString()), entry.getValue().toString());
             }
         } else if (existingPrefixes instanceof List) {
             List<?> list = (List<?>) existingPrefixes;
@@ -1046,16 +1054,16 @@ public class OntologyMetadataService {
                     Object p = map.get("prefix");
                     Object n = map.get("namespace");
                     if (p != null && n != null) {
-                        prefixes.put(p.toString(), n.toString());
+                        prefixes.put(stripTrailingColon(p.toString()), n.toString());
                     }
                 }
             }
         }
-        
+
         // If MongoDB prefixes are empty, try to pull from GraphDB first to avoid wiping them
         if (prefixes.isEmpty()) {
             log.info("MongoDB prefixes empty for project {}, pulling from GraphDB before update", projectId);
-            prefixes.putAll(datasetService.getPrefixes(projectId));
+            datasetService.getPrefixes(projectId).forEach((p, ns) -> prefixes.put(stripTrailingColon(p), ns));
         }
         
         // If we are renaming a prefix, remove the old one
@@ -1080,6 +1088,7 @@ public class OntologyMetadataService {
     public void deletePrefix(String projectId, String prefix, boolean draft, String userId) {
         if (draft) {
             datasetService.deleteDraftPrefix(projectId, userId, prefix);
+            storageManager.bumpDraftGraphVersion(projectId, userId);
             return;
         }
         // 1. Update in MongoDB
@@ -1091,7 +1100,7 @@ public class OntologyMetadataService {
             if (existingPrefixes instanceof Map) {
                 Map<?, ?> rawMap = (Map<?, ?>) existingPrefixes;
                 for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
-                    prefixes.put(entry.getKey().toString(), entry.getValue().toString());
+                    prefixes.put(stripTrailingColon(entry.getKey().toString()), entry.getValue().toString());
                 }
             } else if (existingPrefixes instanceof List) {
                 List<?> list = (List<?>) existingPrefixes;
@@ -1101,12 +1110,12 @@ public class OntologyMetadataService {
                         Object p = map.get("prefix");
                         Object n = map.get("namespace");
                         if (p != null && n != null) {
-                            prefixes.put(p.toString(), n.toString());
+                            prefixes.put(stripTrailingColon(p.toString()), n.toString());
                         }
                     }
                 }
             }
-            
+
             if (prefixes.containsKey(prefix)) {
                 prefixes.remove(prefix);
                 meta.put("prefixes", prefixes);

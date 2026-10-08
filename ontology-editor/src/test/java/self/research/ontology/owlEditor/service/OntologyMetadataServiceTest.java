@@ -37,6 +37,8 @@ class OntologyMetadataServiceTest {
     private ManchesterExpressionService manchesterExpressionService;
     @Mock
     private OntologyHistoryService historyService;
+    @Mock
+    private StorageManager storageManager;
 
     private OntologyMetadataService service;
 
@@ -44,7 +46,7 @@ class OntologyMetadataServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         service = new OntologyMetadataService(datasetService, projectMetadataService, mutationService,
-                generalClassAxiomService, importService, manchesterExpressionService);
+                generalClassAxiomService, importService, manchesterExpressionService, storageManager);
         ReflectionTestUtils.setField(service, "historyService", historyService);
 
         @SuppressWarnings("unchecked")
@@ -86,11 +88,46 @@ class OntologyMetadataServiceTest {
     }
 
     @Test
+    void getPrefixesStripsTheColonSuffixFromTheGraphDbFallback() {
+        when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.empty());
+        when(datasetService.getPrefixes("proj-1")).thenReturn(Map.of("foaf:", "http://xmlns.com/foaf/0.1/"));
+
+        List<Map<String, String>> result = service.getPrefixes("proj-1");
+
+        assertTrue(result.stream().anyMatch(p -> p.get("prefix").equals("foaf")));
+        assertTrue(result.stream().noneMatch(p -> p.get("prefix").equals("foaf:")));
+    }
+
+    @Test
+    void updatePrefixStripsTheColonSuffixWhenSeedingFromTheGraphDbFallback() {
+        when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.empty());
+        when(datasetService.getPrefixes("proj-1")).thenReturn(Map.of("foaf:", "http://xmlns.com/foaf/0.1/"));
+
+        service.updatePrefix("proj-1", "ex", "http://ex.org/", null);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> metaCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(projectMetadataService).writeMeta(eq("proj-1"), metaCaptor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, String> savedPrefixes = (Map<String, String>) metaCaptor.getValue().get("prefixes");
+        assertEquals("http://xmlns.com/foaf/0.1/", savedPrefixes.get("foaf"));
+        assertTrue(savedPrefixes.containsKey("ex"));
+        assertTrue(savedPrefixes.keySet().stream().noneMatch(k -> k.endsWith(":")));
+    }
+
+    @Test
     void updatePrefixInDraftModeRoutesToTheDraftOverridesNotThePublicMetadata() {
         service.updatePrefix("proj-1", "ex", "http://ex.org/", null, true, "u1");
 
         verify(datasetService).updateDraftPrefix("proj-1", "u1", "ex", "http://ex.org/", null);
         verify(projectMetadataService, never()).writeMeta(anyString(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void updatePrefixInDraftModeInvalidatesTheDraftCodeViewCache() {
+        service.updatePrefix("proj-1", "ex", "http://ex.org/", null, true, "u1");
+
+        verify(storageManager).bumpDraftGraphVersion("proj-1", "u1");
     }
 
     @Test
@@ -100,6 +137,13 @@ class OntologyMetadataServiceTest {
         verify(datasetService).deleteDraftPrefix("proj-1", "u1", "ex");
         verify(projectMetadataService, never()).readMeta(anyString());
         verify(projectMetadataService, never()).writeMeta(anyString(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void deletePrefixInDraftModeInvalidatesTheDraftCodeViewCache() {
+        service.deletePrefix("proj-1", "ex", true, "u1");
+
+        verify(storageManager).bumpDraftGraphVersion("proj-1", "u1");
     }
 
     @Test
