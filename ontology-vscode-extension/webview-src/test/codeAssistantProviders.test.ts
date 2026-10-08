@@ -388,6 +388,49 @@ describe("requestNextTurn — HTTP error mapping", () => {
     );
   });
 
+  it("shows the provider's own explanation on a 404 instead of a bare generic message", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("gemini");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({
+        error: {
+          code: 404,
+          message: "This model models/gemini-2.5-flash is no longer available to new users. "
+            + "Please update your code to use models/gemini-3.8-flash for the latest features and improvements.",
+          status: "NOT_FOUND",
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    await expect(requestNextTurn(conversation, [TOOL])).rejects.toThrow(/gemini-3\.8-flash for the latest features/);
+  });
+
+  it("does not call a billing shortfall a rate limit", async () => {
+    vi.spyOn(llmInsights, "getStoredProvider").mockReturnValue("openai");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({
+        error: {
+          message: "You have no credits remaining. Add credits to continue using the API at "
+            + "https://platform.openai.com/settings/organization/billing/.",
+          type: "insufficient_quota",
+          param: null,
+          code: "credit_balance_exhausted",
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const conversation = await startAssistantConversation("system prompt", "hi");
+    const error = await requestNextTurn(conversation, [TOOL]).catch((e) => e);
+    expect(error.message).toMatch(/no credits remaining/);
+    expect(error.message).not.toMatch(/Rate limit reached/);
+  });
+
   it("retries a 503 and succeeds once the provider recovers", async () => {
     vi.useFakeTimers();
     try {
