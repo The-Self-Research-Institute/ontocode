@@ -6,12 +6,14 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
+import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.HistorySyncService;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 
 import java.util.Base64;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -58,5 +60,50 @@ class ChangeTrackingControllerTest {
         controller.addComment("proj-1", "c1", Map.of("text", "Looks good"), httpRequest);
 
         verify(historySyncService).addComment("c1", "system", "System", "Looks good");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String detailsStatus(HistoryChange change) {
+        when(historySyncService.getHistoryChange("c1")).thenReturn(change);
+        Map<String, Object> body = controller.getChangeDetails("proj-1", "c1").getBody();
+        return (String) ((Map<String, Object>) body.get("change")).get("status");
+    }
+
+    @Test
+    void detailsShowSavedForAnOrdinaryChangeEvenIfStoredAsPending() {
+        HistoryChange change = new HistoryChange("proj-1", "edit-1", "u1", "User");
+        change.setStatus("PENDING");
+
+        assertEquals("SAVED", detailsStatus(change));
+    }
+
+    @Test
+    void detailsShowDraftForADraftChange() {
+        HistoryChange change = new HistoryChange("proj-1", "edit-1", "u1", "User");
+        change.setDraft(true);
+
+        assertEquals("DRAFT", detailsStatus(change));
+    }
+
+    @Test
+    void detailsShowRevertedForARolledBackChange() {
+        HistoryChange change = new HistoryChange("proj-1", "edit-1", "u1", "User");
+        change.setDraft(true);
+        change.setReverted(true);
+
+        assertEquals("REVERTED", detailsStatus(change));
+    }
+
+    @Test
+    void detailsShowConflictedForAConflictingChange() {
+        HistoryChange change = new HistoryChange("proj-1", "edit-1", "u1", "User");
+        change.setHasConflict(true);
+
+        assertEquals("CONFLICTED", detailsStatus(change));
+    }
+
+    @Test
+    void newChangesDefaultToSaved() {
+        assertEquals("SAVED", new HistoryChange().getStatus());
     }
 }

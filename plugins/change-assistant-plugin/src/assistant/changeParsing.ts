@@ -97,7 +97,7 @@ export function parseChange(change: any) {
     authorEmail: change.userId || '',
     type: mapChangeType(originalOperationType, change.changeCategory || change.entityType),
     action: mapAction(originalOperationType),
-    status: (change.status?.toLowerCase() || 'approved') as ChangeStatus,
+    status: (change.status?.toLowerCase() || 'saved') as ChangeStatus,
     entityUri: change.entityIRI,
     entityLabel: change.entityLabel || extractLabelFromIRI(change.entityIRI),
     oldValue: change.oldValue,
@@ -129,9 +129,6 @@ export function computeStats(parsedChanges: any[], draftChanges: OntologyChange[
     .reduce((sum, c) => sum + (c.warnings?.length || 0), 0);
   return {
     totalChanges: parsedChanges.length,
-    pendingChanges: parsedChanges.filter((c: any) => c.status === 'pending').length,
-    approvedChanges: parsedChanges.filter((c: any) => c.status === 'approved').length,
-    rejectedChanges: parsedChanges.filter((c: any) => c.status === 'rejected').length,
     draftChanges: draftChanges.length,
     conflicts: parsedChanges.filter((c: any) => c.conflicts?.length > 0).length,
     activeAuthors: new Set(parsedChanges.map((c: any) => c.author)).size,

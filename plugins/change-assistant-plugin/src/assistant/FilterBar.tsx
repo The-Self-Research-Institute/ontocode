@@ -47,9 +47,8 @@ const FilterBar: React.FC<FilterBarProps> = (props) => (
       >
         <option value="all">All Status</option>
         <option value="draft">Drafts</option>
-        <option value="pending">Pending</option>
-        <option value="approved">Approved</option>
-        <option value="rejected">Rejected</option>
+        <option value="saved">Saved</option>
+        <option value="reverted">Reverted</option>
         <option value="conflicted">Conflicted</option>
       </select>
       <select

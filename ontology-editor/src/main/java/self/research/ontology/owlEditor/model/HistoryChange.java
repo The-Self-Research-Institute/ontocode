@@ -50,7 +50,7 @@ public class HistoryChange {
     private String description;
     
     // Collaboration features
-    private String status = "PENDING"; // PENDING, APPROVED, REJECTED
+    private String status = "SAVED";
     private String approvedBy;
     private LocalDateTime approvedAt;
     private String rejectedBy;

@@ -230,7 +230,7 @@ public class ChangeTrackingController {
         map.put("oldValue", change.getOldValue());
         map.put("newValue", change.getNewValue());
         map.put("description", change.getDescription());
-        map.put("status", change.getStatus());
+        map.put("status", displayStatus(change));
         map.put("hasConflict", change.isHasConflict());
         putChangeSetFields(map, change);
         map.put("reverted", change.isReverted());
@@ -270,6 +270,13 @@ public class ChangeTrackingController {
         map.put("commentCount", commentCount);
 
         return map;
+    }
+
+    static String displayStatus(HistoryChange change) {
+        if (change.isReverted()) return "REVERTED";
+        if (change.isDraft()) return "DRAFT";
+        if (change.isHasConflict()) return "CONFLICTED";
+        return "SAVED";
     }
 
     /**
@@ -593,7 +600,7 @@ public class ChangeTrackingController {
                 details.put("oldValue", historyChange.getOldValue());
                 details.put("newValue", historyChange.getNewValue());
                 details.put("description", historyChange.getDescription());
-                details.put("status", historyChange.getStatus());
+                details.put("status", displayStatus(historyChange));
                 details.put("hasConflict", historyChange.isHasConflict());
                 
                 // Convert comments to list format
