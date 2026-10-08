@@ -218,7 +218,7 @@ public class ChangeTrackingController {
         Map<String, Object> map = new HashMap<>();
         map.put("id", change.getId());
         map.put("editId", change.getEditId());
-        map.put("timestamp", change.getTimestamp() != null ? change.getTimestamp().toString() : null);
+        map.put("timestamp", change.getTimestampIso());
         map.put("userId", change.getUserId());
         map.put("username", change.getUsername());
         map.put("changeType", change.getOperationType());
@@ -590,7 +590,7 @@ public class ChangeTrackingController {
                 Map<String, Object> details = new HashMap<>();
                 details.put("id", historyChange.getId());
                 details.put("projectId", historyChange.getProjectId());
-                details.put("timestamp", historyChange.getTimestamp().toString());
+                details.put("timestamp", historyChange.getTimestampIso());
                 details.put("userId", historyChange.getUserId());
                 details.put("username", historyChange.getUsername());
                 details.put("operationType", historyChange.getOperationType());
@@ -739,7 +739,7 @@ public class ChangeTrackingController {
     private Map<String, Object> changeToMap(OntologyChange change) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", change.getId());
-        map.put("timestamp", change.getTimestamp().toString());
+        map.put("timestamp", change.getTimestampIso());
         map.put("username", change.getUsername());
         map.put("userId", change.getUserId());
         map.put("changeType", change.getChangeType().toString());

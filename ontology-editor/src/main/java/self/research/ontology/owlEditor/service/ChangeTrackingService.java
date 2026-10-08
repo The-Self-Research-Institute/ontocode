@@ -12,6 +12,7 @@ import self.research.ontology.owlEditor.model.OntologyChange.ChangeType;
 import self.research.ontology.owlEditor.repository.OntologyChangeRepository;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -230,7 +231,7 @@ public class ChangeTrackingService {
         stats.put("changesByDay", byDay);
         
         // Recent activity (last 24 hours)
-        LocalDateTime yesterday = LocalDateTime.now().minusDays(1);
+        LocalDateTime yesterday = LocalDateTime.now(ZoneOffset.UTC).minusDays(1);
         long recentChanges = allChanges.stream()
             .filter(c -> c.getTimestamp().isAfter(yesterday))
             .count();
@@ -389,7 +390,7 @@ public class ChangeTrackingService {
     private Map<String, Object> changeToMap(OntologyChange change) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", change.getId());
-        map.put("timestamp", change.getTimestamp().toString());
+        map.put("timestamp", change.getTimestampIso());
         map.put("username", change.getUsername());
         map.put("changeType", change.getChangeType().toString());
         map.put("category", change.getChangeCategory());

@@ -9236,6 +9236,7 @@ const updateItemInState = useCallback(
         const resp: any = await apiClient.post(`/api/desktop/save/${encodeURIComponent(projectId)}`);
         const d = resp?.data || resp;
         setHasUnsavedChanges(false);
+        setDraftCount(0);
         notificationService.success(
           "Saved",
           d?.saved ? "Your changes were saved." : "Nothing to save — already up to date.",

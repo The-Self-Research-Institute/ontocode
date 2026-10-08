@@ -11,6 +11,8 @@ import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 import self.research.ontology.owlEditor.service.HistorySyncService;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -110,6 +112,19 @@ class ChangeTrackingControllerTest {
     @Test
     void newChangesDefaultToSaved() {
         assertEquals("SAVED", new HistoryChange().getStatus());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void detailsTimestampIsSerializedAsUtcSoTheClientCanRenderItsOwnTimezone() {
+        HistoryChange change = new HistoryChange("proj-1", "edit-1", "u1", "User");
+        change.setTimestamp(LocalDateTime.of(2026, 10, 8, 15, 20, 32));
+        when(historySyncService.getHistoryChange("c1")).thenReturn(change);
+
+        Map<String, Object> body = controller.getChangeDetails("proj-1", "c1").getBody();
+        String timestamp = (String) ((Map<String, Object>) body.get("change")).get("timestamp");
+
+        assertEquals("2026-10-08T15:20:32Z", timestamp);
     }
 
     @Test

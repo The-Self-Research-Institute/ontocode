@@ -93,35 +93,53 @@ final class CodeViewHistoryRecorder {
         }
     }
 
+    private record PrefixChange(String opType, String prefix, String oldNamespace, String newNamespace) {}
+
     private void recordPrefixChanges(Actor actor, Set<Namespace> oldNamespaces, Set<Namespace> newNamespaces) {
         Map<String, String> oldPrefixes = new LinkedHashMap<>();
         oldNamespaces.forEach(ns -> oldPrefixes.put(ns.getPrefix(), ns.getName()));
         Map<String, String> newPrefixes = new LinkedHashMap<>();
         newNamespaces.forEach(ns -> newPrefixes.put(ns.getPrefix(), ns.getName()));
 
+        List<PrefixChange> changes = new ArrayList<>();
         for (Map.Entry<String, String> entry : newPrefixes.entrySet()) {
             String oldNamespace = oldPrefixes.get(entry.getKey());
             if (oldNamespace == null) {
-                historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), "prefixAdded",
-                        null, entry.getKey(), null, entry.getValue(),
-                        "Code View save added prefix " + entry.getKey() + ": <" + entry.getValue() + ">",
-                        null, null, actor.draft(), actor.origin());
+                changes.add(new PrefixChange("prefixAdded", entry.getKey(), null, entry.getValue()));
             } else if (!oldNamespace.equals(entry.getValue())) {
-                historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), "prefixModified",
-                        null, entry.getKey(), oldNamespace, entry.getValue(),
-                        "Code View save changed prefix " + entry.getKey() + " from <" + oldNamespace
-                                + "> to <" + entry.getValue() + ">",
-                        null, null, actor.draft(), actor.origin());
+                changes.add(new PrefixChange("prefixModified", entry.getKey(), oldNamespace, entry.getValue()));
             }
         }
         for (String prefix : oldPrefixes.keySet()) {
             if (!newPrefixes.containsKey(prefix)) {
-                historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), "prefixDeleted",
-                        null, prefix, oldPrefixes.get(prefix), null,
-                        "Code View save removed prefix " + prefix,
-                        null, null, actor.draft(), actor.origin());
+                changes.add(new PrefixChange("prefixDeleted", prefix, oldPrefixes.get(prefix), null));
             }
         }
+
+        if (changes.isEmpty()) {
+            return;
+        }
+        if (changes.size() == 1) {
+            PrefixChange c = changes.get(0);
+            historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), c.opType(),
+                    null, c.prefix(), c.oldNamespace(), c.newNamespace(),
+                    describePrefixChange(c), null, null, actor.draft(), actor.origin());
+            return;
+        }
+
+        String summary = changes.stream().map(this::describePrefixChange).collect(Collectors.joining("; "));
+        historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), "prefixesChanged",
+                null, changes.size() + " prefixes", null, null,
+                "Code View save changed " + changes.size() + " prefixes (" + summary + ")",
+                null, null, actor.draft(), actor.origin());
+    }
+
+    private String describePrefixChange(PrefixChange c) {
+        return switch (c.opType()) {
+            case "prefixAdded" -> "added " + c.prefix() + ": <" + c.newNamespace() + ">";
+            case "prefixDeleted" -> "removed " + c.prefix();
+            default -> "changed " + c.prefix() + " from <" + c.oldNamespace() + "> to <" + c.newNamespace() + ">";
+        };
     }
 
     private int groupBySubject(Set<Statement> added, Set<Statement> removed, Map<Resource, SubjectDiff> bySubject) {

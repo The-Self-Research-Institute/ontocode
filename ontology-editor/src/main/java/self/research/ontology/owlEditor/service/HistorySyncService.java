@@ -12,7 +12,7 @@ import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -102,7 +102,7 @@ public class HistorySyncService {
                 if (timestampObj instanceof Long) {
                     LocalDateTime timestamp = LocalDateTime.ofInstant(
                         Instant.ofEpochMilli((Long) timestampObj),
-                        ZoneId.systemDefault()
+                        ZoneOffset.UTC
                     );
                     builder.timestamp(timestamp);
                 }

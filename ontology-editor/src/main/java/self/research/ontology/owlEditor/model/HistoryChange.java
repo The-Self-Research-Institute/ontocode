@@ -5,6 +5,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -404,6 +405,10 @@ public class HistoryChange {
 
     public void setTimestamp(LocalDateTime timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public String getTimestampIso() {
+        return timestamp == null ? null : timestamp.toInstant(ZoneOffset.UTC).toString();
     }
 
     public String getOperationType() {
