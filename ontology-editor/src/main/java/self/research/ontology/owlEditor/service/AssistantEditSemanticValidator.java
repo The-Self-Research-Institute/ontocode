@@ -320,6 +320,7 @@ public class AssistantEditSemanticValidator {
     private Extracted extractTurtle(Path file, List<SemanticEdit> sorted) throws Exception {
         Extraction before = new Extraction();
         Extraction after = new Extraction();
+        Map<String, String> groupPrefixes = collectGroupPrefixes(sorted);
         TurtleLineScanner documentScanner = new TurtleLineScanner();
         TurtleStatementTracker documentTracker = TurtleStatementTracker.positionOnly();
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -338,10 +339,24 @@ public class AssistantEditSemanticValidator {
                     lineNo++;
                 }
                 scanTurtleText(edit.originalText(), documentScanner.fork(), documentTracker.fork(), before);
-                scanTurtleText(edit.newText(), documentScanner.fork(), documentTracker.fork(), after);
+                scanTurtleText(edit.newText(), documentScanner.fork(groupPrefixes), documentTracker.fork(), after);
             }
         }
         return new Extracted(before, after);
+    }
+
+    private Map<String, String> collectGroupPrefixes(List<SemanticEdit> sorted) {
+        TurtleLineScanner scanner = new TurtleLineScanner();
+        for (SemanticEdit edit : sorted) {
+            String text = edit.newText();
+            if (text == null || text.isEmpty()) {
+                continue;
+            }
+            for (String line : text.split("\n", -1)) {
+                scanner.scan(line);
+            }
+        }
+        return scanner.prefixes();
     }
 
     private void scanTurtleText(String text, TurtleLineScanner scanner, TurtleStatementTracker tracker,
