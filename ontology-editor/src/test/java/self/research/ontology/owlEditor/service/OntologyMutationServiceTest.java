@@ -98,6 +98,21 @@ class OntologyMutationServiceTest {
     }
 
     @Test
+    void applyRawUpdateInvalidatesTheDraftCodeViewCache() {
+        service.applyRawUpdate("proj-1", "INSERT DATA {...}", true, "u1");
+
+        verify(datasetService).execDraftUpdateCopyOnSwitch("proj-1", "u1", "INSERT DATA {...}");
+        verify(storageManager).bumpDraftGraphVersion("proj-1", "u1");
+    }
+
+    @Test
+    void makeSiblingsDisjointInvalidatesTheDraftCodeViewCache() {
+        service.makeSiblingsDisjoint("proj-1", List.of("http://ex.org/A", "http://ex.org/B"), true, "u1");
+
+        verify(storageManager).bumpDraftGraphVersion("proj-1", "u1");
+    }
+
+    @Test
     void applyRawUpdateWithoutHistoryStillWorksWhenHistoryServiceIsAbsent() {
         ReflectionTestUtils.setField(service, "historyService", null);
 
