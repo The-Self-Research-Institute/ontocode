@@ -64,6 +64,10 @@ public class CodeViewReimportPipeline {
 
     @Autowired(required = false)
     @Nullable
+    private DesktopOntologyLoader desktopOntologyLoader;
+
+    @Autowired(required = false)
+    @Nullable
     private EditorReasonerCacheService editorReasonerCache;
 
     @Autowired(required = false)
@@ -407,6 +411,10 @@ public class CodeViewReimportPipeline {
 
     private void invalidateDerivedCaches(String projectId, @Nullable List<String> touchedIris, boolean draft) {
         datasetService.markProjectDirty(projectId);
+        boolean desktopWorkingCopy = !draft && desktopOntologyLoader != null && desktopOntologyLoader.isOwlApiFirst();
+        if (desktopWorkingCopy) {
+            desktopOntologyLoader.refreshDraftFromTripleStore(projectId);
+        }
         if (ontologyCache != null) {
             ontologyCache.evict(projectId);
             log.info("[CODE-VIEW-SAVE] Evicted in-memory OWLAPI cache for project {} (now stale vs. reimported Fuseki data)", projectId);
@@ -432,6 +440,9 @@ public class CodeViewReimportPipeline {
         }
         if (editorReasonerCache != null) {
             editorReasonerCache.invalidateOntology(projectId);
+        }
+        if (desktopWorkingCopy) {
+            desktopOntologyLoader.scheduleRewarm(projectId);
         }
     }
 

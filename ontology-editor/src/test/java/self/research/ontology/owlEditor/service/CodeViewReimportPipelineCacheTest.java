@@ -117,6 +117,51 @@ class CodeViewReimportPipelineCacheTest {
         verify(springCacheEviction, never()).evictForProject(anyString());
     }
 
+    @Mock
+    private DesktopOntologyLoader desktopOntologyLoader;
+    @Mock
+    private self.research.ontology.owlEditor.cache.ProjectOntologyCache ontologyCache;
+
+    private void wireDesktop(boolean owlApiFirst) {
+        ReflectionTestUtils.setField(pipeline, "desktopOntologyLoader", desktopOntologyLoader);
+        ReflectionTestUtils.setField(pipeline, "ontologyCache", ontologyCache);
+        when(desktopOntologyLoader.isOwlApiFirst()).thenReturn(owlApiFirst);
+    }
+
+    @Test
+    void desktopDraftIsRewrittenBeforeTheInMemoryModelIsDroppedAndThenReloaded() throws Exception {
+        wireDesktop(true);
+        Path patched = Files.createTempFile("patched-", ".ttl");
+
+        pipeline.finishPatch("proj-1", "turtle", patched, "u1", "User", new LinkedHashModel(), new LinkedHashModel());
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(desktopOntologyLoader, ontologyCache);
+        order.verify(desktopOntologyLoader).refreshDraftFromTripleStore("proj-1");
+        order.verify(ontologyCache).evict("proj-1");
+        order.verify(desktopOntologyLoader).scheduleRewarm("proj-1");
+    }
+
+    @Test
+    void draftModeWritesLeaveTheDesktopWorkingCopyAlone() throws Exception {
+        wireDesktop(true);
+        when(datasetService.getDraftGraphUri("proj-1", "u1")).thenReturn("urn:draft:proj-1:u1");
+
+        pipeline.restoreSnapshot("proj-1", rdfXmlSnapshot(), true, "u1");
+
+        verify(desktopOntologyLoader, never()).refreshDraftFromTripleStore(anyString());
+        verify(desktopOntologyLoader, never()).scheduleRewarm(anyString());
+    }
+
+    @Test
+    void withoutOwlApiFirstTheDesktopWorkingCopyIsNotTouched() throws Exception {
+        wireDesktop(false);
+
+        pipeline.restoreSnapshot("proj-1", rdfXmlSnapshot());
+
+        verify(desktopOntologyLoader, never()).refreshDraftFromTripleStore(anyString());
+        verify(desktopOntologyLoader, never()).scheduleRewarm(anyString());
+    }
+
     @Test
     void aCacheFailureDoesNotFailAnEditThatAlreadyReachedTheGraph() throws Exception {
         doThrow(new RuntimeException("mongo down"))

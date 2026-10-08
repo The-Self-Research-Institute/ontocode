@@ -7,6 +7,8 @@ import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.AssistantApplyOperationDocument;
 import self.research.ontology.owlEditor.document.AssistantEditGroupDocument;
@@ -23,6 +25,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -52,6 +55,11 @@ public class AssistantEditApplyService {
 
     @Value("${assistant.apply.triple-patch.enabled:true}")
     private boolean triplePatchEnabled;
+
+    @Autowired(required = false)
+    @Lazy
+    @Nullable
+    private ProjectImportService projectImportService;
 
     public AssistantEditApplyService(AssistantEditGroupRepository groupRepository,
                                       StorageManager storageManager,
@@ -197,6 +205,13 @@ public class AssistantEditApplyService {
         if (rejected != null) {
             return rejected;
         }
+        if (!group.isDraft()) {
+            String unsynced = syncPendingDesktopEdits(group.getProjectId());
+            perf.mark("desktopSync");
+            if (unsynced != null) {
+                return errorResult("APPLY_FAILED", unsynced);
+            }
+        }
 
         StorageManager.ContentScope scope = scopeFor(group);
         SparqlQueryContext.setUserId(scope.userId());
@@ -232,6 +247,19 @@ public class AssistantEditApplyService {
         } finally {
             SparqlQueryContext.clear();
         }
+    }
+
+    private String syncPendingDesktopEdits(String projectId) {
+        if (projectImportService == null || !projectImportService.isFusekiSyncPending(projectId)) {
+            return null;
+        }
+        Map<String, Object> sync = projectImportService.syncProjectToFuseki(projectId);
+        if (Boolean.TRUE.equals(sync.get("synced"))) {
+            return null;
+        }
+        Object error = sync.get("error");
+        return "Couldn't bring your unsaved edits into the triple store before applying"
+                + (error != null ? ": " + error : "");
     }
 
     private ApplyResult rejectByStatus(AssistantEditGroupDocument group) {
