@@ -144,6 +144,38 @@ public class OntologyMutationService {
         });
     }
 
+    public void invalidateEntityCaches(String projectId, @Nullable List<String> affectedIris, boolean draft) {
+        if (!draft) {
+            topLevelCacheService.evict(projectId);
+        }
+        if (hierarchyIndexService != null) {
+            hierarchyIndexService.markStale(projectId);
+        }
+        if (affectedIris != null) {
+            if (entityUsageIndexService != null) entityUsageIndexService.invalidate(projectId, affectedIris);
+            if (classDetailCacheService != null) classDetailCacheService.invalidate(projectId, affectedIris);
+        } else if (!draft) {
+            if (classDetailCacheService != null) classDetailCacheService.dropAll(projectId);
+            if (entityUsageIndexService != null) {
+                entityUsageIndexService.dropAll(projectId);
+                entityUsageIndexService.scheduleBuild(projectId);
+            }
+        }
+        graphGeneratingService.clearGraphCache();
+        if (visualizationController != null) {
+            visualizationController.clearCache(projectId);
+        }
+    }
+
+    private static List<String> affectedIris(List<MutationOp> ops, Set<String> reverseReferenceIris) {
+        return Stream.concat(
+                ops.stream().flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri())),
+                reverseReferenceIris.stream())
+            .filter(Objects::nonNull)
+            .distinct()
+            .toList();
+    }
+
     public void apply(String projectId, List<MutationOp> ops) {
         apply(projectId, ops, false, null, false);
     }
@@ -203,25 +235,8 @@ public class OntologyMutationService {
                 if (ontologyCache != null) {
                     ontologyCache.updateCachedVersion(projectId, version);
                 }
-                topLevelCacheService.evict(projectId);
                 invalidatePublicCodeViewCache(projectId, draft);
-                if (hierarchyIndexService != null) {
-                    hierarchyIndexService.markStale(projectId);
-                }
-                if (entityUsageIndexService != null || classDetailCacheService != null) {
-                    List<String> affectedIris = Stream.concat(
-                            ops.stream().flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri())),
-                            reverseReferenceIris.stream())
-                        .filter(Objects::nonNull)
-                        .distinct()
-                        .toList();
-                    if (entityUsageIndexService != null) entityUsageIndexService.invalidate(projectId, affectedIris);
-                    if (classDetailCacheService != null) classDetailCacheService.invalidate(projectId, affectedIris);
-                }
-                graphGeneratingService.clearGraphCache();
-                if (visualizationController != null) {
-                    visualizationController.clearCache(projectId);
-                }
+                invalidateEntityCaches(projectId, affectedIris(ops, reverseReferenceIris), draft);
                 invalidateReasonerCaches(projectId);
                 return;
             }
@@ -246,28 +261,8 @@ public class OntologyMutationService {
             long sparqlDuration = System.currentTimeMillis() - sparqlStart;
             log.info("[MUTATION] SPARQL update completed in {}ms for project={}", sparqlDuration, projectId);
 
-            if (!draft) {
-                topLevelCacheService.evict(projectId);
-                invalidatePublicCodeViewCache(projectId, draft);
-            }
-            if (hierarchyIndexService != null) {
-                hierarchyIndexService.markStale(projectId);
-            }
-            if (entityUsageIndexService != null || classDetailCacheService != null) {
-                List<String> affectedIris = Stream.concat(
-                        ops.stream().flatMap(op -> Stream.of(op.iri(), op.parent(), op.target(), op.classIri())),
-                        reverseReferenceIris.stream())
-                    .filter(Objects::nonNull)
-                    .distinct()
-                    .toList();
-                if (entityUsageIndexService != null) entityUsageIndexService.invalidate(projectId, affectedIris);
-                if (classDetailCacheService != null) classDetailCacheService.invalidate(projectId, affectedIris);
-            }
-
-            graphGeneratingService.clearGraphCache();
-            if (visualizationController != null) {
-                visualizationController.clearCache(projectId);
-            }
+            invalidatePublicCodeViewCache(projectId, draft);
+            invalidateEntityCaches(projectId, affectedIris(ops, reverseReferenceIris), draft);
             invalidateReasonerCaches(projectId);
             log.info("[MUTATION] Graph cache cleared after mutations");
 

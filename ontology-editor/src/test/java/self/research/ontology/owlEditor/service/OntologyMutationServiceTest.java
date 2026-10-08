@@ -121,4 +121,68 @@ class OntologyMutationServiceTest {
         verify(datasetService, org.mockito.Mockito.never()).execConstructAll(anyString());
         verify(datasetService).execUpdate("proj-1", "INSERT DATA {...}");
     }
+
+    @Mock
+    private ClassDetailCacheService classDetailCacheService;
+    @Mock
+    private EntityUsageIndexService entityUsageIndexService;
+    @Mock
+    private HierarchyIndexService hierarchyIndexService;
+
+    private void wireEntityCaches() {
+        ReflectionTestUtils.setField(service, "classDetailCacheService", classDetailCacheService);
+        ReflectionTestUtils.setField(service, "entityUsageIndexService", entityUsageIndexService);
+        ReflectionTestUtils.setField(service, "hierarchyIndexService", hierarchyIndexService);
+    }
+
+    @Test
+    void manualLabelEditStillClearsTheCachedDetailsOfThatClass() {
+        wireEntityCaches();
+
+        service.apply("proj-1", List.of(OntologyMutationService.MutationOp.forTypeAssertion(
+                "updateClassLabel", "http://ex.org/Pizza", "Pizza Margherita")));
+
+        verify(classDetailCacheService).invalidate("proj-1", List.of("http://ex.org/Pizza"));
+        verify(entityUsageIndexService).invalidate("proj-1", List.of("http://ex.org/Pizza"));
+        verify(topLevelCacheService).evict("proj-1");
+        verify(hierarchyIndexService).markStale("proj-1");
+    }
+
+    @Test
+    void invalidatingKnownIrisClearsOnlyThoseEntries() {
+        wireEntityCaches();
+
+        service.invalidateEntityCaches("proj-1", List.of("http://ex.org/A", "http://ex.org/B"), false);
+
+        verify(classDetailCacheService).invalidate("proj-1", List.of("http://ex.org/A", "http://ex.org/B"));
+        verify(entityUsageIndexService).invalidate("proj-1", List.of("http://ex.org/A", "http://ex.org/B"));
+        verify(classDetailCacheService, org.mockito.Mockito.never()).dropAll(anyString());
+        verify(topLevelCacheService).evict("proj-1");
+        verify(hierarchyIndexService).markStale("proj-1");
+        verify(graphGeneratingService).clearGraphCache();
+    }
+
+    @Test
+    void invalidatingWithUnknownScopeDropsEveryCachedEntryAndRebuildsUsage() {
+        wireEntityCaches();
+
+        service.invalidateEntityCaches("proj-1", null, false);
+
+        verify(classDetailCacheService).dropAll("proj-1");
+        verify(entityUsageIndexService).dropAll("proj-1");
+        verify(entityUsageIndexService).scheduleBuild("proj-1");
+        verify(topLevelCacheService).evict("proj-1");
+    }
+
+    @Test
+    void draftWriteWithUnknownScopeLeavesThePublicCachesAlone() {
+        wireEntityCaches();
+
+        service.invalidateEntityCaches("proj-1", null, true);
+
+        verify(classDetailCacheService, org.mockito.Mockito.never()).dropAll(anyString());
+        verify(entityUsageIndexService, org.mockito.Mockito.never()).dropAll(anyString());
+        verify(topLevelCacheService, org.mockito.Mockito.never()).evict(anyString());
+        verify(hierarchyIndexService).markStale("proj-1");
+    }
 }

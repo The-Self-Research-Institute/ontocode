@@ -24,12 +24,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -55,6 +57,10 @@ public class CodeViewReimportPipeline {
     @Autowired(required = false)
     @Nullable
     private OntologyQueryService ontologyQueryService;
+
+    @Autowired(required = false)
+    @Nullable
+    private OntologySpringCacheEvictionService springCacheEviction;
 
     @Autowired(required = false)
     @Nullable
@@ -324,7 +330,7 @@ public class CodeViewReimportPipeline {
         } catch (Exception diffEx) {
             log.warn("[CODE-VIEW-SAVE] Failed to record change history for a patched apply: {}", diffEx.getMessage());
         }
-        invalidateAfterGraphReplaced(projectId, MetadataRefresh.BACKGROUND);
+        invalidateAfterGraphReplaced(projectId, MetadataRefresh.BACKGROUND, touchedIris(removed, added));
         storageManager.storeCodeViewCacheFile(projectId, format, patchedFile);
         if (recorded) {
             announce(projectId, userId, username, resolved);
@@ -348,13 +354,27 @@ public class CodeViewReimportPipeline {
         }
     }
 
+    static List<String> touchedIris(Model removed, Model added) {
+        return Stream.concat(removed.stream(), added.stream())
+                .flatMap(st -> Stream.of(st.getSubject(), st.getPredicate(), st.getObject()))
+                .filter(org.eclipse.rdf4j.model.Value::isIRI)
+                .map(org.eclipse.rdf4j.model.Value::stringValue)
+                .distinct()
+                .toList();
+    }
+
     private void invalidateAfterDraftReplaced(String projectId, String userId) {
-        invalidateDerivedCaches(projectId);
+        invalidateDerivedCaches(projectId, null, true);
         storageManager.bumpDraftGraphVersion(projectId, userId);
     }
 
     private void invalidateAfterGraphReplaced(String projectId, MetadataRefresh refresh) {
-        invalidateDerivedCaches(projectId);
+        invalidateAfterGraphReplaced(projectId, refresh, null);
+    }
+
+    private void invalidateAfterGraphReplaced(String projectId, MetadataRefresh refresh,
+                                              @Nullable List<String> touchedIris) {
+        invalidateDerivedCaches(projectId, touchedIris, false);
         storageManager.clearCodeViewCache(projectId);
         datasetService.evictPublicReadCache(projectId);
         if (indexService == null) {
@@ -385,7 +405,7 @@ public class CodeViewReimportPipeline {
         }
     }
 
-    private void invalidateDerivedCaches(String projectId) {
+    private void invalidateDerivedCaches(String projectId, @Nullable List<String> touchedIris, boolean draft) {
         datasetService.markProjectDirty(projectId);
         if (ontologyCache != null) {
             ontologyCache.evict(projectId);
@@ -393,8 +413,18 @@ public class CodeViewReimportPipeline {
         }
         metadataService.incrementMutationVersion(projectId);
 
-        if (hierarchyIndexService != null) {
+        if (ontologyMutationService != null) {
+            try {
+                ontologyMutationService.invalidateEntityCaches(projectId, touchedIris, draft);
+            } catch (Exception cacheEx) {
+                log.warn("[CODE-VIEW-SAVE] Failed invalidating entity caches for project {} (non-fatal): {}",
+                        projectId, cacheEx.getMessage());
+            }
+        } else if (hierarchyIndexService != null) {
             hierarchyIndexService.scheduleBuild(projectId);
+        }
+        if (!draft && springCacheEviction != null) {
+            springCacheEviction.evictForProject(projectId);
         }
 
         if (ontologyQueryService != null) {
