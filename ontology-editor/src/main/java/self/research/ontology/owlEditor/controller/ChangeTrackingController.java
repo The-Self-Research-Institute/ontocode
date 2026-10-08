@@ -658,14 +658,14 @@ public class ChangeTrackingController {
     public ResponseEntity<Map<String, Object>> addComment(
             @PathVariable String projectId,
             @PathVariable String changeId,
-            @RequestBody Map<String, String> request
+            @RequestBody Map<String, Object> request,
+            jakarta.servlet.http.HttpServletRequest httpRequest
     ) {
         try {
-            String text = request.get("text");
-            String userId = request.getOrDefault("userId", "system");
-            String username = request.getOrDefault("username", "System");
-            
-            boolean success = historySyncService.addComment(changeId, userId, username, text);
+            String text = request.get("text") != null ? request.get("text").toString() : null;
+            ChangeRollbackService.Actor actor = rollbackSupport.actor(httpRequest, request);
+
+            boolean success = historySyncService.addComment(changeId, actor.userId(), actor.username(), text);
             
             if (success) {
                 return ResponseEntity.ok(Map.of(
