@@ -7,10 +7,12 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.model.HistoryChange;
+import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 import self.research.ontology.owlEditor.service.HistorySyncService;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,6 +26,8 @@ class ChangeTrackingControllerTest {
     private HistorySyncService historySyncService;
     @Mock
     private WorkspaceOwnershipService workspaceOwnershipService;
+    @Mock
+    private RollbackAuditRepository rollbackAuditRepository;
 
     private ChangeTrackingController controller;
 
@@ -33,6 +37,7 @@ class ChangeTrackingControllerTest {
         controller = new ChangeTrackingController();
         ReflectionTestUtils.setField(controller, "historySyncService", historySyncService);
         ReflectionTestUtils.setField(controller, "rollbackSupport", new RollbackRequestSupport(workspaceOwnershipService));
+        ReflectionTestUtils.setField(controller, "rollbackAuditRepository", rollbackAuditRepository);
         when(historySyncService.addComment(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
     }
 
@@ -105,5 +110,24 @@ class ChangeTrackingControllerTest {
     @Test
     void newChangesDefaultToSaved() {
         assertEquals("SAVED", new HistoryChange().getStatus());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void recentChangesListShowsTheRealStatusOfEachChange() {
+        HistoryChange saved = new HistoryChange("proj-1", "edit-1", "u1", "User");
+        saved.setStatus("PENDING");
+        HistoryChange draft = new HistoryChange("proj-1", "edit-2", "u1", "User");
+        draft.setDraft(true);
+        HistoryChange reverted = new HistoryChange("proj-1", "edit-3", "u1", "User");
+        reverted.setStatus("PENDING");
+        reverted.setReverted(true);
+        reverted.setRevertedAuditId("audit-1");
+        when(historySyncService.getHistoryChanges("proj-1")).thenReturn(List.of(saved, draft, reverted));
+
+        Map<String, Object> body = controller.getRecentChanges("proj-1", 100).getBody();
+
+        List<Map<String, Object>> changes = (List<Map<String, Object>>) body.get("changes");
+        assertEquals(List.of("SAVED", "DRAFT", "REVERTED"), changes.stream().map(c -> c.get("status")).toList());
     }
 }
