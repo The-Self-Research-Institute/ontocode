@@ -52,7 +52,7 @@ export const CodeAssistantDeadEndNotice: React.FC<CodeAssistantDeadEndNoticeProp
     <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-900 text-sm chat-message-enter" data-dead-end={deadEnd.code}>
       <div className="flex items-start gap-2">
         <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-        <span>{deadEnd.message}</span>
+        <span className="min-w-0 break-words">{deadEnd.message}</span>
       </div>
       {control}
     </div>
