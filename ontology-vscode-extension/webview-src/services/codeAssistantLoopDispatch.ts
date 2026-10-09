@@ -246,6 +246,15 @@ function toolErrorOutcome(e: unknown): DispatchOutcome {
   return { result: { message: e instanceof Error ? e.message : "Unknown error calling the tool endpoint." }, isError: true };
 }
 
+const TARGET_TYPE_NAMES = new Set(["range", "statement", "identifier"]);
+
+export function normalizeKnownSlips(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  if (toolName === "read_context" && typeof args.kind === "string" && TARGET_TYPE_NAMES.has(args.kind)) {
+    return { ...args, kind: "definitions" };
+  }
+  return args;
+}
+
 export async function dispatchToolCall(
   ctx: LoopContext,
   name: string,
@@ -257,7 +266,7 @@ export async function dispatchToolCall(
     return { result: { error: `Unknown tool "${name}".` }, isError: true };
   }
 
-  const coercedArgs = coerceJsonStrings(tool.parameters, args) as Record<string, unknown>;
+  const coercedArgs = normalizeKnownSlips(name, coerceJsonStrings(tool.parameters, args) as Record<string, unknown>);
   const validation = validateAgainstSchema(tool.parameters, coercedArgs);
   if (!validation.valid) {
     return { result: { error: "Invalid arguments", details: validation.errors }, isError: true };
