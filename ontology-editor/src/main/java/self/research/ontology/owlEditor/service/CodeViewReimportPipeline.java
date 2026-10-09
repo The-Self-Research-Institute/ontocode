@@ -371,6 +371,9 @@ public class CodeViewReimportPipeline {
 
     private void invalidateAfterDraftReplaced(String projectId, String userId) {
         invalidateDerivedCaches(projectId, null, true);
+        if (springCacheEviction != null) {
+            springCacheEviction.evictForProjectAndUser(projectId, userId);
+        }
         storageManager.bumpDraftGraphVersion(projectId, userId);
     }
 

@@ -105,9 +105,16 @@ public class AssistantSwrlToolService {
                     .build();
         }
         try (AssistantAdmissionLimiter.Admitted ignored = (AssistantAdmissionLimiter.Admitted) admission) {
-            if (!pluginInstallChecker.isInstalled(SWRL_PLUGIN_ID, authorizationHeader)) {
+            AssistantPluginInstallChecker.InstallStatus installStatus =
+                    pluginInstallChecker.checkInstalled(SWRL_PLUGIN_ID, authorizationHeader);
+            if (installStatus == AssistantPluginInstallChecker.InstallStatus.NOT_INSTALLED) {
                 return SwrlToolResult.builder().ok(false).errorCode("PLUGIN_NOT_INSTALLED")
                         .message("The SWRL plugin isn't installed — install it from the Extensions panel first.")
+                        .build();
+            }
+            if (installStatus == AssistantPluginInstallChecker.InstallStatus.CHECK_FAILED) {
+                return SwrlToolResult.builder().ok(false).errorCode("SWRL_SERVICE_CHECK_FAILED")
+                        .message("Couldn't reach the plugin service to confirm the SWRL plugin is installed. Try again shortly.")
                         .build();
             }
             return runAdmitted(sessionId, session, call);

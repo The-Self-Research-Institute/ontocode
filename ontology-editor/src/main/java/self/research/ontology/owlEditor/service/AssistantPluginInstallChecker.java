@@ -32,9 +32,11 @@ public class AssistantPluginInstallChecker {
         this.restTemplate = new RestTemplate(f);
     }
 
-    public boolean isInstalled(String pluginId, String authorizationHeader) {
+    public enum InstallStatus { INSTALLED, NOT_INSTALLED, CHECK_FAILED }
+
+    public InstallStatus checkInstalled(String pluginId, String authorizationHeader) {
         if (desktopMode) {
-            return true;
+            return InstallStatus.INSTALLED;
         }
         HttpHeaders headers = new HttpHeaders();
         if (authorizationHeader != null && !authorizationHeader.isBlank()) {
@@ -45,11 +47,11 @@ public class AssistantPluginInstallChecker {
                     pluginServiceUrl + "/api/plugins/" + pluginId + "/is-installed",
                     HttpMethod.GET, new HttpEntity<>(headers), Map.class);
             Map<?, ?> body = response.getBody();
-            return body != null && Boolean.TRUE.equals(body.get("installed"));
+            boolean installed = body != null && Boolean.TRUE.equals(body.get("installed"));
+            return installed ? InstallStatus.INSTALLED : InstallStatus.NOT_INSTALLED;
         } catch (RestClientException e) {
-            log.warn("[Assistant] Could not check install status for plugin {} (treating as not installed): {}",
-                    pluginId, e.getMessage());
-            return false;
+            log.warn("[Assistant] Could not check install status for plugin {}: {}", pluginId, e.getMessage());
+            return InstallStatus.CHECK_FAILED;
         }
     }
 }

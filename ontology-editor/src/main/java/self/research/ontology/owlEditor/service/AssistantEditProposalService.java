@@ -350,11 +350,21 @@ public class AssistantEditProposalService {
         checks.add(new CheckResult("size_limits", sizeOk));
 
         String projectId = session.getProjectId();
-        boolean liveMatch = singleTargetPath && rangeWellFormed
-                && (derived ? noOverlap
-                        && ProposedEdits.matchesLiveContentInOnePass(storageManager, projectId, targetPath, sortedEdits, scope)
-                : sortedEdits.stream().allMatch(e -> ProposedEdits.matchesLiveContent(storageManager, projectId, e, scope)));
-        checks.add(new CheckResult("original_text_matches_live", liveMatch));
+        CodeViewRangeMatcher.MatchResult liveMatchResult;
+        if (!singleTargetPath || !rangeWellFormed) {
+            liveMatchResult = CodeViewRangeMatcher.MatchResult.OK;
+        } else if (derived) {
+            liveMatchResult = !noOverlap ? CodeViewRangeMatcher.MatchResult.mismatch(overlapCheck.detail())
+                    : ProposedEdits.liveMatchDetailInOnePass(storageManager, projectId, targetPath, sortedEdits, scope);
+        } else {
+            liveMatchResult = sortedEdits.stream()
+                    .map(e -> ProposedEdits.liveMatchDetail(storageManager, projectId, e, scope))
+                    .filter(r -> !r.matches())
+                    .findFirst()
+                    .orElse(CodeViewRangeMatcher.MatchResult.OK);
+        }
+        boolean liveMatch = liveMatchResult.matches();
+        checks.add(new CheckResult("original_text_matches_live", liveMatch, liveMatchResult.detail()));
 
         return hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
     }

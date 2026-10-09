@@ -261,6 +261,20 @@ class CodeViewReimportPipelineTest {
     }
 
     @Test
+    void nonScratchDraftReimportEvictsThatUsersSpringCachedEntityLists() throws Exception {
+        OntologySpringCacheEvictionService springCacheEviction = org.mockito.Mockito.mock(OntologySpringCacheEvictionService.class);
+        ReflectionTestUtils.setField(pipeline, "springCacheEviction", springCacheEviction);
+        when(storageManager.extensionFor("turtle")).thenReturn("ttl");
+        Path contentFile = fileWith("ttl", ":A a owl:Class .");
+
+        pipeline.reimport(new ReimportRequest("proj-1", "turtle", contentFile,
+                true, "u1", "User", "urn:draft:graph:u1", null, false));
+
+        verify(springCacheEviction).evictForProjectAndUser("proj-1", "u1");
+        verify(springCacheEviction, never()).evictForProject(anyString());
+    }
+
+    @Test
     void oldContentFileForDiffTriggersDiffRecording() throws Exception {
         when(storageManager.extensionFor("turtle")).thenReturn("ttl");
         Path contentFile = fileWith("ttl", ":A a owl:Class .");

@@ -56,7 +56,8 @@ class AssistantSwrlToolServiceTest {
         ReflectionTestUtils.setField(toolService, "swrlServiceUrl", "http://127.0.0.1:18084");
         when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
         when(sessionService.isRevisionStale(any())).thenReturn(false);
-        when(pluginInstallChecker.isInstalled(anyString(), any())).thenReturn(true);
+        when(pluginInstallChecker.checkInstalled(anyString(), any()))
+                .thenReturn(AssistantPluginInstallChecker.InstallStatus.INSTALLED);
     }
 
     @SuppressWarnings("unchecked")
@@ -104,12 +105,26 @@ class AssistantSwrlToolServiceTest {
     @Test
     void returnsPluginNotInstalledBeforeSpendingARetrievalAttempt() {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
-        when(pluginInstallChecker.isInstalled(eq("swrl-editor-plugin"), any())).thenReturn(false);
+        when(pluginInstallChecker.checkInstalled(eq("swrl-editor-plugin"), any()))
+                .thenReturn(AssistantPluginInstallChecker.InstallStatus.NOT_INSTALLED);
 
         SwrlToolResult result = toolService.runRule("s1", "u@x.com", "Bearer t");
 
         assertFalse(result.isOk());
         assertEquals("PLUGIN_NOT_INSTALLED", result.getErrorCode());
+        verify(sessionService, never()).tryConsumeRetrievalAttempt(anyString());
+    }
+
+    @Test
+    void returnsServiceCheckFailedWhenThePluginServiceCannotBeReachedRatherThanNotInstalled() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(pluginInstallChecker.checkInstalled(eq("swrl-editor-plugin"), any()))
+                .thenReturn(AssistantPluginInstallChecker.InstallStatus.CHECK_FAILED);
+
+        SwrlToolResult result = toolService.runRule("s1", "u@x.com", "Bearer t");
+
+        assertFalse(result.isOk());
+        assertEquals("SWRL_SERVICE_CHECK_FAILED", result.getErrorCode());
         verify(sessionService, never()).tryConsumeRetrievalAttempt(anyString());
     }
 

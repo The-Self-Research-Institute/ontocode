@@ -105,4 +105,30 @@ class CodeViewRangeMatcherTest {
         when(storageManager.ensureCodeViewFile("p", "unicode")).thenReturn(unicode);
         assertTrue(matcher.allMatch("p", "unicode", List.of(range(1, 1, "ex:b rdfs:label \"犬\"@ja ."))));
     }
+
+    @Test
+    void matchWithDetailExplainsWhichLineChanged() {
+        CodeViewRangeMatcher.MatchResult result = matcher.matchWithDetail("p", "turtle",
+                List.of(range(5, 1, "something else entirely")));
+
+        assertFalse(result.matches());
+        assertTrue(result.detail().contains("line 6"), result.detail());
+    }
+
+    @Test
+    void matchWithDetailIsOkWhenEverythingMatches() {
+        CodeViewRangeMatcher.MatchResult result = matcher.matchWithDetail("p", "turtle", List.of(range(5, 1, "line 5")));
+
+        assertTrue(result.matches());
+        assertTrue(result.detail() == null);
+    }
+
+    @Test
+    void matchWithDetailNotesTheDocumentIsShorterThanExpected() {
+        CodeViewRangeMatcher.MatchResult result = matcher.matchWithDetail("p", "turtle",
+                List.of(range(9_999, 2, "line 9999\nline 10000")));
+
+        assertFalse(result.matches());
+        assertTrue(result.detail().contains("shorter than expected"), result.detail());
+    }
 }

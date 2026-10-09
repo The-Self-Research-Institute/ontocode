@@ -56,4 +56,25 @@ class AssistantConsistencyCheckGateTest {
     void returnsFalseForNoEdits() {
         assertFalse(AssistantConsistencyCheckGate.worthChecking("turtle", List.of()));
     }
+
+    @org.junit.jupiter.api.Test
+    void skipsAPrefixOnlyEditEvenInAnUnrecognizedFormatLikeOwlxml() {
+        EditInput prefixEdit = new EditInput("owlxml", new EditRange(0, 0), "",
+                "@prefix custom: <http://www.example.org/custom#> .");
+        assertFalse(AssistantConsistencyCheckGate.worthChecking("owlxml", List.of(prefixEdit)));
+    }
+
+    @org.junit.jupiter.api.Test
+    void skipsAnXmlNamespaceOnlyEditInAnUnrecognizedFormat() {
+        EditInput namespaceEdit = new EditInput("owlxml", new EditRange(0, 0), "",
+                "xmlns:custom=\"http://www.example.org/custom#\"");
+        assertFalse(AssistantConsistencyCheckGate.worthChecking("owlxml", List.of(namespaceEdit)));
+    }
+
+    @org.junit.jupiter.api.Test
+    void stillFlagsRealContentInAnUnrecognizedFormat() {
+        EditInput realEdit = new EditInput("owlxml", new EditRange(0, 1), "",
+                "<SubClassOf><Class IRI=\"#A\"/><Class IRI=\"#B\"/></SubClassOf>");
+        assertTrue(AssistantConsistencyCheckGate.worthChecking("owlxml", List.of(realEdit)));
+    }
 }

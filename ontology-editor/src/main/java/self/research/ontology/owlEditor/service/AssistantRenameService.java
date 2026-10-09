@@ -101,8 +101,12 @@ public class AssistantRenameService {
                 return RenameDerivation.refused(scan.problem);
             }
             if (scan.occurrences == 0) {
+                log.warn("[Assistant] Rename found zero occurrences for project {} targetPath {}: resolved target=<{}> "
+                                + "replacement=<{}> (as given: targetIdentifier='{}' replacementIdentifier='{}')",
+                        projectId, targetPath, target.iri, replacement.iri, operation.targetIdentifier(),
+                        operation.replacementIdentifier());
                 return RenameDerivation.refused("<" + target.iri + "> does not occur in the " + targetPath
-                        + " document, so there is nothing to rename.");
+                        + " document, so there is nothing to rename." + localNameHint(file, target.iri));
             }
             return derived(scan, target.iri, replacement.iri);
         } catch (Exception e) {
@@ -111,6 +115,23 @@ public class AssistantRenameService {
             return RenameDerivation.refused("Could not read the " + targetPath + " document to derive the rename ("
                     + e.getMessage() + "), so no rename was generated.");
         }
+    }
+
+    private static String localNameHint(Path file, String iri) {
+        int cut = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
+        String localName = cut >= 0 && cut < iri.length() - 1 ? iri.substring(cut + 1) : null;
+        if (localName == null || localName.isBlank()) {
+            return "";
+        }
+        try {
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            if (content.contains(localName)) {
+                return " The name '" + localName + "' does appear in the document, but under a different IRI than <"
+                        + iri + "> — check the prefix/namespace it's actually declared under.";
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
     }
 
     private static RenameDerivation derived(RenameScan scan, String targetIri, String replacementIri) {

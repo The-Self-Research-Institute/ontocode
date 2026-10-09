@@ -1,7 +1,12 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CodeAssistantCheckNotes, INSERTION_MOVED_CHECK, INSERTION_MOVED_PAST_SIBLING_CHECK } from "../components/CodeAssistantFailedChecks";
+import {
+  CodeAssistantCheckNotes,
+  CodeAssistantFailedChecks,
+  INSERTION_MOVED_CHECK,
+  INSERTION_MOVED_PAST_SIBLING_CHECK,
+} from "../components/CodeAssistantFailedChecks";
 
 describe("CodeAssistantCheckNotes", () => {
   it("shows where an insertion was moved", () => {
@@ -33,5 +38,30 @@ describe("CodeAssistantCheckNotes", () => {
 
   it("renders nothing when no adjustment was made", () => {
     expect(renderToStaticMarkup(<CodeAssistantCheckNotes checks={[{ name: "syntax_valid", passed: true }]} />)).toBe("");
+  });
+});
+
+describe("CodeAssistantFailedChecks", () => {
+  it("uses a failure-phrased label for a check whose default wording would contradict its own detail", () => {
+    const html = renderToStaticMarkup(
+      <CodeAssistantFailedChecks
+        checks={[
+          {
+            name: "original_text_matches_live",
+            passed: false,
+            detail: "The document changed at line 6 since this edit was proposed.",
+          },
+        ]}
+      />,
+    );
+    expect(html).toContain("The document has changed since this edit was proposed");
+    expect(html).not.toContain("still matches the current document");
+  });
+
+  it("uses the normal label for every other failed check", () => {
+    const html = renderToStaticMarkup(
+      <CodeAssistantFailedChecks checks={[{ name: "syntax_valid", passed: false, detail: "Unexpected token" }]} />,
+    );
+    expect(html).toContain("The edited document parses");
   });
 });

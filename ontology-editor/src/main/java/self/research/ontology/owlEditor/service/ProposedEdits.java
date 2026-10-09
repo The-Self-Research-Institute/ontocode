@@ -25,11 +25,17 @@ final class ProposedEdits {
 
     static boolean matchesLiveContentInOnePass(StorageManager storageManager, String projectId, String targetPath,
                                                List<EditInput> sortedEdits, StorageManager.ContentScope scope) {
+        return liveMatchDetailInOnePass(storageManager, projectId, targetPath, sortedEdits, scope).matches();
+    }
+
+    static CodeViewRangeMatcher.MatchResult liveMatchDetailInOnePass(StorageManager storageManager, String projectId,
+                                                                     String targetPath, List<EditInput> sortedEdits,
+                                                                     StorageManager.ContentScope scope) {
         List<CodeViewRangeMatcher.ExpectedRange> expected = sortedEdits.stream()
                 .map(e -> new CodeViewRangeMatcher.ExpectedRange(e.range().startLine(), e.range().lineCount(),
                         e.originalText()))
                 .toList();
-        return new CodeViewRangeMatcher(storageManager).allMatch(projectId, targetPath, expected, scope);
+        return new CodeViewRangeMatcher(storageManager).matchWithDetail(projectId, targetPath, expected, scope);
     }
 
     static boolean isRangeWellFormed(EditInput edit) {
@@ -97,8 +103,13 @@ final class ProposedEdits {
 
     static boolean matchesLiveContent(StorageManager storageManager, String projectId, EditInput edit,
                                       StorageManager.ContentScope scope) {
+        return liveMatchDetail(storageManager, projectId, edit, scope).matches();
+    }
+
+    static CodeViewRangeMatcher.MatchResult liveMatchDetail(StorageManager storageManager, String projectId,
+                                                            EditInput edit, StorageManager.ContentScope scope) {
         if (edit.range().lineCount() == 0) {
-            return true;
+            return CodeViewRangeMatcher.MatchResult.OK;
         }
         try {
             StorageManager.CodeViewPage page = scope.draft()
@@ -106,11 +117,16 @@ final class ProposedEdits {
                             edit.range().lineCount(), scope)
                     : storageManager.readCodeViewPage(
                             projectId, edit.targetPath(), edit.range().startLine(), edit.range().lineCount());
-            return page.content().equals(edit.originalText());
+            if (page.content().equals(edit.originalText())) {
+                return CodeViewRangeMatcher.MatchResult.OK;
+            }
+            return CodeViewRangeMatcher.MatchResult.mismatch("The document changed at line "
+                    + (edit.range().startLine() + 1) + " since this edit was proposed.");
         } catch (Exception e) {
             log.warn("[Assistant] Live-content check failed for {}:{}-{}: {}",
                     edit.targetPath(), edit.range().startLine(), edit.range().lineCount(), e.getMessage());
-            return false;
+            return CodeViewRangeMatcher.MatchResult.mismatch(
+                    "Could not read the document to check it (" + e.getMessage() + ").");
         }
     }
 

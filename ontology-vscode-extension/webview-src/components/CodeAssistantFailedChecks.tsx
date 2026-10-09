@@ -33,6 +33,14 @@ export function checkLabel(name: string): string {
   return CHECK_LABELS[name] ?? name.replace(/_/g, " ");
 }
 
+const FAILURE_LABEL_OVERRIDES: Record<string, string> = {
+  original_text_matches_live: "The document has changed since this edit was proposed",
+};
+
+function failureLabel(name: string): string {
+  return FAILURE_LABEL_OVERRIDES[name] ?? checkLabel(name);
+}
+
 export const CodeAssistantFailedChecks: React.FC<{ checks: Check[] }> = ({ checks }) => {
   const failed = checks.filter((c) => !c.passed);
   if (failed.length === 0) return null;
@@ -40,7 +48,7 @@ export const CodeAssistantFailedChecks: React.FC<{ checks: Check[] }> = ({ check
     <ul className="space-y-1 text-xs text-red-800" aria-label="Checks that failed">
       {failed.map((check) => (
         <li key={check.name}>
-          <span className="font-semibold">{checkLabel(check.name)}</span>
+          <span className="font-semibold">{failureLabel(check.name)}</span>
           {check.detail ? `: ${check.detail}` : ""}
         </li>
       ))}
