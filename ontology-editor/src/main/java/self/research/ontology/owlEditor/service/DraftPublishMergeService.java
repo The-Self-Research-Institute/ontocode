@@ -6,6 +6,8 @@ import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.model.merge.ConflictResolution;
@@ -35,6 +37,10 @@ public class DraftPublishMergeService {
     private final DraftSessionRepository sessionRepository;
     private final MainGraphRevisionService revisionService;
 
+    @Autowired(required = false)
+    @Nullable
+    private DraftBaselineStore baselineStore;
+
     public DraftPublishMergeService(SparqlDatasetService datasetService,
                                     StorageManager storageManager,
                                     OntologyMergeService mergeService,
@@ -54,6 +60,7 @@ public class DraftPublishMergeService {
         Path path = storageManager.projectDir(projectId).resolve(relative);
         Files.createDirectories(path.getParent());
         Files.writeString(path, rdf);
+        saveToStore(projectId, userId, rdf);
         log.info("[DRAFT-MERGE] Captured baseline snapshot for project {} user {} → {}",
                 projectId, userId, path);
         return relative;
@@ -70,6 +77,7 @@ public class DraftPublishMergeService {
                 }
             }
         });
+        deleteFromStore(projectId, userId);
     }
 
     public void publishWithThreeWayMerge(String projectId,
@@ -83,15 +91,14 @@ public class DraftPublishMergeService {
             return;
         }
 
-        Path baselinePath = storageManager.projectDir(projectId)
-                .resolve(sessionOpt.get().getBaselineSnapshotPath());
-        if (!Files.exists(baselinePath)) {
+        Optional<String> baselineOpt = readBaselineIfAvailable(projectId, userId, sessionOpt.get());
+        if (baselineOpt.isEmpty()) {
             log.warn("[DRAFT-MERGE] Baseline file missing — publishing via MOVE GRAPH");
             datasetService.moveDraftToMain(projectId, userId);
             return;
         }
 
-        String baselineRdf = Files.readString(baselinePath);
+        String baselineRdf = baselineOpt.get();
         OWLOntology baseline = mergeService.loadOntologyFromRdf(baselineRdf);
 
         String mainGraph = datasetService.getGraphUri(projectId);
@@ -130,13 +137,11 @@ public class DraftPublishMergeService {
 
             Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
             String baselineSnapshotPath = sessionOpt.map(DraftSession::getBaselineSnapshotPath).orElse(null);
-            Path baselinePath = baselineSnapshotPath != null
-                    ? storageManager.projectDir(projectId).resolve(baselineSnapshotPath)
-                    : null;
+            Optional<String> baselineOpt = sessionOpt
+                    .flatMap(session -> readBaselineIfAvailable(projectId, userId, session));
             OWLOntology ours;
-            if (baselinePath != null && Files.exists(baselinePath)) {
-                String baselineRdf = Files.readString(baselinePath);
-                ours = buildOursOntology(projectId, userId, baselineRdf);
+            if (baselineOpt.isPresent()) {
+                ours = buildOursOntology(projectId, userId, baselineOpt.get());
             } else {
 
                 String draftGraph = datasetService.getDraftGraphUri(projectId, userId);
@@ -169,7 +174,15 @@ public class DraftPublishMergeService {
         }
 
         DraftSession session = sessionOpt.get();
-        String baselineRdf = readOrEstablishBaseline(projectId, userId, session);
+        String baselineRdf;
+        try {
+            baselineRdf = readOrEstablishBaseline(projectId, userId, session);
+        } catch (BaselineLostException lost) {
+            Map<String, Object> result = noChangesResult(false);
+            result.put("baselineLost", true);
+            result.put("message", BASELINE_LOST_MESSAGE);
+            return result;
+        }
         if (baselineRdf == null) {
 
             return noChangesResult(false);
@@ -217,7 +230,13 @@ public class DraftPublishMergeService {
             throw new IllegalStateException("No draft session found for project " + projectId);
         }
         DraftSession session = sessionOpt.get();
-        String baselineRdf = readOrEstablishBaseline(projectId, userId, session);
+        String baselineRdf;
+        try {
+            baselineRdf = readOrEstablishBaseline(projectId, userId, session);
+        } catch (BaselineLostException lost) {
+            return Map.of("success", false, "baselineLost", true, "mergedCount", 0, "conflictsResolved", 0,
+                    "message", BASELINE_LOST_MESSAGE);
+        }
         if (baselineRdf == null) {
             return Map.of("success", true, "mergedCount", 0, "conflictsResolved", 0,
                     "message", "Draft baseline established — nothing to pull yet");
@@ -255,6 +274,10 @@ public class DraftPublishMergeService {
         return result;
     }
 
+    private static final String BASELINE_LOST_MESSAGE =
+            "The starting snapshot of your draft was lost (for example after a server restart), so we can't tell "
+                    + "what changed in Public since you started. Publish your draft or re-add the missing items.";
+
     private String readOrEstablishBaseline(String projectId, String userId, DraftSession session) throws Exception {
         String snapshotPath = session.getBaselineSnapshotPath();
         Path baselinePath = snapshotPath != null ? storageManager.projectDir(projectId).resolve(snapshotPath) : null;
@@ -262,10 +285,89 @@ public class DraftPublishMergeService {
             return Files.readString(baselinePath);
         }
 
+        if (snapshotPath != null) {
+            Optional<String> stored = loadFromStore(projectId, userId);
+            if (stored.isPresent()) {
+                Files.createDirectories(baselinePath.getParent());
+                Files.writeString(baselinePath, stored.get());
+                log.info("[DRAFT-MERGE] Restored baseline snapshot for project {} user {} from durable storage",
+                        projectId, userId);
+                return stored.get();
+            }
+            log.error("[DRAFT-MERGE] Baseline snapshot for project {} user {} is gone from disk and storage; "
+                    + "Public changes since the draft began can no longer be listed", projectId, userId);
+            throw new BaselineLostException();
+        }
+
         log.warn("[DRAFT-MERGE] No baseline snapshot for project {} user {} — establishing one now",
                 projectId, userId);
         advanceBaseline(projectId, userId, session);
         return null;
+    }
+
+    private Optional<String> readBaselineIfAvailable(String projectId, String userId, DraftSession session) {
+        String snapshotPath = session.getBaselineSnapshotPath();
+        if (snapshotPath == null) {
+            return Optional.empty();
+        }
+        try {
+            Path baselinePath = storageManager.projectDir(projectId).resolve(snapshotPath);
+            if (Files.exists(baselinePath)) {
+                return Optional.of(Files.readString(baselinePath));
+            }
+            Optional<String> stored = loadFromStore(projectId, userId);
+            if (stored.isPresent()) {
+                Files.createDirectories(baselinePath.getParent());
+                Files.writeString(baselinePath, stored.get());
+                log.info("[DRAFT-MERGE] Restored baseline snapshot for project {} user {} from durable storage",
+                        projectId, userId);
+            }
+            return stored;
+        } catch (IOException e) {
+            log.warn("[DRAFT-MERGE] Could not read the baseline for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private static final class BaselineLostException extends Exception {
+    }
+
+    private void saveToStore(String projectId, String userId, String rdf) {
+        if (baselineStore == null) {
+            return;
+        }
+        try {
+            baselineStore.save(projectId, userId, rdf);
+        } catch (Exception e) {
+            log.warn("[DRAFT-MERGE] Could not keep a durable copy of the baseline for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
+    }
+
+    private Optional<String> loadFromStore(String projectId, String userId) {
+        if (baselineStore == null) {
+            return Optional.empty();
+        }
+        try {
+            return baselineStore.load(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT-MERGE] Could not read the durable baseline for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private void deleteFromStore(String projectId, String userId) {
+        if (baselineStore == null) {
+            return;
+        }
+        try {
+            baselineStore.delete(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT-MERGE] Could not delete the durable baseline for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
     }
 
     private void advanceBaseline(String projectId, String userId, DraftSession session) throws IOException {

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { X, Download, AlertTriangle, CheckCircle, Loader2, RefreshCw, GitMerge } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { extractLocalName } from "../utils/draftChangeHelpers";
+import { applyRefusal, phaseForAnalysis } from "./pullPreviewState";
 
 interface PullPreviewDialogProps {
   isOpen: boolean;
@@ -19,7 +20,7 @@ interface ChangeRow {
 }
 
 type Resolution = "keep_draft" | "take_public";
-type Phase = "analyzing" | "no_changes" | "ready" | "merging" | "done" | "error";
+type Phase = "analyzing" | "no_changes" | "baseline_lost" | "ready" | "merging" | "done" | "error";
 
 const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
   isOpen, onClose, onConfirm, projectId, userId,
@@ -42,7 +43,9 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
         setSafeChanges(safe);
         setConflicts(conf);
         setResolutions({});
-        setPhase(safe.length === 0 && conf.length === 0 ? "no_changes" : "ready");
+        const next = phaseForAnalysis(data);
+        setErrorMsg(next.message);
+        setPhase(next.phase);
       })
       .catch((e: any) => {
         setErrorMsg(e?.message || "Could not analyse differences with the public version.");
@@ -67,7 +70,13 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
     setPhase("merging");
     apiClient
       .post<any>(`/api/ontology/${projectId}/pull-from-public/apply`, { resolutions }, { params: { userId } })
-      .then(() => {
+      .then((res) => {
+        const refusal = applyRefusal(res?.data || res);
+        if (refusal) {
+          setErrorMsg(refusal);
+          setPhase("baseline_lost");
+          return;
+        }
         setPhase("done");
         setTimeout(() => {
           onConfirm();
@@ -122,6 +131,14 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
             <div className="flex flex-col items-center justify-center py-10 gap-2 opacity-70 text-center">
               <CheckCircle size={22} className="text-green-500" />
               <span>Your draft is already up to date with public. Nothing to pull.</span>
+            </div>
+          )}
+
+          {phase === "baseline_lost" && (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+              <AlertTriangle size={22} className="text-amber-500" />
+              <span className="font-medium">Can't tell what changed in Public</span>
+              <p className="opacity-70 max-w-sm">{errorMsg}</p>
             </div>
           )}
 
