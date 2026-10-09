@@ -297,6 +297,7 @@ public class DraftTrackingService {
     }
 
     private void finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
+        draftChangeHistory.markPublished(projectId, userId);
         if (unappliedDrafts.isEmpty()) {
             return;
         }
@@ -339,6 +340,7 @@ public class DraftTrackingService {
                 springCacheEviction.evictForProject(projectId);
             }
             invalidateHierarchyCaches(projectId);
+            draftChangeHistory.markPublished(projectId, userId);
 
             if (!unappliedDrafts.isEmpty()) {
                 unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(

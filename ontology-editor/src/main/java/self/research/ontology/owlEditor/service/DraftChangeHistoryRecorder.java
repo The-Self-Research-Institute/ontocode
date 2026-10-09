@@ -26,6 +26,15 @@ public class DraftChangeHistoryRecorder {
         this.historyService = historyService;
     }
 
+    public void markPublished(String projectId, String userId) {
+        try {
+            historyService.markDraftHistoryPublished(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark published draft history entries for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
+    }
+
     public void record(String projectId, List<DraftChange> drafts) {
         try {
             drafts.forEach(draft -> recordTrackedChange(projectId, draft));

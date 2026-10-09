@@ -27,6 +27,23 @@ public class HistorySyncService {
     private final MongoTemplate mongoTemplate;
     private final OntologyHistoryService historyService;
 
+    public long markDraftsPublished(String projectId, String userId) {
+        if (projectId == null || userId == null) {
+            return 0;
+        }
+        var result = mongoTemplate.updateMulti(
+                org.springframework.data.mongodb.core.query.Query.query(
+                        org.springframework.data.mongodb.core.query.Criteria.where("projectId").is(projectId)
+                                .and("userId").is(userId).and("draft").is(true)),
+                new org.springframework.data.mongodb.core.query.Update().set("draft", false),
+                self.research.ontology.owlEditor.model.HistoryChange.class);
+        if (result.getModifiedCount() > 0) {
+            log.info("Marked {} draft history entries as published for project {} user {}",
+                    result.getModifiedCount(), projectId, userId);
+        }
+        return result.getModifiedCount();
+    }
+
     public void syncChange(String projectId, String editId, Map<String, Object> changeData) {
 
         if (historyChangeRepository.existsByProjectIdAndEditId(projectId, editId)) {

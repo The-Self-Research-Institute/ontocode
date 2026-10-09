@@ -35,6 +35,12 @@ public class OntologyHistoryService {
     @Lazy
     private OntologyHistoryService self;
 
+    public void markDraftHistoryPublished(String projectId, String userId) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsPublished(projectId, userId);
+        }
+    }
+
     private static final ValueFactory vf = SimpleValueFactory.getInstance();
 
     private static final String HISTORY_NS = "http://ontology.research/history#";

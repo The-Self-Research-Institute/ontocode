@@ -107,4 +107,18 @@ class DraftChangeHistoryRecorderTest {
         verify(history, times(0)).recordEdit(anyString(), anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), any(), anyString(), any(), anyList(), anyBoolean());
     }
+
+    @Test
+    void markPublishedPassesTheProjectAndUserToTheHistoryService() {
+        recorder.markPublished("p1", "u1");
+
+        verify(history).markDraftHistoryPublished("p1", "u1");
+    }
+
+    @Test
+    void markPublishedNeverFailsAPublishThatAlreadyWentThrough() {
+        doThrow(new RuntimeException("mongo down")).when(history).markDraftHistoryPublished(anyString(), anyString());
+
+        assertDoesNotThrow(() -> recorder.markPublished("p1", "u1"));
+    }
 }
