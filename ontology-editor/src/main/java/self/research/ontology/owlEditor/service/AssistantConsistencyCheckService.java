@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.eclipse.rdf4j.rio.RDFFormat;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -21,17 +22,26 @@ import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -50,6 +60,9 @@ public class AssistantConsistencyCheckService {
     private final RestTemplate restTemplate;
     private final ThreadPoolExecutor checkExecutor;
     private final ScheduledExecutorService watchdog;
+    private final ScheduledExecutorService debounceScheduler;
+    private final CodeViewRangeMatcher rangeMatcher;
+    private final ConcurrentMap<String, PendingBatch> pendingBatches = new ConcurrentHashMap<>();
 
     @Value("${ontology.plugin-service.url:http://localhost:8087}")
     private String pluginServiceUrl;
@@ -59,6 +72,29 @@ public class AssistantConsistencyCheckService {
 
     @Value("${assistant.consistency-check.max-dataset-size:150000}")
     private long maxDatasetSizeForCheck;
+
+    @Value("${assistant.consistency-check.debounce-enabled:true}")
+    private boolean debounceEnabled;
+
+    @Value("${assistant.consistency-check.debounce-quiet-ms:600}")
+    private long debounceQuietMs;
+
+    @Value("${assistant.consistency-check.debounce-max-wait-ms:2500}")
+    private long debounceMaxWaitMs;
+
+    @Value("${assistant.consistency-check.debounce-max-batch-size:10}")
+    private int debounceMaxBatchSize;
+
+    private static final class PendingBatch {
+        final String projectId;
+        final List<String> groupIds = new ArrayList<>();
+        final long firstArrivalNanos = System.nanoTime();
+        ScheduledFuture<?> flushTask;
+
+        PendingBatch(String projectId) {
+            this.projectId = projectId;
+        }
+    }
 
     public AssistantConsistencyCheckService(SparqlDatasetService datasetService, StorageManager storageManager,
                                             LineRangeSpliceWriter spliceWriter, CodeViewReimportPipeline reimportPipeline,
@@ -75,6 +111,9 @@ public class AssistantConsistencyCheckService {
         this.checkExecutor = new ThreadPoolExecutor(1, 2, 60, TimeUnit.SECONDS, new ArrayBlockingQueue<>(20),
                 namedDaemonFactory("assistant-consistency-check"), new ThreadPoolExecutor.AbortPolicy());
         this.watchdog = Executors.newSingleThreadScheduledExecutor(namedDaemonFactory("assistant-consistency-watchdog"));
+        this.debounceScheduler = Executors.newSingleThreadScheduledExecutor(
+                namedDaemonFactory("assistant-consistency-debounce"));
+        this.rangeMatcher = new CodeViewRangeMatcher(storageManager);
     }
 
     private static java.util.concurrent.ThreadFactory namedDaemonFactory(String name) {
@@ -132,6 +171,111 @@ public class AssistantConsistencyCheckService {
     public void startAsyncCheck(String serverGroupId, String projectId, String targetPath,
                                 List<AssistantEditGroupDocument.EditEntry> editEntries,
                                 StorageManager.ContentScope scope) {
+        if (!debounceEnabled) {
+            dispatchSingle(serverGroupId, projectId, targetPath, editEntries, scope);
+            return;
+        }
+        enqueueForBatch(serverGroupId, projectId);
+    }
+
+    private void enqueueForBatch(String serverGroupId, String projectId) {
+        String sessionId = groupRepository.findById(serverGroupId)
+                .map(AssistantEditGroupDocument::getSessionId)
+                .orElse(null);
+        String batchKey = projectId + "::" + (sessionId != null ? sessionId : serverGroupId);
+        AtomicBoolean flushNow = new AtomicBoolean(false);
+        pendingBatches.compute(batchKey, (key, existing) -> {
+            PendingBatch batch = existing != null ? existing : new PendingBatch(projectId);
+            batch.groupIds.add(serverGroupId);
+            if (batch.flushTask != null) {
+                batch.flushTask.cancel(false);
+            }
+            if (batch.groupIds.size() >= debounceMaxBatchSize) {
+                flushNow.set(true);
+                return batch;
+            }
+            long elapsedMs = (System.nanoTime() - batch.firstArrivalNanos) / 1_000_000;
+            long delay = Math.max(0, Math.min(debounceQuietMs, debounceMaxWaitMs - elapsedMs));
+            batch.flushTask = debounceScheduler.schedule(() -> flush(batchKey), delay, TimeUnit.MILLISECONDS);
+            return batch;
+        });
+        if (flushNow.get()) {
+            flush(batchKey);
+        }
+    }
+
+    private void flush(String batchKey) {
+        PendingBatch batch = pendingBatches.remove(batchKey);
+        if (batch == null || batch.groupIds.isEmpty()) {
+            return;
+        }
+        checkExecutor.execute(() -> processBatch(batch.projectId, batch.groupIds));
+    }
+
+    private void processBatch(String projectId, List<String> groupIds) {
+        List<AssistantEditGroupDocument> groups = new ArrayList<>();
+        groupRepository.findAllById(groupIds).forEach(groups::add);
+        List<AssistantEditGroupDocument> stillPending = groups.stream()
+                .filter(g -> g.getConsistencyCheck() == null
+                        || g.getConsistencyCheck().getState() == ConsistencyCheckState.PENDING)
+                .toList();
+        if (stillPending.isEmpty()) {
+            return;
+        }
+        Map<String, List<AssistantEditGroupDocument>> byTargetPath = stillPending.stream()
+                .collect(Collectors.groupingBy(AssistantEditGroupDocument::getTargetPath,
+                        LinkedHashMap::new, Collectors.toList()));
+        for (List<AssistantEditGroupDocument> samePathGroup : byTargetPath.values()) {
+            if (samePathGroup.size() == 1) {
+                dispatchSingleFromDocument(samePathGroup.get(0));
+                continue;
+            }
+            StorageManager.ContentScope scope = scopeOf(samePathGroup.get(0));
+            if (isMergeEligible(projectId, scope, samePathGroup)) {
+                dispatchMergedBatch(projectId, scope, samePathGroup.get(0).getTargetPath(), samePathGroup);
+            } else {
+                samePathGroup.forEach(this::dispatchSingleFromDocument);
+            }
+        }
+    }
+
+    private boolean isMergeEligible(String projectId, StorageManager.ContentScope scope,
+                                    List<AssistantEditGroupDocument> samePathGroup) {
+        long currentVersion = storageManager.resolveGraphVersion(projectId, scope);
+        for (AssistantEditGroupDocument group : samePathGroup) {
+            Long versionAtPropose = group.getPublicGraphVersionAtPropose();
+            if (versionAtPropose == null || currentVersion != versionAtPropose) {
+                return false;
+            }
+        }
+        List<AssistantEditGroupDocument.EditEntry> allEdits = samePathGroup.stream()
+                .flatMap(g -> g.getEdits().stream())
+                .sorted(Comparator.comparingLong(AssistantEditGroupDocument.EditEntry::getStartLine))
+                .toList();
+        if (!ProposedEdits.checkNoCrossGroupOverlap(allEdits).ok()) {
+            return false;
+        }
+        String targetPath = samePathGroup.get(0).getTargetPath();
+        List<CodeViewRangeMatcher.ExpectedRange> ranges = allEdits.stream()
+                .map(e -> new CodeViewRangeMatcher.ExpectedRange(e.getStartLine(), e.getLineCount(), e.getOriginalText()))
+                .toList();
+        CodeViewRangeMatcher.MatchResult match = scope.draft()
+                ? rangeMatcher.matchWithDetail(projectId, targetPath, ranges, scope)
+                : rangeMatcher.matchWithDetail(projectId, targetPath, ranges);
+        return match.matches();
+    }
+
+    private static StorageManager.ContentScope scopeOf(AssistantEditGroupDocument group) {
+        return new StorageManager.ContentScope(group.isDraft(), group.getDraftUserId());
+    }
+
+    private void dispatchSingleFromDocument(AssistantEditGroupDocument group) {
+        dispatchSingle(group.getId(), group.getProjectId(), group.getTargetPath(), group.getEdits(), scopeOf(group));
+    }
+
+    private void dispatchSingle(String serverGroupId, String projectId, String targetPath,
+                                List<AssistantEditGroupDocument.EditEntry> editEntries,
+                                StorageManager.ContentScope scope) {
         String whatIfKey = "assistant-whatif-" + serverGroupId;
         Future<?> future;
         try {
@@ -145,6 +289,26 @@ public class AssistantConsistencyCheckService {
             if (future.cancel(true)) {
                 resolve(serverGroupId, ConsistencyCheckState.TIMED_OUT,
                         "Couldn't verify in time — treated as inconclusive.");
+            }
+        }, wallClockBudgetMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void dispatchMergedBatch(String projectId, StorageManager.ContentScope scope, String targetPath,
+                                     List<AssistantEditGroupDocument> groups) {
+        List<String> groupIds = groups.stream().map(AssistantEditGroupDocument::getId).toList();
+        String whatIfKey = "assistant-whatif-batch-" + UUID.randomUUID();
+        Future<?> future;
+        try {
+            future = checkExecutor.submit(() -> runMergedBatchCheck(projectId, targetPath, groups, scope, whatIfKey));
+        } catch (RejectedExecutionException rejected) {
+            groupIds.forEach(id -> resolve(id, ConsistencyCheckState.ERROR,
+                    "Too many consistency checks running right now; this one was skipped."));
+            return;
+        }
+        watchdog.schedule(() -> {
+            if (future.cancel(true)) {
+                groupIds.forEach(id -> resolve(id, ConsistencyCheckState.TIMED_OUT,
+                        "Couldn't verify in time — treated as inconclusive."));
             }
         }, wallClockBudgetMs, TimeUnit.MILLISECONDS);
     }
@@ -172,9 +336,11 @@ public class AssistantConsistencyCheckService {
                 Files.deleteIfExists(splicedFile);
             }
 
+            String ontologyContent = datasetService.exportDraftGraphContent(projectId, whatIfKey, RDFFormat.NTRIPLES);
             Map<String, String> body = new HashMap<>();
             body.put("reasonerType", "HERMIT");
             body.put("whatIfKey", whatIfKey);
+            body.put("ontologyContent", ontologyContent);
             @SuppressWarnings("unchecked")
             ResponseEntity<Map<String, Object>> response = (ResponseEntity<Map<String, Object>>) (ResponseEntity<?>)
                     restTemplate.postForEntity(pluginServiceUrl + "/api/reasoner/" + projectId + "/consistency",
@@ -199,6 +365,65 @@ public class AssistantConsistencyCheckService {
                 } catch (Exception cleanupEx) {
                     log.warn("[Assistant] Failed to clear what-if scratch graph for group {}: {}",
                             serverGroupId, cleanupEx.getMessage());
+                }
+            }
+        }
+    }
+
+    private void runMergedBatchCheck(String projectId, String targetPath, List<AssistantEditGroupDocument> groups,
+                                     StorageManager.ContentScope scope, String whatIfKey) {
+        List<String> groupIds = groups.stream().map(AssistantEditGroupDocument::getId).toList();
+        boolean graphCopied = false;
+        try {
+            datasetService.copyMainGraphToDraft(projectId, whatIfKey);
+            graphCopied = true;
+
+            List<LineRangeSpliceWriter.SpliceEdit> spliceEdits = groups.stream()
+                    .flatMap(g -> g.getEdits().stream())
+                    .sorted(Comparator.comparingLong(AssistantEditGroupDocument.EditEntry::getStartLine))
+                    .map(e -> new LineRangeSpliceWriter.SpliceEdit(e.getStartLine(), e.getLineCount(), e.getNewText()))
+                    .toList();
+            Path sourceFile = scope.draft()
+                    ? storageManager.resolveCodeViewFile(projectId, targetPath, scope)
+                    : storageManager.ensureCodeViewFile(projectId, targetPath);
+            Path splicedFile = spliceWriter.splice(sourceFile, storageManager.extensionFor(targetPath), spliceEdits);
+            try {
+                reimportPipeline.reimport(new CodeViewReimportPipeline.ReimportRequest(
+                        projectId, targetPath, splicedFile, true, whatIfKey, "assistant-consistency-check",
+                        datasetService.getDraftGraphUri(projectId, whatIfKey), null, true, true));
+            } finally {
+                Files.deleteIfExists(splicedFile);
+            }
+
+            String ontologyContent = datasetService.exportDraftGraphContent(projectId, whatIfKey, RDFFormat.NTRIPLES);
+            Map<String, String> body = new HashMap<>();
+            body.put("reasonerType", "HERMIT");
+            body.put("whatIfKey", whatIfKey);
+            body.put("ontologyContent", ontologyContent);
+            @SuppressWarnings("unchecked")
+            ResponseEntity<Map<String, Object>> response = (ResponseEntity<Map<String, Object>>) (ResponseEntity<?>)
+                    restTemplate.postForEntity(pluginServiceUrl + "/api/reasoner/" + projectId + "/consistency",
+                            body, Map.class);
+            Map<String, Object> result = response.getBody();
+            boolean consistent = result != null && Boolean.TRUE.equals(result.get("consistent"));
+            if (consistent) {
+                groupIds.forEach(id -> resolve(id, ConsistencyCheckState.PASSED,
+                        "This edit keeps the ontology logically consistent."));
+            } else {
+                groupIds.forEach(id -> resolve(id, ConsistencyCheckState.FAILED,
+                        "Applying this would make the ontology logically inconsistent."));
+            }
+        } catch (Exception e) {
+            log.warn("[Assistant] Batched what-if consistency check failed for groups {}: {}", groupIds, e.getMessage());
+            groupIds.forEach(id -> resolve(id, ConsistencyCheckState.ERROR,
+                    "Couldn't verify (" + e.getMessage() + ") — treated as inconclusive."));
+        } finally {
+            if (graphCopied) {
+                try {
+                    datasetService.clearDraftGraph(projectId, whatIfKey);
+                } catch (Exception cleanupEx) {
+                    log.warn("[Assistant] Failed to clear what-if scratch graph for batch {}: {}",
+                            whatIfKey, cleanupEx.getMessage());
                 }
             }
         }

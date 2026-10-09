@@ -101,6 +101,25 @@ final class ProposedEdits {
         return new OverlapCheck(true, null);
     }
 
+    static OverlapCheck checkNoCrossGroupOverlap(List<EditEntry> sortedEntries) {
+        for (int i = 0; i < sortedEntries.size() - 1; i++) {
+            EditEntry a = sortedEntries.get(i);
+            EditEntry b = sortedEntries.get(i + 1);
+            long thisEnd = a.getStartLine() + a.getLineCount();
+            long nextStart = b.getStartLine();
+            if (thisEnd > nextStart) {
+                String first = a.getLineCount() == 0
+                        ? "the insertion at line " + a.getStartLine()
+                        : "the edit covering lines " + a.getStartLine() + "-" + (thisEnd - 1);
+                String second = b.getLineCount() == 0
+                        ? "the insertion at line " + nextStart
+                        : "the edit starting at line " + nextStart;
+                return new OverlapCheck(false, "Across this batch, " + second + " overlaps " + first + ".");
+            }
+        }
+        return new OverlapCheck(true, null);
+    }
+
     static boolean matchesLiveContent(StorageManager storageManager, String projectId, EditInput edit,
                                       StorageManager.ContentScope scope) {
         return liveMatchDetail(storageManager, projectId, edit, scope).matches();

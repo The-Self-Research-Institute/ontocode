@@ -486,7 +486,7 @@ public class ReasonerController {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
             String whatIfKey = request.get("whatIfKey");
             if (whatIfKey != null && !whatIfKey.isBlank()) {
-                return checkWhatIfConsistency(projectId, whatIfKey, reasonerType);
+                return checkWhatIfConsistency(projectId, whatIfKey, reasonerType, request.get("ontologyContent"));
             }
             if (workerAvailable()) {
                 return submitToWorker("REASONER_CONSISTENCY", projectId, reasonerType);
@@ -527,11 +527,13 @@ public class ReasonerController {
     }
 
     private ResponseEntity<Map<String, Object>> checkWhatIfConsistency(String projectId, String whatIfKey,
-                                                                        String reasonerType) {
+                                                                        String reasonerType, String ontologyContent) {
         OWLOntology ontology = null;
         try {
             log.info("Checking what-if consistency for project {} key {} with {}", projectId, whatIfKey, reasonerType);
-            ontology = loadWhatIfOntology(projectId, whatIfKey);
+            ontology = ontologyContent != null && !ontologyContent.isBlank()
+                    ? loadOntologyFromContent(ontologyContent)
+                    : loadWhatIfOntology(projectId, whatIfKey);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
             long startTime = System.currentTimeMillis();
@@ -565,6 +567,14 @@ public class ReasonerController {
                             projectId, whatIfKey, disposeEx.getMessage());
                 }
             }
+        }
+    }
+
+    private OWLOntology loadOntologyFromContent(String content) throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        try (InputStream inputStream = new java.io.ByteArrayInputStream(
+                content.getBytes(StandardCharsets.UTF_8))) {
+            return manager.loadOntologyFromOntologyDocument(inputStream);
         }
     }
 
