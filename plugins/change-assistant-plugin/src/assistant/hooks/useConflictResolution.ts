@@ -38,8 +38,10 @@ export function useConflictResolution(projectId: string, loadChanges: () => void
         type: conflict.conflictType,
         description: conflict.description,
         localChange: change.newValue || '',
-        remoteChange: change.oldValue || '',
-        baseValue: change.oldValue
+        remoteChange: conflict.theirValue || change.oldValue || '',
+        baseValue: change.oldValue,
+        remoteAuthor: conflict.theirUsername,
+        remoteTimestamp: conflict.theirTimestamp
       });
       setShowConflictResolver(true);
     }

@@ -72,6 +72,8 @@ class ChangeTrackingControllerTest {
     @SuppressWarnings("unchecked")
     private String detailsStatus(HistoryChange change) {
         when(historySyncService.getHistoryChange("c1")).thenReturn(change);
+        when(historySyncService.getHistoryChanges("proj-1")).thenReturn(List.of(change));
+        when(historySyncService.computeConflicts(List.of(change))).thenReturn(Map.of());
         Map<String, Object> body = controller.getChangeDetails("proj-1", "c1").getBody();
         return (String) ((Map<String, Object>) body.get("change")).get("status");
     }
@@ -102,11 +104,31 @@ class ChangeTrackingControllerTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void detailsShowConflictedForAConflictingChange() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         HistoryChange change = new HistoryChange("proj-1", "edit-1", "u1", "User");
-        change.setHasConflict(true);
+        change.setId("c1");
+        change.setEntityIRI("http://example.org#E");
+        change.setOldValue("A");
+        change.setNewValue("B");
+        change.setTimestamp(now);
 
-        assertEquals("CONFLICTED", detailsStatus(change));
+        HistoryChange partner = new HistoryChange("proj-1", "edit-2", "u2", "Other");
+        partner.setId("c2");
+        partner.setEntityIRI("http://example.org#E");
+        partner.setOldValue("A");
+        partner.setNewValue("C");
+        partner.setTimestamp(now.minusMinutes(5));
+
+        List<HistoryChange> all = List.of(partner, change);
+        when(historySyncService.getHistoryChange("c1")).thenReturn(change);
+        when(historySyncService.getHistoryChanges("proj-1")).thenReturn(all);
+        when(historySyncService.computeConflicts(all)).thenReturn(Map.of("c1",
+                new HistorySyncService.ConflictMatch("c2", "u2", "Other", "C", partner.getTimestamp())));
+
+        Map<String, Object> body = controller.getChangeDetails("proj-1", "c1").getBody();
+        assertEquals("CONFLICTED", ((Map<String, Object>) body.get("change")).get("status"));
     }
 
     @Test

@@ -51,6 +51,10 @@ export interface ConflictInfo {
   description: string;
   conflictingChangeId?: string;
   suggestedResolution?: string;
+  theirValue?: string;
+  theirUserId?: string;
+  theirUsername?: string;
+  theirTimestamp?: string;
 }
 
 export interface ChangeWarning {

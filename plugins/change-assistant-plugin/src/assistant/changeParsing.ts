@@ -106,7 +106,17 @@ export function parseChange(change: any) {
     commitId: change.editId,
     branch: undefined,
     comments: [],
-    conflicts: change.hasConflict ? [{ conflictType: 'concurrent_edit' as const, description: 'Conflict detected' }] : [],
+    conflicts: change.hasConflict ? [{
+      conflictType: 'concurrent_edit' as const,
+      description: change.conflictPartnerUsername
+        ? `${change.conflictPartnerUsername} changed this around the same time`
+        : 'Conflict detected',
+      conflictingChangeId: change.conflictPartnerChangeId ?? undefined,
+      theirValue: change.conflictPartnerValue,
+      theirUserId: change.conflictPartnerUserId,
+      theirUsername: change.conflictPartnerUsername,
+      theirTimestamp: change.conflictPartnerTimestamp,
+    }] : [],
     warnings: [],
     commentCount: change.commentCount || 0,
     operationType: originalOperationType,

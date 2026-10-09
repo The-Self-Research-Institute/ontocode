@@ -186,15 +186,16 @@ public class ChangeTrackingController {
         try {
             // Use MongoDB as the single source for change tracking
             List<HistoryChange> historyChanges = historySyncService.getHistoryChanges(projectId);
-            
+            Map<String, HistorySyncService.ConflictMatch> conflicts = historySyncService.computeConflicts(historyChanges);
+
             // Limit results
             if (historyChanges.size() > count) {
                 historyChanges = historyChanges.subList(0, count);
             }
-            
+
             // Convert to response format
             List<Map<String, Object>> changes = historyChanges.stream()
-                .map(this::historyChangeToMap)
+                .map(change -> historyChangeToMap(change, conflicts))
                 .collect(Collectors.toList());
             
             return ResponseEntity.ok(Map.of(
@@ -214,7 +215,8 @@ public class ChangeTrackingController {
     /**
      * Convert HistoryChange to Map for API response
      */
-    private Map<String, Object> historyChangeToMap(HistoryChange change) {
+    private Map<String, Object> historyChangeToMap(HistoryChange change,
+                                                   Map<String, HistorySyncService.ConflictMatch> conflicts) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", change.getId());
         map.put("editId", change.getEditId());
@@ -230,8 +232,17 @@ public class ChangeTrackingController {
         map.put("oldValue", change.getOldValue());
         map.put("newValue", change.getNewValue());
         map.put("description", change.getDescription());
-        map.put("status", displayStatus(change));
-        map.put("hasConflict", change.isHasConflict());
+        HistorySyncService.ConflictMatch conflict = change.getId() == null ? null : conflicts.get(change.getId());
+        map.put("status", displayStatus(change, conflict != null));
+        map.put("hasConflict", conflict != null);
+        if (conflict != null) {
+            map.put("conflictPartnerChangeId", conflict.partnerChangeId());
+            map.put("conflictPartnerUserId", conflict.partnerUserId());
+            map.put("conflictPartnerUsername", conflict.partnerUsername());
+            map.put("conflictPartnerValue", conflict.partnerValue());
+            map.put("conflictPartnerTimestamp", conflict.partnerTimestamp() == null
+                    ? null : conflict.partnerTimestamp().toInstant(java.time.ZoneOffset.UTC).toString());
+        }
         putChangeSetFields(map, change);
         map.put("reverted", change.isReverted());
         if (change.isReverted()) {
@@ -272,10 +283,10 @@ public class ChangeTrackingController {
         return map;
     }
 
-    static String displayStatus(HistoryChange change) {
+    static String displayStatus(HistoryChange change, boolean hasConflict) {
         if (change.isReverted()) return "REVERTED";
         if (change.isDraft()) return "DRAFT";
-        if (change.isHasConflict()) return "CONFLICTED";
+        if (hasConflict) return "CONFLICTED";
         return "SAVED";
     }
 
@@ -585,8 +596,13 @@ public class ChangeTrackingController {
         try {
             // Try to find in MongoDB synced changes first (has comments)
             HistoryChange historyChange = historySyncService.getHistoryChange(changeId);
-            
+
             if (historyChange != null) {
+                Map<String, HistorySyncService.ConflictMatch> conflicts = historySyncService.computeConflicts(
+                        historySyncService.getHistoryChanges(projectId));
+                HistorySyncService.ConflictMatch conflict = historyChange.getId() == null
+                        ? null : conflicts.get(historyChange.getId());
+
                 Map<String, Object> details = new HashMap<>();
                 details.put("id", historyChange.getId());
                 details.put("projectId", historyChange.getProjectId());
@@ -600,8 +616,16 @@ public class ChangeTrackingController {
                 details.put("oldValue", historyChange.getOldValue());
                 details.put("newValue", historyChange.getNewValue());
                 details.put("description", historyChange.getDescription());
-                details.put("status", displayStatus(historyChange));
-                details.put("hasConflict", historyChange.isHasConflict());
+                details.put("status", displayStatus(historyChange, conflict != null));
+                details.put("hasConflict", conflict != null);
+                if (conflict != null) {
+                    details.put("conflictPartnerChangeId", conflict.partnerChangeId());
+                    details.put("conflictPartnerUserId", conflict.partnerUserId());
+                    details.put("conflictPartnerUsername", conflict.partnerUsername());
+                    details.put("conflictPartnerValue", conflict.partnerValue());
+                    details.put("conflictPartnerTimestamp", conflict.partnerTimestamp() == null
+                            ? null : conflict.partnerTimestamp().toInstant(java.time.ZoneOffset.UTC).toString());
+                }
                 
                 // Convert comments to list format
                 List<Map<String, Object>> commentsList = new ArrayList<>();

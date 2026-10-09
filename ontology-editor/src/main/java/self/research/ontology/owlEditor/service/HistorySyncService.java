@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -10,12 +11,17 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 @Slf4j
@@ -26,6 +32,13 @@ public class HistorySyncService {
     private final HistoryChangeRepository historyChangeRepository;
     private final MongoTemplate mongoTemplate;
     private final OntologyHistoryService historyService;
+
+    @Value("${ontology.history.conflict-window-hours:24}")
+    private long conflictWindowHours;
+
+    public record ConflictMatch(String partnerChangeId, String partnerUserId, String partnerUsername,
+                                String partnerValue, LocalDateTime partnerTimestamp) {
+    }
 
     public long markDraftsPublished(String projectId, String userId) {
         if (projectId == null || userId == null) {
@@ -315,6 +328,64 @@ public class HistorySyncService {
     }
 
     public List<HistoryChange> getConflicts(String projectId) {
-        return historyChangeRepository.findByProjectIdAndHasConflictOrderByTimestampDesc(projectId, true);
+        List<HistoryChange> changes = getHistoryChanges(projectId);
+        Map<String, ConflictMatch> conflicts = computeConflicts(changes);
+        return changes.stream().filter(change -> conflicts.containsKey(change.getId())).toList();
+    }
+
+    public Map<String, ConflictMatch> computeConflicts(List<HistoryChange> changes) {
+        Map<String, ConflictMatch> result = new HashMap<>();
+        Map<String, List<HistoryChange>> byEntity = new HashMap<>();
+        for (HistoryChange change : changes) {
+            if (change.isDraft() || change.isReverted() || change.getEntityIRI() == null
+                    || change.getTimestamp() == null) {
+                continue;
+            }
+            byEntity.computeIfAbsent(change.getEntityIRI(), k -> new ArrayList<>()).add(change);
+        }
+
+        long windowMillis = Duration.ofHours(conflictWindowHours).toMillis();
+        for (List<HistoryChange> group : byEntity.values()) {
+            if (group.size() < 2) {
+                continue;
+            }
+            group.sort(Comparator.comparing(HistoryChange::getTimestamp));
+            for (int i = 1; i < group.size(); i++) {
+                HistoryChange earlier = group.get(i - 1);
+                HistoryChange later = group.get(i);
+                if (!isGenuineConflict(earlier, later, windowMillis)) {
+                    continue;
+                }
+                result.put(later.getId(), conflictMatchFor(earlier));
+                result.put(earlier.getId(), conflictMatchFor(later));
+            }
+        }
+        return result;
+    }
+
+    private boolean isGenuineConflict(HistoryChange earlier, HistoryChange later, long windowMillis) {
+        if (Objects.equals(earlier.getUserId(), later.getUserId())) {
+            return false;
+        }
+        if (earlier.getResolvedAt() != null || later.getResolvedAt() != null) {
+            return false;
+        }
+        if (earlier.getAnnotationProperty() != null && later.getAnnotationProperty() != null
+                && !earlier.getAnnotationProperty().equals(later.getAnnotationProperty())) {
+            return false;
+        }
+        long diffMillis = Duration.between(earlier.getTimestamp(), later.getTimestamp()).toMillis();
+        if (diffMillis < 0 || diffMillis > windowMillis) {
+            return false;
+        }
+        if (Objects.equals(later.getOldValue(), earlier.getNewValue())) {
+            return false;
+        }
+        return !Objects.equals(later.getNewValue(), earlier.getNewValue());
+    }
+
+    private static ConflictMatch conflictMatchFor(HistoryChange change) {
+        return new ConflictMatch(change.getId(), change.getUserId(), change.getUsername(),
+                change.getNewValue(), change.getTimestamp());
     }
 }

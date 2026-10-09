@@ -8,6 +8,8 @@ interface Conflict {
   localChange: string;
   remoteChange: string;
   baseValue?: string;
+  remoteAuthor?: string;
+  remoteTimestamp?: string;
 }
 
 interface ConflictResolverProps {
@@ -105,7 +107,9 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
                   <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
                     <span className="text-green-600 font-semibold">R</span>
                   </div>
-                  <span className="font-semibold text-gray-900">Their Change</span>
+                  <span className="font-semibold text-gray-900">
+                    {conflict.remoteAuthor ? `${conflict.remoteAuthor}'s Change` : 'Their Change'}
+                  </span>
                 </div>
                 {selectedResolution === 'accept_remote' && (
                   <CheckCircle className="w-5 h-5 text-green-600" />
@@ -114,6 +118,11 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
               <div className="font-mono text-sm text-gray-800 bg-white p-3 rounded border break-all">
                 {conflict.remoteChange}
               </div>
+              {conflict.remoteTimestamp && (
+                <div className="text-xs text-gray-500 mt-2">
+                  {new Date(conflict.remoteTimestamp).toLocaleString()}
+                </div>
+              )}
             </div>
           </div>
 
