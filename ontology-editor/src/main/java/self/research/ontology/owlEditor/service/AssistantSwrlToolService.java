@@ -17,7 +17,11 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.util.AssistantTokenEstimator;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -73,7 +77,79 @@ public class AssistantSwrlToolService {
 
     public SwrlToolResult runRule(String sessionId, String userEmail, String authorizationHeader) {
         return runTool(sessionId, userEmail, authorizationHeader, session ->
-                postToSwrl("/api/swrl/" + session.getProjectId() + "/execute", Map.of(), authorizationHeader));
+                shapeResult(postToSwrl("/api/swrl/" + session.getProjectId() + "/execute", Map.of(),
+                        authorizationHeader)));
+    }
+
+    static final int MAX_RESULT_TOKENS = 6_000;
+    private static final int TRIM_NOTE_RESERVE_TOKENS = 250;
+    private static final List<String> ACTIONABLE_AXIOM_FIELDS = List.of("axiomType", "subjectIri", "predicateIri",
+            "objectIri", "objectLiteral", "literalDatatypeIri", "literalLangTag", "readable");
+
+    private static boolean isActionable(Object axiom) {
+        return axiom instanceof Map<?, ?> m && m.get("subjectIri") != null && m.get("predicateIri") != null;
+    }
+
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> shapeResult(Map<String, Object> data) {
+        if (!(data.get("inferredAxioms") instanceof List<?> all)) {
+            return data;
+        }
+        List<Object> actionable = new ArrayList<>();
+        Map<String, Integer> otherByType = new java.util.TreeMap<>();
+        for (Object axiom : all) {
+            if (isActionable(axiom)) {
+                Map<String, Object> source = (Map<String, Object>) axiom;
+                Map<String, Object> slim = new java.util.LinkedHashMap<>();
+                for (String field : ACTIONABLE_AXIOM_FIELDS) {
+                    if (source.get(field) != null) {
+                        slim.put(field, source.get(field));
+                    }
+                }
+                actionable.add(slim);
+            } else if (axiom instanceof Map<?, ?> m) {
+                otherByType.merge(String.valueOf(m.get("axiomType")), 1, Integer::sum);
+            }
+        }
+        int others = all.size() - actionable.size();
+
+        Map<String, Object> shaped = new HashMap<>(data);
+        shaped.put("inferredAxioms", actionable);
+        shaped.put("inferredAxiomsTotal", all.size());
+        StringBuilder note = new StringBuilder();
+        if (others > 0) {
+            shaped.put("otherInferredCount", others);
+            shaped.put("otherInferredByType", otherByType);
+            note.append(others).append(" other inferred axioms (general reasoner conclusions such as subclass "
+                    + "relations, which cannot be added as individual facts) are not listed. ");
+        }
+
+        int used = AssistantTokenEstimator.estimate(String.valueOf(shaped)) + TRIM_NOTE_RESERVE_TOKENS;
+        if (used > MAX_RESULT_TOKENS) {
+            List<Object> kept = new ArrayList<>();
+            Map<String, Object> withoutAxioms = new HashMap<>(shaped);
+            withoutAxioms.put("inferredAxioms", List.of());
+            int budget = MAX_RESULT_TOKENS - TRIM_NOTE_RESERVE_TOKENS
+                    - AssistantTokenEstimator.estimate(String.valueOf(withoutAxioms));
+            int running = 0;
+            for (Object axiom : actionable) {
+                int cost = AssistantTokenEstimator.estimate(String.valueOf(axiom));
+                if (running + cost > budget) {
+                    break;
+                }
+                kept.add(axiom);
+                running += cost;
+            }
+            shaped.put("inferredAxioms", kept);
+            shaped.put("truncated", true);
+            shaped.put("inferredAxiomsShown", kept.size());
+            note.append("Only the first ").append(kept.size()).append(" of ").append(actionable.size())
+                    .append(" addable axioms are shown to keep this result within the session's token budget. ");
+        }
+        if (note.length() > 0) {
+            shaped.put("note", note.append("The SWRL tab lists everything.").toString());
+        }
+        return shaped;
     }
 
     private interface SwrlCall {
@@ -135,7 +211,7 @@ public class AssistantSwrlToolService {
 
         try {
             Map<String, Object> data = call.call(session);
-            int estimatedTokens = self.research.ontology.owlEditor.util.AssistantTokenEstimator.estimate(String.valueOf(data));
+            int estimatedTokens = AssistantTokenEstimator.estimate(String.valueOf(data));
             if (!sessionService.tryConsumeTokenBudget(sessionId, estimatedTokens)) {
                 return SwrlToolResult.builder().ok(false).errorCode("BUDGET_EXHAUSTED")
                         .message("Retrieval token budget exhausted for this session").build();

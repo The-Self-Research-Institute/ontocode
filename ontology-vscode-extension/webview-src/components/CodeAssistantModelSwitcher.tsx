@@ -6,6 +6,8 @@ import {
   getStoredModel,
   getProviderModels,
   getStoredSessionTokenBudget,
+  MAX_SESSION_TOKEN_BUDGET,
+  MIN_SESSION_TOKEN_BUDGET,
   setStoredSessionTokenBudget,
   getStoredRetrievalAttempts,
   setStoredRetrievalAttempts,
@@ -62,9 +64,9 @@ const SessionBudgetRow: React.FC = () => (
   <ClampedNumberRow
     id="code-assistant-session-budget"
     label="Session budget (tokens)"
-    helperText="Between 2,000 and 20,000 tokens. Applies to your next message, not the current one."
-    min={2000}
-    max={20000}
+    helperText={`Between ${MIN_SESSION_TOKEN_BUDGET.toLocaleString("en-US")} and ${MAX_SESSION_TOKEN_BUDGET.toLocaleString("en-US")} tokens. Applies to your next message, not the current one.`}
+    min={MIN_SESSION_TOKEN_BUDGET}
+    max={MAX_SESSION_TOKEN_BUDGET}
     step={1000}
     getStored={getStoredSessionTokenBudget}
     setStored={setStoredSessionTokenBudget}

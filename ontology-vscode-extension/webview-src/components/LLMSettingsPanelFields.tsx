@@ -1,6 +1,13 @@
 import React from 'react';
 import { Save, Trash2, Eye, EyeOff, Check, X, RefreshCw } from 'lucide-react';
-import { DEFAULT_MAX_RESPONSE_TOKENS, DEFAULT_SESSION_TOKEN_BUDGET, KnownModel, LlmProvider } from '../services/LlmInsightsService';
+import {
+  DEFAULT_MAX_RESPONSE_TOKENS,
+  DEFAULT_SESSION_TOKEN_BUDGET,
+  KnownModel,
+  LlmProvider,
+  MAX_SESSION_TOKEN_BUDGET,
+  MIN_SESSION_TOKEN_BUDGET,
+} from '../services/LlmInsightsService';
 import type { LlmSettingsMessage } from '../hooks/useLlmModelList';
 
 const INPUT_CLASS = 'w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent';
@@ -104,8 +111,8 @@ export const SessionBudgetField: React.FC<{ value: number; onChange: (value: num
     </label>
     <input
       type="number"
-      min={2000}
-      max={20000}
+      min={MIN_SESSION_TOKEN_BUDGET}
+      max={MAX_SESSION_TOKEN_BUDGET}
       step={1000}
       value={value}
       onChange={(e) => onChange(Number(e.target.value) || DEFAULT_SESSION_TOKEN_BUDGET)}

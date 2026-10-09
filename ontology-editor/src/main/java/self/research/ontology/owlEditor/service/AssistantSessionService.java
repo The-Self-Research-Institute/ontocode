@@ -30,7 +30,7 @@ public class AssistantSessionService {
     private static final int CREATE_LOCK_STRIPES = 64;
 
     private static final int MIN_TOKEN_BUDGET = 2000;
-    private static final int MAX_TOKEN_BUDGET = 20000;
+    private static final int MAX_TOKEN_BUDGET = 50000;
     private static final int MIN_RETRIEVAL_ATTEMPTS = 2;
     private static final int MAX_RETRIEVAL_ATTEMPTS = 30;
 
