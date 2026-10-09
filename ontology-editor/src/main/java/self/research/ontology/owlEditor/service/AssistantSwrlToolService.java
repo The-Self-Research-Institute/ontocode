@@ -112,6 +112,12 @@ public class AssistantSwrlToolService {
                         .message("The SWRL plugin isn't installed — install it from the Extensions panel first.")
                         .build();
             }
+            if (installStatus == AssistantPluginInstallChecker.InstallStatus.NOT_AUTHORIZED) {
+                return SwrlToolResult.builder().ok(false).errorCode("SWRL_PLUGIN_CHECK_UNAUTHORIZED")
+                        .message("The plugin service didn't accept your login, so I couldn't confirm the SWRL plugin "
+                                + "is installed. Sign in again and retry.")
+                        .build();
+            }
             if (installStatus == AssistantPluginInstallChecker.InstallStatus.CHECK_FAILED) {
                 return SwrlToolResult.builder().ok(false).errorCode("SWRL_SERVICE_CHECK_FAILED")
                         .message("Couldn't reach the plugin service to confirm the SWRL plugin is installed. Try again shortly.")

@@ -129,6 +129,20 @@ class AssistantSwrlToolServiceTest {
     }
 
     @Test
+    void asksTheUserToSignInAgainWhenThePluginServiceRejectsTheirLogin() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(pluginInstallChecker.checkInstalled(eq("swrl-editor-plugin"), any()))
+                .thenReturn(AssistantPluginInstallChecker.InstallStatus.NOT_AUTHORIZED);
+
+        SwrlToolResult result = toolService.runRule("s1", "u@x.com", "Bearer t");
+
+        assertFalse(result.isOk());
+        assertEquals("SWRL_PLUGIN_CHECK_UNAUTHORIZED", result.getErrorCode());
+        assertTrue(result.getMessage().contains("Sign in again"));
+        verify(sessionService, never()).tryConsumeRetrievalAttempt(anyString());
+    }
+
+    @Test
     void returnsBudgetExhaustedWhenRetrievalAttemptFails() {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
         when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(false);
