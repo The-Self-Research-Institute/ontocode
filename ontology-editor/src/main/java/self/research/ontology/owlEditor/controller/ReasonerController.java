@@ -302,10 +302,6 @@ public class ReasonerController {
     ) {
         try {
             OWLOntology ontology = loadOntology(projectId);
-            // Mirror the mapping from getInferredClassHierarchy: HermiT → OPENLLET so that
-            // child queries use the same reasoner as the initial hierarchy load, preventing
-            // expand-arrow inconsistencies where OPENLLET marks a node hasChildren:true
-            // but ELK returns empty for the same node on expand.
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
             int axiomCount = ontology.getAxiomCount();
             if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
@@ -379,6 +375,9 @@ public class ReasonerController {
             }
             OWLOntology ontology = loadOntology(projectId);
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
+            if (effectiveType.equalsIgnoreCase("ELK")) {
+                effectiveType = "OPENLLET";
+            }
 
             int axiomCount = ontology.getAxiomCount();
             // Medium ontologies (10k-100k): switch to ELK (fast EL reasoner, 10-100x faster than HermiT)
@@ -442,7 +441,11 @@ public class ReasonerController {
 
                     Node<OWLClass> unsatisfiableNode = reasoner.getUnsatisfiableClasses();
                     if (unsatisfiableNode.getSize() > 1 || !reasoner.getSubClasses(nothing, true).isEmpty()) {
-                        hierarchy.add(buildClassNode(ontology, reasoner, nothing, visited, INITIAL_HIERARCHY_DEPTH));
+                        Map<String, Object> nothingNode = buildClassNode(ontology, reasoner, nothing, visited, INITIAL_HIERARCHY_DEPTH);
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> rootChildren = (List<Map<String, Object>>) root.get("children");
+                        rootChildren.add(0, nothingNode);
+                        root.put("hasChildren", true);
                     }
 
                     Map<String, Object> result = new HashMap<>();
@@ -523,23 +526,11 @@ public class ReasonerController {
         boolean hasAnyChildren;
 
         if (owlClass.isOWLNothing()) {
-            // Nothing has no real "subclasses" under OWL semantics — getSubClasses(Nothing)
-            // is always empty (nothing can be more specific than the empty class). The
-            // classes that actually belong "under" Nothing in an inferred hierarchy are the
-            // ones EQUIVALENT to it — every unsatisfiable class — which is exactly what
-            // getEquivalentClasses(Nothing) returns. Build each as its own child node (like
-            // Protege does: individually red, individually clickable) instead of leaving them
-            // squashed into Nothing's inline "≡ A, B, C..." label with no way to see/select
-            // them one at a time.
             hasAnyChildren = !equivNode.getEntities().isEmpty()
                     && equivNode.getEntities().stream().anyMatch(c -> !c.equals(owlClass));
             if (maxDepth > 0) {
                 for (OWLClass equivClass : equivNode.getEntities()) {
                     if (equivClass.equals(owlClass)) continue;
-                    // Suppress each unsatisfiable class's own equivalentClasses label — every
-                    // member of this set is mutually equivalent to every other by definition,
-                    // so repeating the same ~10-name list on every single row would be noisy;
-                    // isUnsatisfiable (red) already conveys what actually matters here.
                     children.add(buildClassNode(ontology, reasoner, equivClass, visited, maxDepth - 1, true));
                 }
                 children.sort(Comparator.comparing(m -> m.get("label").toString()));

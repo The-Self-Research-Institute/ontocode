@@ -290,7 +290,7 @@ export const combineReasonerResults = (classificationPayload: any, statsPayload?
       ...existingStats,
       unsatisfiableClassesRaw: unsatRaw,
       classHierarchyNodes: statsData.classCount ?? existingStats.classHierarchyNodes ?? 0,
-      objectPropertyNodes: statsData.propertyCount ?? existingStats.objectPropertyNodes ?? 0,
+      objectPropertyNodes: statsData.objectPropertyCount ?? existingStats.objectPropertyNodes ?? 0,
       dataPropertyNodes: statsData.dataPropertyCount ?? existingStats.dataPropertyNodes ?? 0,
       individuals: statsData.individualCount ?? existingStats.individuals ?? 0,
       satisfiableClasses: statsData.satisfiableClasses ?? existingStats.satisfiableClasses ?? 0,

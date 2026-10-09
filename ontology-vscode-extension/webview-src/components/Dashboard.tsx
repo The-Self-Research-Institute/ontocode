@@ -3087,6 +3087,33 @@ const Dashboard: React.FC<DashboardProps> = ({
     ];
   }
 
+  function appendUnsatisfiableRoot(tree: TreeNode[], unsatisfiableClassesRaw: any): TreeNode[] {
+  if (tree.length === 0) return tree;
+    if (!Array.isArray(unsatisfiableClassesRaw) || unsatisfiableClassesRaw.length === 0) return tree;
+    const nothingNode: TreeNode = {
+      id: "http://www.w3.org/2002/07/owl#Nothing",
+      label: "owl:Nothing",
+      isUnsatisfiable: true,
+      hasChildren: true,
+      children: unsatisfiableClassesRaw.map((cls: any) => ({
+        id: cls.iri || cls.id,
+        label: cls.label,
+        isUnsatisfiable: true,
+        hasChildren: false,
+        children: [],
+      })),
+    } as TreeNode;
+    const [thingRoot, ...rest] = tree;
+    return [
+      {
+        ...thingRoot,
+        children: [nothingNode, ...(thingRoot.children || [])],
+        hasChildren: true,
+      },
+      ...rest,
+    ];
+  }
+
   const startReasoner = useCallback(async () => {
     if (!projectId) {
       notificationService.error("No Ontology Loaded", "Please load an ontology first");
@@ -3122,7 +3149,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
+      const bundleClassHierarchy = appendUnsatisfiableRoot(
+        buildInferredTreeFromFlatList((results as any)?.classHierarchy),
+        (results as any)?.unsatisfiableClasses,
+      );
       const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
         (results as any)?.objectPropertyHierarchy,
         { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
@@ -9189,7 +9219,10 @@ const updateItemInState = useCallback(
       // endpoint below — that one doesn't reliably honor the requested
       // reasonerType and can report a false "inconsistent", wiping out a
       // perfectly good result we already have right here.
-      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
+      const bundleClassHierarchy = appendUnsatisfiableRoot(
+        buildInferredTreeFromFlatList((results as any)?.classHierarchy),
+        (results as any)?.unsatisfiableClasses,
+      );
       const bundleObjectPropertyHierarchy = (results as any)?.objectPropertyHierarchy;
       const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList((results as any)?.objectPropertyHierarchy);
       if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {

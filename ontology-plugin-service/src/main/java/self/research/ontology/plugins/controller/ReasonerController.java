@@ -208,7 +208,7 @@ public class ReasonerController {
      * with a diagnose hint, anything else a 500. Shared by every reasoning
      * endpoint so the mapping cannot drift between them.
      */
-    private ResponseEntity<Map<String, Object>> reasoningFailure(Exception e, String projectId, String action) {
+    private ResponseEntity<Map<String, Object>> reasoningFailure(Throwable e, String projectId, String action) {
         log.error("Error {} for project {}", action, projectId, e);
         String message = e.getMessage() != null ? e.getMessage() : e.toString();
         // technicalDetail always carries the real exception class + message + first
@@ -729,6 +729,67 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     }
 }
 
+    @PostMapping("/{projectId}/explain-entailment")
+    public ResponseEntity<Map<String, Object>> explainEntailment(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> request
+    ) {
+        try {
+            String entailmentType = request.get("entailmentType");
+            String subjectIri = request.get("subjectIri");
+            if (entailmentType == null || subjectIri == null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "error", "entailmentType and subjectIri are required"));
+            }
+            String targetIri = request.get("targetIri");
+            String propertyIri = request.get("propertyIri");
+            String literalValue = request.get("literalValue");
+
+            String requestedReasonerType = request.getOrDefault("reasonerType", "HERMIT");
+            ReasonerType requestedType = ReasonerType.valueOf(requestedReasonerType.toUpperCase());
+            ReasonerType type = (requestedType == ReasonerType.ELK || requestedType == ReasonerType.STRUCTURAL)
+                ? ReasonerType.HERMIT
+                : requestedType;
+
+            int maxJustifications = 10;
+            if (request.containsKey("maxJustifications")) {
+                maxJustifications = Integer.parseInt(request.get("maxJustifications"));
+            }
+            String mode = request.getOrDefault("mode", "regular");
+
+            log.info("Explaining entailment {} ({} -> {}) for project: {} with {} (mode={})",
+                entailmentType, subjectIri, targetIri, projectId, type, mode);
+
+            OWLOntology ontology = loadOntology(projectId);
+            OWLAxiom entailment = reasonerService.buildEntailmentAxiom(
+                entailmentType, subjectIri, targetIri, propertyIri, literalValue);
+
+            List<Map<String, Object>> justifications =
+                reasonerService.findEntailmentJustifications(ontology, entailment, type, maxJustifications, mode);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("usedReasoner", type.getDisplayName());
+            if (type != requestedType) {
+                result.put("reasonerUpgraded", true);
+            }
+            result.put("justifications", justifications);
+            return ResponseEntity.ok(result);
+
+        } catch (IllegalArgumentException iae) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "error", iae.getMessage() != null ? iae.getMessage() : "Invalid request"));
+        } catch (Throwable e) {
+            // Throwable, not Exception: a mismatched/incompatible owlexplanation classpath
+            // (or any other library-level LinkageError) must still come back as a real,
+            // readable message instead of leaking out as Spring's generic, detail-free
+            // "Internal Server Error" default error page.
+            return reasoningFailure(e, projectId, "explaining entailment");
+        }
+    }
+
     /**
      * Get inferred axioms
      * GET /api/reasoner/{projectId}/inferred-axioms
@@ -747,20 +808,29 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
 
             OWLOntology ontology = loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
+
             long startTime = System.currentTimeMillis();
             Set<OWLAxiom> inferredAxioms = reasonerService.getInferredAxioms(ontology, type);
             long duration = System.currentTimeMillis() - startTime;
-            
-            List<Map<String, String>> axiomsList = inferredAxioms.stream()
+
+            List<Map<String, Object>> axiomsList = inferredAxioms.stream()
                 .limit(100) // Limit to first 100 to avoid huge responses
-                .map(axiom -> Map.of(
-                    "axiomType", axiom.getAxiomType().getName(),
-                    "readable", formatAxiom(axiom, ontology),
-                    "axiom", axiom.toString()
-                ))
+                .map(axiom -> {
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("axiomType", axiom.getAxiomType().getName());
+                    entry.put("readable", formatAxiom(axiom, ontology));
+                    entry.put("axiom", axiom.toString());
+                    // Structured description of this axiom, attached now while the real
+                    // OWLAxiom object is still in hand, so the frontend's "?" can request
+                    // an explanation without parsing axiom text back into a query.
+                    Map<String, Object> entailment = reasonerService.describeEntailment(axiom);
+                    if (entailment != null) {
+                        entry.put("entailment", entailment);
+                    }
+                    return entry;
+                })
                 .collect(Collectors.toList());
-            
+
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("axioms", axiomsList);

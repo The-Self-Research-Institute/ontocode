@@ -7,6 +7,7 @@ import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { Property } from '../../types';
+import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
 
 type PropertyUsageItem = {
   type: string;
@@ -176,7 +177,7 @@ const PropertyEditor: React.FC<{
         user,
         existingIris = [],
 }) => {
-    const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('annotations');
+    const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('description');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [editorTitle, setEditorTitle] = useState("");
     const [editorAction, setEditorAction] = useState<((val: string) => void) | null>(null);
@@ -185,6 +186,10 @@ const PropertyEditor: React.FC<{
     const [isIRIEditorOpen, setIsIRIEditorOpen] = useState(false);
     const [classLabelLookup, setClassLabelLookup] = useState<Map<string, string>>(new Map());
     const collaboration = useCollaboration();
+
+    const handleNavigate = onNavigate ?? ((iri: string, type: string) => {
+      dispatchCollaborationNavigate({ projectId, entityIRI: iri, entityType: type });
+    });
 
     // Hold a lock on this entity for as long as the IRI/label editor is open — see
     // ClassEditor.tsx for the reasoning (this pattern is shared across all detail editors).
@@ -582,7 +587,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                                 itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
-                                onNavigate={onNavigate}
+                                onNavigate={handleNavigate}
                                 projectId={projectId}
                                 parentEntityIri={item.id}
                             />
@@ -597,7 +602,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                             itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
-                            onNavigate={onNavigate}
+                            onNavigate={handleNavigate}
                             projectId={projectId}
                             parentEntityIri={item.id}
                         />
@@ -612,7 +617,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                                 itemEntityType="objectProperty"
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
-                                onNavigate={onNavigate}
+                                onNavigate={handleNavigate}
                                 projectId={projectId}
                                 parentEntityIri={item.id}
                             />
@@ -628,7 +633,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                             itemEntityType="class"
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
-                            onNavigate={onNavigate}
+                            onNavigate={handleNavigate}
                             projectId={projectId}
                             parentEntityIri={item.id}
                             labelLookup={classLabelLookup}
@@ -645,7 +650,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                             itemEntityType={isObjectProperty ? 'class' : 'datatype'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
-                            onNavigate={onNavigate}
+                            onNavigate={handleNavigate}
                             projectId={projectId}
                             parentEntityIri={item.id}
                             labelLookup={isObjectProperty ? classLabelLookup : undefined}
@@ -661,7 +666,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                             itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
-                            onNavigate={onNavigate}
+                            onNavigate={handleNavigate}
                             projectId={projectId}
                             parentEntityIri={item.id}
                         />
@@ -675,7 +680,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                                 themeColor="blue"
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
-                                onNavigate={onNavigate}
+                                onNavigate={handleNavigate}
                                 projectId={projectId}
                                 parentEntityIri={item.id}
                             />

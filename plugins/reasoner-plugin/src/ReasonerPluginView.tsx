@@ -59,6 +59,65 @@ async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   return fetch(input, { ...init, headers });
 }
 
+const OWL_AXIOM_KEYWORDS = [
+  'SubClassOf', 'EquivalentClasses', 'EquivalentTo', 'DisjointClasses', 'DisjointWith',
+  'DisjointUnionOf', 'SubPropertyOf', 'SubObjectPropertyOf', 'SubDataPropertyOf',
+  'InverseObjectProperties', 'InverseOf', 'ObjectPropertyRange', 'ObjectPropertyDomain',
+  'DataPropertyRange', 'DataPropertyDomain', 'SameIndividual', 'DifferentIndividuals',
+  'FunctionalObjectProperty', 'InverseFunctionalObjectProperty', 'FunctionalDataProperty',
+  'TransitiveObjectProperty', 'ReflexiveObjectProperty', 'IrreflexiveObjectProperty',
+  'SymmetricObjectProperty', 'AsymmetricObjectProperty', 'ObjectIntersectionOf',
+  'ObjectUnionOf', 'ObjectSomeValuesFrom', 'ObjectAllValuesFrom', 'ObjectMinCardinality',
+  'ObjectMaxCardinality', 'ObjectExactCardinality', 'DataSomeValuesFrom', 'DataAllValuesFrom',
+  'DataMinCardinality', 'DataMaxCardinality', 'DataExactCardinality', 'ClassAssertion',
+  'ObjectPropertyAssertion', 'DataPropertyAssertion', 'NegativeObjectPropertyAssertion',
+  'NegativeDataPropertyAssertion', 'HasKey', 'Type',
+  'some', 'only', 'and', 'or', 'min', 'max', 'exactly',
+];
+
+function renderLinkedAxiomText(
+  text: string,
+  entities: { iri: string; label: string; kind: string }[] | undefined,
+  onNavigate: (iri: string, kind: string, label: string) => void,
+  isDark: boolean,
+): React.ReactNode {
+  const byLabel = new Map(
+    (entities || [])
+      .filter((e) => e.label && text.includes(e.label))
+      .map((e) => [e.label, e]),
+  );
+  const keywords = OWL_AXIOM_KEYWORDS.filter((k) => text.includes(k));
+
+  const tokens = [...byLabel.keys(), ...keywords].sort((a, b) => b.length - a.length);
+  if (tokens.length === 0) return text;
+
+  const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`\\b(${tokens.map(escapeRegExp).join('|')})\\b`, 'g');
+
+  const keywordClass = isDark ? 'text-blue-400' : 'text-blue-700';
+
+  const parts = text.split(pattern);
+  return parts.map((part, i) => {
+    const entity = byLabel.get(part);
+    if (entity) {
+      return (
+        <button
+          key={i}
+          onClick={(ev) => { ev.stopPropagation(); onNavigate(entity.iri, entity.kind, entity.label); }}
+          className={`hover:underline ${isDark ? 'hover:text-blue-400' : 'hover:text-blue-700'}`}
+          title={`Go to ${entity.label}`}
+        >
+          {part}
+        </button>
+      );
+    }
+    if (keywords.includes(part)) {
+      return <span key={i} className={keywordClass}>{part}</span>;
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
+
 interface ReasonerPluginProps {
   projectId: string;
   apiBaseUrl?: string;
@@ -77,10 +136,6 @@ interface ReasonerPluginProps {
   onSelectReasoner?: (reasoner: string) => void;
   onToggleSync?: () => void;
   isReasonerSynced?: boolean;
-    // Reports freshly-computed inferred hierarchies back to the parent so other
-  // views (e.g. the Entities tab's "Inferred" toggle) can display them too —
-  // this plugin previously only kept classification results in its own local
-  // state, so a successful run here never reached anywhere else in the app.
   onInferredHierarchyChange?: (data: {
     classHierarchy: any[];
     objectPropertyHierarchy: any[];
@@ -290,7 +345,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const [expandedObjectProperties, setExpandedObjectProperties] = useState<Set<string>>(new Set());
   const [expandedDataProperties, setExpandedDataProperties] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'classes' | 'objectProperties' | 'dataProperties' | 'inferredAxioms'>('classes');
-  const [inferredAxioms, setInferredAxioms] = useState<Array<{ axiomType: string; readable: string; axiom: string }>>([]);
+  const [inferredAxioms, setInferredAxioms] = useState<Array<{
+    axiomType: string; readable: string; axiom: string;
+    entailment?: { entailmentType: string; subjectIri: string; targetIri?: string; propertyIri?: string; literalValue?: string };
+  }>>([]);
   const [inferredAxiomsTotal, setInferredAxiomsTotal] = useState(0);
   const [inferredAxiomsFilter, setInferredAxiomsFilter] = useState('');
   const [hoveredClass, setHoveredClass] = useState<string | null>(null);
@@ -301,8 +359,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const [showExplainDialog, setShowExplainDialog] = useState(false);
   const [justificationMode, setJustificationMode] = useState<'regular' | 'laconic'>('regular');
   const [justificationLimitMode, setJustificationLimitMode] = useState<'all' | 'limit'>('limit');
-  const [justificationLimitValue, setJustificationLimitValue] = useState<number | ''>(5);
+  const [justificationLimitValue, setJustificationLimitValue] = useState<number | ''>(10);
   const [inconsistencyExplanation, setInconsistencyExplanation] = useState<any>(null);
+  const [explainTarget, setExplainTarget] = useState<{
+    entailmentType: string; subjectIri: string; targetIri?: string; propertyIri?: string; literalValue?: string; label: string;
+  } | null>(null);
+  const [entailmentJustifications, setEntailmentJustifications] = useState<any[] | null>(null);
+  const [entailmentLoading, setEntailmentLoading] = useState(false);
+  const [entailmentError, setEntailmentError] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState(true);
   const [reasonerStatus, setReasonerStatus] = useState<string>('Not initialized');
   const [stats, setStats] = useState<any>(null);
@@ -321,11 +385,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const isLoading = dashboardIsLoading ?? localIsLoading;
   const reasonerResults = dashboardReasonerResults || localReasonerResults;
 
-  // Derived values for the UI. Placed here (rather than down with the rest of
-  // the render-derived values) so fetchInconsistencyExplanation, defined below,
-  // can close over isOntologyInconsistent without a TS "used before declaration"
-  // error — useCallback only invokes the closure later, once these are assigned,
-  // but TS's control-flow analysis doesn't reason about that deferral.
   const displayStats = reasonerResults?.stats || stats || null;
   const unsatList = reasonerResults?.unsatisfiableClasses || [];
   const equivalentGroups = reasonerResults?.equivalentClasses || [];
@@ -334,11 +393,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const combinedUnsat = unsatList.length > 0 ? unsatList : consistencyUnsat;
   const consistentFlag = (displayStats?.isConsistent ?? consistencyData?.consistent ?? consistencyData?.isConsistent);
   const unsatRaw = displayStats?.unsatisfiableClassesRaw;
-  // A class being unsatisfiable is NOT the same as the whole ontology being
-// inconsistent — a class can be individually broken while everything else
-// is perfectly fine (consistentFlag stays true). Only treat this as a full
-// ontology inconsistency when the consistency check itself actually failed.
-const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
+  const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
 
   const tooltipRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -683,7 +738,7 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
 
             maxJustifications: (limitOverride?.mode ?? justificationLimitMode) === 'all'
               ? 50
-              : (Number(limitOverride?.value ?? justificationLimitValue) || 5)
+              : (Number(limitOverride?.value ?? justificationLimitValue) || 10)
           })
         }
       );
@@ -709,6 +764,69 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
     }
   }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, pollWorkerJob]);
 
+  const fetchEntailmentExplanation = useCallback(async (
+    target: { entailmentType: string; subjectIri: string; targetIri?: string; propertyIri?: string; literalValue?: string },
+    modeOverride?: 'regular' | 'laconic',
+    limitOverride?: { mode: 'all' | 'limit'; value: number | '' }
+  ) => {
+    setEntailmentJustifications(null);
+    setEntailmentError(null);
+    setEntailmentLoading(true);
+    try {
+      const reasonerMap: Record<string, string> = {
+        'hermit': 'HERMIT',
+        'pellet': 'PELLET',
+        'openllet': 'OPENLLET',
+        'fact++': 'FACTPLUSPLUS',
+        'elk': 'ELK',
+        'structural': 'STRUCTURAL'
+      };
+      const reasonerType = reasonerMap[selectedReasoner.toLowerCase()] || 'HERMIT';
+      const encodedProjectId = encodeURIComponent(projectId);
+      const response = await authFetch(
+        `${resolvedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/explain-entailment`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entailmentType: target.entailmentType,
+            subjectIri: target.subjectIri,
+            targetIri: target.targetIri,
+            propertyIri: target.propertyIri,
+            literalValue: target.literalValue,
+            reasonerType,
+            mode: modeOverride ?? justificationMode,
+            maxJustifications: (limitOverride?.mode ?? justificationLimitMode) === 'all'
+              ? 50
+              : (Number(limitOverride?.value ?? justificationLimitValue) || 10)
+          })
+        }
+      );
+
+      if (response.ok) {
+        const result = await response.json();
+        setEntailmentJustifications(result?.justifications ?? []);
+      } else {
+        const errBody = await response.json().catch(() => null);
+        setEntailmentError(errBody?.error || 'Failed to load explanation');
+      }
+    } catch (error) {
+      setEntailmentError(error instanceof Error ? error.message : 'Failed to load explanation');
+    } finally {
+      setEntailmentLoading(false);
+    }
+  }, [projectId, selectedReasoner, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue]);
+
+  const openExplainEntailment = (
+    target: { entailmentType: string; subjectIri: string; targetIri?: string; propertyIri?: string; literalValue?: string },
+    label: string
+  ) => {
+    const full = { ...target, label };
+    setExplainTarget(full);
+    setShowExplainDialog(true);
+    fetchEntailmentExplanation(full);
+  };
+
   // Handle class hover
   const handleClassHover = (classIri: string, event: React.MouseEvent) => {
     setHoveredClass(classIri);
@@ -721,11 +839,23 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
   };
 
   // Navigate to entity in hierarchy
-  const navigateToEntity = (iri: string) => {
+  const navigateToEntity = (iri: string, kind?: string) => {
+    setShowExplainDialog(false);
+    setExplainTarget(null);
+    setEntailmentJustifications(null);
+
     setSelectedClassIri(iri);
-    
+
+    const targetTab = kind === 'objectProperty' ? 'objectProperties'
+      : kind === 'dataProperty' ? 'dataProperties'
+      : kind === 'class' ? 'classes'
+      : activeTab;
+    if (targetTab !== activeTab) {
+      setActiveTab(targetTab);
+    }
+
     // Expand parent nodes to make it visible
-    if (activeTab === 'classes') {
+    if (targetTab === 'classes') {
       setExpandedClasses(prev => {
         const newSet = new Set(prev);
         classHierarchy.forEach(node => {
@@ -735,7 +865,7 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
         });
         return newSet;
       });
-    } else if (activeTab === 'objectProperties') {
+    } else if (targetTab === 'objectProperties') {
       setExpandedObjectProperties(prev => {
         const newSet = new Set(prev);
         objectPropertyHierarchy.forEach(node => {
@@ -745,7 +875,7 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
         });
         return newSet;
       });
-    } else if (activeTab === 'dataProperties') {
+    } else if (targetTab === 'dataProperties') {
       setExpandedDataProperties(prev => {
         const newSet = new Set(prev);
         dataPropertyHierarchy.forEach(node => {
@@ -756,7 +886,7 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
         return newSet;
       });
     }
-    
+
     // Scroll to the element
     setTimeout(() => {
       const element = classRefs.current.get(iri);
@@ -769,6 +899,15 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
         }, 2000);
       }
     }, 100);
+  };
+
+  const navigateToEntityPanel = (iri: string, kind: string, label: string) => {
+    setShowExplainDialog(false);
+    setExplainTarget(null);
+    setEntailmentJustifications(null);
+    window.dispatchEvent(new CustomEvent('collaboration:navigate-to-entity', {
+      detail: { projectId, entityIRI: iri, entityType: kind, entityLabel: label },
+    }));
   };
 
   // Helper function to render hierarchy
@@ -1469,17 +1608,32 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
                         ? { iri: cls, label: cls.split('#').pop() || cls.split('/').pop() || cls }
                         : cls;
                       return (
-                        <div 
-                          key={idx} 
-                          className={`border rounded px-2 py-1.5 text-[11px] cursor-pointer ${
+                        <div
+                          key={idx}
+                          className={`border rounded px-2 py-1.5 text-[11px] cursor-pointer flex items-start justify-between gap-2 ${
                             isDark ? 'bg-gray-800 border-red-900/50 hover:bg-gray-700' : 'bg-white border-red-200 hover:bg-red-50'
                           }`}
-                          onClick={() => navigateToEntity(clsData.iri)}
+                          onClick={() => navigateToEntityPanel(clsData.iri, 'class', clsData.label)}
                         >
-                          <div className={`font-semibold ${isDark ? 'text-red-400' : 'text-red-900'}`}>{clsData.label}</div>
-                          <div className={`text-[10px] truncate ${isDark ? 'text-gray-500' : 'text-red-600'}`} title={clsData.iri}>
-                            {clsData.iri}
+                          <div className="min-w-0">
+                            <div className={`font-semibold ${isDark ? 'text-red-400' : 'text-red-900'}`}>{clsData.label}</div>
+                            <div className={`text-[10px] truncate ${isDark ? 'text-gray-500' : 'text-red-600'}`} title={clsData.iri}>
+                              {clsData.iri}
+                            </div>
                           </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openExplainEntailment({ entailmentType: 'UNSATISFIABLE_CLASS', subjectIri: clsData.iri }, clsData.label);
+                            }}
+                            className={`shrink-0 p-1 rounded transition-colors ${
+                              isDark ? 'text-red-400 hover:bg-red-900/40' : 'text-red-500 hover:bg-red-100'
+                            }`}
+                            title={`Why is '${clsData.label}' unsatisfiable?`}
+                            aria-label={`Explain why ${clsData.label} is unsatisfiable`}
+                          >
+                            <HelpCircle size={13} />
+                          </button>
                         </div>
                       );
                     })}
@@ -1518,7 +1672,7 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
               <div className={`px-4 py-3 border-t mt-auto ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
                 <div className="space-y-2">
                   <button
-                    onClick={() => { setShowExplainDialog(true); fetchInconsistencyExplanation(); }}
+                    onClick={() => { setExplainTarget(null); setShowExplainDialog(true); fetchInconsistencyExplanation(); }}
                     disabled={!isOntologyInconsistent || isLoading}
                     className={`w-full px-3 py-2 text-xs font-medium border rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
                       isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600 text-gray-200' : 'bg-white border-gray-300 hover:bg-gray-50 text-gray-700'
@@ -1663,16 +1817,30 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
                           .map((ax, idx) => (
                             <div
                               key={idx}
-                              className={`px-3 py-2 rounded border text-xs font-mono ${
+                              className={`px-3 py-2 rounded border text-xs font-mono flex items-start justify-between gap-2 ${
                                 isDark ? 'bg-gray-800/50 border-gray-700 text-gray-200' : 'bg-gray-50 border-gray-200 text-gray-800'
                               }`}
                             >
-                              <span className={`inline-block px-1.5 py-0.5 mr-2 rounded text-[10px] font-sans font-medium ${
-                                isDark ? 'bg-purple-900/40 text-purple-300' : 'bg-purple-100 text-purple-700'
-                              }`}>
-                                {ax.axiomType}
+                              <span className="min-w-0">
+                                <span className={`inline-block px-1.5 py-0.5 mr-2 rounded text-[10px] font-sans font-medium ${
+                                  isDark ? 'bg-purple-900/40 text-purple-300' : 'bg-purple-100 text-purple-700'
+                                }`}>
+                                  {ax.axiomType}
+                                </span>
+                                {ax.readable || ax.axiom}
                               </span>
-                              {ax.readable || ax.axiom}
+                              {ax.entailment && (
+                                <button
+                                  onClick={() => openExplainEntailment(ax.entailment!, ax.readable || ax.axiom)}
+                                  className={`shrink-0 p-1 rounded font-sans transition-colors ${
+                                    isDark ? 'text-purple-300 hover:bg-purple-900/40' : 'text-purple-600 hover:bg-purple-100'
+                                  }`}
+                                  title={`Why is '${ax.readable || ax.axiom}' inferred?`}
+                                  aria-label="Explain this inferred axiom"
+                                >
+                                  <HelpCircle size={13} />
+                                </button>
+                              )}
                             </div>
                           ))}
                       </div>
@@ -1698,14 +1866,158 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
             <div className={`flex items-center justify-between px-6 py-4 border-b ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
               <h3 className="text-lg font-semibold flex items-center gap-2">
                 <Lightbulb className="text-yellow-500" size={20} />
-                Reasoner Explanation
+                {explainTarget ? `Explanation for '${explainTarget.label}'` : 'Reasoner Explanation'}
               </h3>
-              <button onClick={() => setShowExplainDialog(false)} className="text-gray-500 hover:text-gray-700">
+              <button
+                onClick={() => { setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
+                className="text-gray-500 hover:text-gray-700"
+              >
                 <XCircle size={24} />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-6">
-              {isOntologyInconsistent ? (
+              {explainTarget ? (
+                <div className="space-y-4">
+                  <div className={`p-3 rounded-md border text-sm space-y-2 ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={justificationMode === 'regular'}
+                        disabled={entailmentLoading}
+                        onChange={() => { setJustificationMode('regular'); fetchEntailmentExplanation(explainTarget, 'regular'); }}
+                      />
+                      Show regular justifications
+                      {entailmentLoading && justificationMode === 'regular' && (
+                        <RefreshCw size={12} className="animate-spin opacity-60" />
+                      )}
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={justificationMode === 'laconic'}
+                        disabled={entailmentLoading}
+                        onChange={() => { setJustificationMode('laconic'); fetchEntailmentExplanation(explainTarget, 'laconic'); }}
+                      />
+                      Show laconic justifications
+                      {entailmentLoading && justificationMode === 'laconic' && (
+                        <RefreshCw size={12} className="animate-spin opacity-60" />
+                      )}
+                    </label>
+
+                    <div className={`h-px my-1 ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} />
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        checked={justificationLimitMode === 'all'}
+                        disabled={entailmentLoading}
+                        onChange={() => {
+                          setJustificationLimitMode('all');
+                          fetchEntailmentExplanation(explainTarget, undefined, { mode: 'all', value: justificationLimitValue });
+                        }}
+                      />
+                      All justifications
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        id="entailment-limit-radio"
+                        checked={justificationLimitMode === 'limit'}
+                        disabled={entailmentLoading}
+                        onChange={() => {
+                          setJustificationLimitMode('limit');
+                          fetchEntailmentExplanation(explainTarget, undefined, { mode: 'limit', value: justificationLimitValue });
+                        }}
+                      />
+                      <label htmlFor="entailment-limit-radio" className="cursor-pointer">
+                        Limit justifications to
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={justificationLimitValue}
+                        disabled={entailmentLoading}
+                        onFocus={() => {
+                          if (justificationLimitMode !== 'limit') setJustificationLimitMode('limit');
+                        }}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setJustificationLimitValue(raw === '' ? '' : Number(raw));
+                        }}
+                        onBlur={(e) => {
+                          const newValue = Math.max(1, Math.min(50, Number(e.target.value) || 5));
+                          setJustificationLimitValue(newValue);
+                          fetchEntailmentExplanation(explainTarget, undefined, { mode: 'limit', value: newValue });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const newValue = Math.max(1, Math.min(50, Number(e.currentTarget.value) || 5));
+                            setJustificationLimitValue(newValue);
+                            fetchEntailmentExplanation(explainTarget, undefined, { mode: 'limit', value: newValue });
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        className={`w-16 px-2 py-1 rounded border text-sm ${
+                          isDark ? 'bg-gray-900 border-gray-600 text-gray-100' : 'bg-white border-gray-300 text-gray-900'
+                        }`}
+                      />
+                    </div>
+                  </div>
+
+                  {entailmentLoading && entailmentJustifications === null ? (
+                    <div className="text-sm opacity-80 flex items-center gap-2">
+                      <RefreshCw size={14} className="animate-spin" />
+                      Computing explanation...
+                    </div>
+                  ) : entailmentError ? (
+                    <div className={`text-sm ${isDark ? 'text-red-400' : 'text-red-600'}`}>{entailmentError}</div>
+                  ) : entailmentJustifications && entailmentJustifications.length > 0 ? (
+                    <div className="space-y-3">
+                      {entailmentJustifications.map((justification: any, ji: number) => (
+                        <div
+                          key={ji}
+                          className={`rounded-md border overflow-hidden ${
+                            isDark ? 'border-gray-700 bg-gray-900/40' : 'border-gray-300 bg-gray-50'
+                          }`}
+                        >
+                          <div
+                            className={`px-3 py-1.5 text-xs font-semibold border-b ${
+                              isDark ? 'border-gray-700 bg-gray-800/60 text-gray-200' : 'border-gray-200 bg-gray-100 text-gray-800'
+                            }`}
+                          >
+                            {justification.label}
+                          </div>
+                          <ol>
+                            {(justification.axioms || []).map((axiom: any, ai: number) => (
+                              <li
+                                key={ai}
+                                className={`px-3 py-1.5 text-xs ${
+                                  ai !== justification.axioms.length - 1
+                                    ? (isDark ? 'border-b border-gray-800' : 'border-b border-gray-200')
+                                    : ''
+                                }`}
+                              >
+                                <div className="flex items-baseline justify-between gap-3">
+                                  <span className="flex items-baseline gap-2 min-w-0">
+                                    <span className="opacity-50 shrink-0">{ai + 1})</span>
+                                    <span className="font-medium">{renderLinkedAxiomText(axiom.text, axiom.entities, navigateToEntityPanel, isDark)}</span>
+                                  </span>
+                                  <span className="opacity-50 italic whitespace-nowrap shrink-0">
+                                    {axiom.membershipNote}
+                                  </span>
+                                </div>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm opacity-80">No justifications found for this entailment.</div>
+                  )}
+                </div>
+              ) : isOntologyInconsistent ? (
                 <div className="space-y-4">
                   <div className={`p-4 rounded-md border ${isDark ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-red-50 border-red-200 text-red-700'}`}>
                     <div className="font-bold mb-1">Ontology is Inconsistent</div>
@@ -1930,19 +2242,21 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
                                   {(justification.axioms || []).map((axiom: any, ai: number) => (
                                     <li
                                       key={ai}
-                                      className={`flex items-baseline justify-between gap-3 px-3 py-1.5 text-xs ${
+                                      className={`px-3 py-1.5 text-xs ${
                                         ai !== justification.axioms.length - 1
                                           ? (isDark ? 'border-b border-gray-800' : 'border-b border-gray-200')
                                           : ''
                                       }`}
                                     >
-                                      <span className="flex items-baseline gap-2 min-w-0">
-                                        <span className="opacity-50 shrink-0">{ai + 1})</span>
-                                        <span className="font-medium">{axiom.text}</span>
-                                      </span>
-                                      <span className="opacity-50 italic whitespace-nowrap shrink-0">
-                                        {axiom.membershipNote}
-                                      </span>
+                                      <div className="flex items-baseline justify-between gap-3">
+                                        <span className="flex items-baseline gap-2 min-w-0">
+                                          <span className="opacity-50 shrink-0">{ai + 1})</span>
+                                          <span className="font-medium">{renderLinkedAxiomText(axiom.text, axiom.entities, navigateToEntityPanel, isDark)}</span>
+                                        </span>
+                                        <span className="opacity-50 italic whitespace-nowrap shrink-0">
+                                          {axiom.membershipNote}
+                                        </span>
+                                      </div>
                                     </li>
                                   ))}
                                 </ol>
@@ -1973,8 +2287,8 @@ const isOntologyInconsistent = consistentFlag === false || unsatRaw === -1;
               )}
             </div>
             <div className={`px-6 py-4 border-t flex justify-end ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
-              <button 
-                onClick={() => setShowExplainDialog(false)}
+              <button
+                onClick={() => { setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
                 className={`px-4 py-2 text-sm font-medium rounded ${
                   isDark ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'
                 }`}

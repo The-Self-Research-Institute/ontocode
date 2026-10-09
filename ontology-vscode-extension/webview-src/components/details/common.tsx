@@ -6,9 +6,6 @@ import axiomAnnotationService from "../../services/axiomAnnotationService";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
 
-type JustificationAxiom = { type: string; manchester: string; entities: { iri: string; label: string; type: string }[]; isAsserted: boolean };
-type Justification = { index: number; axioms: JustificationAxiom[]; isAsserted: boolean };
-
 // Text is BLACK, only keywords are colored (magenta/pink)
 // Links are shown as underlined text for clickable entities
 const MANCHESTER_KEYWORDS = ['some', 'only', 'value', 'Self', 'min', 'max', 'exactly', 'and', 'or', 'not', 'that', 'inverse'];
@@ -290,6 +287,170 @@ const ColorizedAxiomDefinition: React.FC<{
   return <span>{result}</span>;
 };
 
+export type EntailmentPayload = {
+  entailmentType: string;
+  subjectIri: string;
+  targetIri?: string;
+  propertyIri?: string;
+  literalValue?: string;
+};
+
+type EntailmentJustification = {
+  label: string;
+  axioms: Array<{ text: string; membershipNote: string; entities?: { iri: string; label: string; kind: string }[] }>;
+};
+
+const OWL_AXIOM_KEYWORDS = [
+  'SubClassOf', 'EquivalentClasses', 'EquivalentTo', 'DisjointClasses', 'DisjointWith',
+  'DisjointUnionOf', 'SubPropertyOf', 'SubObjectPropertyOf', 'SubDataPropertyOf',
+  'InverseObjectProperties', 'InverseOf', 'ObjectPropertyRange', 'ObjectPropertyDomain',
+  'DataPropertyRange', 'DataPropertyDomain', 'SameIndividual', 'DifferentIndividuals',
+  'FunctionalObjectProperty', 'InverseFunctionalObjectProperty', 'FunctionalDataProperty',
+  'TransitiveObjectProperty', 'ReflexiveObjectProperty', 'IrreflexiveObjectProperty',
+  'SymmetricObjectProperty', 'AsymmetricObjectProperty', 'ObjectIntersectionOf',
+  'ObjectUnionOf', 'ObjectSomeValuesFrom', 'ObjectAllValuesFrom', 'ObjectMinCardinality',
+  'ObjectMaxCardinality', 'ObjectExactCardinality', 'DataSomeValuesFrom', 'DataAllValuesFrom',
+  'DataMinCardinality', 'DataMaxCardinality', 'DataExactCardinality', 'ClassAssertion',
+  'ObjectPropertyAssertion', 'DataPropertyAssertion', 'NegativeObjectPropertyAssertion',
+  'NegativeDataPropertyAssertion', 'HasKey', 'Type',
+  'some', 'only', 'and', 'or', 'min', 'max', 'exactly',
+];
+
+function renderLinkedAxiomText(
+  text: string,
+  entities: { iri: string; label: string; kind: string }[] | undefined,
+  onNavigate?: (iri: string, type: string) => void,
+): React.ReactNode {
+  const byLabel = new Map(
+    (entities || [])
+      .filter((e) => e.label && text.includes(e.label))
+      .map((e) => [e.label, e]),
+  );
+  const keywords = OWL_AXIOM_KEYWORDS.filter((k) => text.includes(k));
+
+  const tokens = [...byLabel.keys(), ...keywords].sort((a, b) => b.length - a.length);
+  if (tokens.length === 0) return text;
+
+  const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`\\b(${tokens.map(escapeRegExp).join('|')})\\b`, 'g');
+
+  const parts = text.split(pattern);
+  return parts.map((part, i) => {
+    const entity = byLabel.get(part);
+    if (entity) {
+      if (!onNavigate) return <span key={i}>{part}</span>;
+      return (
+        <button
+          key={i}
+          onClick={(ev) => { ev.stopPropagation(); onNavigate(entity.iri, entity.kind); }}
+          className="hover:underline hover:text-blue-600"
+          title={`Go to ${entity.label}`}
+        >
+          {part}
+        </button>
+      );
+    }
+    if (keywords.includes(part)) {
+      return <span key={i} className="text-blue-600">{part}</span>;
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
+
+export const ExplanationModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  label: string;
+  loading: boolean;
+  error: string | null;
+  justifications: EntailmentJustification[] | null;
+  mode: 'regular' | 'laconic';
+  onModeChange: (mode: 'regular' | 'laconic') => void;
+  limitAll: boolean;
+  onLimitAllChange: (all: boolean) => void;
+  limitValue: number;
+  onLimitValueChange: (value: number) => void;
+  onNavigate?: (iri: string, type: string) => void;
+}> = ({ isOpen, onClose, label, loading, error, justifications, mode, onModeChange, limitAll, onLimitAllChange, limitValue, onLimitValueChange, onNavigate }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col border overflow-hidden"
+        style={{ borderColor: 'var(--color-border)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50 shrink-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 min-w-0">
+            <HelpCircle size={16} className="text-blue-600 shrink-0" />
+            <span className="truncate">Explanation for '{label}'</span>
+          </div>
+          <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800 shrink-0">Close</button>
+        </div>
+
+        <div className="px-5 pt-3 pb-2 grid grid-cols-2 gap-x-4 gap-y-1 border-b bg-gray-50 text-[11px] shrink-0">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="radio" checked={mode === 'regular'} onChange={() => onModeChange('regular')} className="accent-blue-600" />
+            Show regular justifications
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="radio" checked={!limitAll} onChange={() => onLimitAllChange(false)} className="accent-blue-600" />
+            Limit justifications to
+            <input
+              type="number" min={1} max={99} value={limitValue}
+              onChange={(e) => onLimitValueChange(Math.max(1, parseInt(e.target.value) || 1))}
+              onFocus={() => onLimitAllChange(false)}
+              className="w-12 px-1 py-0 border border-gray-300 rounded text-[11px]"
+            />
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="radio" checked={mode === 'laconic'} onChange={() => onModeChange('laconic')} className="accent-blue-600" />
+            Show laconic justifications
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="radio" checked={limitAll} onChange={() => onLimitAllChange(true)} className="accent-blue-600" />
+            All justifications
+          </label>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 text-xs">
+          {loading ? (
+            <div className="flex items-center gap-2 text-gray-500">
+              <Loader size={14} className="animate-spin" /> Computing explanation…
+            </div>
+          ) : error ? (
+            <div className="text-red-600">{error}</div>
+          ) : justifications && justifications.length > 0 ? (
+            <div className="space-y-3">
+              {justifications.map((just, ji) => (
+                <div key={ji} className="border rounded-md overflow-hidden">
+                  <div className="px-3 py-1.5 text-xs font-semibold bg-gray-100 border-b">{just.label}</div>
+                  <ol>
+                    {just.axioms.map((axiom, ai) => (
+                      <li key={ai} className={`px-3 py-1.5 ${ai !== just.axioms.length - 1 ? 'border-b' : ''}`}>
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="flex items-baseline gap-2 min-w-0">
+                            <span className="opacity-50 shrink-0">{ai + 1})</span>
+                            <span className="font-medium">{renderLinkedAxiomText(axiom.text, axiom.entities, onNavigate)}</span>
+                          </span>
+                          <span className="opacity-50 italic whitespace-nowrap shrink-0 text-[10px]">{axiom.membershipNote}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-gray-400 italic">No justifications found for this entailment.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const AxiomRow: React.FC<{
   axiom: Axiom;
   onDelete?: (id: string) => Promise<void> | void;
@@ -307,7 +468,8 @@ export const AxiomRow: React.FC<{
   projectId?: string;
   parentEntityIri?: string;
   sectionName?: string;
-}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations: hasAxiomAnnotationsProp = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, sectionName }) => {
+  resolveGCAAxiom?: (definition: string) => { subjectIris: string[]; targetIri: string } | null;
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations: hasAxiomAnnotationsProp = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, sectionName, resolveGCAAxiom }) => {
   // Handle isInferred from prop or axiom object (can be boolean or string 'true')
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
   const [isEditing, setIsEditing] = useState(false);
@@ -321,9 +483,100 @@ export const AxiomRow: React.FC<{
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [deletingAnnotIdx, setDeletingAnnotIdx] = useState<number | null>(null);
   const [isSavingAnnot, setIsSavingAnnot] = useState(false);
+  const [showExplain, setShowExplain] = useState(false);
+  const [explainMode, setExplainMode] = useState<'regular' | 'laconic'>('regular');
+  const [explainLimitAll, setExplainLimitAll] = useState(false);
+  const [explainLimitValue, setExplainLimitValue] = useState(10);
+  const [explainJustifications, setExplainJustifications] = useState<EntailmentJustification[] | null>(null);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainError, setExplainError] = useState<string | null>(null);
 
   const relatedIri = axiom.id?.includes('|||') ? axiom.id.split('|||')[0] : axiom.id;
   const hasAxiomAnnotations = hasAxiomAnnotationsProp || axiomAnnotations.length > 0;
+
+  const explainPayload: EntailmentPayload | null = (() => {
+    if (!parentEntityIri) return null;
+    const isComplex = axiom.isRestriction === true || axiom.isRestriction === 'true'
+      || axiom.isComplex === true || axiom.isComplex === 'true';
+    const hasPlainRelatedIri = !!relatedIri && relatedIri.startsWith('http');
+    if (axiom.type === 'Instance' && hasPlainRelatedIri) {
+      return { entailmentType: 'CLASS_ASSERTION', subjectIri: relatedIri, targetIri: parentEntityIri };
+    }
+    if (!isComplex && hasPlainRelatedIri && (axiom.type === 'SubClassOf' || axiom.type === 'EquivalentTo')) {
+      return { entailmentType: 'SUBCLASS_OF', subjectIri: parentEntityIri, targetIri: relatedIri };
+    }
+    if (!isComplex && hasPlainRelatedIri && axiom.type === 'DisjointWith') {
+      return { entailmentType: 'DISJOINT_CLASSES', subjectIri: parentEntityIri, targetIri: relatedIri };
+    }
+    const isRestrictionAxiom = axiom.isRestriction === true || axiom.isRestriction === 'true';
+    const isSubclassOrEquivalentRow = axiom.type === 'SubClassOf' || axiom.type === 'EquivalentTo';
+    const isDataPropertyRestriction = dataProperties.some((p) => p.id === axiom.propertyIri);
+    const isRestrictionCandidate = isSubclassOrEquivalentRow && isRestrictionAxiom
+      && !!axiom.propertyIri && axiom.fillerIri?.startsWith('http');
+    const isObjectRestrictionCandidate = isRestrictionCandidate && !isDataPropertyRestriction;
+    if (isRestrictionCandidate && (axiom.restrictionType === 'some' || axiom.restrictionType === 'only')) {
+      return {
+        entailmentType: isDataPropertyRestriction ? 'SUBCLASS_OF_DATA_RESTRICTION' : 'SUBCLASS_OF_OBJECT_RESTRICTION',
+        subjectIri: parentEntityIri,
+        targetIri: axiom.fillerIri,
+        propertyIri: axiom.propertyIri,
+        literalValue: axiom.restrictionType,
+      };
+    }
+    if (
+      isObjectRestrictionCandidate
+      && (axiom.restrictionType === 'min' || axiom.restrictionType === 'max' || axiom.restrictionType === 'exactly')
+      && axiom.cardinality !== undefined && axiom.cardinality !== null
+    ) {
+      return {
+        entailmentType: 'SUBCLASS_OF_OBJECT_CARDINALITY',
+        subjectIri: parentEntityIri,
+        targetIri: axiom.fillerIri,
+        propertyIri: axiom.propertyIri,
+        literalValue: `${axiom.restrictionType}:${axiom.cardinality}`,
+      };
+    }
+    if (sectionName === 'General class axioms' && resolveGCAAxiom) {
+      const parsed = resolveGCAAxiom(axiom.definition);
+      if (parsed) {
+        return {
+          entailmentType: 'INTERSECTION_SUBCLASS_OF',
+          subjectIri: parsed.subjectIris[0],
+          targetIri: parsed.targetIri,
+          propertyIri: parsed.subjectIris[1],
+        };
+      }
+    }
+    return null;
+  })();
+
+  const fetchExplainEntailment = useCallback(async (mode: 'regular' | 'laconic', limit: number) => {
+    if (!projectId || !explainPayload) return;
+    setExplainLoading(true);
+    setExplainError(null);
+    try {
+      const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
+        ...explainPayload,
+        mode,
+        maxJustifications: limit,
+      });
+      const data = (res as any)?.data ?? res;
+      setExplainJustifications(data?.justifications ?? []);
+    } catch (e: any) {
+      setExplainError(e?.response?.data?.error ?? e?.message ?? 'Failed to load explanation');
+    } finally {
+      setExplainLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri]);
+
+  useEffect(() => {
+    if (showExplain) {
+      setExplainJustifications(null);
+      fetchExplainEntailment(explainMode, explainLimitAll ? 99 : explainLimitValue);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showExplain]);
 
   const loadAxiomAnnotations = useCallback(async () => {
     if (!projectId || !parentEntityIri || !relatedIri) return;
@@ -486,8 +739,20 @@ export const AxiomRow: React.FC<{
             </div>
           </div>
           <div className="flex items-center gap-1 ml-2">
+
+            {explainPayload && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowExplain(true); }}
+                className={`p-1 rounded hover:bg-blue-100 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-400 hover:text-blue-600`}
+                title="Explain inference"
+                aria-label="Explanation"
+              >
+                <HelpCircle size={14} />
+              </button>
+            )}
+
             {/* Axiom Annotations button */}
-            <button 
+            <button
               onClick={(e) => {
                 e.stopPropagation();
                 setShowAxiomAnnotations(!showAxiomAnnotations);
@@ -648,6 +913,24 @@ export const AxiomRow: React.FC<{
           )}
         </div>
       )}
+
+      {explainPayload && (
+        <ExplanationModal
+          isOpen={showExplain}
+          onClose={() => setShowExplain(false)}
+          label={axiom.definition || relatedIri}
+          loading={explainLoading}
+          error={explainError}
+          justifications={explainJustifications}
+          mode={explainMode}
+          onModeChange={(mode) => { setExplainMode(mode); fetchExplainEntailment(mode, explainLimitAll ? 99 : explainLimitValue); }}
+          limitAll={explainLimitAll}
+          onLimitAllChange={(all) => { setExplainLimitAll(all); fetchExplainEntailment(explainMode, all ? 99 : explainLimitValue); }}
+          limitValue={explainLimitValue}
+          onLimitValueChange={(value) => { setExplainLimitValue(value); if (!explainLimitAll) fetchExplainEntailment(explainMode, value); }}
+          onNavigate={onNavigate ? (iri, type) => { setShowExplain(false); onNavigate(iri, type); } : undefined}
+        />
+      )}
     </div>
   );
 };
@@ -673,7 +956,8 @@ export const AxiomSubsection: React.FC<{
   onViewOnlyAction?: () => void;
   projectId?: string;
   parentEntityIri?: string;
-}> = ({ title, axioms, inferredAxioms, viewMode = 'asserted', onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri }) => {
+  resolveGCAAxiom?: (definition: string) => { subjectIris: string[]; targetIri: string } | null;
+}> = ({ title, axioms, inferredAxioms, viewMode = 'asserted', onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, resolveGCAAxiom }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -826,6 +1110,7 @@ export const AxiomSubsection: React.FC<{
                 projectId={projectId}
                 parentEntityIri={parentEntityIri}
                 sectionName={title}
+                resolveGCAAxiom={resolveGCAAxiom}
               />
             ))}
             {/* Inferred axioms (only in inferred view) */}
@@ -1084,18 +1369,16 @@ export const MultiSelectItem: React.FC<{
    * instead of its bare ID/IRI (e.g. "example of usage" instead of "IAO_0000112"). */
   labelLookup?: Map<string, string>;
 }> = ({ item, onDelete, onEdit, entityType, themeColor = 'blue', isInferred = false, sectionName, onNavigate, projectId, parentEntityIri, labelLookup }) => {
-    const [showExplanation, setShowExplanation] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [showAnnotations, setShowAnnotations] = useState(false);
-    const [copied, setCopied] = useState<'iri' | 'fragment' | null>(null);
     const [isHovered, setIsHovered] = useState(false);
-    const [justType, setJustType] = useState<'regular' | 'laconic'>('laconic');
-    const [limitJustifications, setLimitJustifications] = useState(true);
-    const [justLimit, setJustLimit] = useState(3);
-    const [showLaconicExpl, setShowLaconicExpl] = useState(false);
-    const [explanationData, setExplanationData] = useState<Justification[] | null>(null);
-    const [explanationLoading, setExplanationLoading] = useState(false);
-    const [explanationError, setExplanationError] = useState<string | null>(null);
+    const [showExplain, setShowExplain] = useState(false);
+    const [explainMode, setExplainMode] = useState<'regular' | 'laconic'>('regular');
+    const [explainLimitAll, setExplainLimitAll] = useState(false);
+    const [explainLimitValue, setExplainLimitValue] = useState(10);
+    const [explainJustifications, setExplainJustifications] = useState<EntailmentJustification[] | null>(null);
+    const [explainLoading, setExplainLoading] = useState(false);
+    const [explainError, setExplainError] = useState<string | null>(null);
     const [showAddAnnotationForm, setShowAddAnnotationForm] = useState(false);
     const [newAnnotProp, setNewAnnotProp] = useState('http://www.w3.org/2000/01/rdf-schema#comment');
     const [newAnnotValue, setNewAnnotValue] = useState('');
@@ -1120,61 +1403,73 @@ export const MultiSelectItem: React.FC<{
         }
     }, [projectId, parentEntityIri, displayItem, sectionName]);
 
-    const fetchExplanation = useCallback(async (type: 'regular' | 'laconic', limit: number) => {
-        if (!projectId || !parentEntityIri) return;
-        setExplanationLoading(true);
-        setExplanationError(null);
-        try {
-            const res = await apiClient.post<any>(`/api/ontology/${projectId}/explain-axiom`, {
-                entityIri: parentEntityIri,
-                relatedIri: displayItem,
-                sectionName,
-                justificationType: type,
-                maxJustifications: limit,
-            });
-            const data = res?.data ?? res;
-            setExplanationData(data?.justifications ?? []);
-        } catch (e: any) {
-            setExplanationError(e?.message ?? 'Failed to load explanation');
-        } finally {
-            setExplanationLoading(false);
-        }
-    }, [projectId, parentEntityIri, displayItem, sectionName]);
-
-    useEffect(() => {
-        if (showExplanation) {
-            setExplanationData(null);
-            fetchExplanation(justType, limitJustifications ? justLimit : 99);
-        }
-    }, [showExplanation]); // eslint-disable-line react-hooks/exhaustive-deps
-
     useEffect(() => {
         if (showAnnotations) {
             void fetchAxiomAnnotations();
         }
     }, [showAnnotations, fetchAxiomAnnotations]);
 
-    const handleCopyIri = () => {
-        navigator.clipboard.writeText(displayItem).then(() => {
-            setCopied('iri');
-            setTimeout(() => setCopied(null), 1500);
-        }).catch(() => {});
-    };
-    // The local name after the last '#' or '/' — e.g. copying '396458002' instead of
-    // the full 'http://.../ontology#396458002'. Useful when cross-referencing IRIs
-    // against external systems that only care about the fragment (a long-requested,
-    // never-implemented feature in Protégé — see issue #938).
-    const handleCopyFragment = () => {
-        const fragment = displayItem.split(/[#/]/).pop() || displayItem;
-        navigator.clipboard.writeText(fragment).then(() => {
-            setCopied('fragment');
-            setTimeout(() => setCopied(null), 1500);
-        }).catch(() => {});
-    };
     // Check if this is an inverse property expression
     const inverseMatch = displayItem.match(/^inverse\((.+)\)$/i);
     const isInverse = !!inverseMatch;
     const propertyIri = isInverse ? inverseMatch[1] : displayItem;
+
+    const explainPayload: EntailmentPayload | null = (() => {
+        if (!parentEntityIri || !propertyIri || !propertyIri.startsWith('http')) return null;
+        const isDataPropertyContext = themeColor === 'green';
+        switch (sectionName) {
+            case 'SubProperty Of':
+                return {
+                    entailmentType: isDataPropertyContext ? 'SUB_DATA_PROPERTY_OF' : 'SUB_OBJECT_PROPERTY_OF',
+                    subjectIri: parentEntityIri,
+                    targetIri: propertyIri,
+                };
+            case 'Inverse Of':
+                return { entailmentType: 'INVERSE_OBJECT_PROPERTIES', subjectIri: parentEntityIri, targetIri: propertyIri };
+            case 'Domains (Intersection)':
+                return {
+                    entailmentType: isDataPropertyContext ? 'DATA_PROPERTY_DOMAIN' : 'OBJECT_PROPERTY_DOMAIN',
+                    subjectIri: parentEntityIri,
+                    targetIri: propertyIri,
+                };
+            case 'Ranges (Intersection)':
+                return {
+                    entailmentType: isDataPropertyContext ? 'DATA_PROPERTY_RANGE' : 'OBJECT_PROPERTY_RANGE',
+                    subjectIri: parentEntityIri,
+                    targetIri: propertyIri,
+                };
+            default:
+                return null;
+        }
+    })();
+
+    const fetchExplainEntailment = useCallback(async (mode: 'regular' | 'laconic', limit: number) => {
+        if (!projectId || !explainPayload) return;
+        setExplainLoading(true);
+        setExplainError(null);
+        try {
+            const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
+                ...explainPayload,
+                mode,
+                maxJustifications: limit,
+            });
+            const data = (res as any)?.data ?? res;
+            setExplainJustifications(data?.justifications ?? []);
+        } catch (e: any) {
+            setExplainError(e?.response?.data?.error ?? e?.message ?? 'Failed to load explanation');
+        } finally {
+            setExplainLoading(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri]);
+
+    useEffect(() => {
+        if (showExplain) {
+            setExplainJustifications(null);
+            fetchExplainEntailment(explainMode, explainLimitAll ? 99 : explainLimitValue);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showExplain]);
 
     // Check if this is a restriction expression (contains 'some', 'only', 'min', 'max', 'exactly', 'value')
     const restrictionKeywords = ['some', 'only', 'min', 'max', 'exactly', 'value', 'and', 'or', 'not'];
@@ -1308,167 +1603,83 @@ export const MultiSelectItem: React.FC<{
                         <span className="ml-2 text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded">Inferred</span>
                     )}
                 </div>
-                {!isInferred && (
-                    <div className={`flex items-center gap-1 transition-all ${isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                        {/* ? — Explanation (justification) */}
+                <div className={`flex items-center gap-1 transition-all ${(isDeleting || showExplain) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                    {explainPayload && (
                         <button
-                            onClick={(e) => { e.stopPropagation(); setShowExplanation(v => !v); if (showAnnotations) setShowAnnotations(false); }}
-                            className={`p-1 rounded transition-all ${showExplanation ? 'text-blue-600 bg-blue-50 opacity-100' : 'text-gray-400 hover:bg-blue-100 hover:text-blue-600'}`}
+                            onClick={(e) => { e.stopPropagation(); setShowExplain(true); }}
+                            className="p-1 rounded transition-all text-gray-400 hover:bg-blue-100 hover:text-blue-600"
                             title={`Explanation for '${displayName}'`}
                             aria-label="Explanation"
                         >
                             <HelpCircle size={14} />
                         </button>
-                        {/* @ — Axiom annotations */}
-                        <button
-                            onClick={(e) => { e.stopPropagation(); setShowAnnotations(v => !v); if (showExplanation) setShowExplanation(false); }}
-                            className={`p-1 rounded transition-all ${showAnnotations ? 'text-amber-600 bg-amber-50 opacity-100' : 'text-gray-400 hover:bg-amber-100 hover:text-amber-600'}`}
-                            title={`Annotations for ${sectionName || 'axiom'}`}
-                            aria-label="Axiom annotations"
-                        >
-                            <AtSign size={14} />
-                        </button>
-                        {/* ✎ — Edit item */}
-                        {onEdit && (
+                    )}
+                    {!isInferred && (
+                        <>
+                            {/* @ — Axiom annotations */}
                             <button
-                                onClick={(e) => { e.stopPropagation(); onEdit(item); }}
-                                className="p-1 rounded text-gray-400 hover:bg-blue-100 hover:text-blue-600 transition-all"
-                                title={`Edit '${displayName}'`}
-                                aria-label={`Edit ${displayName}`}
+                                onClick={(e) => { e.stopPropagation(); setShowAnnotations(v => !v); }}
+                                className={`p-1 rounded transition-all ${showAnnotations ? 'text-amber-600 bg-amber-50 opacity-100' : 'text-gray-400 hover:bg-amber-100 hover:text-amber-600'}`}
+                                title={`Annotations for ${sectionName || 'axiom'}`}
+                                aria-label="Axiom annotations"
                             >
-                                <Edit2 size={14} />
+                                <AtSign size={14} />
                             </button>
-                        )}
-                        {/* ○ — Navigate to entity in hierarchy */}
-                        {onNavigate && (
+                            {/* ✎ — Edit item */}
+                            {onEdit && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onEdit(item); }}
+                                    className="p-1 rounded text-gray-400 hover:bg-blue-100 hover:text-blue-600 transition-all"
+                                    title={`Edit '${displayName}'`}
+                                    aria-label={`Edit ${displayName}`}
+                                >
+                                    <Edit2 size={14} />
+                                </button>
+                            )}
+                            {/* ○ — Navigate to entity in hierarchy */}
+                            {onNavigate && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onNavigate(propertyIri, detectedType || 'class'); }}
+                                    className="p-1 rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-all"
+                                    title={`Navigate to '${displayName}'`}
+                                    aria-label={`Navigate to ${displayName}`}
+                                >
+                                    <Circle size={14} />
+                                </button>
+                            )}
                             <button
-                                onClick={(e) => { e.stopPropagation(); onNavigate(propertyIri, detectedType || 'class'); }}
-                                className="p-1 rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-all"
-                                title={`Navigate to '${displayName}'`}
-                                aria-label={`Navigate to ${displayName}`}
+                                onClick={async () => {
+                                    setIsDeleting(true);
+                                    try { await onDelete(item); } finally { setIsDeleting(false); }
+                                }}
+                                disabled={isDeleting}
+                                className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                title={`Remove '${displayName}'`}
+                                aria-label={`Remove ${displayName}`}
                             >
-                                <Circle size={14} />
+                                {isDeleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
                             </button>
-                        )}
-                        <button
-                            onClick={async () => {
-                                setIsDeleting(true);
-                                try { await onDelete(item); } finally { setIsDeleting(false); }
-                            }}
-                            disabled={isDeleting}
-                            className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title={`Remove '${displayName}'`}
-                            aria-label={`Remove ${displayName}`}
-                        >
-                            {isDeleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                        </button>
-                    </div>
-                )}
+                        </>
+                    )}
+                </div>
             </div>
 
-            {/* Explanation panel — justification dialog */}
-            {showExplanation && !isInferred && (
-                <div className="mx-1.5 mb-1.5 bg-blue-50 border border-blue-200 rounded text-xs" onClick={(e) => e.stopPropagation()}>
-                    {/* Title bar */}
-                    <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-blue-200 bg-blue-100">
-                        <HelpCircle size={11} className="text-blue-600 shrink-0" />
-                        <span className="text-[10px] font-semibold text-blue-800">
-                            Explanation for '{displayName}'{sectionName ? ` ${sectionName}` : ''}
-                        </span>
-                    </div>
-                    {/* Filter row — matches's radio layout */}
-                    <div className="px-2 pt-2 pb-1 grid grid-cols-2 gap-x-4 gap-y-0.5">
-                        <label className="flex items-center gap-1 cursor-pointer">
-                            <input type="radio" name={`just-${item}`} checked={justType === 'regular'}
-                                onChange={() => { setJustType('regular'); fetchExplanation('regular', limitJustifications ? justLimit : 99); }}
-                                className="w-2.5 h-2.5 accent-blue-600" />
-                            <span className="text-[10px] text-gray-700">Show regular justifications</span>
-                        </label>
-                        <label className="flex items-center gap-1 cursor-pointer">
-                            <input type="radio" name={`just-limit-${item}`} checked={!limitJustifications}
-                                onChange={() => { setLimitJustifications(false); fetchExplanation(justType, 99); }}
-                                className="w-2.5 h-2.5 accent-blue-600" />
-                            <span className="text-[10px] text-gray-700">All justifications</span>
-                        </label>
-                        <label className="flex items-center gap-1 cursor-pointer">
-                            <input type="radio" name={`just-${item}`} checked={justType === 'laconic'}
-                                onChange={() => { setJustType('laconic'); fetchExplanation('laconic', limitJustifications ? justLimit : 99); }}
-                                className="w-2.5 h-2.5 accent-blue-600" />
-                            <span className="text-[10px] text-gray-700">Show laconic justifications</span>
-                        </label>
-                        <label className="flex items-center gap-1 cursor-pointer">
-                            <input type="radio" name={`just-limit-${item}`} checked={limitJustifications}
-                                onChange={() => { setLimitJustifications(true); fetchExplanation(justType, justLimit); }}
-                                className="w-2.5 h-2.5 accent-blue-600" />
-                            <span className="text-[10px] text-gray-700">Limit justifications to</span>
-                            <input
-                                type="number" min={1} max={99} value={justLimit}
-                                onChange={(e) => { const v = Math.max(1, parseInt(e.target.value) || 1); setJustLimit(v); setLimitJustifications(true); fetchExplanation(justType, v); }}
-                                onClick={() => setLimitJustifications(true)}
-                                className="w-8 px-1 py-0 text-[10px] border border-gray-300 rounded bg-white text-gray-700"
-                            />
-                        </label>
-                    </div>
-                    {/* Justification blocks */}
-                    <div className="px-2 pb-2">
-                        {explanationLoading && (
-                            <div className="flex items-center gap-1.5 py-2 text-[10px] text-blue-500">
-                                <Loader size={11} className="animate-spin" /> Loading justifications…
-                            </div>
-                        )}
-                        {explanationError && (
-                            <div className="text-[10px] text-red-500 py-1">{explanationError}</div>
-                        )}
-                        {!explanationLoading && !explanationError && explanationData !== null && (
-                            explanationData.length === 0 ? (
-                                <div className="text-[10px] text-gray-400 italic py-1">No justifications found (axiom may be inferred by the reasoner).</div>
-                            ) : (
-                                explanationData.map((just) => (
-                                    <div key={just.index} className="mb-2">
-                                        <div className="flex items-center justify-between mb-0.5">
-                                            <span className="text-[10px] font-semibold text-gray-700">Explanation {just.index}</span>
-                                            <label className="flex items-center gap-1 cursor-pointer">
-                                                <input type="checkbox" checked={showLaconicExpl} onChange={(e) => setShowLaconicExpl(e.target.checked)} className="w-2.5 h-2.5 accent-blue-600" />
-                                                <span className="text-[10px] text-gray-500">Display laconic explanation</span>
-                                            </label>
-                                        </div>
-                                        <div className="bg-white border border-blue-100 rounded overflow-hidden">
-                                            <div className="px-2 py-1 text-[10px] text-gray-500 border-b border-blue-50">
-                                                Explanation for: '{displayName}'{sectionName ? ` ${sectionName}` : ''}
-                                            </div>
-                                            {just.axioms.map((ax, ai) => (
-                                                <div key={ai} className="flex items-center justify-between px-2 py-1.5 bg-green-50">
-                                                    <span className="text-xs text-gray-900 font-semibold">{ax.manchester}</span>
-                                                    <HelpCircle size={12} className="shrink-0 text-gray-400 ml-2" />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))
-                            )
-                        )}
-                        {!explanationLoading && explanationData === null && !projectId && (
-                            <div className="text-[10px] text-gray-400 italic py-1">No project context available.</div>
-                        )}
-                        {/* IRI row */}
-                        <div className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mt-2 mb-1">IRI</div>
-                        <div className="flex items-start gap-2">
-                            <span className="font-mono text-gray-700 break-all flex-1 leading-relaxed select-all text-[10px]">{item}</span>
-                            <button onClick={handleCopyIri}
-                                title="Copy the full IRI"
-                                className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                                    copied === 'iri' ? 'bg-green-100 border-green-300 text-green-700' : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-100'
-                                }`}
-                            >{copied === 'iri' ? '✓ Copied' : 'Copy IRI'}</button>
-                            <button onClick={handleCopyFragment}
-                                title="Copy just the local name (fragment) after the last # or /"
-                                className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                                    copied === 'fragment' ? 'bg-green-100 border-green-300 text-green-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-100'
-                                }`}
-                            >{copied === 'fragment' ? '✓ Copied' : 'Copy Fragment'}</button>
-                        </div>
-                    </div>
-                </div>
+            {explainPayload && (
+                <ExplanationModal
+                    isOpen={showExplain}
+                    onClose={() => setShowExplain(false)}
+                    label={displayName}
+                    loading={explainLoading}
+                    error={explainError}
+                    justifications={explainJustifications}
+                    mode={explainMode}
+                    onModeChange={(mode) => { setExplainMode(mode); fetchExplainEntailment(mode, explainLimitAll ? 99 : explainLimitValue); }}
+                    limitAll={explainLimitAll}
+                    onLimitAllChange={(all) => { setExplainLimitAll(all); fetchExplainEntailment(explainMode, all ? 99 : explainLimitValue); }}
+                    limitValue={explainLimitValue}
+                    onLimitValueChange={(value) => { setExplainLimitValue(value); if (!explainLimitAll) fetchExplainEntailment(explainMode, value); }}
+                    onNavigate={onNavigate ? (iri, type) => { setShowExplain(false); onNavigate(iri, type); } : undefined}
+                />
             )}
 
             {/* Annotations panel — "Annotations for DataPropertyRange" dialog */}

@@ -12,6 +12,7 @@ import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '.
 import { useAuth } from '../../custom-hook/useAuth';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
+import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 
@@ -298,7 +299,7 @@ const ClassEditor: React.FC<{
     itemRef.current = item;
   });
 
-  const [activeTab, setActiveTab] = useState<"annotations" | "usage" | "description">("annotations");
+  const [activeTab, setActiveTab] = useState<"annotations" | "usage" | "description">("description");
   const [loadingAnnotations, setLoadingAnnotations] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [loadingDetailsElapsed, setLoadingDetailsElapsed] = useState(0);
@@ -566,9 +567,11 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
   // Pre-load all-classes lookup when editor dialog opens so Manchester expressions can resolve labels
   useEffect(() => {
-    if (isEditorOpen || isGCAEditorOpen) loadAllClassesLookup();
+    if (isEditorOpen || isGCAEditorOpen || (classDetails?.generalClassAxioms?.length ?? 0) > 0) {
+      loadAllClassesLookup();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditorOpen, isGCAEditorOpen]);
+  }, [isEditorOpen, isGCAEditorOpen, classDetails?.generalClassAxioms?.length]);
 
   // Auto-reload when a collaborator modifies this class
   useEffect(() => {
@@ -945,65 +948,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
   // Navigation handler for clicking properties in axiom descriptions
   const handleNavigate = (iri: string, type: string) => {
     console.log("[ClassEditor] Navigate to:", { iri, type });
-
-    if (type === "class") {
-      // Find the class in the hierarchy
-      const findInHierarchy = (nodes: TreeNode[]): TreeNode | null => {
-        for (const node of nodes) {
-          if (node.id === iri) return node;
-          if (node.children) {
-            const found = findInHierarchy(node.children);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-
-      const classNode = findInHierarchy(classHierarchy);
-      if (classNode) {
-        console.log("[ClassEditor] Navigating to class:", classNode);
-        // Update the current item to trigger parent re-render with new selection
-        onUpdate(classNode);
-      } else {
-        console.warn("[ClassEditor] Class not found in hierarchy:", iri);
-      }
-    } else if (type === "property" || type === "objectProperty" || type === "dataProperty") {
-      // Find the property in the hierarchies
-      const findInPropertyHierarchy = (nodes: TreeNode[]): TreeNode | null => {
-        for (const node of nodes) {
-          if (node.id === iri) return node;
-          if (node.children) {
-            const found = findInPropertyHierarchy(node.children);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-
-      // Check in object property hierarchy first
-      let propertyNode = objectPropertyHierarchy.length > 0 ? findInPropertyHierarchy(objectPropertyHierarchy) : null;
-
-      // If not found, check in data property hierarchy
-      if (!propertyNode && dataPropertyHierarchy.length > 0) {
-        propertyNode = findInPropertyHierarchy(dataPropertyHierarchy);
-      }
-
-      // If still not found, create a basic property node from the lists
-      if (!propertyNode) {
-        const property = properties.find((p) => p.id === iri) || dataProperties.find((p) => p.id === iri);
-        if (property) {
-          propertyNode = property;
-        }
-      }
-
-      if (propertyNode) {
-        console.log("[ClassEditor] Navigating to property:", propertyNode);
-        // Navigate to the property by updating the selection
-        onUpdate(propertyNode);
-      } else {
-        console.warn("[ClassEditor] Property not found in hierarchies:", iri);
-      }
-    }
+    dispatchCollaborationNavigate({ projectId, entityIRI: iri, entityType: type });
   };
 
   const openEditor = (
@@ -1201,6 +1146,21 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       if (iris) return { expressionType: "union", iris };
     }
     return null;
+  };
+
+  const resolveGCAAxiom = (
+    definition: string,
+  ): { subjectIris: string[]; targetIri: string } | null => {
+    const match = definition.match(/^\s*\(?(.+?)\)?\s+SubClassOf\s+(.+?)\s*$/i);
+    if (!match) return null;
+    const [, subExprText, targetExprText] = match;
+    const parsedSub = parseManchesterExpression(subExprText);
+    if (!parsedSub || parsedSub.expressionType !== "intersection" || parsedSub.iris.length !== 2) {
+      return null;
+    }
+    const targetIri = findClassIriByLabelOrIri(targetExprText.trim(), classHierarchy);
+    if (!targetIri) return null;
+    return { subjectIris: parsedSub.iris, targetIri };
   };
 
   const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
@@ -2411,6 +2371,8 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                resolveGCAAxiom={resolveGCAAxiom}
+                onNavigate={handleNavigate}
               />
 
               {/* SubClass Of (Anonymous Ancestor) */}
@@ -2504,6 +2466,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                   onViewOnlyAction={onViewOnlyAction}
                   projectId={projectId}
                   parentEntityIri={item.id}
+                  onNavigate={handleNavigate}
                 />
               </div>
 
@@ -2524,6 +2487,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                onNavigate={handleNavigate}
               />
 
               {/* Disjoint With Section */}
@@ -2565,6 +2529,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                onNavigate={handleNavigate}
               />
             </div>
             )}
