@@ -1752,7 +1752,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
 CodeHighlighter.displayName = "CodeHighlighter";
 
 // Line-by-line highlighting functions (no background colors, only text colors)
-function highlightTurtleLine(line: string): string {
+export function highlightTurtleLine(line: string): string {
   // Debug logging for DOI detection
   if (line.includes("bibo:doi") || line.includes("dc:identifier")) {
     console.log("🐢 highlightTurtleLine called with DOI line:", { line, escaped: escapeHtml(line) });
@@ -1780,9 +1780,9 @@ function highlightTurtleLine(line: string): string {
       /(@prefix|@base)(\s+)/g,
       (_match, keyword, space) => `${store(`<span style="color:#c586c0">${keyword}</span>`)}${space}`,
     )
-    .replace(/(&lt;[^&gt;]+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
+    .replace(/(&lt;(?:(?!&gt;).)+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
     .replace(
-      /("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
+      /(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
       (_match, str, lang) =>
         `${store(`<span style="color:#ce9178">${str}</span>`)}${store(`<span style="color:#4fc1ff">${lang}</span>`)}`,
     )
@@ -1801,7 +1801,7 @@ function highlightTurtleLine(line: string): string {
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI'),2000);" title="Click to open DOI: ${doiUrl}">&quot;${displayValue}&quot;</a>`)}`;
     })
-    .replace(/("(?:[^"\\]|\\.)*")/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
+    .replace(/(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
     .replace(/(\^\^)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`))
     .replace(
       /\b([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)\b/g,
@@ -1836,13 +1836,13 @@ function highlightRDFXMLLine(line: string): string {
     .replace(/(&lt;\?xml[^?]*\?&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
     .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
     // Special highlighting for DOI elements - handle tags with or without xmlns attributes
-    .replace(/(&lt;bibo:doi(?:\s+[^&gt;]*)?&gt;)([^&lt;]+)(&lt;\/bibo:doi&gt;)/gi, (_match, open, doiValue, close) => {
+    .replace(/(&lt;bibo:doi(?:\s+(?:(?!&gt;).)*)?&gt;)((?:(?!&lt;).)+)(&lt;\/bibo:doi&gt;)/gi, (_match, open, doiValue, close) => {
       console.log("🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi:", { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       // Extract tag parts for proper highlighting
-      const openTagMatch = open.match(/(&lt;)(bibo)(:)(doi)(\s+[^&gt;]*)?(&gt;)/i);
+      const openTagMatch = open.match(/(&lt;)(bibo)(:)(doi)(\s+(?:(?!&gt;).)*)?(&gt;)/i);
       if (openTagMatch) {
         const openTag = `${store(`<span style="color:#808080">&lt;</span>`)}${store(`<span style="color:#569cd6">bibo</span>`)}:${store(`<span style="color:#4ec9b0">doi</span>`)}${openTagMatch[5] || ""}${store(`<span style="color:#808080">&gt;</span>`)}`;
         const closeTag = `${store(`<span style="color:#808080">&lt;/</span>`)}${store(`<span style="color:#569cd6">bibo</span>`)}:${store(`<span style="color:#4ec9b0">doi</span>`)}${store(`<span style="color:#808080">&gt;</span>`)}`;
@@ -1851,7 +1851,7 @@ function highlightRDFXMLLine(line: string): string {
       return _match; // Fallback if parsing fails
     })
     // Special handling for dc:identifier with doi: prefix
-    .replace(/(&lt;dc:identifier&gt;)doi:([^&lt;]+)(&lt;\/dc:identifier&gt;)/gi, (_match, open, doiValue, close) => {
+    .replace(/(&lt;dc:identifier&gt;)doi:((?:(?!&lt;).)+)(&lt;\/dc:identifier&gt;)/gi, (_match, open, doiValue, close) => {
       console.log("🔗 DOI PATTERN MATCHED in RDF/XML dc:identifier:", { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
@@ -1860,7 +1860,7 @@ function highlightRDFXMLLine(line: string): string {
       const closeTag = `${store(`<span style="color:#808080">&lt;/</span>`)}${store(`<span style="color:#569cd6">dc</span>`)}:${store(`<span style="color:#4ec9b0">identifier</span>`)}${store(`<span style="color:#808080">&gt;</span>`)}`;
       return `${openTag}${store(`<span style="color:#ce9178">doi:</span>`)}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeTag}`;
     })
-    .replace(/(bibo:doi)=(&quot;)([^&quot;]+)(&quot;)/gi, (_match, attr, openQuote, doiValue, closeQuote) => {
+    .replace(/(bibo:doi)=(&quot;)((?:(?!&quot;).)+)(&quot;)/gi, (_match, attr, openQuote, doiValue, closeQuote) => {
       console.log("🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi attribute:", { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
@@ -1868,7 +1868,7 @@ function highlightRDFXMLLine(line: string): string {
       return `${store(`<span style="color:#9cdcfe">${attr}</span>`)}=${openQuote}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeQuote}`;
     })
     .replace(
-      /=(&quot;[^&quot;]*&quot;)/g,
+      /=(&quot;(?:(?!&quot;).)*&quot;)/g,
       (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`,
     )
     .replace(
@@ -1921,7 +1921,7 @@ function highlightOWLXMLLine(line: string): string {
   // Pattern 1: <Literal>doi:value</Literal> or <Literal>10.xxxx/...</Literal>
   let result = escaped
     .replace(
-      /(&lt;Literal(?:\s+[^&gt;]*)?)&gt;(doi:)?(\d+\.\d+\/[^&lt;]+)(&lt;\/Literal&gt;)/gi,
+      /(&lt;Literal(?:\s+(?:(?!&gt;).)*)?)&gt;(doi:)?(\d+\.\d+\/(?:(?!&lt;).)+)(&lt;\/Literal&gt;)/gi,
       (_match, openTag, doiPrefix, doiValue, closeTag) => {
         console.log("🔗 DOI PATTERN MATCHED in OWL/XML Literal:", { doiPrefix, doiValue, fullMatch: _match });
         const fullDoiValue = (doiPrefix || "") + doiValue;
@@ -1935,7 +1935,7 @@ function highlightOWLXMLLine(line: string): string {
     )
     // Pattern 2: Highlight AnnotationProperty IRI with bibo/doi
     .replace(
-      /(&lt;AnnotationProperty\s+IRI=&quot;[^&quot;]*(?:bibo\/doi|identifier)[^&quot;]*&quot;\s*\/&gt;)/gi,
+      /(&lt;AnnotationProperty\s+IRI=&quot;(?:(?!&quot;).)*(?:bibo\/doi|identifier)(?:(?!&quot;).)*&quot;\s*\/&gt;)/gi,
       (match) => {
         console.log("🔗 DOI AnnotationProperty detected in OWL/XML:", { match });
         return store(`<span style="color:#4ec9b0;font-weight:bold">${match}</span>`);
@@ -1945,7 +1945,7 @@ function highlightOWLXMLLine(line: string): string {
     .replace(/(&lt;\?xml[^?]*\?&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
     .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
     .replace(
-      /=(&quot;[^&quot;]*&quot;)/g,
+      /=(&quot;(?:(?!&quot;).)*&quot;)/g,
       (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`,
     )
     .replace(
@@ -2034,13 +2034,13 @@ function highlightNTriplesLine(line: string): string {
         return `${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
       },
     )
-    .replace(/(&lt;[^&gt;]+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
+    .replace(/(&lt;(?:(?!&gt;).)+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
     .replace(
-      /("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
+      /(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
       (_match, str, lang) =>
         `${store(`<span style="color:#ce9178">${str}</span>`)}${store(`<span style="color:#4fc1ff">${lang}</span>`)}`,
     )
-    .replace(/("(?:[^"\\]|\\.)*")/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
+    .replace(/(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
     .replace(/(\^\^)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`))
     .replace(/(\s\.\s*$)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`));
 
@@ -2079,7 +2079,7 @@ function highlightOWLLine(line: string): string {
   let result = escaped
     .replace(/(&lt;\?xml[^?]*\?&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
     .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
-    .replace(/(&lt;!DOCTYPE[^&gt;]*&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
+    .replace(/(&lt;!DOCTYPE(?:(?!&gt;).)*&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
     // Functional syntax: AnnotationAssertion(<http://.../bibo/doi> <subject> "value")
     .replace(
       /(AnnotationAssertion\()(&lt;.+?bibo\/doi&gt;)\s+(&lt;.+?&gt;)\s+&quot;(.+?)&quot;\)/gi,
@@ -2126,7 +2126,7 @@ function highlightOWLLine(line: string): string {
       return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
     })
     .replace(
-      /=(&quot;[^&quot;]*&quot;)/g,
+      /=(&quot;(?:(?!&quot;).)*&quot;)/g,
       (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`,
     )
     .replace(
@@ -2182,14 +2182,14 @@ function highlightTurtle(lines: string[]): string {
       // Prefixes and base
       .replace(/(@prefix|@base)(\s+)/g, '<span style="color:#c586c0">$1</span>$2')
       // URIs in angle brackets
-      .replace(/(&lt;[^&gt;]+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
+      .replace(/(&lt;(?:(?!&gt;).)+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
       // Literals with language tags
       .replace(
-        /("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
+        /(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
         '<span style="color:#ce9178">$1</span><span style="color:#4fc1ff">$2</span>',
       )
       // Literals without language tags
-      .replace(/("(?:[^"\\]|\\.)*")/g, '<span style="color:#ce9178">$1</span>')
+      .replace(/(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)/g, '<span style="color:#ce9178">$1</span>')
       // Datatype indicators
       .replace(/(\^\^)/g, '<span style="color:#d4d4d4">$1</span>')
       // Prefixed names
@@ -2222,7 +2222,7 @@ function highlightRDFXML(lines: string[]): string {
       // Comments
       .replace(/(&lt;!--.*?--&gt;)/g, '<span style="color:#6a9955">$1</span>')
       // Attribute values (before tags to avoid conflicts)
-      .replace(/=(&quot;[^&quot;]*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
+      .replace(/=(&quot;(?:(?!&quot;).)*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
       // Opening/closing tags with namespace
       .replace(
         /(&lt;\/?)([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)/g,
@@ -2264,14 +2264,14 @@ function highlightNTriples(lines: string[]): string {
     // Apply highlighting
     escaped = escaped
       // URIs in angle brackets
-      .replace(/(&lt;[^&gt;]+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
+      .replace(/(&lt;(?:(?!&gt;).)+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
       // Literals with language tags
       .replace(
-        /("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
+        /(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
         '<span style="color:#ce9178">$1</span><span style="color:#4fc1ff">$2</span>',
       )
       // Literals without language tags
-      .replace(/("(?:[^"\\]|\\.)*")/g, '<span style="color:#ce9178">$1</span>')
+      .replace(/(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)/g, '<span style="color:#ce9178">$1</span>')
       // Datatype indicators
       .replace(/(\^\^)/g, '<span style="color:#d4d4d4">$1</span>')
       // Triple terminator
@@ -2297,9 +2297,9 @@ function highlightOWL(lines: string[]): string {
       // Comments
       .replace(/(&lt;!--.*?--&gt;)/g, '<span style="color:#6a9955">$1</span>')
       // DOCTYPE
-      .replace(/(&lt;!DOCTYPE[^&gt;]*&gt;)/g, '<span style="color:#569cd6">$1</span>')
+      .replace(/(&lt;!DOCTYPE(?:(?!&gt;).)*&gt;)/g, '<span style="color:#569cd6">$1</span>')
       // Attribute values (before tags to avoid conflicts)
-      .replace(/=(&quot;[^&quot;]*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
+      .replace(/=(&quot;(?:(?!&quot;).)*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
       // OWL and RDF elements with namespace
       .replace(
         /(&lt;\/?)((owl|rdf|rdfs|xsd|dc|dcterms):([a-zA-Z_][\w-]*))/g,
