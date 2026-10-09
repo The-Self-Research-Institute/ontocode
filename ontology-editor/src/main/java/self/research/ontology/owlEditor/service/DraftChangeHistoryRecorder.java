@@ -99,6 +99,7 @@ public class DraftChangeHistoryRecorder {
                 subChanges.add(toSubChangeMap(draft));
             }
         }
+        addCreationParent(primary, primaryData, subChanges);
         String description = subChanges.isEmpty()
                 ? formatChangeDescription(primary)
                 : formatChangeDescription(primary) + " (" + subChanges.size() + " additional change"
@@ -107,6 +108,36 @@ public class DraftChangeHistoryRecorder {
         historyService.recordEdit(projectId, primary.getUserId(), primary.getUsername(), primary.getOperationType(),
                 entityIri, label != null ? label : entityIri, stringOrNull(primaryData.get("oldValue")),
                 newValueOf(primaryData), description, stringOrNull(primaryData.get("property")), subChanges, false);
+    }
+
+    private static void addCreationParent(DraftChange primary, Map<String, Object> data,
+                                          List<Map<String, String>> subChanges) {
+        String type = primary.getOperationType();
+        String predicate;
+        String parent;
+        if ("createClass".equals(type)) {
+            predicate = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+            parent = stringOrNull(data.get("parent"));
+        } else if ("createObjectProperty".equals(type) || "createDataProperty".equals(type)
+                || "createAnnotationProperty".equals(type)) {
+            predicate = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
+            parent = stringOrNull(data.get("parent"));
+        } else {
+            return;
+        }
+        if (parent == null || parent.isBlank() || "http://www.w3.org/2002/07/owl#Thing".equals(parent)) {
+            return;
+        }
+        for (Map<String, String> existing : subChanges) {
+            if (predicate.equals(existing.get("predicate")) && parent.equals(existing.get("newValue"))) {
+                return;
+            }
+        }
+        Map<String, String> sc = new HashMap<>();
+        sc.put("predicate", predicate);
+        sc.put("newValue", parent);
+        sc.put("addition", "true");
+        subChanges.add(0, sc);
     }
 
     private static String stringOrNull(Object value) {
