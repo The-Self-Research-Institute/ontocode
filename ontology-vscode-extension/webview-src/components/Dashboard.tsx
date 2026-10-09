@@ -156,6 +156,7 @@ import {
   unwrapDetails,
 } from "./dashboard-parts/entityRefresh";
 import { searchScopeNoteFor } from "./codeSearch";
+import { isSaveDisabledInDraft } from "./dashboard-parts/draftSave";
 import { discardDraftMessage, runDraftDiscard } from "./dashboard-parts/discardDraft";
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
@@ -217,6 +218,9 @@ import PRsModal from "./PRsModal";
 import DraftPRPanel from "./DraftPRPanel";
 import PullPreviewDialog from "./PullPreviewDialog";
 
+const DRAFT_SAVE_DISABLED_HINT =
+  "Save is off in draft mode. Your edits are kept in your draft; raise a pull request to publish them.";
+
 const TopMenuBar = ({
   fileList,
   myFiles,
@@ -229,6 +233,7 @@ const TopMenuBar = ({
   hasUnsavedChanges,
   isSaving,
   draftCount,
+  saveDisabledInDraft,
   conflictStatus,
   onOpenDialog,
   onOpenPluginMarketplace,
@@ -289,6 +294,7 @@ const TopMenuBar = ({
   hasUnsavedChanges: boolean;
   isSaving: boolean;
   draftCount?: number;
+  saveDisabledInDraft?: boolean;
   conflictStatus?: 'idle' | 'checking' | 'clean' | 'conflict';
   onOpenDialog: () => void;
   onOpenPluginMarketplace: () => void;
@@ -867,7 +873,8 @@ const TopMenuBar = ({
                         await onSave();
                         setOpenMenu(null);
                       }}
-                      disabled={!hasUnsavedChanges || isSaving || !currentProjectId}
+                      disabled={saveDisabledInDraft || !hasUnsavedChanges || isSaving || !currentProjectId}
+                      title={saveDisabledInDraft ? DRAFT_SAVE_DISABLED_HINT : undefined}
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                       Save {draftCount && draftCount > 0 ? `(${draftCount})` : ""}
@@ -18407,6 +18414,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           hasUnsavedChanges={hasUnsavedChanges}
           isSaving={isSaving}
           draftCount={draftCount}
+          saveDisabledInDraft={isSaveDisabledInDraft(syncMode, isDesktop())}
           conflictStatus={publishConflictStatus}
           onOpenDialog={() => setShowOpenDialog(true)}
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
