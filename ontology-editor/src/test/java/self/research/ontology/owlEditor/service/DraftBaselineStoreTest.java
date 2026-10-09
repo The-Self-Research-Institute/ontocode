@@ -49,6 +49,10 @@ class DraftBaselineStoreTest {
         when(gridFs.getResource(file)).thenReturn(resource);
 
         assertEquals(Optional.of("<rdf/>"), store.load("p1", "u1"));
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        verify(gridFs).findOne(query.capture());
+        assertEquals(-1, query.getValue().getSortObject().get("uploadDate"),
+                "must prefer the newest copy if a race ever left two");
     }
 
     @Test

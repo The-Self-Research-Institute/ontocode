@@ -3,6 +3,7 @@ package self.research.ontology.owlEditor.service;
 import com.mongodb.client.gridfs.model.GridFSFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.gridfs.GridFsResource;
@@ -37,7 +38,7 @@ public class DraftBaselineStore {
     }
 
     public Optional<String> load(String projectId, String userId) {
-        GridFSFile file = gridFsTemplate.findOne(byName(projectId, userId));
+        GridFSFile file = gridFsTemplate.findOne(byName(projectId, userId).with(Sort.by(Sort.Direction.DESC, "uploadDate")));
         if (file == null) {
             return Optional.empty();
         }
