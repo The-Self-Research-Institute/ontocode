@@ -215,6 +215,8 @@ services:
     ports:
       - "8083:8083"
     environment:
+      ONTOLOGY_PLUGIN_SERVICE_URL: http://plugin-service:8087
+      ONTOLOGY_SWRL_SERVICE_URL: http://swrl-service:8084
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
       FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
