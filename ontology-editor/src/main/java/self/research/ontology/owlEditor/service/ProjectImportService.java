@@ -845,7 +845,7 @@ public class ProjectImportService {
 
             try {
                 historyService.recordEdit(projectId, item.getOwnerEmail(), item.getOwnerEmail(),
-                        "projectImported", null, null, null, null, "Imported " + filename);
+                        "projectImported", null, filename, null, null, "Imported " + filename);
             } catch (Exception historyEx) {
                 log.warn("[Import {}] Failed to record import history entry (non-fatal): {}",
                         projectId, historyEx.getMessage());

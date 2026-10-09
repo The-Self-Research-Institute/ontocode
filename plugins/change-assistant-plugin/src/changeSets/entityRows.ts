@@ -68,6 +68,7 @@ export function canUndoEntry(entry: ChangeEntry): boolean {
 }
 
 function otherChangesLabel(entry: ChangeEntry): string {
+  if (entry.operationType === 'projectImported') return 'File imported';
   const count = (entry.description || '').match(/modified (\d+) structural/i);
   if (count) return `${count[1]} other axioms`;
   return /structural/i.test(entry.operationType || '') ? 'Other axioms' : 'Other changes';
@@ -96,6 +97,9 @@ export function buildEntityRow(entry: ChangeEntry): EntityRow {
 }
 
 export function manualHeading(entry: ChangeEntry): SetHeading {
+  if (entry.operationType === 'projectImported') {
+    return { verb: 'Imported', name: entry.entityLabel || (entry.description || '').replace(/^Imported\s+/, '') || 'file' };
+  }
   const badge = entityBadge(entry);
   const parent = entry.reverted ? undefined
     : (entry.subChanges || []).find(sc => sc.addition && !sc.reverted && sc.newValue && /subClassOf$/.test(sc.predicate || ''));
