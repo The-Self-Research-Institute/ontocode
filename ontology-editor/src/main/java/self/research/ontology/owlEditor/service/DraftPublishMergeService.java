@@ -57,6 +57,10 @@ public class DraftPublishMergeService {
     public String captureBaselineSnapshot(String projectId, String userId) throws IOException {
         String mainGraph = datasetService.getGraphUri(projectId);
         String rdf = datasetService.exportNamedGraph(projectId, mainGraph, RDFFormat.RDFXML);
+        return writeBaselineSnapshot(projectId, userId, rdf);
+    }
+
+    private String writeBaselineSnapshot(String projectId, String userId, String rdf) throws IOException {
         String relative = "baselines/" + sanitizeUserId(userId) + ".owl";
         Path path = storageManager.projectDir(projectId).resolve(relative);
         Files.createDirectories(path.getParent());
@@ -331,31 +335,41 @@ public class DraftPublishMergeService {
         }
         OWLOntology draftCopy = mergeService.loadOntologyFromRdf(draftRdf);
         OWLOntology draftTarget = mergeService.loadOntologyFromRdf(draftRdf);
-        OWLOntology publicOnt = mergeService.loadOntologyFromRdf(exportMain(projectId));
+        String publicRdf = exportMain(projectId);
+        OWLOntology publicOnt = mergeService.loadOntologyFromRdf(publicRdf);
 
         Set<String> differing = mergeService.collectTouchedIris(draftCopy, publicOnt);
         Map<String, ConflictResolution> effective = new java.util.HashMap<>();
+        Set<String> declinedPublicOnly = new LinkedHashSet<>();
         int taken = 0;
         for (String iriStr : differing) {
             IRI iri = IRI.create(iriStr);
-            boolean draftOnly = draftCopy.containsEntityInSignature(iri) && !publicOnt.containsEntityInSignature(iri);
+            boolean inDraft = draftCopy.containsEntityInSignature(iri);
+            boolean inPublic = publicOnt.containsEntityInSignature(iri);
+            ResolutionAction action = ResolutionAction.KEEP_TARGET;
             ConflictResolution chosen = resolutions != null ? resolutions.get(iriStr) : null;
-            if (draftOnly || chosen == null) {
-                ConflictResolution keep = new ConflictResolution();
-                keep.setAction(ResolutionAction.KEEP_TARGET);
-                effective.put(iriStr, keep);
-            } else {
-                effective.put(iriStr, chosen);
-                if (chosen.getAction() == ResolutionAction.KEEP_SOURCE) {
-                    taken++;
-                }
+            if (chosen != null && chosen.getAction() == ResolutionAction.KEEP_SOURCE && !(inDraft && !inPublic)) {
+                action = draftCopy.containsAnnotationPropertyInSignature(iri)
+                        || publicOnt.containsAnnotationPropertyInSignature(iri)
+                        ? ResolutionAction.MERGE : ResolutionAction.KEEP_SOURCE;
+                taken++;
+            }
+            ConflictResolution resolution = new ConflictResolution();
+            resolution.setAction(action);
+            effective.put(iriStr, resolution);
+            if (!inDraft && inPublic && action == ResolutionAction.KEEP_TARGET) {
+                declinedPublicOnly.add(iriStr);
             }
         }
 
         OWLOntology merged = mergeService.mergeDraftPublishThreeWay(
                 draftCopy, publicOnt, draftTarget, differing, effective);
         replaceDraftGraph(projectId, userId, mergeService.saveOntologyToRdfXml(merged));
-        advanceBaseline(projectId, userId, session);
+
+        OWLOntology newBaseline = mergeService.loadOntologyFromRdf(publicRdf);
+        declinedPublicOnly.forEach(iri -> mergeService.removeEntityDefinition(newBaseline, IRI.create(iri)));
+        recordBaseline(projectId, userId, session,
+                writeBaselineSnapshot(projectId, userId, mergeService.saveOntologyToRdfXml(newBaseline)));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
@@ -475,7 +489,10 @@ public class DraftPublishMergeService {
     }
 
     private void advanceBaseline(String projectId, String userId, DraftSession session) throws IOException {
-        String newSnapshotPath = captureBaselineSnapshot(projectId, userId);
+        recordBaseline(projectId, userId, session, captureBaselineSnapshot(projectId, userId));
+    }
+
+    private void recordBaseline(String projectId, String userId, DraftSession session, String newSnapshotPath) {
         session.setBaselineSnapshotPath(newSnapshotPath);
         session.setBaselineMainRevision(revisionService.getRevision(projectId));
         session.setBaselineMainTripleCount(datasetService.countMainGraphTriples(projectId));

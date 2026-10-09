@@ -1310,6 +1310,10 @@ public class OntologyMergeService {
      * Does not remove axioms where the entity is merely referenced by other entities.
      * Uses batch applyChanges for atomic removal.
      */
+    public void removeEntityDefinition(OWLOntology ontology, IRI entityIRI) {
+        removeDefiningAxioms(ontology, entityIRI, ontology.getOWLOntologyManager());
+    }
+
     private void removeDefiningAxioms(OWLOntology ontology, IRI entityIRI, OWLOntologyManager manager) {
         Set<OWLAxiom> toRemove = getDefiningAxioms(ontology, entityIRI);
         if (!toRemove.isEmpty()) {

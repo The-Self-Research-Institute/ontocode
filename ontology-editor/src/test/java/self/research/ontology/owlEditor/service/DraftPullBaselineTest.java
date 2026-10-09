@@ -254,6 +254,67 @@ class DraftPullBaselineTest {
         assertTrue(appliedDraftRdf().contains(classC));
     }
 
+    private String storedBaseline() {
+        org.mockito.ArgumentCaptor<String> rdf = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(baselineStore).save(eq("p1"), eq("u1"), rdf.capture());
+        return rdf.getValue();
+    }
+
+    @Test
+    void aPublicOnlyClassTheUserDeclinesIsLeftOutOfTheNewBaselineSoPublishingCannotDeleteIt() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "A"), rdfWithLabels(CLASS_A, "A", CLASS_B, "B"));
+
+        service.applyPull("p1", "u1", Map.of(CLASS_B,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.KEEP_TARGET)));
+
+        assertFalse(storedBaseline().contains(CLASS_B));
+    }
+
+    @Test
+    void aPublicOnlyClassTheUserTakesStaysInTheNewBaseline() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "A"), rdfWithLabels(CLASS_A, "A", CLASS_B, "B"));
+
+        service.applyPull("p1", "u1", Map.of(CLASS_B,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.KEEP_SOURCE)));
+
+        assertTrue(storedBaseline().contains(CLASS_B));
+        assertTrue(appliedDraftRdf().contains(CLASS_B));
+    }
+
+    @Test
+    void anUnexpectedActionSuchAsSkipNeverStripsTheUsersOwnVersion() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "Alpha"), rdfWithLabels(CLASS_A, "Beta"));
+
+        service.applyPull("p1", "u1", Map.of(CLASS_A,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.SKIP)));
+
+        String merged = appliedDraftRdf();
+        assertTrue(merged.contains("Alpha"));
+        assertFalse(merged.contains("Beta"));
+    }
+
+    @Test
+    void takingPublicForAnAnnotationPropertyNeverRemovesTheDraftsOwnUsesOfIt() throws Exception {
+        String property = "http://ex.org/myNote";
+        String draft = "<?xml version=\"1.0\"?><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
+                + "xmlns:rdfs=\"http://www.w3.org/2000/01/rdf-schema#\" xmlns:owl=\"http://www.w3.org/2002/07/owl#\" "
+                + "xmlns:ex=\"http://ex.org/\"><owl:Ontology rdf:about=\"http://ex.org/o\"/>"
+                + "<owl:AnnotationProperty rdf:about=\"" + property + "\"><rdfs:label>draft name</rdfs:label></owl:AnnotationProperty>"
+                + "<owl:Class rdf:about=\"http://ex.org/Bar\"><ex:myNote>my private note</ex:myNote></owl:Class></rdf:RDF>";
+        String publicRdf = "<?xml version=\"1.0\"?><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
+                + "xmlns:rdfs=\"http://www.w3.org/2000/01/rdf-schema#\" xmlns:owl=\"http://www.w3.org/2002/07/owl#\">"
+                + "<owl:Ontology rdf:about=\"http://ex.org/o\"/>"
+                + "<owl:AnnotationProperty rdf:about=\"" + property + "\"><rdfs:label>public name</rdfs:label></owl:AnnotationProperty></rdf:RDF>";
+        givenDraftAndPublic(draft, publicRdf);
+
+        service.applyPull("p1", "u1", Map.of(property,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.KEEP_SOURCE)));
+
+        String merged = appliedDraftRdf();
+        assertTrue(merged.contains("my private note"));
+        assertTrue(merged.contains("public name"));
+    }
+
     @Test
     void afterAResolvedFallbackPullTheBaselineIsReestablishedFromPublic() throws Exception {
         givenDraftAndPublic(rdfWithLabels(CLASS_A, "A"), rdfWithLabels(CLASS_A, "A", CLASS_B, "B"));
