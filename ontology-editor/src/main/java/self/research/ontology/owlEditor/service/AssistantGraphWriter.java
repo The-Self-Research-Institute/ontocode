@@ -49,7 +49,7 @@ final class AssistantGraphWriter {
                 return new Outcome(patched.get(), null);
             }
         }
-        return reimport(group, splicedFile, userEmail, perf, origin);
+        return reimport(group, sourceFile, splicedFile, userEmail, perf, origin);
     }
 
     private static void seedIndex(Path cacheFile, TriplePatchPlanner.TriplePatch patch) {
@@ -120,7 +120,7 @@ final class AssistantGraphWriter {
         }
     }
 
-    private Outcome reimport(AssistantEditGroupDocument group, Path splicedFile, String userEmail, PerfPhases perf,
+    private Outcome reimport(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile, String userEmail, PerfPhases perf,
                              ChangeOrigin origin) {
         AssistantApplyOperationDocument operation;
         try {
@@ -150,8 +150,20 @@ final class AssistantGraphWriter {
             return new Outcome(null, failed);
         }
         perf.mark("reimport");
+        recordPrefixChanges(group, sourceFile, splicedFile, draft, draft ? draftUserId : userEmail, userEmail, origin);
         operationService.markCommitted(operation);
         return new Outcome(new Written(result.sourceVersion(), result.cacheMatchesSubmittedContent(), false), null);
+    }
+
+    private void recordPrefixChanges(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile, boolean draft,
+                                     String historyUserId, String username, ChangeOrigin origin) {
+        try {
+            reimportPipeline.recordPrefixChanges(group.getProjectId(), historyUserId, username, draft, origin,
+                    PrefixScanner.scan(sourceFile, group.getTargetPath()),
+                    PrefixScanner.scan(splicedFile, group.getTargetPath()));
+        } catch (Exception scanEx) {
+            log.debug("[Assistant] Could not compare prefix declarations for the change history: {}", scanEx.getMessage());
+        }
     }
 
     private static List<TriplePatchPlanner.Edit> edits(AssistantEditGroupDocument group) {

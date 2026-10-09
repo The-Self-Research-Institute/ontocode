@@ -56,8 +56,15 @@ final class CodeViewHistoryRecorder {
 
     void record(String projectId, String userId, String username, Model oldModel, Model newModel, boolean draft,
                 ChangeOrigin origin) {
+        record(projectId, userId, username, oldModel, newModel, draft, origin, true);
+    }
+
+    void record(String projectId, String userId, String username, Model oldModel, Model newModel, boolean draft,
+                ChangeOrigin origin, boolean diffPrefixes) {
         Actor actor = new Actor(projectId, userId, username, draft, origin != null ? origin : ChangeOrigin.manual());
-        recordPrefixChanges(actor, oldModel.getNamespaces(), newModel.getNamespaces());
+        if (diffPrefixes) {
+            recordPrefixChanges(actor, oldModel.getNamespaces(), newModel.getNamespaces());
+        }
         Set<Statement> added = new LinkedHashSet<>(newModel);
         added.removeAll(oldModel);
         Set<Statement> removed = new LinkedHashSet<>(oldModel);
@@ -91,6 +98,16 @@ final class CodeViewHistoryRecorder {
         if (draftOps != null && !draftOps.isEmpty()) {
             draftTrackingService.recordDrafts(projectId, userId, username, draftOps, UUID.randomUUID().toString());
         }
+    }
+
+    void recordPrefixes(String projectId, String userId, String username, Map<String, String> oldPrefixes,
+                        Map<String, String> newPrefixes, boolean draft, ChangeOrigin origin) {
+        Actor actor = new Actor(projectId, userId, username, draft, origin != null ? origin : ChangeOrigin.manual());
+        Set<Namespace> oldNamespaces = new LinkedHashSet<>();
+        oldPrefixes.forEach((prefix, name) -> oldNamespaces.add(new org.eclipse.rdf4j.model.impl.SimpleNamespace(prefix, name)));
+        Set<Namespace> newNamespaces = new LinkedHashSet<>();
+        newPrefixes.forEach((prefix, name) -> newNamespaces.add(new org.eclipse.rdf4j.model.impl.SimpleNamespace(prefix, name)));
+        recordPrefixChanges(actor, oldNamespaces, newNamespaces);
     }
 
     private record PrefixChange(String opType, String prefix, String oldNamespace, String newNamespace) {}

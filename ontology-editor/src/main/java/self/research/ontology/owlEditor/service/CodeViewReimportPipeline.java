@@ -281,11 +281,22 @@ public class CodeViewReimportPipeline {
             Model oldModel = parseToModel(req.oldContentFileForDiff(), RdfFiles.snapshotFormat(req.oldContentFileForDiff()));
             Model newModel = parseToModel(files.importSourceFile, files.rdfFormat);
             historyRecorder.record(req.projectId(), CodeViewHistoryRecorder.effectiveUserId(req.userId(), desktopMode),
-                    CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft(), origin);
+                    CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft(), origin,
+                    !oldModel.getNamespaces().isEmpty());
             return origin;
         } catch (Exception diffEx) {
             log.warn("[CODE-VIEW-SAVE] Failed to record change history diff (save itself succeeded): {}", diffEx.getMessage());
             return null;
+        }
+    }
+
+    public void recordPrefixChanges(String projectId, String userId, String username, boolean draft,
+                                    ChangeOrigin origin, Map<String, String> oldPrefixes, Map<String, String> newPrefixes) {
+        try {
+            historyRecorder.recordPrefixes(projectId, CodeViewHistoryRecorder.effectiveUserId(userId, desktopMode),
+                    CodeViewHistoryRecorder.effectiveUsername(username), oldPrefixes, newPrefixes, draft, origin);
+        } catch (Exception e) {
+            log.warn("[CODE-VIEW-SAVE] Failed to record prefix changes (the edit itself succeeded): {}", e.getMessage());
         }
     }
 
