@@ -425,6 +425,17 @@ public class DraftTrackingService {
         log.info("[DRAFT] Clearing applied drafts for project {}", projectId);
         draftRepository.deleteByProjectIdAndAppliedTrue(projectId);
     }
+
+    private static final int ORPHANED_DRAFT_RETENTION_DAYS = 30;
+
+    @org.springframework.scheduling.annotation.Scheduled(cron = "0 30 3 * * *")
+    public void cleanupOrphanedUnappliedDrafts() {
+        LocalDateTime cutoff = LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(ORPHANED_DRAFT_RETENTION_DAYS);
+        long deleted = draftRepository.deleteByAppliedFalseAndTimestampBefore(cutoff);
+        if (deleted > 0) {
+            log.info("[DRAFT] Cleaned up {} unapplied draft record(s) older than {} days", deleted, ORPHANED_DRAFT_RETENTION_DAYS);
+        }
+    }
     
     /**
      * Get draft statistics

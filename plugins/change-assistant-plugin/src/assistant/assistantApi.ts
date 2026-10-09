@@ -12,15 +12,25 @@ function postJson(url: string, body: object): Promise<Response> {
   });
 }
 
-export async function fetchDraftList(projectId: string): Promise<any[] | null> {
+export async function fetchDraftList(projectId: string, userId: string): Promise<any[] | null> {
   const base = apiBase();
-  const response = await authFetch(`${base}/api/ontology/${projectId}/drafts/stats`);
+  const query = `?userId=${encodeURIComponent(userId)}`;
+  const response = await authFetch(`${base}/api/ontology/${projectId}/drafts/stats${query}`);
   if (!response.ok) return null;
-  const draftsResponse = await authFetch(`${base}/api/ontology/${projectId}/drafts`);
+  const draftsResponse = await authFetch(`${base}/api/ontology/${projectId}/drafts${query}`);
   if (!draftsResponse.ok) return null;
   const draftsData = await draftsResponse.json();
   if (!draftsData.drafts || !Array.isArray(draftsData.drafts)) return null;
   return draftsData.drafts;
+}
+
+export async function fetchDraftSessionActive(projectId: string, userId: string): Promise<boolean> {
+  const response = await authFetch(
+    `${apiBase()}/api/ontology/${projectId}/draft/copy/status?userId=${encodeURIComponent(userId)}`,
+  );
+  if (!response.ok) return false;
+  const data = await response.json();
+  return data.status === 'READY' || data.status === 'COPYING';
 }
 
 export async function fetchRecentChanges(projectId: string): Promise<any> {

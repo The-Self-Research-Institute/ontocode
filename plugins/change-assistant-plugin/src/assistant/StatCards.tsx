@@ -2,15 +2,17 @@ import React from 'react';
 import { Edit3, Lightbulb, Save, Users } from 'lucide-react';
 import { ChangeStats } from './types';
 
-const StatCards: React.FC<{ stats: ChangeStats }> = ({ stats }) => (
-  <div className="grid grid-cols-4 gap-2 mb-4">
-    <div className="bg-yellow-50 p-2 rounded border border-yellow-200">
-      <div className="text-xs text-yellow-600 flex items-center gap-1">
-        <Edit3 className="w-3 h-3" />
-        Drafts
+const StatCards: React.FC<{ stats: ChangeStats; isDraftActive: boolean }> = ({ stats, isDraftActive }) => (
+  <div className={`grid gap-2 mb-4 ${isDraftActive ? 'grid-cols-4' : 'grid-cols-3'}`}>
+    {isDraftActive && (
+      <div className="bg-yellow-50 p-2 rounded border border-yellow-200">
+        <div className="text-xs text-yellow-600 flex items-center gap-1">
+          <Edit3 className="w-3 h-3" />
+          Your drafts
+        </div>
+        <div className="text-xl font-bold text-yellow-700">{stats.draftChanges}</div>
       </div>
-      <div className="text-xl font-bold text-yellow-700">{stats.draftChanges}</div>
-    </div>
+    )}
     <div className="bg-blue-50 p-2 rounded">
       <div className="text-xs text-blue-600 flex items-center gap-1">
         <Save className="w-3 h-3" />

@@ -286,8 +286,8 @@ public class SparqlDatasetService {
                 draftSessionRepository.save(session);
                 log.info("[NAMESPACES] Persisted {} draft prefix mappings for project {} user {}: {}",
                         capturedNamespaces.size(), projectId, userId, capturedNamespaces.keySet());
-            }, () -> log.warn("[NAMESPACES] No draft session found for project {} user {} — draft prefixes not persisted",
-                    projectId, userId));
+            }, () -> log.error("[NAMESPACES] No draft session found for project {} user {} — {} draft prefix mapping(s) DROPPED: {}",
+                    projectId, userId, capturedNamespaces.size(), capturedNamespaces.keySet()));
             return;
         }
         if (projectMetadataService != null) {
@@ -429,6 +429,34 @@ public class SparqlDatasetService {
             session.setPrefixes(prefixes);
             draftSessionRepository.save(session);
         });
+    }
+
+    public void publishDraftPrefixesToPublic(String projectId, String userId) {
+        if (draftSessionRepository == null || userId == null || userId.isBlank()) {
+            return;
+        }
+        draftSessionRepository.findByProjectIdAndUserId(projectId, userId)
+                .map(self.research.ontology.owlEditor.model.DraftSession::getPrefixes)
+                .filter(draftPrefixes -> draftPrefixes != null && !draftPrefixes.isEmpty())
+                .ifPresent(draftPrefixes -> {
+                    Map<String, String> merged = new LinkedHashMap<>(readProjectPrefixes(projectId));
+                    merged.putAll(draftPrefixes);
+                    if (projectMetadataService == null) {
+                        log.warn("[NAMESPACES] projectMetadataService unavailable — draft prefixes not published for project {}", projectId);
+                        return;
+                    }
+                    try {
+                        Map<String, Object> meta = new HashMap<>(
+                                projectMetadataService.readMeta(projectId).orElseGet(HashMap::new));
+                        meta.put("prefixes", merged);
+                        projectMetadataService.writeMeta(projectId, meta);
+                        log.info("[NAMESPACES] Published {} draft prefix mapping(s) to public project {} on behalf of user {}: {}",
+                                draftPrefixes.size(), projectId, userId, draftPrefixes.keySet());
+                    } catch (Exception e) {
+                        log.warn("[NAMESPACES] Failed to publish draft prefixes to public for project {}: {}",
+                                projectId, e.getMessage());
+                    }
+                });
     }
 
     private static String normalizePrefixKey(String prefix) {
@@ -1302,6 +1330,7 @@ public class SparqlDatasetService {
                 + "CLEAR GRAPH <" + draftGraph + ">";
         long start = System.nanoTime();
         execUpdate(projectId, mainGraph, sparql);
+        publishDraftPrefixesToPublic(projectId, userId);
         evictDraftReadyCache(projectId, userId);
         log.info("[DRAFT-MOVE] Published draft→main for project {} user {} in {}ms",
                 projectId, userId, elapsedMillis(start));

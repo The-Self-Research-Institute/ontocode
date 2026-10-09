@@ -110,6 +110,7 @@ public class DraftPublishMergeService {
 
         String mergedRdf = mergeService.saveOntologyToRdfXml(merged);
         datasetService.replaceMainGraphFromRdf(projectId, mergedRdf, RDFFormat.RDFXML);
+        datasetService.publishDraftPrefixesToPublic(projectId, userId);
         datasetService.clearDraftGraph(projectId, userId);
 
         log.info("[DRAFT-MERGE] Published project {} user {} via three-way merge ({} conflict IRIs)",

@@ -30,6 +30,12 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const conflicts = useConflictResolution(projectId, feed.loadChanges);
   const comments = useCommentDialog(projectId, selectedChange, feed.loadChanges);
 
+  React.useEffect(() => {
+    if (!feed.isDraftActive && activeTab === 'drafts') {
+      setActiveTab('live');
+    }
+  }, [feed.isDraftActive, activeTab]);
+
   const openChangeDetails = (changeId: string) => {
     const change = feed.changes.find(c => c.id === changeId);
     if (change) setSelectedChange(change);
@@ -46,8 +52,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
 
   return (
     <div className="h-full flex flex-col bg-white">
-      <AssistantHeader isLoading={feed.isLoading} lastRefresh={feed.lastRefresh} stats={feed.stats} onRefresh={feed.refreshAll} filters={filters} />
-      <TabBar activeTab={activeTab} onSelect={setActiveTab} liveCount={liveActivity.length} stats={feed.stats} />
+      <AssistantHeader isLoading={feed.isLoading} lastRefresh={feed.lastRefresh} stats={feed.stats} onRefresh={feed.refreshAll} filters={filters} isDraftActive={feed.isDraftActive} />
+      <TabBar activeTab={activeTab} onSelect={setActiveTab} liveCount={liveActivity.length} stats={feed.stats} isDraftActive={feed.isDraftActive} />
       <TabContent
         projectId={projectId} activeTab={activeTab} liveActivity={liveActivity}
         changes={feed.changes} draftChanges={feed.draftChanges} stats={feed.stats}

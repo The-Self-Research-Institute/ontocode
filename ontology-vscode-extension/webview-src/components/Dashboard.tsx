@@ -12781,6 +12781,9 @@ const updateItemInState = useCallback(
           }
           // The ontology file was rewritten — reload all entity views to reflect the new state
           refreshAfterBulkWriteRef.current("codeViewSave");
+          window.dispatchEvent(
+            new CustomEvent("ontologyChangesSaved", { detail: { projectId, draft: isDraftScopeActive() } }),
+          );
           void (async () => {
             try {
               const followUpParams = new URLSearchParams({ userId: codeViewEffectiveUserId });
@@ -19476,6 +19479,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onPRApproved={() => {
             refreshOpenPRCount();
             if (projectId) fetchData(projectId, false, undefined, true);
+            window.dispatchEvent(new CustomEvent("ontologyChangesSaved", { detail: { projectId } }));
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}
         />

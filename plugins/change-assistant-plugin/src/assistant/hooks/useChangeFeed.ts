@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchDraftList, fetchRecentChanges } from '../assistantApi';
+import { currentActor } from '../../authFetch';
+import { fetchDraftList, fetchDraftSessionActive, fetchRecentChanges } from '../assistantApi';
 import { computeStats, parseChange, parseDraft } from '../changeParsing';
 import { ChangeStats, EMPTY_STATS, OntologyChange } from '../types';
 
@@ -11,11 +12,17 @@ export function useChangeFeed(projectId: string) {
   const [stats, setStats] = useState<ChangeStats>(EMPTY_STATS);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [isDraftActive, setIsDraftActive] = useState(false);
 
   const loadDraftChanges = async () => {
     try {
-      const drafts = await fetchDraftList(projectId);
+      const userId = currentActor().userId;
+      const [drafts, draftActive] = await Promise.all([
+        fetchDraftList(projectId, userId),
+        fetchDraftSessionActive(projectId, userId),
+      ]);
       if (drafts) setDraftChanges(drafts.map((draft: any) => parseDraft(draft)));
+      setIsDraftActive(draftActive);
     } catch (error) {
       console.error('Failed to load draft changes:', error);
     }
@@ -48,7 +55,18 @@ export function useChangeFeed(projectId: string) {
       loadChanges();
       loadDraftChanges();
     }, 10000);
-    return () => clearInterval(interval);
+    const handleSaved = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!detail || detail.projectId === projectId) {
+        loadChanges();
+        loadDraftChanges();
+      }
+    };
+    window.addEventListener('ontologyChangesSaved', handleSaved);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('ontologyChangesSaved', handleSaved);
+    };
   }, [projectId]);
 
   const refreshAll = () => {
@@ -63,5 +81,5 @@ export function useChangeFeed(projectId: string) {
     }, 1200);
   };
 
-  return { changes, draftChanges, stats, isLoading, lastRefresh, loadChanges, refreshAll, refreshAfterRollback };
+  return { changes, draftChanges, stats, isLoading, lastRefresh, isDraftActive, loadChanges, refreshAll, refreshAfterRollback };
 }
