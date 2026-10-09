@@ -45,6 +45,9 @@ public class OntologyMetadataService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private OntologyHistoryService historyService;
 
+    @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
 
     public static final Map<String, String> STANDARD_PREFIXES;
     static {
@@ -1030,9 +1033,17 @@ public class OntologyMetadataService {
 
     public void updatePrefix(String projectId, String prefix, String iri, String oldPrefix,
                              boolean draft, String userId) {
+        updatePrefix(projectId, prefix, iri, oldPrefix, draft, userId, userId, null);
+    }
+
+    public void updatePrefix(String projectId, String prefix, String iri, String oldPrefix,
+                             boolean draft, String userId, String actorId, String actorName) {
         if (draft) {
             datasetService.updateDraftPrefix(projectId, userId, prefix, iri, oldPrefix);
             storageManager.bumpDraftGraphVersion(projectId, userId);
+            boolean changed = oldPrefix != null && !oldPrefix.isBlank();
+            recordPrefixHistory(projectId, actorId, actorName, true, changed ? "prefixModified" : "prefixAdded",
+                    prefix, oldPrefix, null, iri);
             return;
         }
         // 1. Update in MongoDB
@@ -1066,6 +1077,9 @@ public class OntologyMetadataService {
             datasetService.getPrefixes(projectId).forEach((p, ns) -> prefixes.put(stripTrailingColon(p), ns));
         }
         
+        boolean renamed = oldPrefix != null && !oldPrefix.isBlank() && !oldPrefix.equals(prefix);
+        String previousNamespace = prefixes.get(renamed ? oldPrefix : prefix);
+
         // If we are renaming a prefix, remove the old one
         if (oldPrefix != null && !oldPrefix.equals(prefix)) {
             prefixes.remove(oldPrefix);
@@ -1076,6 +1090,47 @@ public class OntologyMetadataService {
         meta.put("prefixCount", prefixes.size());
         projectMetadataService.writeMeta(projectId, meta);
         storageManager.clearCodeViewCache(projectId);
+
+        if (renamed || previousNamespace == null) {
+            recordPrefixHistory(projectId, actorId, actorName, false, renamed ? "prefixModified" : "prefixAdded",
+                    prefix, renamed ? oldPrefix : null, previousNamespace, iri);
+        } else if (!previousNamespace.equals(iri)) {
+            recordPrefixHistory(projectId, actorId, actorName, false, "prefixModified",
+                    prefix, null, previousNamespace, iri);
+        }
+    }
+
+    private void recordPrefixHistory(String projectId, String actorId, String actorName, boolean draft,
+                                     String opType, String prefix, String oldPrefix, String oldNamespace,
+                                     String newNamespace) {
+        if (historyService == null) {
+            return;
+        }
+        try {
+            historyService.recordEdit(projectId, CodeViewHistoryRecorder.effectiveUserId(actorId, desktopMode),
+                    CodeViewHistoryRecorder.effectiveUsername(actorName), opType, null, prefix, oldNamespace,
+                    newNamespace, describePrefixEdit(opType, prefix, oldPrefix, oldNamespace, newNamespace),
+                    null, null, draft, ChangeOrigin.manual());
+        } catch (Exception e) {
+            log.warn("[Prefix] Could not record the prefix change in the history for project {}: {}",
+                    projectId, e.getMessage());
+        }
+    }
+
+    static String describePrefixEdit(String opType, String prefix, String oldPrefix, String oldNamespace,
+                                     String newNamespace) {
+        return switch (opType) {
+            case "prefixAdded" -> "added " + prefix + ": <" + newNamespace + ">";
+            case "prefixDeleted" -> "removed " + prefix;
+            default -> {
+                if (oldPrefix != null && !oldPrefix.isBlank() && !oldPrefix.equals(prefix)) {
+                    yield "renamed " + oldPrefix + " to " + prefix + ": <" + newNamespace + ">";
+                }
+                yield oldNamespace != null
+                        ? "changed " + prefix + " from <" + oldNamespace + "> to <" + newNamespace + ">"
+                        : "changed " + prefix + " to <" + newNamespace + ">";
+            }
+        };
     }
 
     /**
@@ -1086,9 +1141,15 @@ public class OntologyMetadataService {
     }
 
     public void deletePrefix(String projectId, String prefix, boolean draft, String userId) {
+        deletePrefix(projectId, prefix, draft, userId, userId, null);
+    }
+
+    public void deletePrefix(String projectId, String prefix, boolean draft, String userId,
+                             String actorId, String actorName) {
         if (draft) {
             datasetService.deleteDraftPrefix(projectId, userId, prefix);
             storageManager.bumpDraftGraphVersion(projectId, userId);
+            recordPrefixHistory(projectId, actorId, actorName, true, "prefixDeleted", prefix, null, null, null);
             return;
         }
         // 1. Update in MongoDB
@@ -1117,11 +1178,13 @@ public class OntologyMetadataService {
             }
 
             if (prefixes.containsKey(prefix)) {
-                prefixes.remove(prefix);
+                String removedNamespace = prefixes.remove(prefix);
                 meta.put("prefixes", prefixes);
                 meta.put("prefixCount", prefixes.size());
                 projectMetadataService.writeMeta(projectId, meta);
                 storageManager.clearCodeViewCache(projectId);
+                recordPrefixHistory(projectId, actorId, actorName, false, "prefixDeleted", prefix, null,
+                        removedNamespace, null);
             }
         }
     }

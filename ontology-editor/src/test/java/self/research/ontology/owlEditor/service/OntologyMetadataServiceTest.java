@@ -14,6 +14,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -189,5 +190,106 @@ class OntologyMetadataServiceTest {
                 opsCaptor.capture(), eq(false));
         assertEquals(1, opsCaptor.getValue().size());
         assertEquals("addGCAIntersection", opsCaptor.getValue().get(0).type());
+    }
+
+    private void givenPublicPrefixes(Map<String, String> prefixes) {
+        when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.of(
+                new java.util.HashMap<String, Object>(Map.of("prefixes", new java.util.HashMap<>(prefixes)))));
+    }
+
+    private void verifyHistory(String opType, String label, String oldValue, String newValue, String description,
+                               boolean draft) {
+        verify(historyService).recordEdit(eq("proj-1"), eq("user-7"), eq("Uma"), eq(opType), org.mockito.ArgumentMatchers.isNull(),
+                eq(label), eq(oldValue), eq(newValue), eq(description), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(), eq(draft), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void addingAPublicPrefixIsRecordedInTheChangeHistoryWithWhoDidIt() {
+        givenPublicPrefixes(Map.of("owl", "http://www.w3.org/2002/07/owl#"));
+
+        service.updatePrefix("proj-1", "ex", "http://ex.org/", null, false, null, "user-7", "Uma");
+
+        verifyHistory("prefixAdded", "ex", null, "http://ex.org/", "added ex: <http://ex.org/>", false);
+    }
+
+    @Test
+    void changingAPublicPrefixNamespaceRecordsTheOldAndNewValue() {
+        givenPublicPrefixes(Map.of("ex", "http://old.org/"));
+
+        service.updatePrefix("proj-1", "ex", "http://new.org/", "ex", false, null, "user-7", "Uma");
+
+        verifyHistory("prefixModified", "ex", "http://old.org/", "http://new.org/",
+                "changed ex from <http://old.org/> to <http://new.org/>", false);
+    }
+
+    @Test
+    void renamingAPublicPrefixIsDescribedAsARename() {
+        givenPublicPrefixes(Map.of("old", "http://ex.org/"));
+
+        service.updatePrefix("proj-1", "fresh", "http://ex.org/", "old", false, null, "user-7", "Uma");
+
+        verifyHistory("prefixModified", "fresh", "http://ex.org/", "http://ex.org/",
+                "renamed old to fresh: <http://ex.org/>", false);
+    }
+
+    @Test
+    void savingAPrefixWithoutChangingItRecordsNothing() {
+        givenPublicPrefixes(Map.of("ex", "http://ex.org/"));
+
+        service.updatePrefix("proj-1", "ex", "http://ex.org/", "ex", false, null, "user-7", "Uma");
+
+        verify(historyService, never()).recordEdit(anyString(), anyString(), anyString(), anyString(), any(), any(),
+                any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    void deletingAPublicPrefixIsRecordedWithTheNamespaceItHad() {
+        givenPublicPrefixes(Map.of("ex", "http://ex.org/"));
+
+        service.deletePrefix("proj-1", "ex", false, null, "user-7", "Uma");
+
+        verifyHistory("prefixDeleted", "ex", "http://ex.org/", null, "removed ex", false);
+    }
+
+    @Test
+    void deletingAPrefixThatDoesNotExistRecordsNothing() {
+        givenPublicPrefixes(Map.of("ex", "http://ex.org/"));
+
+        service.deletePrefix("proj-1", "missing", false, null, "user-7", "Uma");
+
+        verify(historyService, never()).recordEdit(anyString(), anyString(), anyString(), anyString(), any(), any(),
+                any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    void draftPrefixEditsAreRecordedAsDraftChanges() {
+        service.updatePrefix("proj-1", "ex", "http://ex.org/", null, true, "user-7", "user-7", "Uma");
+        service.deletePrefix("proj-1", "ex", true, "user-7", "user-7", "Uma");
+
+        verifyHistory("prefixAdded", "ex", null, "http://ex.org/", "added ex: <http://ex.org/>", true);
+        verifyHistory("prefixDeleted", "ex", null, null, "removed ex", true);
+    }
+
+    @Test
+    void aFailureWritingTheHistoryNeverFailsThePrefixEdit() {
+        givenPublicPrefixes(Map.of());
+        doThrow(new RuntimeException("mongo down")).when(historyService).recordEdit(anyString(), anyString(),
+                anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(),
+                org.mockito.ArgumentMatchers.anyBoolean(), any());
+
+        service.updatePrefix("proj-1", "ex", "http://ex.org/", null, false, null, "user-7", "Uma");
+
+        verify(projectMetadataService).writeMeta(eq("proj-1"), any());
+    }
+
+    @Test
+    void anUnnamedActorIsRecordedAsSystemRatherThanFailing() {
+        givenPublicPrefixes(Map.of());
+
+        service.updatePrefix("proj-1", "ex", "http://ex.org/", null, false, null, null, null);
+
+        verify(historyService).recordEdit(eq("proj-1"), eq("anonymous"), eq("System"), eq("prefixAdded"), any(), any(),
+                any(), any(), any(), any(), any(), eq(false), any());
     }
 }

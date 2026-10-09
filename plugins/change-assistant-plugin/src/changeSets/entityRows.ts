@@ -96,9 +96,23 @@ export function buildEntityRow(entry: ChangeEntry): EntityRow {
   };
 }
 
+const PREFIX_VERBS: Record<string, string> = {
+  prefixAdded: 'Added',
+  prefixModified: 'Changed',
+  prefixDeleted: 'Removed'
+};
+
 export function manualHeading(entry: ChangeEntry): SetHeading {
   if (entry.operationType === 'projectImported') {
     return { verb: 'Imported', name: entry.entityLabel || (entry.description || '').replace(/^Imported\s+/, '') || 'file' };
+  }
+  const prefixVerb = PREFIX_VERBS[entry.operationType || ''];
+  if (prefixVerb) {
+    return {
+      verb: prefixVerb,
+      name: `prefix ${entry.entityLabel || ''}`.trim(),
+      ...(entry.description ? { detail: entry.description } : {})
+    };
   }
   const badge = entityBadge(entry);
   const parent = entry.reverted ? undefined

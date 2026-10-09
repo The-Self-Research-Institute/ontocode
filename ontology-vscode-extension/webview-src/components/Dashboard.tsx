@@ -5261,7 +5261,13 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Saving prefix:", payload);
-      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, { ...payload, ...draftBodyFields() });
+      const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, {
+        ...payload,
+        ...draftBodyFields(),
+        actorUserId: actor.userId,
+        actorUsername: actor.username,
+      });
 
       // Refresh prefixes from server
       await refreshPrefixes();
@@ -5286,8 +5292,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       const cleanedPrefix = prefix.endsWith(":") ? prefix.slice(0, -1) : prefix;
 
       console.log("[Dashboard] Deleting prefix:", cleanedPrefix);
+      const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
       await apiClient.delete(
-        withDraftAndUser(`/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`),
+        withDraftAndUser(
+          `/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}` +
+            `&actorUserId=${encodeURIComponent(actor.userId)}&actorUsername=${encodeURIComponent(actor.username)}`,
+        ),
       );
 
       // Refresh from server
