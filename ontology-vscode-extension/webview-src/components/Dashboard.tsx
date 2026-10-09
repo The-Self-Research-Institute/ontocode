@@ -1209,6 +1209,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 }) => {
   // #region State
   const { user, logout } = useAuth();
+  useEffect(() => {
+    (window as any).vscodeUser = user
+      ? { id: user.userId, email: user.email, username: user.username }
+      : undefined;
+  }, [user]);
   const collaboration = useCollaboration();
   const { actualMode } = useTheme();
   const subscription = useSubscription();
