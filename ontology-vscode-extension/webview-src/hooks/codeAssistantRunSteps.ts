@@ -85,9 +85,11 @@ export function appendOutcome(ctx: RunContext, turn: TurnResult, runProjectId: s
 
 function startPendingConsistencyChecks(ctx: RunContext, entry: ReviewEntry, token: string | undefined) {
   const apiBaseUrl = getApiBaseUrl();
+  const runGeneration = ctx.chatGenerationRef.current;
   for (const group of entry.groups) {
     if (!group.validation.checks.some((c) => c.status === "pending")) continue;
     void pollConsistencyCheck(apiBaseUrl, token, entry.sessionId, group.serverGroupId, (resolved) => {
+      if (!ctx.optionsRef.current.mountedRef.current || ctx.chatGenerationRef.current !== runGeneration) return;
       ctx.chat.updateReviewEntry(entry.id, (current) => ({
         ...current,
         groups: current.groups.map((g) => {

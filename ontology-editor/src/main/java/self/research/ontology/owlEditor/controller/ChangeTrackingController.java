@@ -612,7 +612,7 @@ public class ChangeTrackingController {
                         commentMap.put("userId", comment.getUserId());
                         commentMap.put("username", comment.getUsername());
                         commentMap.put("text", comment.getText());
-                        commentMap.put("timestamp", comment.getTimestamp() != null ? comment.getTimestamp().toString() : null);
+                        commentMap.put("timestamp", comment.getTimestampIso());
                         commentsList.add(commentMap);
                     });
                 }
@@ -630,11 +630,11 @@ public class ChangeTrackingController {
                 // Add approval/rejection info
                 if (historyChange.getApprovedBy() != null) {
                     details.put("approvedBy", historyChange.getApprovedBy());
-                    details.put("approvedAt", historyChange.getApprovedAt() != null ? historyChange.getApprovedAt().toString() : null);
+                    details.put("approvedAt", historyChange.getApprovedAtIso());
                 }
                 if (historyChange.getRejectedBy() != null) {
                     details.put("rejectedBy", historyChange.getRejectedBy());
-                    details.put("rejectedAt", historyChange.getRejectedAt() != null ? historyChange.getRejectedAt().toString() : null);
+                    details.put("rejectedAt", historyChange.getRejectedAtIso());
                 }
                 
                 return ResponseEntity.ok(Map.of(
@@ -754,7 +754,7 @@ public class ChangeTrackingController {
         
         if (change.isReverted()) {
             map.put("revertedBy", change.getRevertedBy());
-            map.put("revertedAt", change.getRevertedAt().toString());
+            map.put("revertedAt", change.getRevertedAtIso());
         }
         
         return map;

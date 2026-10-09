@@ -103,6 +103,7 @@ abstract class AssistantEditProposalTestBase {
                         "Skipped — this edit doesn't appear to touch class axioms."));
         when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(7L);
         when(storageManager.ensureCodeViewFile(anyString(), anyString())).thenReturn(write("default.ttl", DEFAULT_DOC));
+        when(storageManager.resolveCodeViewFile(anyString(), anyString(), any())).thenCallRealMethod();
         when(storageManager.extensionFor(anyString())).thenReturn("ttl");
         when(spliceWriter.splice(any(), anyString(), any())).thenAnswer(inv -> validSplicedTurtleFile());
     }

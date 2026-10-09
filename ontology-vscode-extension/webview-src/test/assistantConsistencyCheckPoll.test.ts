@@ -52,14 +52,38 @@ describe("pollConsistencyCheck", () => {
     vi.useRealTimers();
   });
 
-  it("stops without calling onResolved when the group is gone (404)", async () => {
+  it("resolves as inconclusive instead of hanging forever when the group is gone (404)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(404, { ok: false }));
     vi.stubGlobal("fetch", fetchMock);
     const onResolved = vi.fn();
 
     await pollConsistencyCheck("http://localhost:8083", "tok", "s1", "g1", onResolved);
 
-    expect(onResolved).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onResolved).toHaveBeenCalledWith({
+      name: "consistency_preserved",
+      passed: true,
+      detail: "Couldn't find this check anymore — treating it as inconclusive.",
+    });
+  });
+
+  it("gives up and resolves as inconclusive after repeated failures instead of polling forever", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const onResolved = vi.fn();
+
+    const promise = pollConsistencyCheck("http://localhost:8083", "tok", "s1", "g1", onResolved);
+    await vi.advanceTimersByTimeAsync(1500 * 80);
+    await promise;
+
+    expect(onResolved).toHaveBeenCalledTimes(1);
+    expect(onResolved).toHaveBeenCalledWith({
+      name: "consistency_preserved",
+      passed: true,
+      detail: "Stopped waiting for this check to finish — treating it as inconclusive.",
+    });
+    vi.useRealTimers();
   });
 
   it("stops when the signal is already aborted", async () => {

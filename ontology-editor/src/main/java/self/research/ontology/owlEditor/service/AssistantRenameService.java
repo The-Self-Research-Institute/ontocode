@@ -59,13 +59,18 @@ public class AssistantRenameService {
     }
 
     public RenameDerivation derive(String projectId, EditOperation operation, int maxLines) {
+        return derive(projectId, operation, maxLines, StorageManager.ContentScope.publicScope());
+    }
+
+    public RenameDerivation derive(String projectId, EditOperation operation, int maxLines,
+                                   StorageManager.ContentScope scope) {
         String operationProblem = operationProblem(operation);
         if (operationProblem != null) {
             return RenameDerivation.refused(operationProblem);
         }
         String targetPath = operation.targetPath();
         try {
-            Path file = storageManager.ensureCodeViewFile(projectId, targetPath);
+            Path file = storageManager.resolveCodeViewFile(projectId, targetPath, scope);
             boolean rdfXml = isRdfXml(targetPath);
             Declarations declarations = rdfXml ? readRdfXmlDeclarations(file) : readTurtleDeclarations(file);
             if (declarations.problem != null) {

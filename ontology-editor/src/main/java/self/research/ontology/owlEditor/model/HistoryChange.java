@@ -180,7 +180,7 @@ public class HistoryChange {
         private LocalDateTime timestamp;
         
         public CommentEntry() {
-            this.timestamp = LocalDateTime.now();
+            this.timestamp = LocalDateTime.now(ZoneOffset.UTC);
         }
         
         public CommentEntry(String userId, String username, String text) {
@@ -222,12 +222,16 @@ public class HistoryChange {
         public void setTimestamp(LocalDateTime timestamp) {
             this.timestamp = timestamp;
         }
+
+        public String getTimestampIso() {
+            return timestamp == null ? null : timestamp.toInstant(ZoneOffset.UTC).toString();
+        }
     }
 
     // Constructors
     public HistoryChange() {
-        this.timestamp = LocalDateTime.now();
-        this.syncedAt = LocalDateTime.now();
+        this.timestamp = LocalDateTime.now(ZoneOffset.UTC);
+        this.syncedAt = LocalDateTime.now(ZoneOffset.UTC);
     }
 
     public HistoryChange(String projectId, String editId, String userId, String username) {
@@ -499,6 +503,10 @@ public class HistoryChange {
         this.approvedAt = approvedAt;
     }
 
+    public String getApprovedAtIso() {
+        return approvedAt == null ? null : approvedAt.toInstant(ZoneOffset.UTC).toString();
+    }
+
     public String getRejectedBy() {
         return rejectedBy;
     }
@@ -513,6 +521,10 @@ public class HistoryChange {
 
     public void setRejectedAt(LocalDateTime rejectedAt) {
         this.rejectedAt = rejectedAt;
+    }
+
+    public String getRejectedAtIso() {
+        return rejectedAt == null ? null : rejectedAt.toInstant(ZoneOffset.UTC).toString();
     }
 
     public Map<String, CommentEntry> getComments() {
@@ -553,6 +565,10 @@ public class HistoryChange {
 
     public void setResolvedAt(LocalDateTime resolvedAt) {
         this.resolvedAt = resolvedAt;
+    }
+
+    public String getResolvedAtIso() {
+        return resolvedAt == null ? null : resolvedAt.toInstant(ZoneOffset.UTC).toString();
     }
 
     public Map<String, String> getMetadata() {

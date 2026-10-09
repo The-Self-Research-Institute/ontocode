@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchDraftList, fetchRecentChanges } from '../assistantApi';
 import { computeStats, parseChange, parseDraft } from '../changeParsing';
 import { ChangeStats, EMPTY_STATS, OntologyChange } from '../types';
@@ -6,6 +6,8 @@ import { ChangeStats, EMPTY_STATS, OntologyChange } from '../types';
 export function useChangeFeed(projectId: string) {
   const [changes, setChanges] = useState<OntologyChange[]>([]);
   const [draftChanges, setDraftChanges] = useState<OntologyChange[]>([]);
+  const draftChangesRef = useRef<OntologyChange[]>(draftChanges);
+  draftChangesRef.current = draftChanges;
   const [stats, setStats] = useState<ChangeStats>(EMPTY_STATS);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -31,7 +33,7 @@ export function useChangeFeed(projectId: string) {
       const parsedChanges = data.changes.map((change: any) => parseChange(change));
       setChanges(parsedChanges);
       setLastRefresh(new Date());
-      setStats(computeStats(parsedChanges, draftChanges));
+      setStats(computeStats(parsedChanges, draftChangesRef.current));
     } catch (error) {
       console.error('Failed to load changes:', error);
     } finally {

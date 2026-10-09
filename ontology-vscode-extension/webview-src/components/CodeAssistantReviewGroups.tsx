@@ -2,7 +2,7 @@ import React from "react";
 import { Loader2, AlertCircle } from "lucide-react";
 import type { ProposedEditGroupResult } from "../services/codeAssistantSession";
 import type { GroupDecision } from "../services/codeAssistantApplyQueue";
-import { ReviewGroupCard } from "./CodeAssistantReviewGroupCard";
+import { ReviewGroupCard, hasPendingCheck } from "./CodeAssistantReviewGroupCard";
 import type { GroupUndoState } from "../services/codeAssistantUndo";
 
 export type { GroupDecision };
@@ -115,7 +115,9 @@ export const CodeAssistantReviewGroups: React.FC<CodeAssistantReviewGroupsProps>
   undoStates,
   undoHandlers,
 }) => {
-  const pendingCount = groups.filter((g) => (decisions[g.serverGroupId] ?? "pending") === "pending" && g.validation.passed).length;
+  const pendingCount = groups.filter(
+    (g) => (decisions[g.serverGroupId] ?? "pending") === "pending" && g.validation.passed && !hasPendingCheck(g),
+  ).length;
   const isApplyingAny = groups.some((g) => decisions[g.serverGroupId] === "applying");
   const running = applyAllRun?.running === true;
   const applyLocked = Boolean(applyBlockedReason) || running || isApplyingAny || applyBusy;

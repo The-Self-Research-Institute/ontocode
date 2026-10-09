@@ -82,6 +82,7 @@ import { resolveMutationActor } from "../utils/mutationActor";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
+import { toFriendlyErrorMessage } from "./codeAssistantPanelHelpers";
 import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
 import {
   validateJsonLdSyntax,
@@ -9237,6 +9238,9 @@ const updateItemInState = useCallback(
         const d = resp?.data || resp;
         setHasUnsavedChanges(false);
         setDraftCount(0);
+        if (d?.saved) {
+          void fetchCodeViewContent(codeViewFormat, false, true);
+        }
         notificationService.success(
           "Saved",
           d?.saved ? "Your changes were saved." : "Nothing to save — already up to date.",
@@ -9284,6 +9288,7 @@ const updateItemInState = useCallback(
         );
 
         await fetchData(projectId, false, undefined, true);
+        void fetchCodeViewContent(codeViewFormat, false, true);
         collaborationPanelRef.current?.refreshChanges();
       } else {
         const errorMsg = (data && data.error) || "Save failed - no response from server";
@@ -11576,6 +11581,7 @@ const updateItemInState = useCallback(
           prev ? { ...prev, classCount: Math.max(0, ((prev as any).classCount || 0) - iris.length) } : prev,
         );
         console.log(`[MUTATION:delete] ✓ Classes:${iris.join(", ")}`);
+        markAsUnsaved();
         showNotification(
           iris.length > 1 ? `Deleted ${iris.length} classes successfully!` : "Class deleted successfully!",
           "info",
@@ -11587,7 +11593,7 @@ const updateItemInState = useCallback(
         isMutatingRef.current = false;
       }
     },
-    [projectId, user, showNotification, classHierarchy, refreshClassHierarchy],
+    [projectId, user, showNotification, classHierarchy, refreshClassHierarchy, markAsUnsaved],
   );
 
   const handleDeleteItem = useCallback(
@@ -11731,6 +11737,7 @@ const updateItemInState = useCallback(
               );
             }
             console.log(`[MUTATION:delete] ✓ ${activeTab}:${item.id}`);
+            markAsUnsaved();
             showNotification(`"${item.label}" deleted successfully!`, "info");
           } catch (error) {
             console.error("Failed to delete item:", error);
@@ -11741,7 +11748,7 @@ const updateItemInState = useCallback(
         },
       });
     },
-    [selectedItem, entitiesTab, projectId, refreshProperties, handleRefreshAnnotationProperties],
+    [selectedItem, entitiesTab, projectId, refreshProperties, handleRefreshAnnotationProperties, markAsUnsaved],
   );
 
   const handleChangeEntityIri = useCallback(
@@ -12758,7 +12765,7 @@ const updateItemInState = useCallback(
           const errMsg = syncError?.message || "Failed to reach the save endpoint";
           console.error("[Dashboard] code-view-save request failed:", errMsg);
           setCodeViewSaveConflict(false);
-          setCodeViewSaveError(errMsg);
+          setCodeViewSaveError(toFriendlyErrorMessage(errMsg));
           return;
         }
 
@@ -12823,7 +12830,7 @@ const updateItemInState = useCallback(
       } catch (error: any) {
         console.error("[Dashboard] Error saving code content:", error);
         setCodeViewSaveConflict(false);
-        setCodeViewSaveError(error.message || "Failed to save content to backend");
+        setCodeViewSaveError(toFriendlyErrorMessage(error.message || "Failed to save content to backend"));
       } finally {
         setSavingCodeView(false);
       }

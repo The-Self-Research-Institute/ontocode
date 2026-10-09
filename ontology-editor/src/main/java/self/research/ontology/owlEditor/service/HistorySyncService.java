@@ -235,7 +235,7 @@ public class HistorySyncService {
 
         change.setStatus("APPROVED");
         change.setApprovedBy(username);
-        change.setApprovedAt(LocalDateTime.now());
+        change.setApprovedAt(LocalDateTime.now(ZoneOffset.UTC));
         historyChangeRepository.save(change);
 
         log.info("Change {} approved by {}", changeId, username);
@@ -250,7 +250,7 @@ public class HistorySyncService {
 
         change.setStatus("REJECTED");
         change.setRejectedBy(username);
-        change.setRejectedAt(LocalDateTime.now());
+        change.setRejectedAt(LocalDateTime.now(ZoneOffset.UTC));
         historyChangeRepository.save(change);
 
         log.info("Change {} rejected by {}", changeId, username);
@@ -287,7 +287,7 @@ public class HistorySyncService {
         change.setHasConflict(false);
         change.setConflictResolution(resolution);
         change.setResolvedBy(username);
-        change.setResolvedAt(LocalDateTime.now());
+        change.setResolvedAt(LocalDateTime.now(ZoneOffset.UTC));
         historyChangeRepository.save(change);
 
         log.info("Conflict resolved for change {} by {}", changeId, username);

@@ -21,13 +21,14 @@ public class AssistantInsertionSnapper {
         return format != null && CodeViewSubjectIndex.supports(format);
     }
 
-    public OptionalLong nextStatementBoundary(String projectId, String format, long insertLine) {
+    public OptionalLong nextStatementBoundary(String projectId, String format, long insertLine,
+                                              StorageManager.ContentScope scope) {
         if (!supports(format) || insertLine <= 0) {
             return OptionalLong.empty();
         }
         try {
             Optional<SubjectRangeIndex> index = CodeViewSubjectIndex.forFile(
-                    storageManager.ensureCodeViewFile(projectId, format), format);
+                    storageManager.resolveCodeViewFile(projectId, format, scope), format);
             return index.map(i -> boundaryAfter(i, insertLine)).orElse(OptionalLong.empty());
         } catch (Exception e) {
             log.warn("[Assistant] Insertion boundary lookup failed for {}:{}: {}", format, insertLine, e.getMessage());

@@ -5,7 +5,7 @@ import type { GroupDecision } from "../services/codeAssistantApplyQueue";
 import { CodeAssistantDiffEntry } from "./CodeAssistantDiffEntry";
 import { CodeAssistantCheckNotes, CodeAssistantFailedChecks, CodeAssistantPendingChecks } from "./CodeAssistantFailedChecks";
 
-function hasPendingCheck(group: ProposedEditGroupResult): boolean {
+export function hasPendingCheck(group: ProposedEditGroupResult): boolean {
   return group.validation.checks.some((c) => c.status === "pending");
 }
 import { CodeAssistantUndoControls, type UndoControlsProps } from "./CodeAssistantUndoControls";
@@ -75,9 +75,10 @@ const DecisionStatus: React.FC<{ decision: GroupDecision; error?: string }> = ({
     );
   }
   if (decision === "failed") {
+    if (!error) return null;
     return (
       <span className="flex items-center gap-1 text-xs text-red-700" title={error}>
-        <AlertCircle size={14} /> {error || "Apply failed"}
+        <AlertCircle size={14} /> {error}
       </span>
     );
   }

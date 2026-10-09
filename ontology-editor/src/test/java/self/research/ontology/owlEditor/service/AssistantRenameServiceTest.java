@@ -32,6 +32,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -56,11 +57,12 @@ class AssistantRenameServiceTest {
     private AssistantRenameService renameService;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
         renameService = new AssistantRenameService(storageManager, new AssistantGraphIdentifierLookup(datasetService));
         when(datasetService.execSelectCapped(anyString(), anyString(), anyInt(), anyInt(), anyLong()))
                 .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of("x"), List.of(), false, null));
+        when(storageManager.resolveCodeViewFile(anyString(), anyString(), any())).thenCallRealMethod();
     }
 
     private static final String TURTLE_DOC = String.join("\n",

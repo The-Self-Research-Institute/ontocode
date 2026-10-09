@@ -179,7 +179,7 @@ public class AssistantEditProposalService {
         String renameSummary = null;
         if (derived) {
             OperationEdits operationEdits = deriveOperationEdits(session, groupInput, inputEdits, publicGraphVersion,
-                    now, expiresAt, perf, checks);
+                    now, expiresAt, perf, checks, scope);
             if (operationEdits.rejection() != null) {
                 return operationEdits.rejection();
             }
@@ -239,7 +239,8 @@ public class AssistantEditProposalService {
 
     private OperationEdits deriveOperationEdits(AssistantSessionDocument session, EditGroupInput groupInput,
                                                 List<EditInput> inputEdits, long publicGraphVersion, Instant now,
-                                                Instant expiresAt, PerfPhases perf, List<CheckResult> checks) {
+                                                Instant expiresAt, PerfPhases perf, List<CheckResult> checks,
+                                                StorageManager.ContentScope scope) {
         EditOperation operation = groupInput.operation();
         String operationPath = operation.targetPath() == null ? "" : operation.targetPath();
         if (!inputEdits.isEmpty()) {
@@ -257,7 +258,7 @@ public class AssistantEditProposalService {
                     expiresAt, perf, checks);
         }
         AssistantRenameService.RenameDerivation derivation =
-                renameService.derive(session.getProjectId(), operation, maxRenameLines);
+                renameService.derive(session.getProjectId(), operation, maxRenameLines, scope);
         perf.mark("renameDerive");
         if (!derivation.ok()) {
             return new OperationEdits(null, null, null,
@@ -425,7 +426,7 @@ public class AssistantEditProposalService {
         if (!singleInsertPoint || !insertionSnapper.supports(targetPath)) {
             return null;
         }
-        OptionalLong boundary = insertionSnapper.nextStatementBoundary(projectId, targetPath, insertLine);
+        OptionalLong boundary = insertionSnapper.nextStatementBoundary(projectId, targetPath, insertLine, scope);
         if (boundary.isEmpty()) {
             return null;
         }

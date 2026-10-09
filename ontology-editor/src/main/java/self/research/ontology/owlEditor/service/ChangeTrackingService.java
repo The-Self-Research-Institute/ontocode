@@ -259,7 +259,7 @@ public class ChangeTrackingService {
         // Mark as reverted
         change.setReverted(true);
         change.setRevertedBy(username);
-        change.setRevertedAt(LocalDateTime.now());
+        change.setRevertedAt(LocalDateTime.now(ZoneOffset.UTC));
         changeRepository.save(change);
         
         // Create inverse change

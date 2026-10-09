@@ -1,10 +1,15 @@
 package self.research.ontology.owlEditor.service;
 
+import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -21,7 +26,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -46,6 +50,8 @@ class AssistantConsistencyCheckServiceTest {
     @Mock
     private AssistantEditGroupRepository groupRepository;
     @Mock
+    private MongoTemplate mongoTemplate;
+    @Mock
     private SimpMessagingTemplate messagingTemplate;
     @Mock
     private RestTemplate restTemplate;
@@ -56,10 +62,12 @@ class AssistantConsistencyCheckServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         service = new AssistantConsistencyCheckService(datasetService, storageManager, spliceWriter,
-                reimportPipeline, groupRepository, messagingTemplate);
+                reimportPipeline, groupRepository, mongoTemplate, messagingTemplate);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "pluginServiceUrl", "http://localhost:8087");
         ReflectionTestUtils.setField(service, "maxDatasetSizeForCheck", 150000L);
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class), any(FindAndModifyOptions.class),
+                eq(AssistantEditGroupDocument.class))).thenReturn(pendingGroup());
     }
 
     private static EditEntry entry() {
@@ -71,6 +79,14 @@ class AssistantConsistencyCheckServiceTest {
                 .consistencyCheck(AssistantEditGroupDocument.ConsistencyCheckRecord.builder()
                         .state(ConsistencyCheckState.PENDING).build())
                 .build();
+    }
+
+    private ConsistencyCheckState capturedState() {
+        ArgumentCaptor<Update> updateCaptor = ArgumentCaptor.forClass(Update.class);
+        verify(mongoTemplate).findAndModify(any(Query.class), updateCaptor.capture(), any(FindAndModifyOptions.class),
+                eq(AssistantEditGroupDocument.class));
+        return (ConsistencyCheckState) updateCaptor.getValue().getUpdateObject()
+                .get("$set", Document.class).get("consistencyCheck.state");
     }
 
     @Test
@@ -107,16 +123,13 @@ class AssistantConsistencyCheckServiceTest {
     @Test
     void runCheckAlwaysClearsTheScratchGraphEvenWhenReimportPrepFails() throws IOException {
         when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenThrow(new IOException("disk gone"));
-        when(groupRepository.findById("g1")).thenReturn(Optional.of(pendingGroup()));
 
         ReflectionTestUtils.invokeMethod(service, "runCheck", "g1", "proj-1", "turtle",
                 List.of(entry()), StorageManager.ContentScope.publicScope(), "assistant-whatif-g1");
 
         verify(datasetService).copyMainGraphToDraft("proj-1", "assistant-whatif-g1");
         verify(datasetService).clearDraftGraph("proj-1", "assistant-whatif-g1");
-        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
-        verify(groupRepository).save(captor.capture());
-        assertEquals(ConsistencyCheckState.ERROR, captor.getValue().getConsistencyCheck().getState());
+        assertEquals(ConsistencyCheckState.ERROR, capturedState());
     }
 
     @Test
@@ -127,15 +140,12 @@ class AssistantConsistencyCheckServiceTest {
         when(datasetService.getDraftGraphUri("proj-1", "assistant-whatif-g1")).thenReturn("urn:draft:graph:assistant-whatif-g1");
         when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(Map.of("consistent", true)));
-        when(groupRepository.findById("g1")).thenReturn(Optional.of(pendingGroup()));
 
         ReflectionTestUtils.invokeMethod(service, "runCheck", "g1", "proj-1", "turtle",
                 List.of(entry()), StorageManager.ContentScope.publicScope(), "assistant-whatif-g1");
 
         verify(datasetService).clearDraftGraph("proj-1", "assistant-whatif-g1");
-        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
-        verify(groupRepository).save(captor.capture());
-        assertEquals(ConsistencyCheckState.PASSED, captor.getValue().getConsistencyCheck().getState());
+        assertEquals(ConsistencyCheckState.PASSED, capturedState());
         verify(messagingTemplate).convertAndSend(eq("/topic/assistant/consistency-check/g1"), any(Object.class));
     }
 
@@ -146,27 +156,28 @@ class AssistantConsistencyCheckServiceTest {
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(Path.of("spliced.ttl"));
         when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(Map.of("consistent", false)));
-        when(groupRepository.findById("g1")).thenReturn(Optional.of(pendingGroup()));
 
         ReflectionTestUtils.invokeMethod(service, "runCheck", "g1", "proj-1", "turtle",
                 List.of(entry()), StorageManager.ContentScope.publicScope(), "assistant-whatif-g1");
 
         verify(datasetService).clearDraftGraph("proj-1", "assistant-whatif-g1");
-        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
-        verify(groupRepository).save(captor.capture());
-        assertEquals(ConsistencyCheckState.FAILED, captor.getValue().getConsistencyCheck().getState());
+        assertEquals(ConsistencyCheckState.FAILED, capturedState());
     }
 
     @Test
-    void resolveIsANoOpOnceTheCheckIsAlreadyInATerminalState() {
-        AssistantEditGroupDocument alreadyResolved = AssistantEditGroupDocument.builder().id("g1")
-                .consistencyCheck(AssistantEditGroupDocument.ConsistencyCheckRecord.builder()
-                        .state(ConsistencyCheckState.TIMED_OUT).build())
-                .build();
-        when(groupRepository.findById("g1")).thenReturn(Optional.of(alreadyResolved));
+    void resolveDoesNotPublishWhenTheConditionalUpdateDidNotMatch() {
+        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class), any(FindAndModifyOptions.class),
+                eq(AssistantEditGroupDocument.class))).thenReturn(null);
 
         ReflectionTestUtils.invokeMethod(service, "resolve", "g1", ConsistencyCheckState.PASSED, "arrived too late");
 
-        verify(groupRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+    }
+
+    @Test
+    void resolvePublishesWhenTheConditionalUpdateMatches() {
+        ReflectionTestUtils.invokeMethod(service, "resolve", "g1", ConsistencyCheckState.PASSED, "all good");
+
+        verify(messagingTemplate).convertAndSend(eq("/topic/assistant/consistency-check/g1"), any(Object.class));
     }
 }

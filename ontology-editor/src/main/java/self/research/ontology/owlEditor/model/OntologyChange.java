@@ -341,6 +341,10 @@ public class OntologyChange {
         this.revertedAt = revertedAt;
     }
 
+    public String getRevertedAtIso() {
+        return revertedAt == null ? null : revertedAt.toInstant(ZoneOffset.UTC).toString();
+    }
+
     public String getSessionId() {
         return sessionId;
     }

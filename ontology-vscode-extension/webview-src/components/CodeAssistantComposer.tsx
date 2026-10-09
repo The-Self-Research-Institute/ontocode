@@ -88,15 +88,26 @@ function useSlashCommandMenu(input: string, setInput: (value: string) => void, c
   return { matches, activeIndex, runCommand, handleKeyDown };
 }
 
+export const SLASH_COMMAND_MENU_ID = "slash-command-menu";
+export const slashCommandOptionId = (idx: number): string => `slash-command-option-${idx}`;
+
 const SlashCommandMenu: React.FC<{
   matches: SlashCommand[];
   activeIndex: number;
   runCommand: (command: SlashCommand) => void;
 }> = ({ matches, activeIndex, runCommand }) => (
-  <div className="absolute bottom-full left-0 mb-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
+  <div
+    id={SLASH_COMMAND_MENU_ID}
+    role="listbox"
+    aria-label="Slash commands"
+    className="absolute bottom-full left-0 mb-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10"
+  >
     {matches.map((c, idx) => (
       <button
         key={c.cmd}
+        id={slashCommandOptionId(idx)}
+        role="option"
+        aria-selected={idx === activeIndex}
         onClick={() => runCommand(c)}
         disabled={c.disabled}
         className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
@@ -135,6 +146,11 @@ export const CodeAssistantComposer: React.FC<CodeAssistantComposerProps> = (prop
         rows={1}
         disabled={props.disabled}
         placeholder={props.placeholder}
+        role="combobox"
+        aria-expanded={menu.matches.length > 0}
+        aria-controls={SLASH_COMMAND_MENU_ID}
+        aria-activedescendant={menu.matches.length > 0 ? slashCommandOptionId(menu.activeIndex) : undefined}
+        aria-autocomplete="list"
         className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm resize-none disabled:opacity-50 min-h-[44px] max-h-[160px] overflow-y-auto"
       />
       <button

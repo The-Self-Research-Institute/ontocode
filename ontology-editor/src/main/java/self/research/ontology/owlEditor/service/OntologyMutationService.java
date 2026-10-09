@@ -315,6 +315,9 @@ public class OntologyMutationService {
     }
 
     private void markDirtyAfterRawWrite(String projectId) {
+        if (ontologyCache != null && ontologyCache.has(projectId)) {
+            ontologyCache.evict(projectId);
+        }
         try {
             java.nio.file.Path dirtyMarker = storageManager.projectDir(projectId).resolve("ontology.dirty");
             java.nio.file.Files.createFile(dirtyMarker);

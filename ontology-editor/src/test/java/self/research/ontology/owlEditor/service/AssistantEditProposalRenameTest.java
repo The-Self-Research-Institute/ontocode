@@ -114,6 +114,7 @@ class AssistantEditProposalRenameTest {
         when(storageManager.extensionFor("rdfxml")).thenReturn("owl");
         when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(write("doc.ttl", TURTLE_DOC));
         when(storageManager.ensureCodeViewFile("proj-1", "rdfxml")).thenReturn(write("doc.owl", RDFXML_DOC));
+        when(storageManager.resolveCodeViewFile(anyString(), anyString(), any())).thenCallRealMethod();
         when(datasetService.execSelectCapped(anyString(), anyString(), anyInt(), anyInt(), anyLong()))
                 .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of("x"), List.of(), false, null));
     }

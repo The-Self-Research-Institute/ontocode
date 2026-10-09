@@ -169,19 +169,21 @@ public class CodeViewReimportPipeline {
             }
             if (!req.scratch()) {
                 invalidateAfterGraphReplaced(req.projectId(), MetadataRefresh.NOW);
-            }
-            log.info("[CODE-VIEW-SAVE] All format caches cleared");
-            perf.mark("invalidate");
+                log.info("[CODE-VIEW-SAVE] All format caches cleared");
+                perf.mark("invalidate");
 
-            String cachedContent = isOwlApiFormat
-                    ? Files.readString(req.contentFile(), StandardCharsets.UTF_8)
-                    : Files.readString(files.importSourceFile, StandardCharsets.UTF_8);
-            storageManager.storeCodeViewCache(req.projectId(), cachedContent, format);
-            log.info("[CODE-VIEW-SAVE] Current format cache restored");
-            perf.mark("cacheWrite");
+                String cachedContent = isOwlApiFormat
+                        ? Files.readString(req.contentFile(), StandardCharsets.UTF_8)
+                        : Files.readString(files.importSourceFile, StandardCharsets.UTF_8);
+                storageManager.storeCodeViewCache(req.projectId(), cachedContent, format);
+                log.info("[CODE-VIEW-SAVE] Current format cache restored");
+                perf.mark("cacheWrite");
+            }
 
             completed = true;
-            announce(req.projectId(), req.userId(), req.username(), origin);
+            if (!req.scratch()) {
+                announce(req.projectId(), req.userId(), req.username(), origin);
+            }
             boolean cacheMatches = !files.reserializedOnRetry && (isOwlApiFormat || req.skipSanitization());
             return new ReimportResult(format, files.rdfFormat, storageManager.getPublicGraphVersion(req.projectId()),
                     cacheMatches);
@@ -271,7 +273,7 @@ public class CodeViewReimportPipeline {
     }
 
     private ChangeOrigin recordHistoryDiff(ReimportRequest req, ReimportFiles files) {
-        if (req.oldContentFileForDiff() == null) {
+        if (req.scratch() || req.oldContentFileForDiff() == null) {
             return null;
         }
         ChangeOrigin origin = req.origin() != null ? req.origin() : ChangeOrigin.manual();
