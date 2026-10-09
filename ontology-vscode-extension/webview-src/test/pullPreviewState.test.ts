@@ -1,11 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { applyRefusal, BASELINE_LOST_FALLBACK, phaseForAnalysis } from "../components/pullPreviewState";
+import {
+  applyRefusal,
+  BASELINE_LOST_FALLBACK,
+  DIRECT_COMPARE_FALLBACK,
+  phaseForAnalysis,
+  rowKindLabel,
+} from "../components/pullPreviewState";
 
 describe("phaseForAnalysis", () => {
   it("never calls a lost baseline 'up to date'", () => {
     const result = phaseForAnalysis({ baselineLost: true, hasChanges: false, safeChanges: [], conflicts: [], message: "gone" });
 
-    expect(result).toEqual({ phase: "baseline_lost", message: "gone" });
+    expect(result).toEqual({ phase: "baseline_lost", message: "gone", draftOnlyCount: 0 });
   });
 
   it("falls back to a clear message when the server sends none", () => {
@@ -20,6 +26,40 @@ describe("phaseForAnalysis", () => {
   it("says up to date only when there is truly nothing", () => {
     expect(phaseForAnalysis({ safeChanges: [], conflicts: [] }).phase).toBe("no_changes");
     expect(phaseForAnalysis(undefined).phase).toBe("no_changes");
+  });
+});
+
+describe("direct comparison after a lost baseline", () => {
+  it("lists the differences for the user to choose from", () => {
+    const result = phaseForAnalysis({
+      baselineLost: true,
+      directCompare: true,
+      conflicts: [{ entityIri: "x", kind: "different" }],
+      safeChanges: [],
+      draftOnlyCount: 3,
+      message: "choose",
+    });
+
+    expect(result).toEqual({ phase: "ready", message: "choose", draftOnlyCount: 3 });
+  });
+
+  it("uses a default explanation when the server sends none", () => {
+    expect(
+      phaseForAnalysis({ baselineLost: true, directCompare: true, conflicts: [{ entityIri: "x" }] }).message,
+    ).toBe(DIRECT_COMPARE_FALLBACK);
+  });
+
+  it("says nothing to pull when the draft and Public only differ by the user's own items", () => {
+    const result = phaseForAnalysis({ baselineLost: true, directCompare: true, conflicts: [], draftOnlyCount: 4 });
+
+    expect(result.phase).toBe("no_changes");
+    expect(result.draftOnlyCount).toBe(4);
+  });
+
+  it("labels each kind of difference", () => {
+    expect(rowKindLabel("public_only")).toBe("Only in Public");
+    expect(rowKindLabel("different")).toBe("Different");
+    expect(rowKindLabel(undefined)).toBeNull();
   });
 });
 

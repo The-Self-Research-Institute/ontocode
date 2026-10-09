@@ -11,6 +11,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.model.merge.ConflictResolution;
+import self.research.ontology.owlEditor.model.merge.ResolutionAction;
 import self.research.ontology.owlEditor.repository.DraftSessionRepository;
 
 import java.io.IOException;
@@ -178,10 +179,7 @@ public class DraftPublishMergeService {
         try {
             baselineRdf = readOrEstablishBaseline(projectId, userId, session);
         } catch (BaselineLostException lost) {
-            Map<String, Object> result = noChangesResult(false);
-            result.put("baselineLost", true);
-            result.put("message", BASELINE_LOST_MESSAGE);
-            return result;
+            return analyzeDirect(projectId, userId);
         }
         if (baselineRdf == null) {
 
@@ -234,8 +232,7 @@ public class DraftPublishMergeService {
         try {
             baselineRdf = readOrEstablishBaseline(projectId, userId, session);
         } catch (BaselineLostException lost) {
-            return Map.of("success", false, "baselineLost", true, "mergedCount", 0, "conflictsResolved", 0,
-                    "message", BASELINE_LOST_MESSAGE);
+            return applyDirect(projectId, userId, session, resolutions);
         }
         if (baselineRdf == null) {
             return Map.of("success", true, "mergedCount", 0, "conflictsResolved", 0,
@@ -277,6 +274,113 @@ public class DraftPublishMergeService {
     private static final String BASELINE_LOST_MESSAGE =
             "The starting snapshot of your draft was lost (for example after a server restart), so we can't tell "
                     + "what changed in Public since you started. Publish your draft or re-add the missing items.";
+
+    private static final String DIRECT_COMPARE_MESSAGE =
+            "The starting snapshot of your draft was lost, so we can't tell who changed what. Below is every "
+                    + "difference between your draft and Public. Choose what to keep for each one.";
+
+    private Map<String, Object> analyzeDirect(String projectId, String userId) throws Exception {
+        String draftRdf = exportDraft(projectId, userId);
+        if (draftRdf == null) {
+            Map<String, Object> result = noChangesResult(false);
+            result.put("baselineLost", true);
+            result.put("message", BASELINE_LOST_MESSAGE);
+            return result;
+        }
+        OWLOntology draft = mergeService.loadOntologyFromRdf(draftRdf);
+        OWLOntology publicOnt = mergeService.loadOntologyFromRdf(exportMain(projectId));
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        int draftOnly = 0;
+        for (String iriStr : mergeService.collectTouchedIris(draft, publicOnt)) {
+            IRI iri = IRI.create(iriStr);
+            boolean inDraft = draft.containsEntityInSignature(iri);
+            boolean inPublic = publicOnt.containsEntityInSignature(iri);
+            if (inDraft && !inPublic) {
+                draftOnly++;
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("entityIri", iriStr);
+            row.put("entityLabel", localName(iriStr));
+            row.put("kind", inDraft ? "different" : "public_only");
+            row.put("publicAxioms", summarizeAxioms(publicOnt, iri));
+            row.put("yourAxioms", summarizeAxioms(draft, iri));
+            rows.add(row);
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("hasChanges", !rows.isEmpty());
+        result.put("hasConflicts", !rows.isEmpty());
+        result.put("safeChanges", List.of());
+        result.put("conflicts", rows);
+        result.put("noBaseline", false);
+        result.put("baselineLost", true);
+        result.put("directCompare", true);
+        result.put("draftOnlyCount", draftOnly);
+        result.put("message", DIRECT_COMPARE_MESSAGE);
+        return result;
+    }
+
+    private Map<String, Object> applyDirect(String projectId, String userId, DraftSession session,
+                                            Map<String, ConflictResolution> resolutions) throws Exception {
+        String draftRdf = exportDraft(projectId, userId);
+        if (draftRdf == null) {
+            return Map.of("success", false, "baselineLost", true, "mergedCount", 0, "conflictsResolved", 0,
+                    "message", BASELINE_LOST_MESSAGE);
+        }
+        OWLOntology draftCopy = mergeService.loadOntologyFromRdf(draftRdf);
+        OWLOntology draftTarget = mergeService.loadOntologyFromRdf(draftRdf);
+        OWLOntology publicOnt = mergeService.loadOntologyFromRdf(exportMain(projectId));
+
+        Set<String> differing = mergeService.collectTouchedIris(draftCopy, publicOnt);
+        Map<String, ConflictResolution> effective = new java.util.HashMap<>();
+        int taken = 0;
+        for (String iriStr : differing) {
+            IRI iri = IRI.create(iriStr);
+            boolean draftOnly = draftCopy.containsEntityInSignature(iri) && !publicOnt.containsEntityInSignature(iri);
+            ConflictResolution chosen = resolutions != null ? resolutions.get(iriStr) : null;
+            if (draftOnly || chosen == null) {
+                ConflictResolution keep = new ConflictResolution();
+                keep.setAction(ResolutionAction.KEEP_TARGET);
+                effective.put(iriStr, keep);
+            } else {
+                effective.put(iriStr, chosen);
+                if (chosen.getAction() == ResolutionAction.KEEP_SOURCE) {
+                    taken++;
+                }
+            }
+        }
+
+        OWLOntology merged = mergeService.mergeDraftPublishThreeWay(
+                draftCopy, publicOnt, draftTarget, differing, effective);
+        replaceDraftGraph(projectId, userId, mergeService.saveOntologyToRdfXml(merged));
+        advanceBaseline(projectId, userId, session);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("mergedCount", taken);
+        result.put("conflictsResolved", differing.size());
+        result.put("message", taken == 0
+                ? "Your draft was left as it is"
+                : "Took " + taken + " item(s) from Public into your draft");
+        return result;
+    }
+
+    private String exportMain(String projectId) {
+        return datasetService.exportNamedGraph(projectId, datasetService.getGraphUri(projectId), RDFFormat.RDFXML);
+    }
+
+    private String exportDraft(String projectId, String userId) {
+        String rdf = datasetService.exportNamedGraph(
+                projectId, datasetService.getDraftGraphUri(projectId, userId), RDFFormat.RDFXML);
+        return rdf == null || rdf.isBlank() ? null : rdf;
+    }
+
+    private void replaceDraftGraph(String projectId, String userId, String rdfXml) {
+        datasetService.replaceNamedGraphFromRdf(
+                projectId, datasetService.getDraftGraphUri(projectId, userId), rdfXml, RDFFormat.RDFXML);
+    }
 
     private String readOrEstablishBaseline(String projectId, String userId, DraftSession session) throws Exception {
         String snapshotPath = session.getBaselineSnapshotPath();

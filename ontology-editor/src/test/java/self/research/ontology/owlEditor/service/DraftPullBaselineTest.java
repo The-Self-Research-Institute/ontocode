@@ -67,6 +67,39 @@ class DraftPullBaselineTest {
                 + body + "</rdf:RDF>";
     }
 
+    private static String rdfWithLabels(String... iriAndLabel) {
+        StringBuilder body = new StringBuilder();
+        for (int i = 0; i < iriAndLabel.length; i += 2) {
+            body.append("<owl:Class rdf:about=\"").append(iriAndLabel[i]).append("\">");
+            if (iriAndLabel[i + 1] != null) {
+                body.append("<rdfs:label>").append(iriAndLabel[i + 1]).append("</rdfs:label>");
+            }
+            body.append("</owl:Class>");
+        }
+        return "<?xml version=\"1.0\"?><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
+                + "xmlns:rdfs=\"http://www.w3.org/2000/01/rdf-schema#\" "
+                + "xmlns:owl=\"http://www.w3.org/2002/07/owl#\"><owl:Ontology rdf:about=\"http://ex.org/o\"/>"
+                + body + "</rdf:RDF>";
+    }
+
+    private void givenDraftAndPublic(String draftRdf, String publicRdf) {
+        when(datasetService.exportNamedGraph("p1", DRAFT_GRAPH, RDFFormat.RDFXML)).thenReturn(draftRdf);
+        when(datasetService.exportNamedGraph("p1", MAIN_GRAPH, RDFFormat.RDFXML)).thenReturn(publicRdf);
+    }
+
+    private static self.research.ontology.owlEditor.model.merge.ConflictResolution choice(
+            self.research.ontology.owlEditor.model.merge.ResolutionAction action) {
+        var cr = new self.research.ontology.owlEditor.model.merge.ConflictResolution();
+        cr.setAction(action);
+        return cr;
+    }
+
+    private String appliedDraftRdf() {
+        org.mockito.ArgumentCaptor<String> rdf = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(datasetService).replaceNamedGraphFromRdf(eq("p1"), eq(DRAFT_GRAPH), rdf.capture(), eq(RDFFormat.RDFXML));
+        return rdf.getValue();
+    }
+
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
@@ -123,24 +156,112 @@ class DraftPullBaselineTest {
     }
 
     @Test
-    void whenNoBaselineExistsAnywherePullSaysSoInsteadOfClaimingNothingChanged() throws Exception {
+    void withNoBaselineAndNoDraftCopyPullSaysSoInsteadOfClaimingNothingChanged() throws Exception {
         Map<String, Object> result = service.analyzePull("p1", "u1");
 
         assertEquals(true, result.get("baselineLost"));
         assertEquals(false, result.get("hasChanges"));
         assertTrue(((String) result.get("message")).contains("starting snapshot"));
         verify(sessionRepository, never()).save(any(DraftSession.class));
-        verify(datasetService, never()).exportNamedGraph(anyString(), anyString(), any(RDFFormat.class));
     }
 
     @Test
-    void applyingAPullWithoutABaselineIsRefusedAndChangesNothing() throws Exception {
+    void applyingWithNoBaselineAndNoDraftCopyIsRefusedAndChangesNothing() throws Exception {
         Map<String, Object> result = service.applyPull("p1", "u1", Map.of());
 
         assertEquals(false, result.get("success"));
         assertEquals(true, result.get("baselineLost"));
         verify(datasetService, never()).replaceNamedGraphFromRdf(anyString(), anyString(), anyString(), any());
         verify(sessionRepository, never()).save(any(DraftSession.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aLostBaselineFallsBackToListingEveryDifferenceWithPublic() throws Exception {
+        givenDraftAndPublic(
+                rdfWithLabels(CLASS_A, "Alpha", "http://ex.org/C", null),
+                rdfWithLabels(CLASS_A, "Beta", CLASS_B, null));
+
+        Map<String, Object> result = service.analyzePull("p1", "u1");
+
+        assertEquals(true, result.get("baselineLost"));
+        assertEquals(true, result.get("directCompare"));
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.get("conflicts");
+        assertEquals(Map.of(CLASS_A, "different", CLASS_B, "public_only"),
+                rows.stream().collect(java.util.stream.Collectors.toMap(r -> (String) r.get("entityIri"),
+                        r -> (String) r.get("kind"))));
+        assertEquals(1, result.get("draftOnlyCount"));
+        verify(sessionRepository, never()).save(any(DraftSession.class));
+    }
+
+    @Test
+    void takingPublicForARenameBothSidesMadeGivesPublicsLabel() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "Alpha"), rdfWithLabels(CLASS_A, "Beta"));
+
+        Map<String, Object> result = service.applyPull("p1", "u1", Map.of(CLASS_A,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.KEEP_SOURCE)));
+
+        assertEquals(true, result.get("success"));
+        String merged = appliedDraftRdf();
+        assertTrue(merged.contains("Beta"));
+        assertFalse(merged.contains("Alpha"));
+    }
+
+    @Test
+    void keepingTheDraftForARenameBothSidesMadeKeepsYourLabel() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "Alpha"), rdfWithLabels(CLASS_A, "Beta"));
+
+        service.applyPull("p1", "u1", Map.of(CLASS_A,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.KEEP_TARGET)));
+
+        String merged = appliedDraftRdf();
+        assertTrue(merged.contains("Alpha"));
+        assertFalse(merged.contains("Beta"));
+    }
+
+    @Test
+    void aClassOnlyInPublicIsAddedWhenTheUserTakesItAndLeftOutOtherwise() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "A"), rdfWithLabels(CLASS_A, "A", CLASS_B, "B"));
+
+        service.applyPull("p1", "u1", Map.of(CLASS_B,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.KEEP_SOURCE)));
+
+        assertTrue(appliedDraftRdf().contains(CLASS_B));
+    }
+
+    @Test
+    void unresolvedRowsKeepTheDraftAndOnlyUsersOwnWorkIsNeverDeleted() throws Exception {
+        String classC = "http://ex.org/C";
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "Alpha", classC, "Mine"), rdfWithLabels(CLASS_A, "Beta", CLASS_B, "B"));
+
+        service.applyPull("p1", "u1", Map.of());
+
+        String merged = appliedDraftRdf();
+        assertTrue(merged.contains("Alpha"));
+        assertTrue(merged.contains(classC));
+        assertFalse(merged.contains("Beta"));
+        assertFalse(merged.contains(CLASS_B));
+    }
+
+    @Test
+    void evenAnExplicitTakePublicNeverDeletesAClassThatOnlyTheDraftHas() throws Exception {
+        String classC = "http://ex.org/C";
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "A", classC, "Mine"), rdfWithLabels(CLASS_A, "A"));
+
+        service.applyPull("p1", "u1", Map.of(classC,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.KEEP_SOURCE)));
+
+        assertTrue(appliedDraftRdf().contains(classC));
+    }
+
+    @Test
+    void afterAResolvedFallbackPullTheBaselineIsReestablishedFromPublic() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "A"), rdfWithLabels(CLASS_A, "A", CLASS_B, "B"));
+
+        service.applyPull("p1", "u1", Map.of());
+
+        verify(sessionRepository).save(session);
+        verify(baselineStore).save(eq("p1"), eq("u1"), anyString());
     }
 
     @Test

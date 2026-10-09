@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { X, Download, AlertTriangle, CheckCircle, Loader2, RefreshCw, GitMerge } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { extractLocalName } from "../utils/draftChangeHelpers";
-import { applyRefusal, phaseForAnalysis } from "./pullPreviewState";
+import { applyRefusal, phaseForAnalysis, rowKindLabel } from "./pullPreviewState";
 
 interface PullPreviewDialogProps {
   isOpen: boolean;
@@ -17,6 +17,7 @@ interface ChangeRow {
   entityLabel: string;
   publicAxioms?: string;
   yourAxioms?: string;
+  kind?: string;
 }
 
 type Resolution = "keep_draft" | "take_public";
@@ -30,6 +31,8 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
   const [conflicts, setConflicts] = useState<ChangeRow[]>([]);
   const [resolutions, setResolutions] = useState<Record<string, Resolution>>({});
   const [errorMsg, setErrorMsg] = useState("");
+  const [directNote, setDirectNote] = useState("");
+  const [draftOnlyCount, setDraftOnlyCount] = useState(0);
 
   const analyze = useCallback(() => {
     setPhase("analyzing");
@@ -44,7 +47,9 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
         setConflicts(conf);
         setResolutions({});
         const next = phaseForAnalysis(data);
-        setErrorMsg(next.message);
+        setErrorMsg(next.phase === "baseline_lost" ? next.message : "");
+        setDirectNote(next.phase === "baseline_lost" ? "" : next.message);
+        setDraftOnlyCount(next.draftOnlyCount);
         setPhase(next.phase);
       })
       .catch((e: any) => {
@@ -175,6 +180,23 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
 
           {phase === "ready" && (
             <>
+              {directNote && (
+                <div
+                  className="flex items-start gap-2 rounded-md px-3 py-2 border"
+                  style={{ borderColor: "rgba(59,130,246,0.4)", backgroundColor: "rgba(59,130,246,0.08)" }}
+                >
+                  <AlertTriangle size={14} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div className="opacity-90">
+                    {directNote}
+                    {draftOnlyCount > 0 && (
+                      <>
+                        {" "}
+                        {draftOnlyCount} item{draftOnlyCount !== 1 ? "s" : ""} exist only in your draft and will be kept.
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
               {conflicts.length > 0 ? (
                 <div
                   className="flex items-start gap-2 rounded-md px-3 py-2 border"
@@ -182,8 +204,17 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                 >
                   <AlertTriangle size={14} className="text-amber-500 flex-shrink-0 mt-0.5" />
                   <div className="text-amber-600 dark:text-amber-400">
-                    <strong>{conflicts.length} conflict{conflicts.length !== 1 ? "s" : ""}</strong> —
-                    entities changed in both your draft and public. Choose which version to keep for each.
+                    {directNote ? (
+                      <>
+                        <strong>{conflicts.length} difference{conflicts.length !== 1 ? "s" : ""}</strong> — choose
+                        which version to keep for each.
+                      </>
+                    ) : (
+                      <>
+                        <strong>{conflicts.length} conflict{conflicts.length !== 1 ? "s" : ""}</strong> —
+                        entities changed in both your draft and public. Choose which version to keep for each.
+                      </>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -221,7 +252,12 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                           className="flex items-center justify-between px-3 py-1.5 border-b text-[11px] font-medium"
                           style={{ borderColor: "var(--color-border)", backgroundColor: "rgba(128,128,128,0.06)" }}
                         >
-                          <span className="truncate">{c.entityLabel || extractLocalName(c.entityIri)}</span>
+                          <span className="truncate">
+                            {c.entityLabel || extractLocalName(c.entityIri)}
+                            {rowKindLabel(c.kind) && (
+                              <span className="ml-2 font-normal opacity-60">{rowKindLabel(c.kind)}</span>
+                            )}
+                          </span>
                           {resolution && (
                             <span className="flex items-center gap-1 text-green-500 flex-shrink-0">
                               <CheckCircle size={10} /> Resolved
