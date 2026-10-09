@@ -348,10 +348,15 @@ public class DraftPublishMergeService {
             boolean inPublic = publicOnt.containsEntityInSignature(iri);
             ResolutionAction action = ResolutionAction.KEEP_TARGET;
             ConflictResolution chosen = resolutions != null ? resolutions.get(iriStr) : null;
-            if (chosen != null && chosen.getAction() == ResolutionAction.KEEP_SOURCE && !(inDraft && !inPublic)) {
+            ResolutionAction wanted = chosen != null ? chosen.getAction() : null;
+            boolean draftOnly = inDraft && !inPublic;
+            if (!draftOnly && wanted == ResolutionAction.KEEP_SOURCE) {
                 action = draftCopy.containsAnnotationPropertyInSignature(iri)
                         || publicOnt.containsAnnotationPropertyInSignature(iri)
                         ? ResolutionAction.MERGE : ResolutionAction.KEEP_SOURCE;
+                taken++;
+            } else if (inDraft && inPublic && wanted == ResolutionAction.MERGE) {
+                action = ResolutionAction.MERGE;
                 taken++;
             }
             ConflictResolution resolution = new ConflictResolution();
@@ -527,11 +532,13 @@ public class DraftPublishMergeService {
     }
 
     private String summarizeAxioms(OWLOntology ontology, IRI entityIRI) {
-        return ontology.getAxioms().stream()
-                .filter(ax -> ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(entityIRI)))
-                .limit(8)
-                .map(OWLAxiom::toString)
-                .collect(Collectors.joining("\n"));
+        List<OWLAxiom> about = ontology.getAxioms().stream()
+                .filter(ax -> ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(entityIRI))
+                        || (ax instanceof org.semanticweb.owlapi.model.OWLAnnotationAssertionAxiom note
+                                && note.getSubject().equals(entityIRI)))
+                .sorted(java.util.Comparator.comparing(OWLAxiom::toString))
+                .collect(Collectors.toList());
+        return AxiomPlainText.summarize(about, entityIRI);
     }
 
     private static String sanitizeUserId(String userId) {

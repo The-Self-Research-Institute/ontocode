@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   applyRefusal,
   BASELINE_LOST_FALLBACK,
+  canKeepBoth,
   DIRECT_COMPARE_FALLBACK,
   phaseForAnalysis,
   rowKindLabel,
@@ -57,9 +58,20 @@ describe("direct comparison after a lost baseline", () => {
   });
 
   it("labels each kind of difference", () => {
-    expect(rowKindLabel("public_only")).toBe("Only in Public");
-    expect(rowKindLabel("different")).toBe("Different");
+    expect(rowKindLabel("public_only")).toBe("New in Public");
+    expect(rowKindLabel("different")).toBe("Changed");
     expect(rowKindLabel(undefined)).toBeNull();
+  });
+});
+
+describe("canKeepBoth", () => {
+  it("is offered when the item exists on both sides or the kind is unknown", () => {
+    expect(canKeepBoth("different")).toBe(true);
+    expect(canKeepBoth(undefined)).toBe(true);
+  });
+
+  it("is not offered for something that only exists in Public", () => {
+    expect(canKeepBoth("public_only")).toBe(false);
   });
 });
 

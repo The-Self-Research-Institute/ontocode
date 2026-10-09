@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { X, Download, AlertTriangle, CheckCircle, Loader2, RefreshCw, GitMerge } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { extractLocalName } from "../utils/draftChangeHelpers";
-import { applyRefusal, phaseForAnalysis, rowKindLabel } from "./pullPreviewState";
+import { applyRefusal, canKeepBoth, phaseForAnalysis, rowKindLabel } from "./pullPreviewState";
 
 interface PullPreviewDialogProps {
   isOpen: boolean;
@@ -20,7 +20,7 @@ interface ChangeRow {
   kind?: string;
 }
 
-type Resolution = "keep_draft" | "take_public";
+type Resolution = "keep_draft" | "take_public" | "merge";
 type Phase = "analyzing" | "no_changes" | "baseline_lost" | "ready" | "merging" | "done" | "error";
 
 const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
@@ -212,7 +212,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                     ) : (
                       <>
                         <strong>{conflicts.length} conflict{conflicts.length !== 1 ? "s" : ""}</strong> —
-                        entities changed in both your draft and public. Choose which version to keep for each.
+                        items changed in both your draft and Public. Choose what to keep for each.
                       </>
                     )}
                   </div>
@@ -273,10 +273,10 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                             }}
                           >
                             <div className="text-[10px] font-semibold text-blue-500 mb-1 uppercase tracking-wide">
-                              Your Draft
+                              Keep mine (your draft)
                             </div>
-                            <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words line-clamp-4">
-                              {c.yourAxioms || "(no axioms)"}
+                            <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                              {c.yourAxioms || "Nothing recorded in your draft"}
                             </p>
                           </button>
                           <button
@@ -287,13 +287,31 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                             }}
                           >
                             <div className="text-[10px] font-semibold text-purple-500 mb-1 uppercase tracking-wide">
-                              Public Version
+                              Use Public's version
                             </div>
-                            <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words line-clamp-4">
-                              {c.publicAxioms || "(no axioms)"}
+                            <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                              {c.publicAxioms || "Nothing recorded in Public"}
                             </p>
                           </button>
                         </div>
+                        {canKeepBoth(c.kind) && (
+                          <button
+                            onClick={() => setResolution(c.entityIri, "merge")}
+                            className="w-full text-left px-2.5 py-2 border-t transition-colors hover:opacity-90"
+                            style={{
+                              borderColor: "var(--color-border)",
+                              backgroundColor: resolution === "merge" ? "rgba(34,197,94,0.12)" : "transparent",
+                            }}
+                          >
+                            <div className="text-[10px] font-semibold text-green-500 uppercase tracking-wide">
+                              Keep both
+                            </div>
+                            <p className="opacity-70 leading-relaxed">
+                              Combine both versions. For a name or description this gives the item two, which you can
+                              tidy up later.
+                            </p>
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -322,7 +340,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <GitMerge size={12} />
-              {conflicts.length > 0 ? "Apply & Merge" : "Pull & Merge"}
+              {conflicts.length > 0 ? "Apply my choices" : "Pull changes into my draft"}
             </button>
           )}
         </div>

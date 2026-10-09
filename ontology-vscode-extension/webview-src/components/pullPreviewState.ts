@@ -24,12 +24,16 @@ export function phaseForAnalysis(data: any): { phase: AnalysisPhase; message: st
 
 export function rowKindLabel(kind: unknown): string | null {
   if (kind === "public_only") {
-    return "Only in Public";
+    return "New in Public";
   }
   if (kind === "different") {
-    return "Different";
+    return "Changed";
   }
   return null;
+}
+
+export function canKeepBoth(kind: unknown): boolean {
+  return kind !== "public_only";
 }
 
 export function applyRefusal(data: any): string | null {

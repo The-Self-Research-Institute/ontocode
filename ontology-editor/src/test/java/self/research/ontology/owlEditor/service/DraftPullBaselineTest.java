@@ -316,6 +316,43 @@ class DraftPullBaselineTest {
     }
 
     @Test
+    void keepingBothForARenameBothSidesMadeCombinesTheTwoLabels() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "Alpha"), rdfWithLabels(CLASS_A, "Beta"));
+
+        Map<String, Object> result = service.applyPull("p1", "u1", Map.of(CLASS_A,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.MERGE)));
+
+        assertEquals(true, result.get("success"));
+        String merged = appliedDraftRdf();
+        assertTrue(merged.contains("Alpha"));
+        assertTrue(merged.contains("Beta"));
+    }
+
+    @Test
+    void keepBothMeansNothingForAClassOnlyPublicHasSoItIsLeftOut() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "A"), rdfWithLabels(CLASS_A, "A", CLASS_B, "B"));
+
+        service.applyPull("p1", "u1", Map.of(CLASS_B,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.MERGE)));
+
+        assertFalse(appliedDraftRdf().contains(CLASS_B));
+        assertFalse(storedBaseline().contains(CLASS_B));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theListedDifferencesAreWrittenInPlainLanguage() throws Exception {
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "Alpha"), rdfWithLabels(CLASS_A, "Beta"));
+
+        Map<String, Object> result = service.analyzePull("p1", "u1");
+
+        Map<String, Object> row = ((List<Map<String, Object>>) result.get("conflicts")).get(0);
+        assertTrue(((String) row.get("yourAxioms")).contains("Label: \"Alpha\""));
+        assertTrue(((String) row.get("publicAxioms")).contains("Label: \"Beta\""));
+        assertFalse(((String) row.get("yourAxioms")).contains("http://"));
+    }
+
+    @Test
     void afterAResolvedFallbackPullTheBaselineIsReestablishedFromPublic() throws Exception {
         givenDraftAndPublic(rdfWithLabels(CLASS_A, "A"), rdfWithLabels(CLASS_A, "A", CLASS_B, "B"));
 
