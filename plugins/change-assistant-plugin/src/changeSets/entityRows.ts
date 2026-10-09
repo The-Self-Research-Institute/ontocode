@@ -48,7 +48,21 @@ function valueRow(entry: ChangeEntry, raw: string, addition: boolean): PropertyR
   };
 }
 
+function prefixRow(entry: ChangeEntry, raw: string, addition: boolean): PropertyRow {
+  return {
+    ...valueRow(entry, raw, addition),
+    label: `Prefix ${entry.entityLabel || ''}`.trim(),
+    value: raw
+  };
+}
+
 export function propertyRows(entry: ChangeEntry): PropertyRow[] {
+  if (PREFIX_VERBS[entry.operationType || '']) {
+    const prefixRows: PropertyRow[] = [];
+    if (entry.oldValue) prefixRows.push(prefixRow(entry, entry.oldValue, false));
+    if (entry.newValue) prefixRows.push(prefixRow(entry, entry.newValue, true));
+    return prefixRows;
+  }
   const subs = entry.subChanges || [];
   if (subs.length > 0) return subs.map(sc => subChangeRow(entry, sc));
   const rows: PropertyRow[] = [];
