@@ -32,6 +32,8 @@ PLATFORM_ARG=""
 LINUX_ONLY_ARG=""
 REMOTE_BUILD_ARG=0
 UPLOAD_ONLY_ARG=0
+UPDATE_ENV_ARG=0
+BACKUP_ENV_ARG=0
 REMOTE_BUILD_SUPPORTED=("${DEFAULT_ALL_SERVICES[@]}")
 
 declare -A COMPOSE_SERVICE_NAME=(
@@ -53,6 +55,8 @@ while [[ $# -gt 0 ]]; do
     --linux-only) shift; LINUX_ONLY_ARG="${1:-}"; shift ;;
     --remote-build) REMOTE_BUILD_ARG=1; shift ;;
     --upload-only) UPLOAD_ONLY_ARG=1; shift ;;
+    --update-env) UPDATE_ENV_ARG=1; shift ;;
+    --backup) BACKUP_ENV_ARG=1; shift ;;
     *) echo "Unknown arg: $1" >&2; usage 1 ;;
   esac
 done
@@ -129,11 +133,20 @@ resolve_mode() {
 }
 for m in "${MODES[@]}"; do resolve_mode "$m"; done
 
+SERVER_ENV_CHANGED=0
+if [[ $BACKUP_ENV_ARG -eq 1 && $UPDATE_ENV_ARG -eq 0 ]]; then
+  echo "WARNING: --backup has no effect without --update-env" >&2
+fi
+if [[ $UPDATE_ENV_ARG -eq 1 && " ${PLATFORMS[*]} " != *" web "* ]]; then
+  echo "WARNING: --update-env only applies to --platform web — server .env will not be updated" >&2
+fi
+
 echo "============================================"
 echo " OntoCode release"
 echo " Modes     : ${MODES[*]}"
 echo " Services  : ${SERVICES[*]}"
 echo " Platforms : ${PLATFORMS[*]}"
+echo " Update env: $([[ $UPDATE_ENV_ARG -eq 1 ]] && echo "yes (ENV_ values → server .env$([[ $BACKUP_ENV_ARG -eq 1 ]] && echo ', with backup'))" || echo no)"
 echo " BUILD_PLATFORMS : $BUILD_PLATFORMS  (docker buildx; override to add arm64)"
 if [[ "$MODE_ARG" == "all" ]]; then
   echo " NOTE: --mode all — dev and prod branches run in parallel, no dev-first gate."
@@ -183,6 +196,95 @@ echo "[progress] deploying commit ${DEPLOY_START_SHA:-unknown} on branch ${DEPLO
 echo "[progress] logs: $LOG_DIR"
 declare -A BRANCH_PID
 
+collect_server_env() {
+  local m="$1" mp="ENV_${1^^}_" v k names
+  local -A vals=()
+  [[ -f "$ROOT/.env.deploy" ]] || return 0
+  names="$(grep -v '^[[:space:]]*#' "$ROOT/.env.deploy" | grep -oE '\bENV_[A-Za-z0-9_]+' | sort -u)"
+  for v in $names; do
+    case "$v" in ENV_DEV_*|ENV_PROD_*) continue ;; esac
+    vals["${v#ENV_}"]="${!v:-}"
+  done
+  for v in $names; do
+    [[ "$v" == "$mp"* ]] && vals["${v#"$mp"}"]="${!v:-}"
+  done
+  for k in "${!vals[@]}"; do
+    [[ -z "${vals[$k]}" ]] && continue
+    if [[ ! "$k" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+      echo "ERROR: '$k' is not a valid env name (from .env.deploy)" >&2
+      return 1
+    fi
+    if [[ "${vals[$k]}" == *$'\n'* || "${vals[$k]}" == *$'\r'* ]]; then
+      echo "ERROR: value for $k ($m) contains a line break — fix it in .env.deploy" >&2
+      return 1
+    fi
+    printf '%s=%s\n' "$k" "${vals[$k]}"
+  done
+}
+
+sync_server_env() {
+  local m="$1" payload result
+  local ssh_opts=(-o BatchMode=yes)
+  [[ -n "${SSHKEY[$m]}" ]] && ssh_opts+=(-i "${SSHKEY[$m]}")
+  SERVER_ENV_CHANGED=0
+
+  payload="$(collect_server_env "$m")" || return 1
+  if [[ -z "$payload" ]]; then
+    echo "[progress][$m-web] env sync: no ENV_ values for $m in .env.deploy — nothing to update"
+    return 0
+  fi
+
+  local remote='set -e
+umask 077
+touch .env
+cp .env .env.sync.tmp
+[ -s .env.sync.tmp ] && [ -n "$(tail -c1 .env.sync.tmp)" ] && echo >> .env.sync.tmp
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  k="${line%%=*}"
+  if grep -q "^$k=" .env.sync.tmp; then
+    while IFS= read -r l || [ -n "$l" ]; do
+      case "$l" in "$k="*) printf "%s\n" "$line" ;; *) printf "%s\n" "$l" ;; esac
+    done < .env.sync.tmp > .env.sync.tmp2
+    mv .env.sync.tmp2 .env.sync.tmp
+    echo "UPDATED $k"
+  else
+    printf "%s\n" "$line" >> .env.sync.tmp
+    echo "ADDED $k"
+  fi
+done
+if cmp -s .env .env.sync.tmp; then
+  rm -f .env.sync.tmp
+  echo "RESULT unchanged"
+else
+  if [ "$BACKUP" = 1 ]; then
+    cp -p .env ".env.backup.$(date +%Y%m%d%H%M%S)"
+    chmod 600 .env.backup.*
+    ls -1t .env.backup.* | tail -n +6 | xargs -r rm -f
+  fi
+  cat .env.sync.tmp > .env
+  rm -f .env.sync.tmp
+  chmod 600 .env
+  echo "RESULT changed"
+fi'
+
+  result="$(printf '%s\n' "$payload" | ssh "${ssh_opts[@]}" "${HOST[$m]}" \
+    "cd '${DIR[$m]}' && BACKUP=$BACKUP_ENV_ARG && $remote")" || {
+    echo "ERROR: could not update ${HOST[$m]}:${DIR[$m]}/.env" >&2
+    return 1
+  }
+
+  local added
+  added="$(grep '^ADDED' <<<"$result" | cut -d' ' -f2 | tr '\n' ' ')"
+  [[ -n "$added" ]] && echo "[progress][$m-web] env sync: added new keys to server .env: $added"
+  if grep -q '^RESULT changed' <<<"$result"; then
+    SERVER_ENV_CHANGED=1
+    echo "[progress][$m-web] env sync: server .env updated$([[ $BACKUP_ENV_ARG -eq 1 ]] && echo ' (backup saved)')"
+  else
+    echo "[progress][$m-web] env sync: server .env already up to date"
+  fi
+}
+
 branch_web() {
   local m="$1"
   echo "[progress][$m-web] $(date '+%H:%M:%S') START image build+push"
@@ -199,6 +301,9 @@ branch_web() {
       return 1
     fi
     ssh_opts+=(-i "${SSHKEY[$m]}")
+  fi
+  if [[ $UPDATE_ENV_ARG -eq 1 ]]; then
+    sync_server_env "$m" || return 1
   fi
   echo "[progress][$m-web] SSH → ${HOST[$m]} (${DIR[$m]})"
   ssh "${ssh_opts[@]}" "${HOST[$m]}" "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}up -d --pull always && docker compose ${CFLAGS[$m]}ps" || return 1
@@ -265,6 +370,14 @@ branch_web_remote_build() {
   echo "[progress][$m-web] $(date '+%H:%M:%S') rsync OK — building + starting on remote: ${compose_services[*]}"
   ssh "${ssh_opts[@]}" "${HOST[$m]}" \
     "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml build ${compose_services[*]} && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml up -d ${compose_services[*]} && docker compose ${CFLAGS[$m]}ps" || return 1
+  if [[ $UPDATE_ENV_ARG -eq 1 ]]; then
+    sync_server_env "$m" || return 1
+    if [[ $SERVER_ENV_CHANGED -eq 1 ]]; then
+      echo "[progress][$m-web] server .env changed — applying it to all services"
+      ssh "${ssh_opts[@]}" "${HOST[$m]}" \
+        "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}up -d --no-build" || return 1
+    fi
+  fi
   echo "[progress][$m-web] $(date '+%H:%M:%S') DONE remote build+deploy"
 }
 
