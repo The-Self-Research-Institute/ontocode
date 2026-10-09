@@ -54,6 +54,7 @@ public class AssistantEditController {
                                       HttpServletRequest httpRequest) {
         return JwtIdentityExtractor.extractEmail(httpRequest)
                 .map(userEmail -> {
+                    consistencyCheckService.rememberCaller(sessionId, httpRequest.getHeader("Authorization"));
                     ProposeEditResult result = proposalService.propose(sessionId, userEmail, request.groups());
                     return ResponseEntity.ok(toBody(result));
                 })

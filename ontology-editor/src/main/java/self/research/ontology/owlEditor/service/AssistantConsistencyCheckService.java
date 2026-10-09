@@ -8,6 +8,9 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -166,6 +169,38 @@ public class AssistantConsistencyCheckService {
                 .filter(g -> userEmail != null && userEmail.equals(g.getUserEmail())
                         && sessionId != null && sessionId.equals(g.getSessionId()))
                 .map(AssistantEditGroupDocument::getConsistencyCheck);
+    }
+
+    private static final int MAX_REMEMBERED_CALLERS = 1000;
+
+    private final ConcurrentMap<String, String> callerAuthorization = new ConcurrentHashMap<>();
+
+    public void rememberCaller(String sessionId, String authorizationHeader) {
+        if (sessionId == null || authorizationHeader == null || authorizationHeader.isBlank()) {
+            return;
+        }
+        if (callerAuthorization.size() >= MAX_REMEMBERED_CALLERS) {
+            callerAuthorization.clear();
+        }
+        callerAuthorization.put(sessionId, authorizationHeader);
+    }
+
+    private ResponseEntity<Map<String, Object>> postConsistency(String projectId, String serverGroupId,
+                                                                 Map<String, String> body) {
+        String sessionId = groupRepository.findById(serverGroupId)
+                .map(AssistantEditGroupDocument::getSessionId).orElse(null);
+        String authorization = sessionId == null ? null : callerAuthorization.get(sessionId);
+        if (authorization == null) {
+            throw new IllegalStateException("the reasoner needs your login and it wasn't available for this check");
+        }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        headers.set(HttpHeaders.AUTHORIZATION, authorization);
+        @SuppressWarnings("unchecked")
+        ResponseEntity<Map<String, Object>> response = (ResponseEntity<Map<String, Object>>) (ResponseEntity<?>)
+                restTemplate.exchange(pluginServiceUrl + "/api/reasoner/" + projectId + "/consistency",
+                        HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+        return response;
     }
 
     public void startAsyncCheck(String serverGroupId, String projectId, String targetPath,
@@ -341,10 +376,7 @@ public class AssistantConsistencyCheckService {
             body.put("reasonerType", "HERMIT");
             body.put("whatIfKey", whatIfKey);
             body.put("ontologyContent", ontologyContent);
-            @SuppressWarnings("unchecked")
-            ResponseEntity<Map<String, Object>> response = (ResponseEntity<Map<String, Object>>) (ResponseEntity<?>)
-                    restTemplate.postForEntity(pluginServiceUrl + "/api/reasoner/" + projectId + "/consistency",
-                            body, Map.class);
+            ResponseEntity<Map<String, Object>> response = postConsistency(projectId, serverGroupId, body);
             Map<String, Object> result = response.getBody();
             boolean consistent = result != null && Boolean.TRUE.equals(result.get("consistent"));
             if (consistent) {
@@ -400,10 +432,7 @@ public class AssistantConsistencyCheckService {
             body.put("reasonerType", "HERMIT");
             body.put("whatIfKey", whatIfKey);
             body.put("ontologyContent", ontologyContent);
-            @SuppressWarnings("unchecked")
-            ResponseEntity<Map<String, Object>> response = (ResponseEntity<Map<String, Object>>) (ResponseEntity<?>)
-                    restTemplate.postForEntity(pluginServiceUrl + "/api/reasoner/" + projectId + "/consistency",
-                            body, Map.class);
+            ResponseEntity<Map<String, Object>> response = postConsistency(projectId, groupIds.iterator().next(), body);
             Map<String, Object> result = response.getBody();
             boolean consistent = result != null && Boolean.TRUE.equals(result.get("consistent"));
             if (consistent) {

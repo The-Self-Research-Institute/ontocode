@@ -210,6 +210,61 @@ class AssistantReasonerToolServiceTest {
         assertEquals("REASONER_UNAVAILABLE", result.getErrorCode());
     }
 
+    private void acceptedJob(ReasonerWorkerClient worker, Map<String, Object>... polls) {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        ReflectionTestUtils.setField(toolService, "reasonerWorkerClient", worker);
+        ReflectionTestUtils.setField(toolService, "asyncWaitMs", 500L);
+        ReflectionTestUtils.setField(toolService, "asyncPollMs", 5L);
+        Map<String, Object> body = new HashMap<>();
+        body.put("async", true);
+        body.put("jobId", "job-1");
+        mockExchange(new ResponseEntity<>(body, HttpStatus.ACCEPTED));
+        org.mockito.stubbing.OngoingStubbing<Map<String, Object>> stub = when(worker.getJob("job-1"));
+        for (Map<String, Object> poll : polls) {
+            stub = stub.thenReturn(poll);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aBackgroundReasonerJobIsWaitedForAndItsAnswerIsReturned() {
+        ReasonerWorkerClient worker = org.mockito.Mockito.mock(ReasonerWorkerClient.class);
+        acceptedJob(worker, Map.of("status", "RUNNING"),
+                Map.of("status", "COMPLETED", "consistent", true));
+
+        ReasonerToolResult result = toolService.checkConsistency("s1", "u@x.com", "Bearer t");
+
+        assertTrue(result.isOk());
+        assertEquals(Boolean.TRUE, ((Map<String, Object>) result.getData()).get("consistent"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aFailedBackgroundJobReportsTheReasonersOwnError() {
+        ReasonerWorkerClient worker = org.mockito.Mockito.mock(ReasonerWorkerClient.class);
+        acceptedJob(worker, Map.of("status", "FAILED", "error", "Ontology too large"));
+
+        ReasonerToolResult result = toolService.checkConsistency("s1", "u@x.com", "Bearer t");
+
+        assertFalse(result.isOk());
+        assertEquals("REASONER_ERROR", result.getErrorCode());
+        assertTrue(result.getMessage().contains("Ontology too large"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aBackgroundJobThatOutlastsTheWaitAsksTheUserToRetry() {
+        ReasonerWorkerClient worker = org.mockito.Mockito.mock(ReasonerWorkerClient.class);
+        acceptedJob(worker, Map.of("status", "RUNNING"));
+
+        ReasonerToolResult result = toolService.checkConsistency("s1", "u@x.com", "Bearer t");
+
+        assertFalse(result.isOk());
+        assertEquals("REASONER_UNAVAILABLE", result.getErrorCode());
+        assertTrue(result.getMessage().contains("still working"));
+    }
+
     @Test
     void oversizedUnsatisfiableClassesListIsTruncatedWithTotalCount() {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));

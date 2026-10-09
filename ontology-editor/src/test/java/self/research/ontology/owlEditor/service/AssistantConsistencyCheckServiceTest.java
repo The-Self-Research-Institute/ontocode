@@ -4,6 +4,8 @@ import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
@@ -80,6 +82,38 @@ class AssistantConsistencyCheckServiceTest {
         ReflectionTestUtils.setField(service, "debounceMaxBatchSize", 10);
         when(mongoTemplate.findAndModify(any(Query.class), any(Update.class), any(FindAndModifyOptions.class),
                 eq(AssistantEditGroupDocument.class))).thenReturn(pendingGroup());
+        when(groupRepository.findById(anyString())).thenReturn(Optional.of(pendingGroup()));
+        service.rememberCaller("s1", "Bearer user-jwt");
+    }
+
+    @Test
+    void theReasonerRequestCarriesTheUsersLoginSoItIsNotRejectedAsUnauthenticated() throws IOException {
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(Path.of("source.ttl"));
+        when(storageManager.extensionFor("turtle")).thenReturn("ttl");
+        when(spliceWriter.splice(any(), anyString(), any())).thenReturn(Path.of("spliced.ttl"));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(Map.of("consistent", true)));
+
+        ReflectionTestUtils.invokeMethod(service, "runCheck", "g1", "proj-1", "turtle",
+                List.of(entry()), StorageManager.ContentScope.publicScope(), "assistant-whatif-g1");
+
+        ArgumentCaptor<HttpEntity> sent = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).exchange(anyString(), eq(HttpMethod.POST), sent.capture(), eq(Map.class));
+        assertEquals("Bearer user-jwt", sent.getValue().getHeaders().getFirst("Authorization"));
+    }
+
+    @Test
+    void withoutALoginTheCheckIsMarkedInconclusiveInsteadOfCallingTheReasoner() throws IOException {
+        ReflectionTestUtils.setField(service, "callerAuthorization", new java.util.concurrent.ConcurrentHashMap<String, String>());
+        when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(Path.of("source.ttl"));
+        when(storageManager.extensionFor("turtle")).thenReturn("ttl");
+        when(spliceWriter.splice(any(), anyString(), any())).thenReturn(Path.of("spliced.ttl"));
+
+        ReflectionTestUtils.invokeMethod(service, "runCheck", "g1", "proj-1", "turtle",
+                List.of(entry()), StorageManager.ContentScope.publicScope(), "assistant-whatif-g1");
+
+        verify(restTemplate, never()).exchange(anyString(), any(HttpMethod.class), any(HttpEntity.class), eq(Map.class));
+        assertEquals(ConsistencyCheckState.ERROR, capturedState());
     }
 
     private static EditEntry entry() {
@@ -87,7 +121,7 @@ class AssistantConsistencyCheckServiceTest {
     }
 
     private static AssistantEditGroupDocument pendingGroup() {
-        return AssistantEditGroupDocument.builder().id("g1").projectId("proj-1")
+        return AssistantEditGroupDocument.builder().id("g1").projectId("proj-1").sessionId("s1")
                 .consistencyCheck(AssistantEditGroupDocument.ConsistencyCheckRecord.builder()
                         .state(ConsistencyCheckState.PENDING).build())
                 .build();
@@ -150,7 +184,7 @@ class AssistantConsistencyCheckServiceTest {
         when(storageManager.extensionFor("turtle")).thenReturn("ttl");
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(Path.of("spliced.ttl"));
         when(datasetService.getDraftGraphUri("proj-1", "assistant-whatif-g1")).thenReturn("urn:draft:graph:assistant-whatif-g1");
-        when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(Map.of("consistent", true)));
 
         ReflectionTestUtils.invokeMethod(service, "runCheck", "g1", "proj-1", "turtle",
@@ -166,7 +200,7 @@ class AssistantConsistencyCheckServiceTest {
         when(storageManager.ensureCodeViewFile("proj-1", "turtle")).thenReturn(Path.of("source.ttl"));
         when(storageManager.extensionFor("turtle")).thenReturn("ttl");
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(Path.of("spliced.ttl"));
-        when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(Map.of("consistent", false)));
 
         ReflectionTestUtils.invokeMethod(service, "runCheck", "g1", "proj-1", "turtle",
@@ -309,7 +343,7 @@ class AssistantConsistencyCheckServiceTest {
         when(storageManager.resolveGraphVersion("proj-1", StorageManager.ContentScope.publicScope())).thenReturn(5L);
         when(storageManager.extensionFor("turtle")).thenReturn("ttl");
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(Path.of("spliced.ttl"));
-        when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(Map.of("consistent", true)));
         AssistantEditGroupDocument a = group("g1", "s1", 5L, entryAt(0, 1, "line0"));
         AssistantEditGroupDocument b = group("g2", "s1", 5L, entryAt(1, 1, "line1"));
@@ -320,7 +354,7 @@ class AssistantConsistencyCheckServiceTest {
         verify(mongoTemplate, timeout(5000).times(2)).findAndModify(any(Query.class), any(Update.class),
                 any(FindAndModifyOptions.class), eq(AssistantEditGroupDocument.class));
         verify(datasetService, times(1)).copyMainGraphToDraft(eq("proj-1"), anyString());
-        verify(restTemplate, times(1)).postForEntity(anyString(), any(), eq(Map.class));
+        verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class));
     }
 
     @Test
@@ -330,7 +364,7 @@ class AssistantConsistencyCheckServiceTest {
         when(storageManager.resolveGraphVersion("proj-1", StorageManager.ContentScope.publicScope())).thenReturn(5L);
         when(storageManager.extensionFor("turtle")).thenReturn("ttl");
         when(spliceWriter.splice(any(), anyString(), any())).thenReturn(Path.of("spliced.ttl"));
-        when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(Map.of("consistent", true)));
         AssistantEditGroupDocument a = group("g1", "s1", 5L, entryAt(0, 1, "line0"));
         AssistantEditGroupDocument b = group("g2", "s1", 4L, entryAt(1, 1, "line1"));
