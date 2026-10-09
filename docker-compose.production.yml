@@ -227,6 +227,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/log/ontocode/editor:/app/logs
+      - editor-data:/app/data
     networks:
       - ontology-net
     deploy:
@@ -417,6 +418,7 @@ services:
 volumes:
   mongo-data:
   fuseki-data:
+  editor-data:
 
 networks:
   ontology-net:
