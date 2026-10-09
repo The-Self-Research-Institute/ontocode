@@ -16,6 +16,22 @@ export function apiBase(): string {
   return (window as any).API_BASE_URL || 'http://localhost:8082';
 }
 
+function anonymousFallbackId(): string {
+  const key = 'changeAssistantAnonymousId';
+  try {
+    let id = localStorage.getItem(key);
+    if (!id) {
+      id = 'anon-' + (typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36));
+      localStorage.setItem(key, id);
+    }
+    return id;
+  } catch {
+    return 'anonymous';
+  }
+}
+
 export function currentActor(): { userId: string; username: string } {
   let stored: any = {};
   try {
@@ -24,5 +40,8 @@ export function currentActor(): { userId: string; username: string } {
     stored = {};
   }
   const user = (window as any).vscodeUser || stored;
-  return { userId: user?.email || user?.id || 'anonymous', username: user?.username || 'Anonymous' };
+  return {
+    userId: user?.email || user?.id || anonymousFallbackId(),
+    username: user?.username || 'Anonymous',
+  };
 }

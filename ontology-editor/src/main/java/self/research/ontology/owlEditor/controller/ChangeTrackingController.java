@@ -710,8 +710,9 @@ public class ChangeTrackingController {
             String resolution = request.get("resolution");
             String userId = request.getOrDefault("userId", "system");
             String username = request.getOrDefault("username", "System");
-            
-            boolean success = historySyncService.resolveConflict(changeId, userId, username, resolution);
+            String mergedValue = request.get("mergedValue");
+
+            boolean success = historySyncService.resolveConflict(changeId, userId, username, resolution, mergedValue);
             
             if (success) {
                 return ResponseEntity.ok(Map.of(

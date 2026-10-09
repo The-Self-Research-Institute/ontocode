@@ -295,14 +295,17 @@ public class HistorySyncService {
         return true;
     }
 
-    public boolean resolveConflict(String changeId, String userId, String username, String resolution) {
+    public boolean resolveConflict(String changeId, String userId, String username, String resolution, String mergedValue) {
         HistoryChange change = historyChangeRepository.findById(changeId).orElse(null);
         if (change == null) {
             return false;
         }
 
         change.setHasConflict(false);
-        change.setConflictResolution(resolution);
+        change.setConflictResolution(
+                "merge".equals(resolution) && mergedValue != null && !mergedValue.isBlank()
+                        ? mergedValue
+                        : resolution);
         change.setResolvedBy(username);
         change.setResolvedAt(LocalDateTime.now(ZoneOffset.UTC));
         historyChangeRepository.save(change);

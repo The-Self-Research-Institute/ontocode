@@ -30,4 +30,10 @@ class PageBackedRangeMatcher extends CodeViewRangeMatcher {
             return false;
         }
     }
+
+    @Override
+    public boolean allMatch(String projectId, String format, List<ExpectedRange> ranges,
+                            StorageManager.ContentScope scope) {
+        return allMatch(projectId, format, ranges);
+    }
 }

@@ -115,7 +115,7 @@ public class OntologyMutationService {
         }
     }
 
-    public void invalidateReasonerCaches(String projectId) {
+    public void bumpMainGraphRevision(String projectId) {
         if (mainGraphRevisionService != null) {
             try {
                 mainGraphRevisionService.incrementRevision(projectId);
@@ -123,7 +123,9 @@ public class OntologyMutationService {
                 log.warn("[MUTATION] Failed bumping main graph revision for project {}", projectId, e);
             }
         }
+    }
 
+    public void invalidateReasonerCaches(String projectId) {
         if (editorReasonerCacheService != null) {
             try {
                 editorReasonerCacheService.invalidateOntology(projectId);
@@ -237,6 +239,7 @@ public class OntologyMutationService {
                 }
                 invalidatePublicCodeViewCache(projectId, draft);
                 invalidateEntityCaches(projectId, affectedIris(ops, reverseReferenceIris), draft);
+                bumpMainGraphRevision(projectId);
                 invalidateReasonerCaches(projectId);
                 return;
             }
@@ -251,9 +254,7 @@ public class OntologyMutationService {
                 } else {
                     markDirtyAfterRawWrite(projectId);
                     datasetService.execUpdate(projectId, sparql);
-                    if (mainGraphRevisionService != null) {
-                        mainGraphRevisionService.incrementRevision(projectId);
-                    }
+                    bumpMainGraphRevision(projectId);
                 }
             } finally {
                 MutationContext.getAndClear();
@@ -366,9 +367,7 @@ public class OntologyMutationService {
         } else {
             markDirtyAfterRawWrite(projectId);
             datasetService.execUpdate(projectId, sparql);
-            if (mainGraphRevisionService != null) {
-                mainGraphRevisionService.incrementRevision(projectId);
-            }
+            bumpMainGraphRevision(projectId);
         }
         topLevelCacheService.evict(projectId);
         invalidatePublicCodeViewCache(projectId, draft);
@@ -423,9 +422,7 @@ public class OntologyMutationService {
         } else {
             markDirtyAfterRawWrite(projectId);
             datasetService.execUpdate(projectId, sparql);
-            if (mainGraphRevisionService != null) {
-                mainGraphRevisionService.incrementRevision(projectId);
-            }
+            bumpMainGraphRevision(projectId);
         }
         topLevelCacheService.evict(projectId);
         invalidatePublicCodeViewCache(projectId, draft);

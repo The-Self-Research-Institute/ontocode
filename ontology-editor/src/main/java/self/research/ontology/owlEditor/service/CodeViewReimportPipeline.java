@@ -383,6 +383,9 @@ public class CodeViewReimportPipeline {
 
     private void invalidateAfterGraphReplaced(String projectId, MetadataRefresh refresh,
                                               @Nullable List<String> touchedIris) {
+        if (ontologyMutationService != null) {
+            ontologyMutationService.bumpMainGraphRevision(projectId);
+        }
         invalidateDerivedCaches(projectId, touchedIris, false);
         storageManager.clearCodeViewCache(projectId);
         datasetService.evictPublicReadCache(projectId);

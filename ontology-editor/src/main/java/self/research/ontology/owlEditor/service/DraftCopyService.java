@@ -46,6 +46,11 @@ public class DraftCopyService {
             return new InitiateResult(true, "Resumed existing draft session", -1, existingRevision);
         }
 
+        if (getStatus(projectId, userId) == DraftCopyStatus.COPYING) {
+            return new InitiateResult(false,
+                    "A draft copy is already in progress for this project — please wait for it to finish.", 0, 0);
+        }
+
         var stats = importQueueManager.getQueueStats();
         if (stats.getActiveProjectIds() != null && stats.getActiveProjectIds().contains(projectId)) {
             return new InitiateResult(false,

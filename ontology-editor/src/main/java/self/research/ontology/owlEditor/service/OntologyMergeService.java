@@ -1591,6 +1591,21 @@ public class OntologyMergeService {
                 addDefiningAxioms(ours, theirs, iri, manager);
             }
         }
+
+        if (conflictEntityIris != null) {
+            for (String iriStr : conflictEntityIris) {
+                if (touchedIris.contains(iriStr)) {
+                    continue;
+                }
+                IRI iri = IRI.create(iriStr);
+                ConflictResolution resolution = safeResolutions.get(iriStr);
+                if (resolution == null) {
+                    resolution = new ConflictResolution();
+                    resolution.setAction(ResolutionAction.MERGE);
+                }
+                applyDraftConflictResolution(ours, theirs, iri, resolution, manager);
+            }
+        }
         return theirs;
     }
 
@@ -1601,7 +1616,9 @@ public class OntologyMergeService {
      */
     public Set<String> collectTouchedIris(OWLOntology baseline, OWLOntology ours) {
         Set<String> touched = new LinkedHashSet<>();
-        for (OWLEntity entity : ours.getSignature()) {
+        Set<OWLEntity> allEntities = new LinkedHashSet<>(ours.getSignature());
+        allEntities.addAll(baseline.getSignature());
+        for (OWLEntity entity : allEntities) {
             if (entity.isBuiltIn()) {
                 continue;
             }

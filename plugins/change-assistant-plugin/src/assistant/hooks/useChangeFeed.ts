@@ -13,14 +13,18 @@ export function useChangeFeed(projectId: string) {
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [isDraftActive, setIsDraftActive] = useState(false);
+  const draftSeqRef = useRef(0);
+  const changesSeqRef = useRef(0);
 
   const loadDraftChanges = async () => {
+    const seq = ++draftSeqRef.current;
     try {
       const userId = currentActor().userId;
       const [drafts, draftActive] = await Promise.all([
         fetchDraftList(projectId, userId),
         fetchDraftSessionActive(projectId, userId),
       ]);
+      if (seq !== draftSeqRef.current) return;
       if (drafts) setDraftChanges(drafts.map((draft: any) => parseDraft(draft)));
       setIsDraftActive(draftActive);
     } catch (error) {
@@ -29,12 +33,13 @@ export function useChangeFeed(projectId: string) {
   };
 
   const loadChanges = async () => {
+    const seq = ++changesSeqRef.current;
     setIsLoading(true);
     try {
       const data = await fetchRecentChanges(projectId);
+      if (seq !== changesSeqRef.current) return;
       if (!data.success) {
         console.error('[ChangeAssistant] Failed to load changes:', data.error);
-        setIsLoading(false);
         return;
       }
       const parsedChanges = data.changes.map((change: any) => parseChange(change));
@@ -44,7 +49,7 @@ export function useChangeFeed(projectId: string) {
     } catch (error) {
       console.error('Failed to load changes:', error);
     } finally {
-      setIsLoading(false);
+      if (seq === changesSeqRef.current) setIsLoading(false);
     }
   };
 

@@ -395,7 +395,10 @@ public class AssistantEditApplyService {
         List<CodeViewRangeMatcher.ExpectedRange> expected = group.getEdits().stream()
                 .map(e -> new CodeViewRangeMatcher.ExpectedRange(e.getStartLine(), e.getLineCount(), e.getOriginalText()))
                 .toList();
-        return !rangeMatcher.allMatch(group.getProjectId(), group.getTargetPath(), expected, scope);
+        boolean matches = scope.draft()
+                ? rangeMatcher.allMatch(group.getProjectId(), group.getTargetPath(), expected, scope)
+                : rangeMatcher.allMatch(group.getProjectId(), group.getTargetPath(), expected);
+        return !matches;
     }
 
     private ApplyResult idempotentReplay(AssistantEditGroupDocument group) {

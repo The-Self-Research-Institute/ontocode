@@ -12,11 +12,12 @@ interface Conflict {
 
 interface ConflictResolverProps {
   conflict: Conflict;
-  onResolve: (resolution: 'accept_local' | 'accept_remote' | 'merge') => void;
+  onResolve: (resolution: 'accept_local' | 'accept_remote' | 'merge', mergedValue?: string) => void;
   onCancel: () => void;
+  isResolving?: boolean;
 }
 
-const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve, onCancel }) => {
+const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve, onCancel, isResolving }) => {
   const [selectedResolution, setSelectedResolution] = useState<'accept_local' | 'accept_remote' | 'merge' | null>(null);
   const [mergedValue, setMergedValue] = useState('');
 
@@ -31,7 +32,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
 
   const handleResolve = () => {
     if (selectedResolution) {
-      onResolve(selectedResolution);
+      onResolve(selectedResolution, selectedResolution === 'merge' ? mergedValue : undefined);
     }
   };
 
@@ -169,15 +170,15 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
           </button>
           <button
             onClick={handleResolve}
-            disabled={!selectedResolution}
+            disabled={!selectedResolution || isResolving}
             className={`px-4 py-2 rounded flex items-center gap-2 ${
-              selectedResolution
+              selectedResolution && !isResolving
                 ? 'bg-green-600 text-white hover:bg-green-700'
                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}
           >
             <CheckCircle className="w-4 h-4" />
-            Resolve Conflict
+            {isResolving ? 'Resolving…' : 'Resolve Conflict'}
           </button>
         </div>
       </div>

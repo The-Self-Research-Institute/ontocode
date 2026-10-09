@@ -47,6 +47,11 @@ export function postComment(projectId: string, changeId: string, body: object): 
   return postJson(changeUrl(projectId, changeId, 'comments'), body);
 }
 
-export function postConflictResolution(projectId: string, changeId: string, resolution: string): Promise<Response> {
-  return postJson(changeUrl(projectId, changeId, 'resolve-conflict'), { resolution });
+export function postConflictResolution(
+  projectId: string,
+  changeId: string,
+  resolution: string,
+  mergedValue?: string,
+): Promise<Response> {
+  return postJson(changeUrl(projectId, changeId, 'resolve-conflict'), { resolution, mergedValue });
 }

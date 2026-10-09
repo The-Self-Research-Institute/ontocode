@@ -26,9 +26,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const feed = useChangeFeed(projectId);
   const liveActivity = useLiveActivity(projectId, feed.loadChanges);
   const filters = useChangeFilters(feed.changes);
-  const details = useChangeDetails(projectId, feed.changes, showNotification);
-  const conflicts = useConflictResolution(projectId, feed.loadChanges);
-  const comments = useCommentDialog(projectId, selectedChange, feed.loadChanges);
+  const details = useChangeDetails(projectId, feed.changes, showNotification, feed.loadChanges);
+  const conflicts = useConflictResolution(projectId, feed.loadChanges, showNotification);
+  const comments = useCommentDialog(projectId, selectedChange, feed.loadChanges, showNotification);
 
   React.useEffect(() => {
     if (!feed.isDraftActive && activeTab === 'drafts') {
@@ -66,8 +66,10 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       {conflicts.showConflictResolver && conflicts.selectedConflict && (
         <ConflictResolver
           conflict={conflicts.selectedConflict}
-          onResolve={(resolution) => conflicts.resolveConflict(conflicts.selectedConflict.id, resolution)}
+          onResolve={(resolution, mergedValue) =>
+            conflicts.resolveConflict(conflicts.selectedConflict.id, resolution, mergedValue)}
           onCancel={conflicts.cancelConflict}
+          isResolving={conflicts.isResolving}
         />
       )}
       {notification && <NotificationToast notification={notification} />}

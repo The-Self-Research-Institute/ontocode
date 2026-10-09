@@ -315,6 +315,7 @@ public class DraftPublishMergeService {
         if (userId == null || userId.isBlank()) {
             return "anonymous";
         }
-        return userId.replaceAll("[^a-zA-Z0-9._@-]", "_");
+        String sanitized = userId.replaceAll("[^a-zA-Z0-9._@-]", "_");
+        return sanitized + "_" + Integer.toHexString(userId.hashCode());
     }
 }

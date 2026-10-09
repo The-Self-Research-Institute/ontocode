@@ -22,7 +22,7 @@ interface TabContentProps {
   sourceFilter: SourceFilter;
   onRollback: () => void;
   onOpenDetails: (changeId: string) => void;
-  onResolveClick: (change: OntologyChange) => void;
+  onResolveClick: (change: OntologyChange, conflictIndex: number) => void;
   onAutoResolve: (changeId: string, resolution: string) => void;
   onSelectTimeline: (changeId: string) => void;
 }
@@ -42,7 +42,7 @@ const TabContent: React.FC<TabContentProps> = (props) => (
       />
     )}
     {props.activeTab === 'conflicts' && (
-      <ConflictsTab changes={props.filteredChanges} onResolveClick={props.onResolveClick} onAutoResolve={props.onAutoResolve} />
+      <ConflictsTab changes={props.changes} onResolveClick={props.onResolveClick} onAutoResolve={props.onAutoResolve} />
     )}
     {props.activeTab === 'history' && (
       <ChangeTimeline changes={timelineItems(props.changes)} onSelectChange={props.onSelectTimeline} />

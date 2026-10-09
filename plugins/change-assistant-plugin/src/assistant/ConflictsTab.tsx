@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle, GitMerge } from 'lucide-react';
 import { OntologyChange } from './types';
 
 interface ConflictActions {
-  onResolveClick: (change: OntologyChange) => void;
+  onResolveClick: (change: OntologyChange, conflictIndex: number) => void;
   onAutoResolve: (changeId: string, resolution: string) => void;
 }
 
@@ -22,7 +22,7 @@ const ConflictCard: React.FC<ConflictActions & { change: OntologyChange }> = ({ 
         <p className="text-sm text-gray-700 mb-2">{conflict.description}</p>
         <div className="flex gap-2">
           <button
-            onClick={() => onResolveClick(change)}
+            onClick={() => onResolveClick(change, idx)}
             className="px-3 py-1 text-sm bg-orange-600 text-white rounded hover:bg-orange-700 flex items-center gap-1"
           >
             <GitMerge className="w-3 h-3" />

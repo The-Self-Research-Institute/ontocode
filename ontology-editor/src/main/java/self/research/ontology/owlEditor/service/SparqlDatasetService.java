@@ -1813,6 +1813,16 @@ public class SparqlDatasetService {
                         if (sizeBeforeClear > 0) {
                             clearGraph(conn, graphIri, graphUri, projectId);
                         }
+                        if (!partitionByNamespace) {
+                            for (String partitionGraphUri : getPartitionGraphs(conn, projectId, graphUri)) {
+                                IRI partitionGraphIri = valueFactory.createIRI(partitionGraphUri);
+                                long partitionSize = safeGraphSize(conn, partitionGraphIri, "before-clear-partition", projectId);
+                                if (partitionSize > 0) {
+                                    clearGraph(conn, partitionGraphIri, partitionGraphUri, projectId);
+                                }
+                            }
+                            partitionGraphCache.remove(projectId);
+                        }
                     }
 
                     // Parse and upload in batches
@@ -1951,7 +1961,6 @@ public class SparqlDatasetService {
                     long parseStart = System.nanoTime();
                     parser.parse(cleanedStream, finalTargetGraphUri);
                     log.info("[TIMING] RDF parsing completed in {} ms ({} triples parsed)", elapsedMillis(parseStart), totalTriples.get());
-                    persistCapturedNamespaces(projectId, capturedNamespaces, draft, draftUserId, rdfFormat);
 
                     // Upload remaining triples
                     if (partitionByNamespace) {
@@ -2009,6 +2018,8 @@ public class SparqlDatasetService {
                                 "Import verification failed: parsed " + totalTriples.get()
                                         + " triples but named graph is empty after commit for project " + projectId);
                     }
+
+                    persistCapturedNamespaces(projectId, capturedNamespaces, draft, draftUserId, rdfFormat);
 
                     // Invalidate context caches after new data is committed
                     invalidateContextCaches(projectId);

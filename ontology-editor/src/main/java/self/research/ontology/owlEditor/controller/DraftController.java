@@ -567,7 +567,7 @@ public class DraftController {
             }
 
             DraftTrackingService.ApplyDraftsResult result =
-                    draftTrackingService.applyDrafts(projectId, pr.getAuthorId(), true, false, null);
+                    draftTrackingService.applyDrafts(projectId, pr.getAuthorId(), false, false, null);
 
             if (!result.isSuccess() && result.isConflictBlocked()) {
                 return ResponseEntity.status(409).body(Map.of(
