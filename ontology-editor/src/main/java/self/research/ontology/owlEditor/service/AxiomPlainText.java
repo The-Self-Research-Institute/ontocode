@@ -62,7 +62,10 @@ final class AxiomPlainText {
                         ? "Must satisfy: " + render(sub.getSuperClass())
                         : "Kind of: " + render(sub.getSuperClass());
             }
-            return "Parent of: " + render(sub.getSubClass());
+            if (isEntity(sub.getSuperClass(), entity)) {
+                return "Parent of: " + render(sub.getSubClass());
+            }
+            return "Used in: " + render(sub.getSubClass()) + " — " + render(sub.getSuperClass());
         }
         if (axiom instanceof OWLEquivalentClassesAxiom equivalent) {
             return "Same as: " + others(equivalent, entity);
@@ -74,7 +77,14 @@ final class AxiomPlainText {
             return "Is a: " + render(typed.getClassExpression());
         }
         if (axiom instanceof OWLObjectPropertyAssertionAxiom related) {
-            return shorten(related.getProperty().toString()) + ": " + shorten(related.getObject().toString());
+            String property = shorten(related.getProperty().toString());
+            String subject = shorten(related.getSubject().toString());
+            String object = shorten(related.getObject().toString());
+            if (related.getSubject().isNamed()
+                    && related.getSubject().asOWLNamedIndividual().getIRI().equals(entity)) {
+                return property + ": " + object;
+            }
+            return "Used by: " + subject + " (" + property + ")";
         }
         if (axiom instanceof OWLDataPropertyAssertionAxiom data) {
             return shorten(data.getProperty().toString()) + ": \"" + data.getObject().getLiteral() + "\"";

@@ -81,6 +81,28 @@ class AxiomPlainTextTest {
     }
 
     @Test
+    void aFactAboutAnotherIndividualThatMentionsThisOneIsSaidToUseIt() {
+        OWLNamedIndividual one = df.getOWLNamedIndividual(IRI.create(NS + "Pizza1"));
+        OWLNamedIndividual mozzarella = df.getOWLNamedIndividual(IRI.create(NS + "MozzarellaTopping"));
+        OWLObjectProperty hasIngredient = df.getOWLObjectProperty(IRI.create(NS + "hasIngredient"));
+        OWLAxiom axiom = df.getOWLObjectPropertyAssertionAxiom(hasIngredient, one, mozzarella);
+
+        assertEquals("hasIngredient: MozzarellaTopping", AxiomPlainText.describe(axiom, one.getIRI()));
+        assertEquals("Used by: Pizza1 (hasIngredient)", AxiomPlainText.describe(axiom, mozzarella.getIRI()));
+    }
+
+    @Test
+    void aClassNamedInsideAnotherClassesRestrictionIsSaidToBeUsedThereNotAParentOfIt() {
+        OWLObjectProperty hasTopping = df.getOWLObjectProperty(IRI.create(NS + "hasTopping"));
+        OWLClass mozzarella = cls("MozzarellaTopping");
+        OWLAxiom axiom = df.getOWLSubClassOfAxiom(pizza, df.getOWLObjectSomeValuesFrom(hasTopping, mozzarella));
+
+        String text = AxiomPlainText.describe(axiom, mozzarella.getIRI());
+
+        assertEquals("Used in: Pizza — has some hasTopping MozzarellaTopping", text);
+    }
+
+    @Test
     void anythingUnrecognisedStillHasItsLongAddressesShortened() {
         OWLObjectProperty hasTopping = df.getOWLObjectProperty(IRI.create(NS + "hasTopping"));
         OWLObjectProperty hasIngredient = df.getOWLObjectProperty(IRI.create(NS + "hasIngredient"));

@@ -276,7 +276,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                               Keep mine (your draft)
                             </div>
                             <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
-                              {c.yourAxioms || "Nothing recorded in your draft"}
+                              {c.yourAxioms || "Nothing different on this side"}
                             </p>
                           </button>
                           <button
@@ -290,7 +290,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                               Use Public's version
                             </div>
                             <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
-                              {c.publicAxioms || "Nothing recorded in Public"}
+                              {c.publicAxioms || "Nothing different on this side"}
                             </p>
                           </button>
                         </div>

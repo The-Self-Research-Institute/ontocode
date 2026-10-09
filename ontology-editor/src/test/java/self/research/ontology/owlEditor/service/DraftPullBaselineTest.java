@@ -353,6 +353,25 @@ class DraftPullBaselineTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void eachSideListsOnlyTheLinesThatReallyDifferNotEverythingAboutTheItem() throws Exception {
+        String sharedComment = "Shared note";
+        String draft = "<?xml version=\"1.0\"?><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
+                + "xmlns:rdfs=\"http://www.w3.org/2000/01/rdf-schema#\" xmlns:owl=\"http://www.w3.org/2002/07/owl#\">"
+                + "<owl:Ontology rdf:about=\"http://ex.org/o\"/><owl:Class rdf:about=\"" + CLASS_A + "\">"
+                + "<rdfs:label>Alpha</rdfs:label><rdfs:comment>" + sharedComment + "</rdfs:comment></owl:Class></rdf:RDF>";
+        String publicRdf = draft.replace("Alpha", "Beta");
+        givenDraftAndPublic(draft, publicRdf);
+
+        Map<String, Object> result = service.analyzePull("p1", "u1");
+
+        Map<String, Object> row = ((List<Map<String, Object>>) result.get("conflicts")).get(0);
+        assertEquals("Label: \"Alpha\"", row.get("yourAxioms"));
+        assertEquals("Label: \"Beta\"", row.get("publicAxioms"));
+        assertFalse(((String) row.get("yourAxioms")).contains(sharedComment));
+    }
+
+    @Test
     void afterAResolvedFallbackPullTheBaselineIsReestablishedFromPublic() throws Exception {
         givenDraftAndPublic(rdfWithLabels(CLASS_A, "A"), rdfWithLabels(CLASS_A, "A", CLASS_B, "B"));
 

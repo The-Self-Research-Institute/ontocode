@@ -209,7 +209,8 @@ public class DraftPublishMergeService {
             row.put("entityLabel", localName(iriStr));
             row.put("publicAxioms", summarizeAxioms(theirs, iri));
             if (conflictIris.contains(iriStr)) {
-                row.put("yourAxioms", summarizeAxioms(ours, iri));
+                row.put("publicAxioms", summarizeDifference(theirs, ours, iri));
+                row.put("yourAxioms", summarizeDifference(ours, theirs, iri));
                 conflicts.add(row);
             } else {
                 safeChanges.add(row);
@@ -308,8 +309,8 @@ public class DraftPublishMergeService {
             row.put("entityIri", iriStr);
             row.put("entityLabel", localName(iriStr));
             row.put("kind", inDraft ? "different" : "public_only");
-            row.put("publicAxioms", summarizeAxioms(publicOnt, iri));
-            row.put("yourAxioms", summarizeAxioms(draft, iri));
+            row.put("publicAxioms", summarizeDifference(publicOnt, draft, iri));
+            row.put("yourAxioms", summarizeDifference(draft, publicOnt, iri));
             rows.add(row);
         }
 
@@ -532,13 +533,24 @@ public class DraftPublishMergeService {
     }
 
     private String summarizeAxioms(OWLOntology ontology, IRI entityIRI) {
-        List<OWLAxiom> about = ontology.getAxioms().stream()
+        return AxiomPlainText.summarize(axiomsAbout(ontology, entityIRI), entityIRI);
+    }
+
+    private String summarizeDifference(OWLOntology ontology, OWLOntology other, IRI entityIRI) {
+        Set<OWLAxiom> alsoThere = new java.util.HashSet<>(axiomsAbout(other, entityIRI));
+        List<OWLAxiom> onlyHere = axiomsAbout(ontology, entityIRI).stream()
+                .filter(axiom -> !alsoThere.contains(axiom))
+                .collect(Collectors.toList());
+        return onlyHere.isEmpty() ? "" : AxiomPlainText.summarize(onlyHere, entityIRI);
+    }
+
+    private List<OWLAxiom> axiomsAbout(OWLOntology ontology, IRI entityIRI) {
+        return ontology.getAxioms().stream()
                 .filter(ax -> ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(entityIRI))
                         || (ax instanceof org.semanticweb.owlapi.model.OWLAnnotationAssertionAxiom note
                                 && note.getSubject().equals(entityIRI)))
                 .sorted(java.util.Comparator.comparing(OWLAxiom::toString))
                 .collect(Collectors.toList());
-        return AxiomPlainText.summarize(about, entityIRI);
     }
 
     private static String sanitizeUserId(String userId) {
