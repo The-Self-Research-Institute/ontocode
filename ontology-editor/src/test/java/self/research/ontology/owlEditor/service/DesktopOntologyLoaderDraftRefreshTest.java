@@ -46,6 +46,7 @@ class DesktopOntologyLoaderDraftRefreshTest {
         ReflectionTestUtils.setField(loader, "owlApiFirst", true);
         draft = projectDir.resolve("draft").resolve("ontology.draft.owl");
         when(storageManager.draftOntologyPath("proj-1")).thenReturn(draft);
+        when(storageManager.projectDir("proj-1")).thenReturn(projectDir);
     }
 
     @Test
@@ -72,6 +73,19 @@ class DesktopOntologyLoaderDraftRefreshTest {
         loader.refreshDraftFromTripleStore("proj-1");
 
         assertFalse(Files.exists(draft));
+    }
+
+    @Test
+    void aFailedExportKeepsTheDraftWhenTheTripleStoreIsBehindSoUnsavedEditsAreNotLost() throws Exception {
+        Files.createDirectories(draft.getParent());
+        Files.writeString(draft, "<unsaved manual edits/>");
+        Files.writeString(projectDir.resolve("fuseki-sync-pending"), "pending");
+        doThrow(new RuntimeException("triple store unreachable"))
+                .when(datasetService).exportDatasetToStream(eq("proj-1"), eq(RDFFormat.RDFXML), any(OutputStream.class));
+
+        loader.refreshDraftFromTripleStore("proj-1");
+
+        assertEquals("<unsaved manual edits/>", Files.readString(draft));
     }
 
     @Test

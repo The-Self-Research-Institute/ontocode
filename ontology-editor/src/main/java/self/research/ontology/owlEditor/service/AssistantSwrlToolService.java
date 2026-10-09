@@ -78,7 +78,7 @@ public class AssistantSwrlToolService {
     public SwrlToolResult runRule(String sessionId, String userEmail, String authorizationHeader) {
         return runTool(sessionId, userEmail, authorizationHeader, session ->
                 shapeResult(postToSwrl("/api/swrl/" + session.getProjectId() + "/execute", Map.of(),
-                        authorizationHeader)));
+                        authorizationHeader), session.getTokenBudgetRemaining()));
     }
 
     static final int MAX_RESULT_TOKENS = 6_000;
@@ -91,7 +91,8 @@ public class AssistantSwrlToolService {
     }
 
     @SuppressWarnings("unchecked")
-    static Map<String, Object> shapeResult(Map<String, Object> data) {
+    static Map<String, Object> shapeResult(Map<String, Object> data, int tokensRemaining) {
+        int cap = Math.min(MAX_RESULT_TOKENS, Math.max(tokensRemaining, 0));
         if (!(data.get("inferredAxioms") instanceof List<?> all)) {
             return data;
         }
@@ -125,11 +126,11 @@ public class AssistantSwrlToolService {
         }
 
         int used = AssistantTokenEstimator.estimate(String.valueOf(shaped)) + TRIM_NOTE_RESERVE_TOKENS;
-        if (used > MAX_RESULT_TOKENS) {
+        if (used > cap) {
             List<Object> kept = new ArrayList<>();
             Map<String, Object> withoutAxioms = new HashMap<>(shaped);
             withoutAxioms.put("inferredAxioms", List.of());
-            int budget = MAX_RESULT_TOKENS - TRIM_NOTE_RESERVE_TOKENS
+            int budget = cap - TRIM_NOTE_RESERVE_TOKENS
                     - AssistantTokenEstimator.estimate(String.valueOf(withoutAxioms));
             int running = 0;
             for (Object axiom : actionable) {

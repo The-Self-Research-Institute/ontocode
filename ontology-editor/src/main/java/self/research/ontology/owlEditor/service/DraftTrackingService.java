@@ -282,6 +282,7 @@ public class DraftTrackingService {
                 log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
                 return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
             }
+            draftChangeHistory.markPublished(projectId, userId);
 
             try {
                 mainGraphRevisionService.incrementRevision(projectId);
@@ -306,7 +307,6 @@ public class DraftTrackingService {
     }
 
     private void finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
-        draftChangeHistory.markPublished(projectId, userId);
         if (unappliedDrafts.isEmpty()) {
             return;
         }
@@ -347,6 +347,7 @@ public class DraftTrackingService {
             log.error("[DRAFT] MOVE GRAPH publish failed for project {} user {}", projectId, userId, e);
             return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
         }
+        draftChangeHistory.markPublished(projectId, userId);
 
         try {
             mainGraphRevisionService.incrementRevision(projectId);
@@ -355,7 +356,6 @@ public class DraftTrackingService {
                 springCacheEviction.evictForProject(projectId);
             }
             invalidateHierarchyCaches(projectId);
-            draftChangeHistory.markPublished(projectId, userId);
 
             if (!unappliedDrafts.isEmpty()) {
                 unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(

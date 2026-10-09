@@ -259,6 +259,23 @@ class AssistantSwrlToolServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void theCapFollowsWhatIsLeftOfTheSessionBudgetNotAFixedFigure() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(
+                AssistantSessionDocument.builder().id("s1").projectId("proj-1").pinnedRevision(42L)
+                        .tokenBudgetRemaining(2500).status(AssistantSessionStatus.ACTIVE).build()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        mockExchange(new ResponseEntity<>(swrlResult(500, 0), HttpStatus.OK));
+
+        SwrlToolResult result = toolService.runRule("s1", "u@x.com", "Bearer t");
+
+        assertEquals(true, result.getData().get("truncated"));
+        org.mockito.ArgumentCaptor<Integer> charged = org.mockito.ArgumentCaptor.forClass(Integer.class);
+        verify(sessionService).tryConsumeTokenBudget(eq("s1"), charged.capture());
+        assertTrue(charged.getValue() <= 2500, "charged " + charged.getValue() + " of 2500 left");
+    }
+
+    @Test
     void aResultWithoutAnAxiomListIsPassedThroughUntouched() {
         Map<String, Object> body = new HashMap<>();
         body.put("success", false);
@@ -339,6 +356,7 @@ class AssistantSwrlToolServiceTest {
                 .id("s1")
                 .projectId("proj-1")
                 .pinnedRevision(42L)
+                .tokenBudgetRemaining(8000)
                 .status(AssistantSessionStatus.ACTIVE)
                 .build();
     }

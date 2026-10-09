@@ -440,7 +440,12 @@ public class CodeViewReimportPipeline {
             hierarchyIndexService.scheduleBuild(projectId);
         }
         if (!draft && springCacheEviction != null) {
-            springCacheEviction.evictForProject(projectId);
+            try {
+                springCacheEviction.evictForProject(projectId);
+            } catch (Exception evictEx) {
+                log.warn("[CODE-VIEW-SAVE] Failed evicting query caches for project {} (non-fatal): {}",
+                        projectId, evictEx.getMessage());
+            }
         }
 
         if (ontologyQueryService != null) {

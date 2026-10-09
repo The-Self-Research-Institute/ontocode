@@ -147,12 +147,6 @@ public class OntologyMutationService {
     }
 
     public void invalidateEntityCaches(String projectId, @Nullable List<String> affectedIris, boolean draft) {
-        if (!draft) {
-            topLevelCacheService.evict(projectId);
-        }
-        if (hierarchyIndexService != null) {
-            hierarchyIndexService.markStale(projectId);
-        }
         if (affectedIris != null) {
             if (entityUsageIndexService != null) entityUsageIndexService.invalidate(projectId, affectedIris);
             if (classDetailCacheService != null) classDetailCacheService.invalidate(projectId, affectedIris);
@@ -162,6 +156,12 @@ public class OntologyMutationService {
                 entityUsageIndexService.dropAll(projectId);
                 entityUsageIndexService.scheduleBuild(projectId);
             }
+        }
+        if (!draft) {
+            topLevelCacheService.evict(projectId);
+        }
+        if (hierarchyIndexService != null) {
+            hierarchyIndexService.markStale(projectId);
         }
         graphGeneratingService.clearGraphCache();
         if (visualizationController != null) {

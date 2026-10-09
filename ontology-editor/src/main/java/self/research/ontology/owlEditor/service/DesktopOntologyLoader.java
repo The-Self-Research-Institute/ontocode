@@ -588,9 +588,8 @@ public class DesktopOntologyLoader {
         return Map.of();
     }
 
-    /** Persist in-memory OWLAPI model to the DRAFT file (autosave after each mutation).
-     *  The saved ontology (ontology.current.owl) is only touched by {@link #saveProject}.
-     *  A draft left behind after a crash / unsaved exit is recovered on next open. */
+    private static final String FUSEKI_SYNC_PENDING_MARKER = "fuseki-sync-pending";
+
     public void refreshDraftFromTripleStore(String projectId) {
         if (!owlApiFirst || datasetService == null) {
             return;
@@ -601,6 +600,12 @@ public class DesktopOntologyLoader {
             AtomicFileWrite.write(draft, out -> datasetService.exportDatasetToStream(projectId, RDFFormat.RDFXML, out));
             log.info("[Desktop] Rewrote the unsaved draft for {} from the triple store after a bulk write", projectId);
         } catch (Exception e) {
+            if (Files.exists(storageManager.projectDir(projectId).resolve(FUSEKI_SYNC_PENDING_MARKER))) {
+                log.error("[Desktop] Could not rewrite the draft for {} from the triple store and the triple store "
+                        + "is behind the draft, so the old draft is kept to avoid losing unsaved edits: {}",
+                        projectId, e.getMessage());
+                return;
+            }
             log.error("[Desktop] Could not rewrite the draft for {} from the triple store, removing it so the next "
                     + "load re-exports from the triple store instead: {}", projectId, e.getMessage());
             try {
@@ -611,6 +616,9 @@ public class DesktopOntologyLoader {
         }
     }
 
+    /** Persist in-memory OWLAPI model to the DRAFT file (autosave after each mutation).
+     *  The saved ontology (ontology.current.owl) is only touched by {@link #saveProject}.
+     *  A draft left behind after a crash / unsaved exit is recovered on next open. */
     public void persistToDisk(String projectId) throws java.io.IOException {
         Path target = storageManager.draftOntologyPath(projectId);
         writeModelTo(projectId, target);
