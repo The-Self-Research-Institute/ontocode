@@ -150,6 +150,7 @@ import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
 import { useAskAiCodeViewSync } from "./dashboard-parts/hooks/useAskAiCodeViewSync";
 import { entityDetailsUrl, entityKindOf, mergeFreshDetails, unwrapDetails } from "./dashboard-parts/entityRefresh";
 import { searchScopeNoteFor } from "./codeSearch";
+import { discardDraftMessage, runDraftDiscard } from "./dashboard-parts/discardDraft";
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
 import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
@@ -12479,6 +12480,32 @@ const updateItemInState = useCallback(
     void refreshSelectedEntity();
     setEntityDetailsRefreshKey((key) => key + 1);
   };
+  const handleDiscardDraft = () => {
+    if (!projectId) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: "Discard draft",
+      message: discardDraftMessage(draftCount),
+      confirmLabel: "Discard draft",
+      onConfirm: () => {
+        void runDraftDiscard({
+          projectId,
+          userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+          discard: (id, actor) => draftTrackingService.discardDrafts(id, actor),
+          onDiscarded: () => {
+            setDraftCount(0);
+            setHasUnsavedChanges(false);
+            codeViewDirtyRef.current = false;
+            fetchData(projectId, false);
+            void fetchCodeViewContent(codeViewFormat, false, true);
+            notificationService.success("Draft discarded", "Your draft now matches the current Public version.");
+          },
+          onFailed: (message) => notificationService.error("Discard failed", message),
+        });
+      },
+    });
+  };
+
   const refreshAfterBulkWriteRef = useRef(refreshAfterBulkWrite);
   refreshAfterBulkWriteRef.current = refreshAfterBulkWrite;
 
@@ -18578,6 +18605,17 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                 >
                   <Download size={12} />
                   <span className="hidden sm:inline">Pull</span>
+                </button>
+              )}
+              {syncMode === 'private' && projectId && (
+                <button
+                  onClick={handleDiscardDraft}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
+                  style={{ borderColor: "var(--color-border)" }}
+                  title="Discard all your draft changes and start again from the current public version"
+                >
+                  <Trash2 size={12} />
+                  <span className="hidden sm:inline">Discard</span>
                 </button>
               )}
               {/* PR button — opens DraftPRPanel for everyone (reviewers and draft editors) */}
