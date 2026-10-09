@@ -92,6 +92,7 @@ final class AssistantGraphWriter {
             removed.addAll(patch.restoredTrees());
             Model added = new LinkedHashModel(patch.added());
             added.addAll(patch.insertedTrees());
+            attachPrefixes(group.getTargetPath(), sourceFile, splicedFile, removed, added);
             long version = reimportPipeline.finishPatch(projectId, group.getTargetPath(), splicedFile, userEmail,
                     userEmail, removed, added, origin);
             operationService.markCommitted(operation);
@@ -107,6 +108,15 @@ final class AssistantGraphWriter {
                     AssistantApplyFailureHandler.messageOf(patchEx));
             operationService.markRolledBack(operation, AssistantApplyFailureHandler.messageOf(patchEx), "PATCH_FAILED_REIMPORTING");
             return Optional.empty();
+        }
+    }
+
+    private static void attachPrefixes(String format, Path sourceFile, Path splicedFile, Model removed, Model added) {
+        try {
+            PrefixScanner.scan(sourceFile, format).forEach(removed::setNamespace);
+            PrefixScanner.scan(splicedFile, format).forEach(added::setNamespace);
+        } catch (Exception scanEx) {
+            log.debug("[Assistant] Could not compare prefix declarations for the change history: {}", scanEx.getMessage());
         }
     }
 

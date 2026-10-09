@@ -87,6 +87,40 @@ class CodeViewReimportPipelineCacheTest {
     }
 
     @Test
+    void aPatchedApplyThatOnlyAddsAPrefixDeclarationIsRecordedInTheHistoryAsAPrefixAddition() throws Exception {
+        Model removed = new LinkedHashModel();
+        removed.setNamespace("owl", "http://www.w3.org/2002/07/owl#");
+        Model added = new LinkedHashModel();
+        added.setNamespace("owl", "http://www.w3.org/2002/07/owl#");
+        added.setNamespace("pizza2023", "http://ex.org/pizza#");
+        Path patched = Files.createTempFile("patched-", ".ttl");
+
+        pipeline.finishPatch("proj-1", "turtle", patched, "u1", "User", removed, added);
+
+        verify(historyService).recordEdit(eq("proj-1"), eq("u1"), eq("User"), eq("prefixAdded"), isNull(),
+                eq("pizza2023"), isNull(), eq("http://ex.org/pizza#"), anyString(), isNull(), isNull(),
+                eq(false), any());
+    }
+
+    @Test
+    void aPatchedApplyThatLeavesThePrefixesAloneRecordsNoPrefixChange() throws Exception {
+        Model removed = new LinkedHashModel();
+        removed.setNamespace("owl", "http://www.w3.org/2002/07/owl#");
+        removed.add(PIZZA, RDFS.LABEL, VF.createLiteral("Pizza"));
+        Model added = new LinkedHashModel();
+        added.setNamespace("owl", "http://www.w3.org/2002/07/owl#");
+        added.add(PIZZA, RDFS.LABEL, VF.createLiteral("Pizza Margherita"));
+        Path patched = Files.createTempFile("patched-", ".ttl");
+
+        pipeline.finishPatch("proj-1", "turtle", patched, "u1", "User", removed, added);
+
+        verify(historyService, never()).recordEdit(anyString(), anyString(), anyString(), eq("prefixAdded"),
+                any(), any(), any(), any(), anyString(), any(), any(), anyBoolean(), any());
+        verify(historyService, never()).recordEdit(anyString(), anyString(), anyString(), eq("prefixModified"),
+                any(), any(), any(), any(), anyString(), any(), any(), anyBoolean(), any());
+    }
+
+    @Test
     void touchedIrisReachTheClassBehindABlankNodeRestriction() {
         var restriction = VF.createBNode();
         Model added = new LinkedHashModel();
