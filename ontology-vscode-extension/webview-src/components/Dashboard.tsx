@@ -148,7 +148,13 @@ import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
 import { useAskAiCodeViewSync } from "./dashboard-parts/hooks/useAskAiCodeViewSync";
-import { entityDetailsUrl, entityKindOf, mergeFreshDetails, unwrapDetails } from "./dashboard-parts/entityRefresh";
+import {
+  entityDetailsUrl,
+  entityKindOf,
+  isEditingFormField,
+  mergeFreshDetails,
+  unwrapDetails,
+} from "./dashboard-parts/entityRefresh";
 import { searchScopeNoteFor } from "./codeSearch";
 import { discardDraftMessage, runDraftDiscard } from "./dashboard-parts/discardDraft";
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
@@ -12478,7 +12484,9 @@ const updateItemInState = useCallback(
       /* non-fatal */
     }
     void refreshSelectedEntity();
-    setEntityDetailsRefreshKey((key) => key + 1);
+    if (!isEditingFormField(document.activeElement)) {
+      setEntityDetailsRefreshKey((key) => key + 1);
+    }
   };
   const handleDiscardDraft = () => {
     if (!projectId) return;

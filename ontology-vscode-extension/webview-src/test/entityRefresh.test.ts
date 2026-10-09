@@ -4,6 +4,7 @@ import {
   annotationText,
   entityDetailsUrl,
   entityKindOf,
+  isEditingFormField,
   mergeFreshDetails,
   unwrapDetails,
 } from "../components/dashboard-parts/entityRefresh";
@@ -111,5 +112,20 @@ describe("mergeFreshDetails", () => {
     ) as any;
 
     expect(merged).toMatchObject({ id: PIZZA, label: "New", extra: 1, types: ["T"], propertyAssertions: [{ p: "x" }] });
+  });
+});
+
+describe("isEditingFormField", () => {
+  it("is true for text inputs, textareas and selects", () => {
+    for (const tag of ["input", "textarea", "select"]) {
+      expect(isEditingFormField(document.createElement(tag))).toBe(true);
+    }
+  });
+
+  it("is false for buttons, plain elements and nothing", () => {
+    expect(isEditingFormField(document.createElement("button"))).toBe(false);
+    expect(isEditingFormField(document.createElement("div"))).toBe(false);
+    expect(isEditingFormField(null)).toBe(false);
+    expect(isEditingFormField(undefined)).toBe(false);
   });
 });

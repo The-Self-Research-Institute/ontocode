@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { searchLines, searchScopeNoteFor } from "../components/codeSearch";
+import { searchLines, searchResultWindow, searchScopeNoteFor } from "../components/codeSearch";
 
 function runToCompletion(content: string, query: string, caseSensitive = false) {
   const queue: Array<() => void> = [];
@@ -96,5 +96,24 @@ describe("searchScopeNoteFor", () => {
 
   it("says nothing when the whole file is loaded", () => {
     expect(searchScopeNoteFor(null, null)).toBeUndefined();
+  });
+});
+
+describe("searchResultWindow", () => {
+  it("shows everything when there are few matches", () => {
+    expect(searchResultWindow(40, 7)).toEqual({ start: 0, end: 40 });
+  });
+
+  it("shows a window that contains the current match when there are many", () => {
+    expect(searchResultWindow(1200, 0)).toEqual({ start: 0, end: 500 });
+    expect(searchResultWindow(1200, 499)).toEqual({ start: 0, end: 500 });
+    expect(searchResultWindow(1200, 500)).toEqual({ start: 500, end: 1000 });
+    expect(searchResultWindow(1200, 1199)).toEqual({ start: 1000, end: 1200 });
+  });
+
+  it("copes with an out-of-range current match", () => {
+    expect(searchResultWindow(1200, 5000)).toEqual({ start: 1000, end: 1200 });
+    expect(searchResultWindow(1200, -3)).toEqual({ start: 0, end: 500 });
+    expect(searchResultWindow(0, 0)).toEqual({ start: 0, end: 0 });
   });
 });

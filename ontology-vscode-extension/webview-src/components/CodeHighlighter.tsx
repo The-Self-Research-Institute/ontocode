@@ -3,7 +3,7 @@ import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from '../utils/doi
 import type { EditorSelectionContext } from "./codeSelection";
 import { useCodeSelectionReporting, useUnsavedChangesReporting } from "./useCodeSelectionReporting";
 import { escapeRegex, markChangedRange, parseErrorLines, type ChangedLineRange } from "./codeHighlighterMarks";
-import { searchLines } from "./codeSearch";
+import { searchLines, searchResultWindow } from "./codeSearch";
 import {
   Search,
   X,
@@ -387,6 +387,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       searchCancelRef.current = true;
     };
   }, [debouncedSearchQuery, content, caseSensitive]);
+
+  const resultPanelLines = useMemo(
+    () => (showSearchPanel && searchResults.length > 0 ? content.split(/\r?\n/) : []),
+    [content, showSearchPanel, searchResults.length],
+  );
+  const resultWindow = searchResultWindow(searchResults.length, currentMatchIndex);
 
   // Scroll to current match
   useEffect(() => {
@@ -1503,9 +1509,15 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
               </button>
             </div>
             <div className="space-y-1">
-              {searchResults.map((lineIndex, idx) => {
-                const lines = content.split(/\r?\n/);
-                const lineContent = lines[lineIndex] || "";
+              {searchResults.length > resultWindow.end - resultWindow.start && (
+                <div className="px-2 py-1 text-[11px] text-gray-400">
+                  Showing matches {resultWindow.start + 1}–{resultWindow.end} of {searchResults.length}. Use the arrows to
+                  move through the rest.
+                </div>
+              )}
+              {searchResults.slice(resultWindow.start, resultWindow.end).map((lineIndex, windowIdx) => {
+                const idx = resultWindow.start + windowIdx;
+                const lineContent = resultPanelLines[lineIndex] || "";
                 const preview = lineContent.length > 80 ? lineContent.substring(0, 80) + "..." : lineContent;
                 const isCurrentMatch = idx === currentMatchIndex;
 

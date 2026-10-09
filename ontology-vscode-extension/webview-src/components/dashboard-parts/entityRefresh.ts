@@ -69,3 +69,14 @@ export function mergeFreshDetails<T extends { id: string; label?: string; annota
   }
   return { ...current, annotations, label: freshLabel };
 }
+
+export function isEditingFormField(active: Element | null | undefined): boolean {
+  if (!active) {
+    return false;
+  }
+  const tag = active.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+    return true;
+  }
+  return (active as HTMLElement).isContentEditable === true;
+}

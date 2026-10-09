@@ -12,6 +12,21 @@ export interface LineSearchOptions {
 
 const LINES_BETWEEN_CLOCK_CHECKS = 1024;
 
+export const SEARCH_RESULTS_WINDOW = 500;
+
+export function searchResultWindow(
+  total: number,
+  currentIndex: number,
+  size: number = SEARCH_RESULTS_WINDOW,
+): { start: number; end: number } {
+  if (total <= size) {
+    return { start: 0, end: total };
+  }
+  const current = Math.min(Math.max(currentIndex, 0), total - 1);
+  const start = Math.floor(current / size) * size;
+  return { start, end: Math.min(start + size, total) };
+}
+
 export function searchScopeNoteFor(
   page: { startLine: number; lineCount: number; totalLines: number } | null | undefined,
   truncation: { previewLines: number } | null | undefined,
