@@ -34,7 +34,18 @@ export function checkLabel(name: string): string {
 }
 
 const FAILURE_LABEL_OVERRIDES: Record<string, string> = {
+  has_edits: "The proposal has no edits to apply",
+  single_target_path: "The edits target more than one format",
+  range_well_formed: "One or more edit line ranges are invalid",
+  no_intra_group_overlap: "Two or more edits in this group overlap",
+  size_limits: "This edit is too large to apply",
   original_text_matches_live: "The document has changed since this edit was proposed",
+  syntax_valid: "The edited document no longer parses",
+  complete_reference_coverage: "Not every reference to this was updated",
+  references_resolve: "This refers to a name that doesn't exist in the ontology",
+  no_conflicting_declaration: "This conflicts with an existing declaration",
+  consistency_preserved: "This change would make the ontology logically inconsistent",
+  rename_occurrences_complete: "The rename doesn't cover every occurrence",
 };
 
 function failureLabel(name: string): string {

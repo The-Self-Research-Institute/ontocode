@@ -58,10 +58,27 @@ describe("CodeAssistantFailedChecks", () => {
     expect(html).not.toContain("still matches the current document");
   });
 
-  it("uses the normal label for every other failed check", () => {
+  it("uses a failure-phrased label for syntax_valid instead of the pass-phrased default", () => {
     const html = renderToStaticMarkup(
       <CodeAssistantFailedChecks checks={[{ name: "syntax_valid", passed: false, detail: "Unexpected token" }]} />,
     );
-    expect(html).toContain("The edited document parses");
+    expect(html).toContain("The edited document no longer parses");
+    expect(html).not.toContain("The edited document parses<");
+  });
+
+  it("uses a failure-phrased label for consistency_preserved instead of the pass-phrased default", () => {
+    const html = renderToStaticMarkup(
+      <CodeAssistantFailedChecks
+        checks={[{ name: "consistency_preserved", passed: false, detail: "Would make :A unsatisfiable" }]}
+      />,
+    );
+    expect(html).toContain("This change would make the ontology logically inconsistent");
+  });
+
+  it("falls back to a humanized name for a check with no label or override", () => {
+    const html = renderToStaticMarkup(
+      <CodeAssistantFailedChecks checks={[{ name: "some_future_check", passed: false, detail: "Details" }]} />,
+    );
+    expect(html).toContain("some future check");
   });
 });
