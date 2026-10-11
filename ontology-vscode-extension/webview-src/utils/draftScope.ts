@@ -11,11 +11,6 @@ export function withDraftScope(url: string): string {
   return url + (url.includes("?") ? "&draft=true" : "?draft=true");
 }
 
-/**
- * Like withDraftScope but also appends userId — required by the ontology-metadata WRITE
- * endpoints (annotations/imports/iri) to scope the write to the caller's draft graph. Reads
- * can rely on the header userId, but these writes read userId explicitly from the request.
- */
 export function withDraftAndUser(url: string): string {
   if (!isDraftScopeActive()) return url;
   const uid = resolveMutationActor().userId;

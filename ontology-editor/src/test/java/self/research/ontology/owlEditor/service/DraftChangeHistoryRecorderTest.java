@@ -61,6 +61,7 @@ class DraftChangeHistoryRecorderTest {
         assertEquals("http://example.org/note", sub.get("predicate"));
         assertEquals("thin crust", sub.get("newValue"));
         assertEquals("http://example.org/note", sub.get("annotationProperty"));
+        assertEquals("ANNOTATION", sub.get("category"));
         verify(history).recordEdit(eq("p1"), eq("u1"), eq("Uma"), eq("createClass"), eq(SAUCE), eq("Sauce"),
                 isNull(), isNull(), eq("Created class: Sauce"), isNull(), eq(List.of()), eq(false));
     }
@@ -85,6 +86,18 @@ class DraftChangeHistoryRecorderTest {
         assertEquals("http://www.w3.org/2000/01/rdf-schema#subClassOf", subClass.get("predicate"));
         assertEquals("http://example.org/Food", subClass.get("oldValue"));
         assertNull(subClass.get("newValue"));
+    }
+
+    @Test
+    void aDeleteIsPickedAsPrimaryOverAMereAnnotationSoTheRowIsClassifiedByTheRealOperation() {
+        DraftChange note = draft("d1", "addAnnotation",
+                Map.of("iri", PIZZA, "property", "http://example.org/note", "value", "thin crust"));
+        DraftChange delete = draft("d2", "deleteClass", Map.of("iri", PIZZA, "label", "Pizza"));
+
+        recorder.record("p1", List.of(note, delete));
+
+        verify(history).recordEdit(eq("p1"), eq("u1"), eq("Uma"), eq("deleteClass"), eq(PIZZA), eq("Pizza"),
+                isNull(), isNull(), anyString(), isNull(), anyList(), eq(false));
     }
 
     @Test

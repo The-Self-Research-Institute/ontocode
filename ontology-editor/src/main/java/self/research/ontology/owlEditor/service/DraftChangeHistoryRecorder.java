@@ -86,7 +86,8 @@ public class DraftChangeHistoryRecorder {
 
     private void recordBundledHistory(String projectId, List<DraftChange> group) {
         DraftChange primary = group.stream()
-                .filter(d -> d.getOperationType() != null && d.getOperationType().startsWith("create"))
+                .filter(d -> d.getOperationType() != null
+                        && (d.getOperationType().startsWith("create") || d.getOperationType().startsWith("delete")))
                 .findFirst()
                 .orElse(group.get(0));
         Map<String, Object> primaryData = primary.getOperationData();
@@ -155,6 +156,9 @@ public class DraftChangeHistoryRecorder {
 
         Map<String, String> subChange = new HashMap<>();
         subChange.put("addition", String.valueOf(addition));
+        if (opType != null) {
+            subChange.put("category", determineCategory(opType));
+        }
 
         String predicate;
         if ("addSubClassOf".equals(opType) || "deleteSubClassOf".equals(opType)) {

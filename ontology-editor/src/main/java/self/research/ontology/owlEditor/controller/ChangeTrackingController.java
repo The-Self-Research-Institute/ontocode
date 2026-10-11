@@ -262,6 +262,7 @@ public class ChangeTrackingController {
                 scMap.put("oldValue", sc.getOldValue());
                 scMap.put("newValue", sc.getNewValue());
                 scMap.put("annotationProperty", sc.getAnnotationProperty());
+                scMap.put("category", sc.getCategory());
                 scMap.put("addition", sc.isAddition());
                 scMap.put("reverted", sc.isReverted());
                 if (sc.isReverted()) {

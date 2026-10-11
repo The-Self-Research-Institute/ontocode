@@ -298,6 +298,30 @@ public class CodeViewReimportPipeline {
         } catch (Exception e) {
             log.warn("[CODE-VIEW-SAVE] Failed to record prefix changes (the edit itself succeeded): {}", e.getMessage());
         }
+        if (draft && userId != null && !userId.isBlank()) {
+            syncDraftPrefixSideChannel(projectId, userId, oldPrefixes, newPrefixes);
+        }
+    }
+
+    private void syncDraftPrefixSideChannel(String projectId, String userId, Map<String, String> oldPrefixes,
+                                            Map<String, String> newPrefixes) {
+        try {
+            for (Map.Entry<String, String> entry : newPrefixes.entrySet()) {
+                String prefix = entry.getKey();
+                String iri = entry.getValue();
+                if (!iri.equals(oldPrefixes.get(prefix))) {
+                    datasetService.updateDraftPrefix(projectId, userId, prefix, iri, null);
+                }
+            }
+            for (String oldPrefix : oldPrefixes.keySet()) {
+                if (!newPrefixes.containsKey(oldPrefix)) {
+                    datasetService.deleteDraftPrefix(projectId, userId, oldPrefix);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[CODE-VIEW-SAVE] Failed to sync draft prefix side-channel (the edit itself succeeded): {}",
+                    e.getMessage());
+        }
     }
 
     private void announce(String projectId, String userId, String username, ChangeOrigin origin) {

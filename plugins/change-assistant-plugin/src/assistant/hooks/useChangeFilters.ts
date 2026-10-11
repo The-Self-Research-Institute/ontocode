@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { SourceFilter } from '../../changeSets/types';
+import { changeMatchesType } from '../changeParsing';
 import { ChangeStatus, ChangeType, OntologyChange } from '../types';
 
 export function useChangeFilters(changes: OntologyChange[]) {
@@ -9,7 +10,7 @@ export function useChangeFilters(changes: OntologyChange[]) {
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
 
   const filteredChanges = changes.filter(change => {
-    if (filterType !== 'all' && change.type !== filterType) return false;
+    if (filterType !== 'all' && !changeMatchesType(change, filterType)) return false;
     if (filterStatus !== 'all' && change.status !== filterStatus) return false;
     if (searchQuery && !change.entityLabel.toLowerCase().includes(searchQuery.toLowerCase()) &&
         !change.description.toLowerCase().includes(searchQuery.toLowerCase())) return false;
@@ -17,7 +18,7 @@ export function useChangeFilters(changes: OntologyChange[]) {
   });
 
   const typeFilteredChanges = useMemo(() => changes.filter(change =>
-    (filterType === 'all' || change.type === filterType) &&
+    (filterType === 'all' || changeMatchesType(change, filterType)) &&
     (filterStatus === 'all' || change.status === filterStatus)
   ), [changes, filterType, filterStatus]);
 

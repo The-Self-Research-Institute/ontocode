@@ -120,6 +120,7 @@ public class HistorySyncService {
                                     (String) m.get("annotationProperty"),
                                     "true".equals(m.get("addition")));
                             subChange.setId(UUID.randomUUID().toString());
+                            subChange.setCategory((String) m.get("category"));
                             subChanges.add(subChange);
                         }
                     }

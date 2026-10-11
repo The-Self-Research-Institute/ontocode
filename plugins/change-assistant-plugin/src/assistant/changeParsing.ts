@@ -60,6 +60,11 @@ function mapChangeType(operationType: string, entityType: string): ChangeType {
   return 'axiom';
 }
 
+export function changeMatchesType(change: OntologyChange, filterType: ChangeType): boolean {
+  if (change.type === filterType) return true;
+  return (change.subChanges || []).some(sc => sc.category?.toLowerCase() === filterType);
+}
+
 function mapAction(operationType: string): ChangeAction {
   const lowerOp = operationType?.toLowerCase() || '';
   if (lowerOp.includes('add') || lowerOp.includes('create') || lowerOp.includes('insert')) return 'added';

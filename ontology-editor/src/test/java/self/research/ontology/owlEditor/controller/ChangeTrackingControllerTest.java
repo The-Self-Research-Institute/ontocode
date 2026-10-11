@@ -138,6 +138,26 @@ class ChangeTrackingControllerTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void recentChangesCarryEachSubChangesCategoryThrough() {
+        HistoryChange.SubChange sub = new HistoryChange.SubChange(
+                "http://example.org/note", null, "thin crust", "http://example.org/note", true);
+        sub.setCategory("ANNOTATION");
+        HistoryChange change = new HistoryChange("proj-1", "edit-1", "u1", "User");
+        change.setId("c1");
+        change.setEntityIRI("http://example.org#Pizza");
+        change.setSubChanges(List.of(sub));
+
+        when(historySyncService.getHistoryChanges("proj-1")).thenReturn(List.of(change));
+        when(historySyncService.computeConflicts(List.of(change))).thenReturn(Map.of());
+
+        Map<String, Object> body = controller.getRecentChanges("proj-1", 100).getBody();
+        List<Map<String, Object>> changes = (List<Map<String, Object>>) body.get("changes");
+        List<Map<String, Object>> subChanges = (List<Map<String, Object>>) changes.get(0).get("subChanges");
+        assertEquals("ANNOTATION", subChanges.get(0).get("category"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void detailsTimestampIsSerializedAsUtcSoTheClientCanRenderItsOwnTimezone() {
         HistoryChange change = new HistoryChange("proj-1", "edit-1", "u1", "User");
         change.setTimestamp(LocalDateTime.of(2026, 10, 8, 15, 20, 32));

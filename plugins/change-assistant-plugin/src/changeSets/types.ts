@@ -16,6 +16,7 @@ export interface SubChange {
   oldValue?: string;
   newValue?: string;
   annotationProperty?: string;
+  category?: string;
   addition: boolean;
   reverted?: boolean;
   revertedBy?: string;

@@ -335,6 +335,7 @@ public class OntologyHistoryService {
             }
         }
         sc.put("addition", String.valueOf(addition));
+        sc.put("category", determineEntityType(type));
         return sc;
     }
 

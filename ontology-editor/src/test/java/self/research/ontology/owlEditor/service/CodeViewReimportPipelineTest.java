@@ -332,6 +332,59 @@ class CodeViewReimportPipelineTest {
         verify(storageManager, never()).clearCodeViewCache(anyString());
     }
 
+    @Test
+    void recordPrefixChangesSyncsTheDraftSideChannelForANewPrefix() {
+        pipeline.recordPrefixChanges("proj-1", "u1", "User", true, null,
+                Map.of(), Map.of("ex", "http://example.org/ext#"));
+
+        verify(datasetService).updateDraftPrefix("proj-1", "u1", "ex", "http://example.org/ext#", null);
+        verify(datasetService, never()).deleteDraftPrefix(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void recordPrefixChangesSyncsAChangedIriForAnExistingPrefix() {
+        pipeline.recordPrefixChanges("proj-1", "u1", "User", true, null,
+                Map.of("ex", "http://old.example.org/"), Map.of("ex", "http://new.example.org/"));
+
+        verify(datasetService).updateDraftPrefix("proj-1", "u1", "ex", "http://new.example.org/", null);
+    }
+
+    @Test
+    void recordPrefixChangesDeletesAPrefixThatNoLongerExists() {
+        pipeline.recordPrefixChanges("proj-1", "u1", "User", true, null,
+                Map.of("ex", "http://example.org/ext#"), Map.of());
+
+        verify(datasetService).deleteDraftPrefix("proj-1", "u1", "ex");
+        verify(datasetService, never()).updateDraftPrefix(anyString(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void recordPrefixChangesLeavesUnchangedPrefixesAlone() {
+        pipeline.recordPrefixChanges("proj-1", "u1", "User", true, null,
+                Map.of("ex", "http://example.org/ext#"), Map.of("ex", "http://example.org/ext#"));
+
+        verify(datasetService, never()).updateDraftPrefix(anyString(), anyString(), anyString(), anyString(), any());
+        verify(datasetService, never()).deleteDraftPrefix(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void recordPrefixChangesNeverTouchesTheDraftSideChannelOutsideADraft() {
+        pipeline.recordPrefixChanges("proj-1", "u1", "User", false, null,
+                Map.of(), Map.of("ex", "http://example.org/ext#"));
+
+        verify(datasetService, never()).updateDraftPrefix(anyString(), anyString(), anyString(), anyString(), any());
+        verify(datasetService, never()).deleteDraftPrefix(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void recordPrefixChangesSwallowsAFailureSyncingTheDraftSideChannel() {
+        doThrow(new RuntimeException("mongo down")).when(datasetService)
+                .updateDraftPrefix(anyString(), anyString(), anyString(), anyString(), any());
+
+        pipeline.recordPrefixChanges("proj-1", "u1", "User", true, null,
+                Map.of(), Map.of("ex", "http://example.org/ext#"));
+    }
+
     private final Deque<Runnable> queuedRefreshes = new ArrayDeque<>();
 
     private OntologyIndexService withMetadataRefresh() {

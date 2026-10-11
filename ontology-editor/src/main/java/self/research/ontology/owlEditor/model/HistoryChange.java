@@ -91,6 +91,7 @@ public class HistoryChange {
         private String oldValue;
         private String newValue;
         private String annotationProperty;
+        private String category;
         private boolean addition;
 
         // Rollback tracking (granular rollback of this sub-change alone)
@@ -162,6 +163,14 @@ public class HistoryChange {
 
         public void setAnnotationProperty(String annotationProperty) {
             this.annotationProperty = annotationProperty;
+        }
+
+        public String getCategory() {
+            return category;
+        }
+
+        public void setCategory(String category) {
+            this.category = category;
         }
 
         public boolean isAddition() {
