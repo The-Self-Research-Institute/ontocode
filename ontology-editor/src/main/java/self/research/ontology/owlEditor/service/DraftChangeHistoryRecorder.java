@@ -35,16 +35,29 @@ public class DraftChangeHistoryRecorder {
         }
     }
 
-    public void record(String projectId, List<DraftChange> drafts) {
-        try {
-            drafts.forEach(draft -> recordTrackedChange(projectId, draft));
-            Map<String, List<DraftChange>> byEntity = groupByEntity(drafts);
-            byEntity.values().forEach(group -> recordBundledHistory(projectId, group));
-            log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries)",
-                    drafts.size(), byEntity.size());
-        } catch (Exception e) {
-            log.error("[DRAFT] Failed to record changes to change tracking", e);
+    public int record(String projectId, List<DraftChange> drafts) {
+        int failures = 0;
+        for (DraftChange draft : drafts) {
+            try {
+                recordTrackedChange(projectId, draft);
+            } catch (Exception e) {
+                failures++;
+                log.error("[DRAFT] Failed to record a tracked change for draft {} on project {}: {}",
+                        draft.getId(), projectId, e.getMessage());
+            }
         }
+        Map<String, List<DraftChange>> byEntity = groupByEntity(drafts);
+        for (List<DraftChange> group : byEntity.values()) {
+            try {
+                recordBundledHistory(projectId, group);
+            } catch (Exception e) {
+                failures++;
+                log.error("[DRAFT] Failed to record bundled history on project {}: {}", projectId, e.getMessage());
+            }
+        }
+        log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries, {} failed)",
+                drafts.size(), byEntity.size(), failures);
+        return failures;
     }
 
     private void recordTrackedChange(String projectId, DraftChange draft) {

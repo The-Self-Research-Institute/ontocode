@@ -576,6 +576,14 @@ public class DraftController {
                         "conflictBlocked", true
                 ));
             }
+            if (!result.isSuccess()) {
+                log.error("[DRAFT PR] Approval did not actually apply for prId={} project={} author={}: {}",
+                        prId, projectId, pr.getAuthorId(), result.getMessage());
+                return ResponseEntity.status(500).body(Map.of(
+                        "success", false,
+                        "error", result.getMessage() != null ? result.getMessage() : "Could not apply this pull request's changes"
+                ));
+            }
 
             pr.setStatus(DraftPullRequest.Status.APPROVED);
             pr.setReviewedAt(java.time.Instant.now());

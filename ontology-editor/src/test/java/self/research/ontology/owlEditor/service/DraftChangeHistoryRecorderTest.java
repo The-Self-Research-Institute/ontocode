@@ -112,13 +112,29 @@ class DraftChangeHistoryRecorderTest {
     }
 
     @Test
-    void aChangeTrackingFailureNeverFailsThePublish() {
+    void aChangeTrackingFailureNeverFailsThePublishAndTheBundledHistoryStillGetsRecorded() {
         doThrow(new RuntimeException("mongo down")).when(changeTracking).recordChange(any(OntologyChange.class));
 
-        assertDoesNotThrow(() -> recorder.record("p1",
+        int failures = assertDoesNotThrow(() -> recorder.record("p1",
                 List.of(draft("d1", "createClass", Map.of("iri", PIZZA, "label", "Pizza")))));
-        verify(history, times(0)).recordEdit(anyString(), anyString(), anyString(), anyString(), anyString(),
-                anyString(), any(), any(), anyString(), any(), anyList(), anyBoolean());
+
+        assertEquals(1, failures);
+        verify(history).recordEdit(eq("p1"), eq("u1"), eq("Uma"), eq("createClass"), eq(PIZZA), eq("Pizza"),
+                isNull(), isNull(), eq("Created class: Pizza"), isNull(), eq(List.of()), eq(false));
+    }
+
+    @Test
+    void aBundledHistoryFailureIsCountedButOtherEntitiesStillGetRecorded() {
+        doThrow(new RuntimeException("graphdb down")).when(history).recordEdit(anyString(), anyString(), anyString(),
+                anyString(), eq(PIZZA), anyString(), any(), any(), anyString(), any(), anyList(), anyBoolean());
+        DraftChange failing = draft("d1", "createClass", Map.of("iri", PIZZA, "label", "Pizza"));
+        DraftChange other = draft("d2", "createClass", Map.of("iri", SAUCE, "label", "Sauce"));
+
+        int failures = assertDoesNotThrow(() -> recorder.record("p1", List.of(failing, other)));
+
+        assertEquals(1, failures);
+        verify(history).recordEdit(eq("p1"), eq("u1"), eq("Uma"), eq("createClass"), eq(SAUCE), eq("Sauce"),
+                isNull(), isNull(), eq("Created class: Sauce"), isNull(), eq(List.of()), eq(false));
     }
 
     @Test

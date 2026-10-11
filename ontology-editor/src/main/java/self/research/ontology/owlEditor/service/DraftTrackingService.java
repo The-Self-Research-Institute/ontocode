@@ -291,9 +291,9 @@ public class DraftTrackingService {
                     springCacheEviction.evictForProject(projectId);
                 }
                 invalidateHierarchyCaches(projectId);
-                finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
+                int recordingFailures = finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
                 return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                        "Published draft with merge", false, analysis);
+                        "Published draft with merge" + recordingFailureSuffix(recordingFailures), false, analysis);
             } catch (Exception e) {
                 log.error("[DRAFT] Merge publish succeeded but follow-up bookkeeping failed for project {} user {} — "
                         + "data is already live, do not retry", projectId, userId, e);
@@ -306,19 +306,28 @@ public class DraftTrackingService {
         return applyDraftsViaMoveGraph(projectId, userId, force, false, unappliedDrafts);
     }
 
-    private void finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
+    private int finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
         if (unappliedDrafts.isEmpty()) {
-            return;
+            return 0;
         }
         unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
                 projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
-        draftChangeHistory.record(projectId, unappliedDrafts);
+        int recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
         unappliedDrafts.forEach(draft -> draft.setApplied(true));
         draftRepository.saveAll(unappliedDrafts);
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);
             metadataService.writeMeta(projectId, meta);
         }, metadataExecutor);
+        return recordingFailures;
+    }
+
+    private static String recordingFailureSuffix(int recordingFailures) {
+        if (recordingFailures == 0) {
+            return "";
+        }
+        return " (" + recordingFailures + " change" + (recordingFailures == 1 ? "" : "s")
+                + " could not be recorded in history — refresh to see the latest state)";
     }
 
     /**
@@ -357,10 +366,11 @@ public class DraftTrackingService {
             }
             invalidateHierarchyCaches(projectId);
 
+            int recordingFailures = 0;
             if (!unappliedDrafts.isEmpty()) {
                 unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
                         projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
-                draftChangeHistory.record(projectId, unappliedDrafts);
+                recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
                 unappliedDrafts.forEach(draft -> draft.setApplied(true));
                 draftRepository.saveAll(unappliedDrafts);
             }
@@ -373,7 +383,7 @@ public class DraftTrackingService {
             log.info("[DRAFT] MOVE GRAPH publish complete for project {} user {} ({} Mongo ops)",
                     projectId, userId, unappliedDrafts.size());
             return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                    "Published draft successfully", false, null);
+                    "Published draft successfully" + recordingFailureSuffix(recordingFailures), false, null);
         } catch (Exception e) {
             log.error("[DRAFT] Publish succeeded but follow-up bookkeeping failed for project {} user {} — "
                     + "data is already live, do not retry", projectId, userId, e);

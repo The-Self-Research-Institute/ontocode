@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
+import { runOperation } from './changeSetApi';
 import { ChangeSet, OperationTarget, RollbackEvent } from './types';
 import { cardDomId, ENTITY_CAP, flattensEntity, setSubtitle, undoneNote } from './groupChangeSets';
 import { setTarget } from './targets';
@@ -9,12 +10,27 @@ import ChangeSetPropertyRow from './ChangeSetPropertyRow';
 import RowTools from './RowTools';
 
 interface Props {
+  projectId: string;
   set: ChangeSet;
   expanded: boolean;
   onToggle: () => void;
   onUndo: (target: OperationTarget) => void;
   onDetails: (changeId: string) => void;
   highlighted?: boolean;
+}
+
+function useRealUndoCount(projectId: string, target: OperationTarget | null, enabled: boolean): number | undefined {
+  const [count, setCount] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    setCount(undefined);
+    if (!enabled || !target) return;
+    let live = true;
+    runOperation(projectId, target, true).then(result => {
+      if (live && result.data?.applied) setCount(result.data.applied.length);
+    });
+    return () => { live = false; };
+  }, [projectId, target, enabled]);
+  return count;
 }
 
 export function SourceBadge({ ai }: { ai: boolean }) {
@@ -37,9 +53,12 @@ function SetTitle({ set }: { set: ChangeSet }) {
   );
 }
 
-function HeaderActions({ set, onUndo, onDetails }: Pick<Props, 'set' | 'onUndo' | 'onDetails'>) {
+function HeaderActions({ projectId, set, expanded, onUndo, onDetails }:
+  Pick<Props, 'projectId' | 'set' | 'onUndo' | 'onDetails'> & { expanded: boolean }) {
   const redo = set.fullyUndone ? setTarget(set, 'REDO') : null;
   const undo = !set.fullyUndone && set.remaining > 0 ? setTarget(set, 'UNDO') : null;
+  const realCount = useRealUndoCount(projectId, undo, expanded && set.remaining > 1);
+  const displayCount = realCount ?? set.remaining;
   const single = set.entries.length === 1 ? set.entries[0] : null;
   return (
     <div className="cs-actions">
@@ -49,7 +68,7 @@ function HeaderActions({ set, onUndo, onDetails }: Pick<Props, 'set' | 'onUndo' 
       )}
       {undo && (
         <button type="button" className="cs-btn" onClick={() => onUndo(undo)}>
-          {set.remaining > 1 ? `Undo all ${set.remaining}` : 'Undo'}
+          {displayCount > 1 ? `Undo all ${displayCount}` : 'Undo'}
         </button>
       )}
       {redo && <button type="button" className="cs-btn" onClick={() => onUndo(redo)}>Redo</button>}
@@ -79,7 +98,7 @@ function CardBody({ set, onUndo, onDetails }: Pick<Props, 'set' | 'onUndo' | 'on
   );
 }
 
-const ChangeSetCard: React.FC<Props> = ({ set, expanded, onToggle, onUndo, onDetails, highlighted }) => {
+const ChangeSetCard: React.FC<Props> = ({ projectId, set, expanded, onToggle, onUndo, onDetails, highlighted }) => {
   const bodyId = `cs-body-${set.key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   return (
     <div id={cardDomId(set.key)} className={`cs-card${set.fullyUndone ? ' is-undone' : ''}${highlighted ? ' is-flash' : ''}`}>
@@ -93,7 +112,7 @@ const ChangeSetCard: React.FC<Props> = ({ set, expanded, onToggle, onUndo, onDet
             {set.fullyUndone && <span className="cs-sub">{undoneNote(set.undoneBy, set.undoneAt)}</span>}
           </span>
         </button>
-        <HeaderActions set={set} onUndo={onUndo} onDetails={onDetails} />
+        <HeaderActions projectId={projectId} set={set} expanded={expanded} onUndo={onUndo} onDetails={onDetails} />
       </div>
       {expanded && (
         <div className="cs-body" id={bodyId}>

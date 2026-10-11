@@ -31,10 +31,10 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const comments = useCommentDialog(projectId, selectedChange, feed.loadChanges, showNotification);
 
   React.useEffect(() => {
-    if (!feed.isDraftActive && activeTab === 'drafts') {
+    if (!feed.isDraftActive && feed.stats.draftChanges === 0 && activeTab === 'drafts') {
       setActiveTab('live');
     }
-  }, [feed.isDraftActive, activeTab]);
+  }, [feed.isDraftActive, feed.stats.draftChanges, activeTab]);
 
   const openChangeDetails = (changeId: string) => {
     const change = feed.changes.find(c => c.id === changeId);
