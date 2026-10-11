@@ -208,6 +208,21 @@ public class AssistantEditProposalService {
         boolean structurallySound = addStructuralChecks(session, targetPath, sortedEdits, derived, maxDerivedEdits,
                 checks, scope);
         perf.mark("structuralAndLiveMatch");
+
+        // size_limits failing isn't like the other structural checks: continuing on would build
+        // editEntries/diff from the full, oversized edit list and persist it as-is (unlike every
+        // other structural failure, this one scales with payload size, risking an unhandled
+        // database-level failure instead of this clear, specific rejection). Stop here instead,
+        // keeping the checks already computed so the caller still sees the full report.
+        boolean sizeOk = checks.stream().filter(c -> "size_limits".equals(c.name()))
+                .findFirst().map(CheckResult::passed).orElse(true);
+        if (!sizeOk) {
+            String rejectSummary = renameSummary != null ? renameSummary
+                    : sortedEdits.size() + " edit" + (sortedEdits.size() == 1 ? "" : "s") + " on " + targetPath;
+            return persistGroup(session, groupInput, targetPath, List.of(), false, publicGraphVersion, now,
+                    expiresAt, checks, List.of(), rejectSummary);
+        }
+
         sortedEdits = addContentChecks(session, targetPath, sortedEdits, structurallySound, derived,
                 introducedByOperation, checks, perf, scope);
         boolean passed = checks.stream().allMatch(CheckResult::passed);
@@ -345,9 +360,17 @@ public class AssistantEditProposalService {
         checks.add(new CheckResult("no_intra_group_overlap", noOverlap, overlapCheck.detail()));
 
         int maxEdits = derived ? maxDerivedEdits : maxEditsPerGroup;
-        boolean sizeOk = sortedEdits.size() <= maxEdits
-                && sortedEdits.stream().allMatch(e -> e.newText() != null && e.newText().length() <= maxEditBytes);
-        checks.add(new CheckResult("size_limits", sizeOk));
+        boolean editCountOk = sortedEdits.size() <= maxEdits;
+        Optional<EditInput> oversizedEdit = sortedEdits.stream()
+                .filter(e -> e.newText() == null || e.newText().length() > maxEditBytes)
+                .findFirst();
+        boolean sizeOk = editCountOk && oversizedEdit.isEmpty();
+        String sizeDetail = !editCountOk
+                ? "This batch has " + sortedEdits.size() + " edits, more than the " + maxEdits + " allowed at once."
+                : oversizedEdit.isPresent()
+                        ? "One of these edits is larger than the " + maxEditBytes + "-byte limit for a single edit."
+                        : null;
+        checks.add(new CheckResult("size_limits", sizeOk, sizeDetail));
 
         String projectId = session.getProjectId();
         CodeViewRangeMatcher.MatchResult liveMatchResult;
@@ -487,7 +510,13 @@ public class AssistantEditProposalService {
                 .updatedAt(now)
                 .expiresAt(expiresAt)
                 .build();
-        groupRepository.save(document);
+        try {
+            groupRepository.save(document);
+        } catch (Exception e) {
+            log.error("[Assistant] Failed to save proposed edit group for session {}: {}",
+                    session.getId(), e.getMessage(), e);
+            throw new RuntimeException("Couldn't save this proposal — try a smaller batch of changes.", e);
+        }
 
         log.info("[Assistant] Proposed group {} for session {} status={}",
                 document.getId(), session.getId(), document.getStatus());

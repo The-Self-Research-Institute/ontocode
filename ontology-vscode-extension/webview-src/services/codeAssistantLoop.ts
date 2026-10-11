@@ -30,8 +30,19 @@ export {
 } from "./codeAssistantLoopTools";
 export { buildToolProvenance } from "./codeAssistantLoopProvenance";
 
-const MAX_LOOP_ITERATIONS = 12;
-const MAX_CALLS_PER_TURN = 8;
+function configuredLimit(key: string, fallback: number): number {
+  let raw: string | undefined;
+  try {
+    raw = (typeof window !== "undefined" ? (window as any).__ONTOCODE_CONFIG__?.[key] : undefined);
+  } catch {
+    raw = undefined;
+  }
+  const parsed = raw != null ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const MAX_LOOP_ITERATIONS = configuredLimit("ASSISTANT_MAX_LOOP_ITERATIONS", 12);
+const MAX_CALLS_PER_TURN = configuredLimit("ASSISTANT_MAX_CALLS_PER_TURN", 8);
 const TOOL_CALL_STAGGER_MS = 150;
 
 function managedCallFor(ctx: LoopContext): ManagedProviderCall | undefined {

@@ -79,6 +79,7 @@ import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { cancelOntologyExport } from "../services/exportService";
 import { resolveMutationActor } from "../utils/mutationActor";
+import { isDraftScopeActive, withDraftScope, withDraftAndUser } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
@@ -1155,33 +1156,12 @@ const TopMenuBar = ({
 
 
 
-function isDraftScopeActive(): boolean {
-  return !isDesktop() && ontologyMutationService.isPrivateEditMode();
-}
-
 // Webapp + public/live sync: every mutation already writes straight to the shared
 // graph (no per-user draft record), so there's nothing pending to flush and the
 // "unsaved changes" dot should never light up. Desktop always tracks its own
 // unsaved-to-disk state regardless of sync mode.
 function isLiveWriteMode(): boolean {
   return !isDesktop() && !ontologyMutationService.isPrivateEditMode();
-}
-
-function withDraftScope(url: string): string {
-  if (!isDraftScopeActive()) return url;
-  return url + (url.includes("?") ? "&draft=true" : "?draft=true");
-}
-
-/**
- * Like withDraftScope but also appends userId — required by the ontology-metadata WRITE
- * endpoints (annotations/imports/iri) to scope the write to the caller's draft graph. Reads
- * can rely on the header userId, but these writes read userId explicitly from the request.
- */
-function withDraftAndUser(url: string): string {
-  if (!isDraftScopeActive()) return url;
-  const uid = resolveMutationActor().userId;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}draft=true&userId=${encodeURIComponent(uid || "")}`;
 }
 
 /**

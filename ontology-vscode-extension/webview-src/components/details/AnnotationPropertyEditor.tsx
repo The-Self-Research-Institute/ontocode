@@ -5,6 +5,7 @@ import { IRIEditorDialog } from '../dialogs';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
+import { withDraftScope } from '../../utils/draftScope';
 import type { AnnotationProperty } from '../../types';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 
@@ -70,7 +71,7 @@ const PropertyUsageTab: React.FC<{
         endpoint = `/api/ontology/annotation-properties/${projectId}/usage?propertyIri=${encodeURIComponent(propertyIri)}`;
       }
       
-      const response = await apiClient.get<any>(endpoint);
+      const response = await apiClient.get<any>(withDraftScope(endpoint));
       const usageData = response?.data?.data || response?.data || response || [];
       setUsages(Array.isArray(usageData) ? usageData : []);
     } catch (error) {
