@@ -209,11 +209,6 @@ public class AssistantEditProposalService {
                 checks, scope);
         perf.mark("structuralAndLiveMatch");
 
-        // size_limits failing isn't like the other structural checks: continuing on would build
-        // editEntries/diff from the full, oversized edit list and persist it as-is (unlike every
-        // other structural failure, this one scales with payload size, risking an unhandled
-        // database-level failure instead of this clear, specific rejection). Stop here instead,
-        // keeping the checks already computed so the caller still sees the full report.
         boolean sizeOk = checks.stream().filter(c -> "size_limits".equals(c.name()))
                 .findFirst().map(CheckResult::passed).orElse(true);
         if (!sizeOk) {

@@ -231,9 +231,6 @@ export function toFriendlyErrorMessage(raw: string): string {
   if (/socket|connection|unreachable|refused/i.test(raw)) {
     return "Couldn't reach a required service on the server. Try again shortly.";
   }
-  // Short and not an actual stack trace — more likely a specific, legitimate message from a
-  // well-behaved exception handler than a leaked internal detail. Show it rather than masking
-  // it with the generic fallback below.
   if (!looksLikeTrace && !tooLong) {
     return raw;
   }
