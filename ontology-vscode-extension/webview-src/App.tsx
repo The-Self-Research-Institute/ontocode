@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, laz
 import { useAuth } from "./custom-hook/useAuth";
 import apiClient, { updateBaseUrl, ApiError } from "./services/apiClient";
 import { openOntologyFile, fileContentToBase64 } from "./utils/fileAccess";
-import { getGatewayUrl } from "./config/deploymentConfig";
+import { getGatewayUrl, getStoredDeploymentType } from "./config/deploymentConfig";
 import { CollaborationProvider } from "./contexts/CollaborationContext";
 import { EntityPreferencesProvider } from "./contexts/EntityPreferencesContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -148,22 +148,9 @@ const AppContent = () => {
       try { localStorage.setItem("deploymentType", "self-hosted"); } catch { /* ignore */ }
       return "self-hosted";
     }
-    // Auto-detect cloud mode when accessing from the cloud domain
-    if (typeof window !== "undefined") {
-      const hostname = window.location.hostname;
-      if (hostname === "ontocode.selfresearch.org" || hostname === "ontocodeapi.selfresearch.org") {
-        try { localStorage.setItem("deploymentType", "cloud"); } catch { /* ignore */ }
-        return "cloud";
-      }
-    }
-    // Restore from localStorage for returning users
-    try {
-      const stored = localStorage.getItem("deploymentType");
-      if (stored === "self-hosted" || stored === "cloud") return stored;
-    } catch {
-      /* ignore */
-    }
-    return null;
+    const resolved = getStoredDeploymentType();
+    try { localStorage.setItem("deploymentType", resolved); } catch { /* ignore */ }
+    return resolved;
   });
   const [forceShowWorkspace, setForceShowWorkspace] = useState(false);
   const [skipWorkspaceRequested, setSkipWorkspaceRequested] = useState(false);
@@ -900,9 +887,11 @@ const AppContent = () => {
     if (window.vscode) {
       window.vscode.postMessage({ type: "webviewReady" });
     }
+  }, []);
 
-    // Don't load stored deployment type - always show selector before login
-    // Deployment type will be set after user selects in DeploymentSelector
+  useEffect(() => {
+    console.log("[App] Fresh session landed on:", currentRoute.view, "deploymentType:", deploymentType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Ref to prevent the verify fetch from running twice in React 18 StrictMode.
@@ -2291,14 +2280,6 @@ const AppContent = () => {
       });
     };
 
-    const handleBackToWelcome = () => {
-      localStorage.removeItem("deploymentType");
-      navigateTo({
-        view: "deployment",
-        deploymentType: null,
-      });
-    };
-
     const handleBackToLogin = () => {
       setAuthSubView("login");
       setIsLoginView(true);
@@ -2328,7 +2309,8 @@ const AppContent = () => {
         onToggleForm={toggleFormView}
         prefillEmail={inviteEmail || verificationEmail || undefined}
         onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
-        onBackToWelcome={handleBackToWelcome}
+        deploymentType={deploymentType}
+        onSwitchDeploymentType={handleDeploymentSelected}
         onForgotPassword={() => setAuthSubView("forgotPassword")}
       />
     ) : (
@@ -2336,7 +2318,8 @@ const AppContent = () => {
         onToggleForm={toggleFormView}
         prefillEmail={inviteEmail || undefined}
         onBackToInvitation={inviteToken ? handleBackToInvitation : undefined}
-        onBackToWelcome={handleBackToWelcome}
+        deploymentType={deploymentType}
+        onSwitchDeploymentType={handleDeploymentSelected}
         onVerificationRequired={(email) => {
           setVerificationEmail(email);
           setAuthSubView("verifyEmail");
