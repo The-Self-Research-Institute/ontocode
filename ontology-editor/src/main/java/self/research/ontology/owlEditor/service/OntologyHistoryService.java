@@ -12,6 +12,7 @@ import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -19,10 +20,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
 
-/**
- * Service for storing and retrieving edit history in GraphDB.
- * History is stored as RDF triples in a separate named graph.
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -33,9 +30,19 @@ public class OntologyHistoryService {
     @Autowired
     @Lazy
     private HistorySyncService historySyncService;
+
+    @Autowired
+    @Lazy
+    private OntologyHistoryService self;
+
+    public void markDraftHistoryPublished(String projectId, String userId) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsPublished(projectId, userId);
+        }
+    }
+
     private static final ValueFactory vf = SimpleValueFactory.getInstance();
 
-    // History vocabulary
     private static final String HISTORY_NS = "http://ontology.research/history#";
     private static final IRI EDIT_OPERATION = vf.createIRI(HISTORY_NS, "EditOperation");
     private static final IRI HAS_USER_ID = vf.createIRI(HISTORY_NS, "hasUserId");
@@ -48,9 +55,6 @@ public class OntologyHistoryService {
     private static final IRI HAS_NEW_VALUE = vf.createIRI(HISTORY_NS, "hasNewValue");
     private static final IRI HAS_DESCRIPTION = vf.createIRI(HISTORY_NS, "hasDescription");
 
-    /**
-     * Record an edit operation to GraphDB history graph.
-     */
     public void recordEdit(String projectId, String userId, String username,
                           String operationType, String entityIRI, String entityLabel,
                           String oldValue, String newValue, String description) {
@@ -58,9 +62,6 @@ public class OntologyHistoryService {
                    oldValue, newValue, description, null);
     }
 
-    /**
-     * Record an edit operation with annotation property
-     */
     public void recordEdit(String projectId, String userId, String username,
                           String operationType, String entityIRI, String entityLabel,
                           String oldValue, String newValue, String description, String annotationProperty) {
@@ -80,15 +81,20 @@ public class OntologyHistoryService {
                           String operationType, String entityIRI, String entityLabel,
                           String oldValue, String newValue, String description, String annotationProperty,
                           List<Map<String, String>> subChanges, boolean draft) {
+        recordEdit(projectId, userId, username, operationType, entityIRI, entityLabel,
+                oldValue, newValue, description, annotationProperty, subChanges, draft, null);
+    }
+
+    public void recordEdit(String projectId, String userId, String username,
+                          String operationType, String entityIRI, String entityLabel,
+                          String oldValue, String newValue, String description, String annotationProperty,
+                          List<Map<String, String>> subChanges, boolean draft, ChangeOrigin origin) {
 
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
         String editId = UUID.randomUUID().toString();
         IRI editIRI = vf.createIRI(HISTORY_NS + "edit/" + editId);
         long timestamp = System.currentTimeMillis();
 
-        // Mongo first: history_changes powers the Change Assistant and collaboration
-        // views, and must survive Fuseki being down (desktop defers Fuseki startup —
-        // OWLAPI-first mode — so the RDF write below can fail with connection refused).
         try {
             Map<String, Object> changeData = new HashMap<>();
             changeData.put("userId", userId);
@@ -104,8 +110,14 @@ public class OntologyHistoryService {
             if (annotationProperty != null) changeData.put("annotationProperty", annotationProperty);
             if (subChanges != null && !subChanges.isEmpty()) changeData.put("subChanges", subChanges);
             changeData.put("draft", draft);
+            if (origin != null) {
+                changeData.put("changeSetId", origin.changeSetId());
+                changeData.put("source", origin.source());
+                if (origin.ai() != null) changeData.put("ai", origin.ai());
+                if (origin.revertsChangeSetId() != null) changeData.put("revertsChangeSetId", origin.revertsChangeSetId());
+                if (origin.rollbackAuditId() != null) changeData.put("rollbackAuditId", origin.rollbackAuditId());
+            }
 
-            // Determine entity type from operation
             String entityType = determineEntityType(operationType);
             changeData.put("entityType", entityType);
 
@@ -114,11 +126,20 @@ public class OntologyHistoryService {
             log.error("[OntologyHistory] Failed to sync change to MongoDB", e);
         }
 
-        // RDF history graph: best-effort mirror in the triple store.
+        self.mirrorEditToTripleStoreAsync(historyGraph, editIRI, editId, userId, username,
+                operationType, entityIRI, entityLabel, oldValue, newValue, description,
+                annotationProperty, timestamp);
+    }
+
+    @Async("metadataExecutor")
+    public void mirrorEditToTripleStoreAsync(IRI historyGraph, IRI editIRI, String editId,
+                          String userId, String username, String operationType,
+                          String entityIRI, String entityLabel, String oldValue,
+                          String newValue, String description, String annotationProperty,
+                          long timestamp) {
         try (RepositoryConnection conn = datasetService.getRepository().getConnection()) {
             conn.begin();
 
-            // Add edit operation as RDF triples
             conn.add(editIRI, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, EDIT_OPERATION, historyGraph);
             conn.add(editIRI, HAS_USER_ID, vf.createLiteral(userId), historyGraph);
             conn.add(editIRI, HAS_USERNAME, vf.createLiteral(username), historyGraph);
@@ -205,6 +226,8 @@ public class OntologyHistoryService {
                 }
             }
 
+            addCreationParent(primary, subChanges);
+
             String primaryOpType;
             String label;
             String description;
@@ -239,6 +262,48 @@ public class OntologyHistoryService {
         }
     }
 
+    private static final String OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing";
+
+    static void addCreationParent(
+            self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp primary,
+            List<Map<String, String>> subChanges) {
+        if (primary == null || primary.type() == null || !primary.type().startsWith("create")) {
+            return;
+        }
+        String predicate;
+        String parent;
+        switch (primary.type()) {
+            case "createClass" -> {
+                predicate = RDFS_SUBCLASSOF;
+                parent = primary.parent();
+            }
+            case "createObjectProperty", "createDataProperty", "createAnnotationProperty" -> {
+                predicate = RDFS_SUBPROPERTYOF;
+                parent = primary.parent();
+            }
+            case "createIndividual" -> {
+                predicate = RDF_TYPE;
+                parent = primary.classIri();
+            }
+            default -> {
+                return;
+            }
+        }
+        if (parent == null || parent.isBlank() || OWL_THING_IRI.equals(parent)) {
+            return;
+        }
+        for (Map<String, String> existing : subChanges) {
+            if (predicate.equals(existing.get("predicate")) && parent.equals(existing.get("newValue"))) {
+                return;
+            }
+        }
+        Map<String, String> sc = new HashMap<>();
+        sc.put("predicate", predicate);
+        sc.put("newValue", parent);
+        sc.put("addition", "true");
+        subChanges.add(0, sc);
+    }
+
     private Map<String, String> mutationOpToSubChange(
             self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op) {
         String type = op.type();
@@ -270,6 +335,7 @@ public class OntologyHistoryService {
             }
         }
         sc.put("addition", String.valueOf(addition));
+        sc.put("category", determineEntityType(type));
         return sc;
     }
 
@@ -285,9 +351,6 @@ public class OntologyHistoryService {
         return String.join("; ", parts);
     }
 
-    /**
-     * Determine entity type from operation type.
-     */
     private String determineEntityType(String operationType) {
         if (operationType == null) return "OTHER";
 
@@ -302,9 +365,6 @@ public class OntologyHistoryService {
         return "OTHER";
     }
 
-    /**
-     * Retrieve edit history for a project from GraphDB.
-     */
     public List<Map<String, Object>> getHistory(String projectId, int limit) {
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
         List<Map<String, Object>> results = new ArrayList<>();
@@ -342,23 +402,20 @@ public class OntologyHistoryService {
 
                     Map<String, Object> edit = new HashMap<>();
 
-                    // Generate unique ID from edit IRI
                     String editIRI = bindings.getValue("edit").stringValue();
                     edit.put("id", editIRI);
 
-                    // Add projectId
                     edit.put("projectId", projectId);
 
                     edit.put("userId", bindings.getValue("userId").stringValue());
                     edit.put("username", bindings.getValue("username").stringValue());
 
                     long timestamp = Long.parseLong(bindings.getValue("timestamp").stringValue());
-                    edit.put("timestamp", timestamp); // Keep as number for JavaScript
+                    edit.put("timestamp", timestamp);
 
                     String operationType = bindings.getValue("operationType").stringValue();
                     edit.put("changeType", operationType);
 
-                    // Determine category from operation type
                     String category = "OTHER";
                     if (operationType.contains("Class") || operationType.contains("CLASS")) {
                         category = "CLASS";
@@ -405,9 +462,6 @@ public class OntologyHistoryService {
         return results;
     }
 
-    /**
-     * Clear history for a project.
-     */
     public void clearHistory(String projectId) {
         IRI historyGraph = vf.createIRI(HISTORY_NS + "graph/" + projectId);
 

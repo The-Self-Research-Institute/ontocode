@@ -10,6 +10,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpResponse;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Mono;
@@ -103,8 +104,13 @@ public class GatewayCorsConfig {
         };
     }
 
-    private static HttpStatus resolveStatus(Throwable ex) {
-
+    static HttpStatus resolveStatus(Throwable ex) {
+        if (ex instanceof ResponseStatusException statusEx) {
+            HttpStatus declared = HttpStatus.resolve(statusEx.getStatusCode().value());
+            if (declared != null) {
+                return declared;
+            }
+        }
         String className = ex.getClass().getName();
         String message = ex.getMessage();
         boolean isTimeout = ex instanceof java.util.concurrent.TimeoutException

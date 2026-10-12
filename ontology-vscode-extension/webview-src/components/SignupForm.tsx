@@ -7,16 +7,18 @@ import { AppVersionBadge } from './AppVersionBadge';
 import { OntoCodeLogo } from './OntoCodeLogo';
 import { TermsAndConditionsModal } from './TermsAndConditionsModal';
 import { PrivacyPolicyModal } from './PrivacyPolicyModal';
+import { DeploymentModePill } from './DeploymentModePill';
 
 interface SignupFormProps {
     onToggleForm: () => void;
     prefillEmail?: string;
     onBackToInvitation?: () => void;
-    onBackToWelcome?: () => void;
+    deploymentType: 'self-hosted' | 'cloud';
+    onSwitchDeploymentType: (type: 'self-hosted' | 'cloud') => void;
     onVerificationRequired?: (email: string) => void;
 }
 
-const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWelcome, onVerificationRequired }: SignupFormProps) => {
+const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, deploymentType, onSwitchDeploymentType, onVerificationRequired }: SignupFormProps) => {
     const [username, setUsername] = useState('');
     const [email, setEmail] = useState(prefillEmail || '');
     const [password, setPassword] = useState('');
@@ -105,6 +107,7 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
             <div className="flex justify-center mb-3">
               <AppVersionBadge variant="dark" />
             </div>
+            <DeploymentModePill deploymentType={deploymentType} onSwitch={onSwitchDeploymentType} />
             <h2 className="text-3xl font-bold text-white mb-2">Create Your Account</h2>
             <p className="text-gray-300">Get started with OntoCode Studio</p>
           </div>
@@ -240,15 +243,6 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, onBackToWe
               >
                 <ArrowLeft size={16} />
                 Back to Invitation
-              </button>
-            )}
-            {onBackToWelcome && (
-              <button
-                onClick={onBackToWelcome}
-                className="flex items-center justify-center gap-2 w-full text-gray-400 hover:text-gray-300 text-sm"
-              >
-                <ArrowLeft size={16} />
-                Back to Welcome
               </button>
             )}
           </div>

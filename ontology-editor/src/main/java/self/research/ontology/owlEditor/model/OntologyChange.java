@@ -5,6 +5,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -101,7 +102,7 @@ public class OntologyChange {
     }
 
     public OntologyChange() {
-        this.timestamp = LocalDateTime.now();
+        this.timestamp = LocalDateTime.now(ZoneOffset.UTC);
     }
 
     public OntologyChange(String projectId, String userId, String username, ChangeType changeType) {
@@ -224,6 +225,10 @@ public class OntologyChange {
         this.timestamp = timestamp;
     }
 
+    public String getTimestampIso() {
+        return timestamp == null ? null : timestamp.toInstant(ZoneOffset.UTC).toString();
+    }
+
     public ChangeType getChangeType() {
         return changeType;
     }
@@ -334,6 +339,10 @@ public class OntologyChange {
 
     public void setRevertedAt(LocalDateTime revertedAt) {
         this.revertedAt = revertedAt;
+    }
+
+    public String getRevertedAtIso() {
+        return revertedAt == null ? null : revertedAt.toInstant(ZoneOffset.UTC).toString();
     }
 
     public String getSessionId() {

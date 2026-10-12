@@ -42,6 +42,21 @@ public class RollbackAudit {
     // Only populated on a primary-rollback audit doc: ids of sub-changes cascaded through.
     private List<String> cascadedSubChangeIds = new ArrayList<>();
 
+    @Indexed
+    private String changeSetId;
+    private String direction = "UNDO";
+    private List<String> changeIds = new ArrayList<>();
+    private int skippedCount;
+
+    public String getChangeSetId() { return changeSetId; }
+    public void setChangeSetId(String changeSetId) { this.changeSetId = changeSetId; }
+    public String getDirection() { return direction; }
+    public void setDirection(String direction) { this.direction = direction; }
+    public List<String> getChangeIds() { return changeIds; }
+    public void setChangeIds(List<String> changeIds) { this.changeIds = changeIds != null ? changeIds : new ArrayList<>(); }
+    public int getSkippedCount() { return skippedCount; }
+    public void setSkippedCount(int skippedCount) { this.skippedCount = skippedCount; }
+
     public RollbackAudit() {
         this.revertedAt = LocalDateTime.now();
     }

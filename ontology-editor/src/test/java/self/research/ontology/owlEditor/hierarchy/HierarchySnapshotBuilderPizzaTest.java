@@ -27,7 +27,7 @@ class HierarchySnapshotBuilderPizzaTest {
 
     @Test
     void assertedTopLevel_matchesOntoCodePizzaTutorial() throws Exception {
-        Path owl = Path.of("..", "PizzaTutorialWithDataV2.owl").normalize();
+        Path owl = Path.of("..", "test-data", "PizzaTutorialWithDataV2 (1).owl").normalize();
         assertTrue(owl.toFile().exists(), "Pizza tutorial fixture missing: " + owl);
 
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();

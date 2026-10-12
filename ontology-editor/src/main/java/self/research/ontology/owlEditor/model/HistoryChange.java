@@ -5,6 +5,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -50,7 +51,7 @@ public class HistoryChange {
     private String description;
     
     // Collaboration features
-    private String status = "PENDING"; // PENDING, APPROVED, REJECTED
+    private String status = "SAVED";
     private String approvedBy;
     private LocalDateTime approvedAt;
     private String rejectedBy;
@@ -76,6 +77,11 @@ public class HistoryChange {
     private boolean reverted = false;
     private String revertedAuditId;
 
+    @Indexed
+    private String changeSetId;
+    private String source;
+    private AiInfo ai;
+
     // Sync tracking
     private LocalDateTime syncedAt;
 
@@ -85,6 +91,7 @@ public class HistoryChange {
         private String oldValue;
         private String newValue;
         private String annotationProperty;
+        private String category;
         private boolean addition;
 
         // Rollback tracking (granular rollback of this sub-change alone)
@@ -158,6 +165,14 @@ public class HistoryChange {
             this.annotationProperty = annotationProperty;
         }
 
+        public String getCategory() {
+            return category;
+        }
+
+        public void setCategory(String category) {
+            this.category = category;
+        }
+
         public boolean isAddition() {
             return addition;
         }
@@ -174,7 +189,7 @@ public class HistoryChange {
         private LocalDateTime timestamp;
         
         public CommentEntry() {
-            this.timestamp = LocalDateTime.now();
+            this.timestamp = LocalDateTime.now(ZoneOffset.UTC);
         }
         
         public CommentEntry(String userId, String username, String text) {
@@ -216,12 +231,16 @@ public class HistoryChange {
         public void setTimestamp(LocalDateTime timestamp) {
             this.timestamp = timestamp;
         }
+
+        public String getTimestampIso() {
+            return timestamp == null ? null : timestamp.toInstant(ZoneOffset.UTC).toString();
+        }
     }
 
     // Constructors
     public HistoryChange() {
-        this.timestamp = LocalDateTime.now();
-        this.syncedAt = LocalDateTime.now();
+        this.timestamp = LocalDateTime.now(ZoneOffset.UTC);
+        this.syncedAt = LocalDateTime.now(ZoneOffset.UTC);
     }
 
     public HistoryChange(String projectId, String editId, String userId, String username) {
@@ -233,6 +252,36 @@ public class HistoryChange {
     }
 
     // Builder pattern
+    public static class AiInfo {
+        private String provider;
+        private String model;
+        private String sessionId;
+        private String groupId;
+        private String summary;
+
+        public AiInfo() {
+        }
+
+        public AiInfo(String provider, String model, String sessionId, String groupId, String summary) {
+            this.provider = provider;
+            this.model = model;
+            this.sessionId = sessionId;
+            this.groupId = groupId;
+            this.summary = summary;
+        }
+
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+        public String getModel() { return model; }
+        public void setModel(String model) { this.model = model; }
+        public String getSessionId() { return sessionId; }
+        public void setSessionId(String sessionId) { this.sessionId = sessionId; }
+        public String getGroupId() { return groupId; }
+        public void setGroupId(String groupId) { this.groupId = groupId; }
+        public String getSummary() { return summary; }
+        public void setSummary(String summary) { this.summary = summary; }
+    }
+
     public static class Builder {
         private HistoryChange change;
 
@@ -302,6 +351,21 @@ public class HistoryChange {
             return this;
         }
 
+        public Builder changeSetId(String changeSetId) {
+            change.changeSetId = changeSetId;
+            return this;
+        }
+
+        public Builder source(String source) {
+            change.source = source;
+            return this;
+        }
+
+        public Builder ai(AiInfo ai) {
+            change.ai = ai;
+            return this;
+        }
+
         public HistoryChange build() {
             return change;
         }
@@ -354,6 +418,10 @@ public class HistoryChange {
 
     public void setTimestamp(LocalDateTime timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public String getTimestampIso() {
+        return timestamp == null ? null : timestamp.toInstant(ZoneOffset.UTC).toString();
     }
 
     public String getOperationType() {
@@ -444,6 +512,10 @@ public class HistoryChange {
         this.approvedAt = approvedAt;
     }
 
+    public String getApprovedAtIso() {
+        return approvedAt == null ? null : approvedAt.toInstant(ZoneOffset.UTC).toString();
+    }
+
     public String getRejectedBy() {
         return rejectedBy;
     }
@@ -458,6 +530,10 @@ public class HistoryChange {
 
     public void setRejectedAt(LocalDateTime rejectedAt) {
         this.rejectedAt = rejectedAt;
+    }
+
+    public String getRejectedAtIso() {
+        return rejectedAt == null ? null : rejectedAt.toInstant(ZoneOffset.UTC).toString();
     }
 
     public Map<String, CommentEntry> getComments() {
@@ -500,6 +576,10 @@ public class HistoryChange {
         this.resolvedAt = resolvedAt;
     }
 
+    public String getResolvedAtIso() {
+        return resolvedAt == null ? null : resolvedAt.toInstant(ZoneOffset.UTC).toString();
+    }
+
     public Map<String, String> getMetadata() {
         return metadata;
     }
@@ -526,6 +606,30 @@ public class HistoryChange {
 
     public boolean isReverted() {
         return reverted;
+    }
+
+    public String getChangeSetId() {
+        return changeSetId;
+    }
+
+    public void setChangeSetId(String changeSetId) {
+        this.changeSetId = changeSetId;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
+    }
+
+    public AiInfo getAi() {
+        return ai;
+    }
+
+    public void setAi(AiInfo ai) {
+        this.ai = ai;
     }
 
     public void setReverted(boolean reverted) {

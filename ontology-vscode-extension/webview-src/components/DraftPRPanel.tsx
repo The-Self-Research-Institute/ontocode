@@ -395,7 +395,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {pr.status === "OPEN" && prConflictMap[pr.id]?.conflictType === "IRI_OVERLAP" && (
-                    <AlertTriangle size={12} className="text-amber-500" title="Merge conflicts detected" />
+                    <span title="Merge conflicts detected" className="inline-flex"><AlertTriangle size={12} className="text-amber-500" /></span>
                   )}
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                     pr.status === "OPEN" ? "bg-blue-100 text-blue-700"
@@ -517,7 +517,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                                           <div className="flex items-center gap-1.5">
                                             <span className="opacity-80 truncate">{name}</span>
                                             {isConflict && (
-                                              <AlertTriangle size={10} className="text-amber-500 flex-shrink-0" title="Conflict with public" />
+                                              <span title="Conflict with public" className="inline-flex flex-shrink-0"><AlertTriangle size={10} className="text-amber-500" /></span>
                                             )}
                                           </div>
                                           {parentLabel && (

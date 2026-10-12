@@ -1,3 +1,6 @@
 .desktop-auth.json
 test-results-desktop/
 playwright-report-desktop/
+node_modules/
+test-results/
+playwright-report/

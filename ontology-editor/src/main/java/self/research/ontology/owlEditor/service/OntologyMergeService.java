@@ -48,6 +48,7 @@ public class OntologyMergeService {
     private final ProjectImportService importService;
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
+    private final OntologyHistoryService historyService;
 
     @Value("${auth.service.url:http://localhost:8086}")
     private String authServiceUrl;
@@ -57,11 +58,13 @@ public class OntologyMergeService {
     public OntologyMergeService(SparqlDatasetService datasetService,
                                ProjectImportService importService,
                                StorageManager storageManager,
-                               ProjectMetadataService metadataService) {
+                               ProjectMetadataService metadataService,
+                               OntologyHistoryService historyService) {
         this.datasetService = datasetService;
         this.importService = importService;
         this.storageManager = storageManager;
         this.metadataService = metadataService;
+        this.historyService = historyService;
     }
 
     /**
@@ -300,7 +303,9 @@ public class OntologyMergeService {
                                       String targetProjectId,
                                       String targetFileName,
                                       String outputFileName,
-                                      MergeOptions options) throws Exception {
+                                      MergeOptions options,
+                                      String userId,
+                                      String username) throws Exception {
         log.info("[MERGE] Starting merge operation");
         log.info("[MERGE] Source: {}, Target: {}", sourceFile, targetProjectId);
         log.info("[MERGE] Strategy: {}", options.getStrategy());
@@ -391,7 +396,15 @@ public class OntologyMergeService {
 
             result.setSuccess(true);
             result.setMessage("Merge completed successfully");
-            
+
+            if (historyService != null) {
+                historyService.recordEdit(importProjectId, userId, username, "ontologyMerge", null, null,
+                        null, null, "Merged ontology: " + result.getAxiomsAdded() + " added, "
+                                + result.getAxiomsReplaced() + " replaced, " + result.getAxiomsRemoved() + " removed, "
+                                + result.getEntitiesRenamed() + " renamed, " + result.getConflictsResolved()
+                                + " conflicts resolved");
+            }
+
             log.info("[MERGE] Merge operation completed successfully");
             
         } catch (Exception e) {
@@ -1297,6 +1310,10 @@ public class OntologyMergeService {
      * Does not remove axioms where the entity is merely referenced by other entities.
      * Uses batch applyChanges for atomic removal.
      */
+    public void removeEntityDefinition(OWLOntology ontology, IRI entityIRI) {
+        removeDefiningAxioms(ontology, entityIRI, ontology.getOWLOntologyManager());
+    }
+
     private void removeDefiningAxioms(OWLOntology ontology, IRI entityIRI, OWLOntologyManager manager) {
         Set<OWLAxiom> toRemove = getDefiningAxioms(ontology, entityIRI);
         if (!toRemove.isEmpty()) {
@@ -1578,6 +1595,21 @@ public class OntologyMergeService {
                 addDefiningAxioms(ours, theirs, iri, manager);
             }
         }
+
+        if (conflictEntityIris != null) {
+            for (String iriStr : conflictEntityIris) {
+                if (touchedIris.contains(iriStr)) {
+                    continue;
+                }
+                IRI iri = IRI.create(iriStr);
+                ConflictResolution resolution = safeResolutions.get(iriStr);
+                if (resolution == null) {
+                    resolution = new ConflictResolution();
+                    resolution.setAction(ResolutionAction.MERGE);
+                }
+                applyDraftConflictResolution(ours, theirs, iri, resolution, manager);
+            }
+        }
         return theirs;
     }
 
@@ -1588,7 +1620,9 @@ public class OntologyMergeService {
      */
     public Set<String> collectTouchedIris(OWLOntology baseline, OWLOntology ours) {
         Set<String> touched = new LinkedHashSet<>();
-        for (OWLEntity entity : ours.getSignature()) {
+        Set<OWLEntity> allEntities = new LinkedHashSet<>(ours.getSignature());
+        allEntities.addAll(baseline.getSignature());
+        for (OWLEntity entity : allEntities) {
             if (entity.isBuiltIn()) {
                 continue;
             }

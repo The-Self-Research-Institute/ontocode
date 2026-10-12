@@ -13,8 +13,8 @@ export default async function globalSetup(_config: FullConfig) {
     throw new Error(`electron-app not found at ${ELECTRON_DIR}`);
   }
 
-  const exe = resolveElectronExecutable();
-  const isPackaged = exe.toLowerCase().endsWith('.exe');
+  const resolved = resolveElectronExecutable();
+  const isPackaged = resolved.isPackagedApp;
   if (!isPackaged && !fs.existsSync(path.join(ELECTRON_DIR, 'node_modules', 'electron'))) {
     throw new Error(
       'Electron is not installed. Run:\n  cd electron-app && npm install',
@@ -29,7 +29,7 @@ export default async function globalSetup(_config: FullConfig) {
   if (process.env.ELECTRON_E2E_DEV === '1') {
     console.log('[electron-setup] Dev shell mode — Electron UI + Vite, backend must be reachable');
   } else if (isPackaged) {
-    console.log(`[electron-setup] Using packaged app: ${exe}`);
+    console.log(`[electron-setup] Using packaged app: ${resolved.path}`);
   } else if (bundledDesktopJarExists()) {
     console.log('[electron-setup] Will launch Electron with bundled Mongo/Fuseki/JVM');
   } else {

@@ -110,6 +110,7 @@ function isSupportedNewOntologyExtension(fileName: string): boolean {
 }
 
 const TOKEN_KEY = 'ontocode.authToken';
+const ASSISTANT_KEY = 'ontocode.assistantApiKey';
 const DEPLOYMENT_TYPE_KEY = 'ontocode.deploymentType';
 
 // Function to get URLs based on deployment type
@@ -214,6 +215,7 @@ function parseJwtToken(token: string): { userId?: string; username?: string; sub
 // Type definitions for messages between VS Code and the webview
 type WebviewMessage =
     | { type: 'storedAuthToken'; token: string | null }
+    | { type: 'assistantKeyResult'; requestId: string; value: string; secure: boolean }
     | { type: 'loggedOut' }
     | { type: 'showLogin' }
     | { type: 'showLoading'; projectId: string; fileName?: string }
@@ -253,6 +255,8 @@ type WebviewMessage =
 
 type ExtensionMessage =
     | { type: 'error'; value: string }
+    | { type: 'assistantKeyGet'; requestId: string }
+    | { type: 'assistantKeySet'; requestId: string; value: string }
     | { type: 'saveAuthToken'; token: string }
     | { type: 'requestAuthToken' }
     | { type: 'logout' }
@@ -835,6 +839,18 @@ class OntoCodePanel {
                             await this.resumePendingAuthUpload();
                         }
                         break;
+                    case 'assistantKeyGet': {
+                        const stored = await (this._context as any).secrets.get(ASSISTANT_KEY);
+                        this.postMessage({ type: 'assistantKeyResult', requestId: message.requestId, value: stored ?? '', secure: true });
+                        break;
+                    }
+                    case 'assistantKeySet': {
+                        const trimmed = (message.value ?? '').trim();
+                        if (trimmed) await (this._context as any).secrets.store(ASSISTANT_KEY, trimmed);
+                        else await (this._context as any).secrets.delete(ASSISTANT_KEY);
+                        this.postMessage({ type: 'assistantKeyResult', requestId: message.requestId, value: '', secure: true });
+                        break;
+                    }
                     case 'requestAuthToken':
                         // Fix: Cast context to `any` to access the `secrets` property, bypassing outdated type definitions.
                         const token = await (this._context as any).secrets.get(TOKEN_KEY);

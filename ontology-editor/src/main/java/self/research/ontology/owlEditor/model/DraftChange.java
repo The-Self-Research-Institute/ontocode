@@ -1,11 +1,13 @@
 package self.research.ontology.owlEditor.model;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Map;
 
 /**
@@ -35,7 +37,7 @@ public class DraftChange {
     private boolean applied; // Whether this draft has been applied to GraphDB
     
     public DraftChange() {
-        this.timestamp = LocalDateTime.now();
+        this.timestamp = LocalDateTime.now(ZoneOffset.UTC);
         this.applied = false;
     }
     
@@ -99,6 +101,7 @@ public class DraftChange {
         this.operationData = operationData;
     }
 
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
     public LocalDateTime getTimestamp() {
         return timestamp;
     }

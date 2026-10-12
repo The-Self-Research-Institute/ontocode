@@ -148,7 +148,7 @@ public class SparqlQueryController {
         }
         try {
 
-        mutationService.applyRawUpdate(projectId, request.query(), draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, request.query(), draft, userId, username);
 
         if (draft) {
             return ResponseEntity.ok(Map.of("success", true, "draft", true));

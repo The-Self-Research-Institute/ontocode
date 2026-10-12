@@ -1,46 +1,8 @@
+import { getApiKey, initApiKeyStore, setApiKey } from './assistantKeyStore';
+import { getProviderModels, LlmProvider, PROVIDERS, refreshAvailableModels } from './llmModelCatalog';
 
-
-export type LlmProvider = 'gemini' | 'claude' | 'openai';
-
-interface ProviderConfig {
-  name: string;
-  displayName: string;
-  models: { id: string; label: string }[];
-  defaultModel: string;
-}
-
-const PROVIDERS: Record<LlmProvider, ProviderConfig> = {
-  gemini: {
-    name: 'gemini',
-    displayName: 'Google Gemini',
-    models: [
-      { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (fast, free)' },
-      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (powerful)' },
-      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash (latest)' },
-    ],
-    defaultModel: 'gemini-2.5-flash-lite',
-  },
-  claude: {
-    name: 'claude',
-    displayName: 'Anthropic Claude',
-    models: [
-      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (fast, cheap)' },
-      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 (balanced)' },
-      { id: 'claude-opus-4-8', label: 'Claude Opus 4.8 (most capable)' },
-    ],
-    defaultModel: 'claude-sonnet-5',
-  },
-  openai: {
-    name: 'openai',
-    displayName: 'OpenAI',
-    models: [
-      { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna (fast, cheap)' },
-      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra (balanced)' },
-      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (most capable)' },
-    ],
-    defaultModel: 'gpt-5.6-terra',
-  },
-};
+export type { KnownModel, LlmProvider, RefreshModelsResult } from './llmModelCatalog';
+export { getProviderModels, isLikelyPaidOnlyModel, refreshAvailableModels } from './llmModelCatalog';
 
 const PROVIDER_STORAGE = 'ontocode_llm_provider';
 const KEY_STORAGE = 'ontocode_llm_api_key';
@@ -102,136 +64,17 @@ export function getAvailableProviders(): Array<{ id: LlmProvider; label: string 
   }));
 }
 
-export interface KnownModel {
-  id: string;
-  label: string;
-}
-
-const MODELS_CACHE_STORAGE = 'ontocode_llm_models_cache';
-
-const MODELS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
-
-interface ModelsCacheEntry {
-  fetchedAt: number;
-  models: KnownModel[];
-}
-type ModelsCache = Partial<Record<LlmProvider, ModelsCacheEntry>>;
-
-function readModelsCache(): ModelsCache {
-  try {
-    const raw = localStorage.getItem(MODELS_CACHE_STORAGE);
-    return raw ? (JSON.parse(raw) as ModelsCache) : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeModelsCache(cache: ModelsCache): void {
-  try {
-    localStorage.setItem(MODELS_CACHE_STORAGE, JSON.stringify(cache));
-  } catch {
-    /* storage unavailable — the live list just won't persist across reloads */
-  }
-}
-
-export function getProviderModels(provider: LlmProvider): KnownModel[] {
-  const entry = readModelsCache()[provider];
-  if (entry && entry.models.length && Date.now() - entry.fetchedAt < MODELS_CACHE_TTL_MS) {
-    return entry.models;
-  }
-  return PROVIDERS[provider]?.models ?? [];
-}
-
-async function listGeminiModels(key: string): Promise<KnownModel[]> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
-  );
-  if (!res.ok) return [];
-  const data = await res.json().catch(() => null);
-  const models = Array.isArray(data?.models) ? data.models : [];
-  return models
-    .filter((m: any) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-    .map((m: any) => ({
-      id: String(m.name ?? '').replace(/^models\//, ''),
-      label: String(m.displayName ?? m.name ?? '').replace(/^models\//, ''),
-    }))
-    .filter((m: KnownModel) => m.id);
-}
-
-async function listClaudeModels(key: string): Promise<KnownModel[]> {
-  const res = await fetch('https://api.anthropic.com/v1/models', {
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-  });
-  if (!res.ok) return [];
-  const data = await res.json().catch(() => null);
-  const models = Array.isArray(data?.data) ? data.data : [];
-  return models
-    .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.display_name ?? m.id ?? '') }))
-    .filter((m: KnownModel) => m.id);
-}
-
-async function listOpenAIModels(key: string): Promise<KnownModel[]> {
-  const res = await fetch('https://api.openai.com/v1/models', {
-    headers: { Authorization: `Bearer ${key}` },
-  });
-  if (!res.ok) return [];
-  const data = await res.json().catch(() => null);
-  const models = Array.isArray(data?.data) ? data.data : [];
-
-  const NON_CHAT = /audio|embedding|whisper|tts|instruct|realtime|transcribe|search|moderation|davinci|babbage|image|vision-preview$/i;
-  return models
-    .map((m: any) => ({ id: String(m.id ?? ''), label: String(m.id ?? '') }))
-    .filter((m: KnownModel) => m.id && /^gpt-/i.test(m.id) && !NON_CHAT.test(m.id));
-}
-
-async function fetchLiveModels(provider: LlmProvider, key: string): Promise<KnownModel[]> {
-  try {
-    switch (provider) {
-      case 'gemini':
-        return await listGeminiModels(key);
-      case 'claude':
-        return await listClaudeModels(key);
-      case 'openai':
-        return await listOpenAIModels(key);
-      default:
-        return [];
-    }
-  } catch {
-    return []; // network failure — caller keeps whatever list it already had
-  }
-}
-
-export interface RefreshModelsResult {
-  models: KnownModel[];
-
-  live: boolean;
-}
-
-export async function refreshAvailableModels(provider: LlmProvider, key: string): Promise<RefreshModelsResult> {
-  const live = await fetchLiveModels(provider, key);
-  if (live.length === 0) return { models: getProviderModels(provider), live: false };
-  const cache = readModelsCache();
-  cache[provider] = { fetchedAt: Date.now(), models: live };
-  writeModelsCache(cache);
-  return { models: live, live: true };
+export function ensureApiKeyLoaded(): Promise<void> {
+  return initApiKeyStore(KEY_STORAGE);
 }
 
 export function getStoredApiKey(): string {
-  try {
-    return localStorage.getItem(KEY_STORAGE) ?? '';
-  } catch {
-    return '';
-  }
+  void ensureApiKeyLoaded();
+  return getApiKey();
 }
 
 export function setStoredApiKey(key: string): void {
-  try {
-    const trimmed = key.trim();
-    if (trimmed) localStorage.setItem(KEY_STORAGE, trimmed);
-    else localStorage.removeItem(KEY_STORAGE);
-  } catch {
-    /* storage unavailable — ignore */
-  }
+  void setApiKey(key);
 }
 
 export function hasApiKey(): boolean {
@@ -244,9 +87,9 @@ export function getStoredModel(): string {
     const stored = localStorage.getItem(MODEL_STORAGE);
 
     const isKnownModel = stored != null && getProviderModels(provider).some((m) => m.id === stored);
-    return isKnownModel ? stored : PROVIDERS[provider].defaultModel;
+    return isKnownModel ? stored : "";
   } catch {
-    return PROVIDERS[DEFAULT_PROVIDER].defaultModel;
+    return "";
   }
 }
 
@@ -256,6 +99,101 @@ export function setStoredModel(model: string): void {
   } catch {
     /* ignore */
   }
+}
+
+const MAX_TOKENS_STORAGE = 'ontocode_llm_max_response_tokens';
+export const DEFAULT_MAX_RESPONSE_TOKENS = 8192;
+const MIN_MAX_RESPONSE_TOKENS = 512;
+const MAX_MAX_RESPONSE_TOKENS = 32768;
+
+const SHOW_LABEL_OVERLAY_STORAGE = 'ontocode_llm_show_label_overlay';
+
+export function getStoredShowLabelOverlay(): boolean {
+  try {
+    const stored = localStorage.getItem(SHOW_LABEL_OVERLAY_STORAGE);
+    if (stored === '0') return false;
+    if (stored === '1') return true;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+export function setStoredShowLabelOverlay(value: boolean): void {
+  try {
+    localStorage.setItem(SHOW_LABEL_OVERLAY_STORAGE, value ? '1' : '0');
+  } catch {
+  }
+}
+
+export function getStoredMaxResponseTokens(): number {
+  try {
+    const stored = Number(localStorage.getItem(MAX_TOKENS_STORAGE));
+    if (Number.isInteger(stored) && stored >= MIN_MAX_RESPONSE_TOKENS && stored <= MAX_MAX_RESPONSE_TOKENS) return stored;
+    return DEFAULT_MAX_RESPONSE_TOKENS;
+  } catch {
+    return DEFAULT_MAX_RESPONSE_TOKENS;
+  }
+}
+
+export function setStoredMaxResponseTokens(value: number): void {
+  try {
+    const clamped = Math.round(Math.min(MAX_MAX_RESPONSE_TOKENS, Math.max(MIN_MAX_RESPONSE_TOKENS, value)));
+    localStorage.setItem(MAX_TOKENS_STORAGE, String(clamped));
+  } catch {
+  }
+}
+
+const SESSION_TOKEN_BUDGET_STORAGE = 'ontocode_llm_session_token_budget';
+export const DEFAULT_SESSION_TOKEN_BUDGET = 8000;
+export const MIN_SESSION_TOKEN_BUDGET = 2000;
+export const MAX_SESSION_TOKEN_BUDGET = 50000;
+
+export function getStoredSessionTokenBudget(): number {
+  try {
+    const stored = Number(localStorage.getItem(SESSION_TOKEN_BUDGET_STORAGE));
+    if (Number.isInteger(stored) && stored >= MIN_SESSION_TOKEN_BUDGET && stored <= MAX_SESSION_TOKEN_BUDGET) {
+      return stored;
+    }
+    return DEFAULT_SESSION_TOKEN_BUDGET;
+  } catch {
+    return DEFAULT_SESSION_TOKEN_BUDGET;
+  }
+}
+
+export function setStoredSessionTokenBudget(value: number): number {
+  const clamped = Math.round(Math.min(MAX_SESSION_TOKEN_BUDGET, Math.max(MIN_SESSION_TOKEN_BUDGET, value)));
+  try {
+    localStorage.setItem(SESSION_TOKEN_BUDGET_STORAGE, String(clamped));
+  } catch {
+  }
+  return clamped;
+}
+
+const RETRIEVAL_ATTEMPTS_STORAGE = 'ontocode_llm_retrieval_attempts';
+export const DEFAULT_RETRIEVAL_ATTEMPTS = 8;
+const MIN_RETRIEVAL_ATTEMPTS = 2;
+const MAX_RETRIEVAL_ATTEMPTS = 30;
+
+export function getStoredRetrievalAttempts(): number {
+  try {
+    const stored = Number(localStorage.getItem(RETRIEVAL_ATTEMPTS_STORAGE));
+    if (Number.isInteger(stored) && stored >= MIN_RETRIEVAL_ATTEMPTS && stored <= MAX_RETRIEVAL_ATTEMPTS) {
+      return stored;
+    }
+    return DEFAULT_RETRIEVAL_ATTEMPTS;
+  } catch {
+    return DEFAULT_RETRIEVAL_ATTEMPTS;
+  }
+}
+
+export function setStoredRetrievalAttempts(value: number): number {
+  const clamped = Math.round(Math.min(MAX_RETRIEVAL_ATTEMPTS, Math.max(MIN_RETRIEVAL_ATTEMPTS, value)));
+  try {
+    localStorage.setItem(RETRIEVAL_ATTEMPTS_STORAGE, String(clamped));
+  } catch {
+  }
+  return clamped;
 }
 
 function buildContextBlock(req: LlmInsightRequest): string {
@@ -313,11 +251,11 @@ function buildPrompt(req: LlmInsightRequest): string {
 }
 
 async function callGemini(key: string, model: string, prompt: string, signal?: AbortSignal): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0.4, maxOutputTokens: 512, topP: 0.9 },
@@ -354,6 +292,7 @@ async function callClaude(key: string, model: string, prompt: string, signal?: A
       'Content-Type': 'application/json',
       'x-api-key': key,
       'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
 
@@ -452,17 +391,8 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
   const provider = getStoredProvider();
   const model = getStoredModel();
 
-  try {
-    return await callModel(provider, key, model, prompt, signal);
-  } catch (e) {
-    if (!(e instanceof LlmModelNotFoundError)) {
-      if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
-      throw new LlmRequestError(
-        'Could not reach the AI provider. Check your connection and firewall settings.',
-      );
-    }
-
-    const tried = new Set([model]);
+  const findWorkingModel = async (seedError: LlmModelNotFoundError | null): Promise<string> => {
+    const tried = new Set(model ? [model] : []);
     const attemptAll = async (ids: string[]): Promise<string | null> => {
       for (const candidate of ids) {
         if (tried.has(candidate)) continue;
@@ -470,11 +400,11 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
         try {
           const text = await callModel(provider, key, candidate, prompt, signal);
           setStoredModel(candidate); // remember what actually works for this key
-          return (
-            `_Note: "${model}" isn't available for your API key — switched to ` +
-            `${PROVIDERS[provider].displayName}'s "${candidate}" and saved it as your model. ` +
-            `You can change this any time in AI settings._\n\n${text}`
-          );
+          return model
+            ? `_Note: "${model}" isn't available for your API key — switched to ` +
+              `${PROVIDERS[provider].displayName}'s "${candidate}" and saved it as your model. ` +
+              `You can change this any time in AI settings._\n\n${text}`
+            : text;
         } catch (candidateError) {
           if (candidateError instanceof LlmModelNotFoundError) {
             lastError = candidateError;
@@ -487,7 +417,7 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
       return null;
     };
 
-    let lastError: LlmModelNotFoundError = e;
+    let lastError = seedError;
     const cachedResult = await attemptAll(getProviderModels(provider).map(m => m.id));
     if (cachedResult) return cachedResult;
 
@@ -495,10 +425,30 @@ async function callProvider(prompt: string, signal?: AbortSignal): Promise<strin
     const liveResult = await attemptAll(liveModels.map(m => m.id));
     if (liveResult) return liveResult;
 
+    if (lastError) {
+      throw new LlmRequestError(
+        `${lastError.message} None of ${PROVIDERS[provider].displayName}'s known models worked for this ` +
+        'API key. Double-check the key at the provider\'s console, or try a different provider.',
+      );
+    }
     throw new LlmRequestError(
-      `${lastError.message} None of ${PROVIDERS[provider].displayName}'s known models worked for this ` +
-      'API key. Double-check the key at the provider\'s console, or try a different provider.',
+      `No ${PROVIDERS[provider].displayName} model is available yet. Open the model picker to refresh ` +
+      'the list, or double-check your API key.',
     );
+  };
+
+  if (!model) return findWorkingModel(null);
+
+  try {
+    return await callModel(provider, key, model, prompt, signal);
+  } catch (e) {
+    if (!(e instanceof LlmModelNotFoundError)) {
+      if (e instanceof LlmRequestError || e instanceof LlmConfigError) throw e;
+      throw new LlmRequestError(
+        'Could not reach the AI provider. Check your connection and firewall settings.',
+      );
+    }
+    return findWorkingModel(e);
   }
 }
 

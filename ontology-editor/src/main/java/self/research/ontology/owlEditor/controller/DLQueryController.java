@@ -193,14 +193,14 @@ public class DLQueryController {
                 String userId = resolveDraftUserId(request);
                 String username = request.getUsername() != null ? request.getUsername() : "Anonymous";
                 if (draft) {
-                    mutationService.applyRawUpdate(projectId, sparql, true, userId);
+                    mutationService.applyRawUpdateWithHistory(projectId, sparql, true, userId, username);
                     OntologyMutationService.MutationOp dlOp = new OntologyMutationService.MutationOp(
                             "addDlQueryClass", classIri, request.getClassName().trim(), null, null, null, null,
                             request.getExpression().trim(), null, null, null, null, null, null, null);
                     draftTrackingService.recordDrafts(projectId, userId, username,
                             List.of(dlOp), "dl-add-" + UUID.randomUUID());
                 } else {
-                    mutationService.applyRawUpdate(projectId, sparql);
+                    mutationService.applyRawUpdateWithHistory(projectId, sparql, false, userId, username);
                 }
 
                 return ResponseEntity.ok(Map.of(

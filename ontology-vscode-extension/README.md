@@ -199,6 +199,14 @@ A new **Extension Development Host** window will open.
 
 ## 🧩 Usage
 
+**Starting from scratch (no ontology file open yet):**
+
+1. Click the OntoCode icon in the Activity Bar.
+2. Click **Open OntoCode Editor** at the top of the sidebar.
+3. Sign in (or create an account) — the editor opens straight into your projects.
+
+**Starting from an existing `.owl` file:**
+
 1. In the new window, open an `.owl` ontology file.
 2. Right-click the file (or open the **Command Palette** with `Ctrl+Shift+P` / `Cmd+Shift+P`) and run **Edit with OntoCode** (`ontocode.edit`) — or **OntoCode: Edit Ontology File** (`ontocode.editLargeFile`) for large files.
 3. The **Ontology Web Editor UI** (React webview) will open in a new tab.
@@ -218,7 +226,7 @@ A new **Extension Development Host** window will open.
 | OntoCode: Configure Citation Library | `ontocode.configureZotero` | Sets up the citation library API key/user ID for citation lookup. |
 | OntoCode: Test Citation Library Connection | `ontocode.testZoteroConnection` | Verifies the configured citation library credentials. |
 | OntoCode: Test Invitation Flow | `ontocode.testInvitationFlow` | Debug command for testing collaboration invite links. |
-| Open WebView | `ontocode.openWebview` | Opens the OntoCode webview panel directly. |
+| Open OntoCode Editor | `ontocode.openWebview` | Opens the OntoCode webview panel directly. |
 
 See `contributes.commands` in [package.json](./package.json) for the authoritative list.
 

@@ -9,21 +9,18 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.HandlerMapping;
-import self.research.ontology.owlEditor.document.ProjectDocument;
-import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
+import self.research.ontology.owlEditor.service.ProjectAccessService;
 
 import javax.crypto.SecretKey;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 @Component
 public class EditorApiAuthInterceptor implements HandlerInterceptor {
@@ -38,12 +35,16 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             "/api/v1/issues/report"
     );
 
-    private final ProjectRepository projectRepository;
-    private final MongoTemplate mongoTemplate;
+    private static final String ASSISTANT_SESSION_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/**";
+    public static final String VERIFIED_EMAIL_ATTRIBUTE = "jwtEmail";
 
-    public EditorApiAuthInterceptor(ProjectRepository projectRepository, MongoTemplate mongoTemplate) {
-        this.projectRepository = projectRepository;
-        this.mongoTemplate = mongoTemplate;
+    private final ProjectAccessService projectAccessService;
+    private final AssistantSessionRepository assistantSessionRepository;
+
+    public EditorApiAuthInterceptor(ProjectAccessService projectAccessService,
+                                    AssistantSessionRepository assistantSessionRepository) {
+        this.projectAccessService = projectAccessService;
+        this.assistantSessionRepository = assistantSessionRepository;
     }
 
     @Value("${jwt.secret:}")
@@ -58,15 +59,12 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
-        if (!requireJwt || jwtSecret == null || jwtSecret.isBlank()) {
+        if (jwtSecret == null || jwtSecret.isBlank()) {
             return true;
         }
 
-        if (desktopMode) {
-            String remote = request.getRemoteAddr();
-            if ("127.0.0.1".equals(remote) || "0:0:0:0:0:0:0:1".equals(remote) || "::1".equals(remote)) {
-                return true;
-            }
+        if (desktopMode && isLoopback(request.getRemoteAddr())) {
+            return true;
         }
 
         String method = request.getMethod();
@@ -76,70 +74,91 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         }
 
         String path = request.getRequestURI();
-        for (String pattern : PUBLIC_PATTERNS) {
-            if (PATH.match(pattern, path)) {
-                return true;
-            }
-        }
-
-        if (HttpMethod.POST.matches(method) && path.contains("/api/ontology/upload/")
-                && request.getParameter("ownerEmail") != null && !request.getParameter("ownerEmail").isBlank()) {
+        if (isPublicPath(path) || isOwnerUpload(request, method, path)) {
             return true;
         }
 
         String authHeader = request.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            if (!requireJwt) {
+                return true;
+            }
             log.debug("Editor auth required: {} {}", method, path);
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"Authentication required\"}");
+            writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "{\"error\":\"Authentication required\"}");
             return false;
         }
 
         try {
-            byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
-            SecretKey key = Keys.hmacShaKeyFor(keyBytes);
-            Claims claims = Jwts.parser()
-                    .verifyWith(key)
-                    .build()
-                    .parseSignedClaims(authHeader.substring(7).trim())
-                    .getPayload();
-            if (claims.getSubject() == null || claims.getSubject().isBlank()) {
-                throw new IllegalArgumentException("missing subject");
-            }
-            String jwtEmail = claims.getSubject();
-            request.setAttribute("jwtEmail", jwtEmail);
+            String jwtEmail = verifiedSubject(authHeader);
+            request.setAttribute(VERIFIED_EMAIL_ATTRIBUTE, jwtEmail);
 
             String projectId = pathVariable(request, "projectId");
-            if (projectId != null && !hasProjectAccess(projectId, jwtEmail)) {
+            if (projectId == null) {
+                projectId = assistantSessionProjectId(path);
+            }
+            if (projectId != null && !projectAccessService.hasProjectAccess(projectId, jwtEmail)
+                    && (requireJwt || projectAccessService.projectExists(projectId))) {
                 log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
-                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                response.setContentType("application/json");
-                response.getWriter().write("{\"error\":\"You do not have access to this project\"}");
+                writeError(response, HttpServletResponse.SC_FORBIDDEN,
+                        "{\"error\":\"You do not have access to this project\"}");
                 return false;
             }
 
             return true;
         } catch (Exception e) {
             log.debug("Invalid JWT for {} {}: {}", method, path, e.getMessage());
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"Invalid or expired token\"}");
+            writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "{\"error\":\"Invalid or expired token\"}");
             return false;
         }
     }
 
-    private boolean hasProjectAccess(String projectId, String email) {
-        Optional<ProjectDocument> direct = projectRepository.findById(projectId);
-        if (direct.isPresent() && direct.get().isAccessibleBy(email)) {
-            return true;
+    private static void writeError(HttpServletResponse response, int status, String body) throws Exception {
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.getWriter().write(body);
+    }
+
+    private static boolean isLoopback(String remote) {
+        return "127.0.0.1".equals(remote) || "0:0:0:0:0:0:0:1".equals(remote) || "::1".equals(remote);
+    }
+
+    private static boolean isPublicPath(String path) {
+        for (String pattern : PUBLIC_PATTERNS) {
+            if (PATH.match(pattern, path)) {
+                return true;
+            }
         }
-        int compositeSep = projectId.indexOf("--");
-        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
-        Query query = new Query(Criteria.where("projectId").is(parentProjectId).orOperator(
-                Criteria.where("ownerEmail").is(email),
-                Criteria.where("members").elemMatch(Criteria.where("email").is(email))));
-        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
+        return false;
+    }
+
+    private static boolean isOwnerUpload(HttpServletRequest request, String method, String path) {
+        return HttpMethod.POST.matches(method) && path.contains("/api/ontology/upload/")
+                && request.getParameter("ownerEmail") != null && !request.getParameter("ownerEmail").isBlank();
+    }
+
+    private String verifiedSubject(String authHeader) {
+        byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
+        SecretKey key = Keys.hmacShaKeyFor(keyBytes);
+        Claims claims = Jwts.parser()
+                .verifyWith(key)
+                .build()
+                .parseSignedClaims(authHeader.substring(7).trim())
+                .getPayload();
+        if (claims.getSubject() == null || claims.getSubject().isBlank()) {
+            throw new IllegalArgumentException("missing subject");
+        }
+        return claims.getSubject();
+    }
+
+    private String assistantSessionProjectId(String path) {
+        if (!PATH.match(ASSISTANT_SESSION_PATTERN, path)) {
+            return null;
+        }
+        String sessionId = PATH.extractUriTemplateVariables(ASSISTANT_SESSION_PATTERN, path).get("sessionId");
+        return assistantSessionRepository.findById(sessionId)
+                .map(AssistantSessionDocument::getProjectId)
+                .filter(id -> !id.isBlank())
+                .orElse(null);
     }
 
     @SuppressWarnings("unchecked")

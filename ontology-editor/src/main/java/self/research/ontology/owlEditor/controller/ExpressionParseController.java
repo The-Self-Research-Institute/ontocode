@@ -75,10 +75,10 @@ public class ExpressionParseController {
             String relation = request.relationType.trim();
             if ("Domain".equalsIgnoreCase(relation)) {
                 manchesterExpressionService.addPropertyDomainAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId);
+                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
             } else if ("Range".equalsIgnoreCase(relation)) {
                 manchesterExpressionService.addPropertyRangeAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId);
+                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
             } else {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
@@ -122,10 +122,10 @@ public class ExpressionParseController {
             String relation = request.relationType.trim();
             if ("Domain".equalsIgnoreCase(relation)) {
                 manchesterExpressionService.deletePropertyDomainAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId);
+                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
             } else if ("Range".equalsIgnoreCase(relation)) {
                 manchesterExpressionService.deletePropertyRangeAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId);
+                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
             } else {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
@@ -165,7 +165,7 @@ public class ExpressionParseController {
         }
         try {
             manchesterExpressionService.addGeneralClassAxiom(
-                    projectId, request.subClassExpression.trim(), request.superClassExpression.trim(), draft, userId);
+                    projectId, request.subClassExpression.trim(), request.superClassExpression.trim(), draft, userId, username);
 
             if (!draft) {
                 collaborativeEditService.broadcastMutation(projectId,
@@ -202,7 +202,7 @@ public class ExpressionParseController {
         }
         try {
             manchesterExpressionService.addClassExpressionAxiom(
-                    projectId, request.classIri, request.axiomType, request.expression, draft, userId);
+                    projectId, request.classIri, request.axiomType, request.expression, draft, userId, username);
             if (!draft) {
                 collaborativeEditService.broadcastMutation(projectId,
                         new OntologyMutationService.MutationOp(

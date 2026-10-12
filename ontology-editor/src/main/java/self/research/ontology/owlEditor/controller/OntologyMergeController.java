@@ -27,15 +27,27 @@ import java.util.Map;
 public class OntologyMergeController {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyMergeController.class);
+    private static final String DESKTOP_USER_ID = "desktop-user-local";
 
     private final OntologyMergeService mergeService;
     private final ProjectMetadataService metadataService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
     public OntologyMergeController(OntologyMergeService mergeService,
                                    ProjectMetadataService metadataService) {
         this.mergeService = mergeService;
         this.metadataService = metadataService;
+    }
+
+    private String effectiveUserId(String userId) {
+        return desktopMode ? DESKTOP_USER_ID : (userId != null && !userId.isBlank() ? userId : "anonymous");
+    }
+
+    private String effectiveUsername(String username) {
+        return username != null && !username.isBlank() ? username : "Anonymous";
     }
 
     /**
@@ -134,8 +146,10 @@ public class OntologyMergeController {
             @RequestParam(value = "targetProjectId", required = false) String targetProjectId,
             @RequestParam(value = "targetFileName", required = false) String targetFileName,
             @RequestParam(value = "outputFileName", required = false) String outputFileName,
-            @RequestParam(value = "conflictResolutions", required = false) String conflictResolutionsJson) {
-        
+            @RequestParam(value = "conflictResolutions", required = false) String conflictResolutionsJson,
+            @RequestParam(value = "userId", required = false) String userId,
+            @RequestParam(value = "username", required = false) String username) {
+
         log.info("[MERGE] Executing merge for project {}", projectId);
         log.info("[MERGE] Strategy: {}, Rename suffix: {}", strategy, renameSuffix);
         
@@ -167,11 +181,13 @@ public class OntologyMergeController {
                 effectiveTargetProjectId,
                 targetFileName,
                 outputFileName,
-                options
+                options,
+                effectiveUserId(userId),
+                effectiveUsername(username)
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);
-            
+
             // Clean up temp file (handle Windows file locking)
             try {
                 boolean deleted = Files.deleteIfExists(tempFile);
@@ -182,7 +198,7 @@ public class OntologyMergeController {
                 tempFile.toFile().deleteOnExit();
                 log.debug("[MERGE] Temp file locked, marked for deletion on exit: {}", tempFile);
             }
-            
+
             log.info("[MERGE] Merge complete in {}ms", duration);
             
             return ResponseEntity.ok(result);
@@ -211,8 +227,10 @@ public class OntologyMergeController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "targetFileName", required = false) String targetFileName,
             @RequestParam(value = "outputFileName", required = false) String outputFileName,
+            @RequestParam(value = "userId", required = false) String userId,
+            @RequestParam(value = "username", required = false) String username,
             @RequestBody MergeOptions options) {
-        
+
         log.info("[MERGE] Executing merge with manual resolutions for project {}", projectId);
         log.info("[MERGE] Resolutions provided: {}", options.getConflictResolutions().size());
         
@@ -229,7 +247,9 @@ public class OntologyMergeController {
                 projectId,
                 targetFileName,
                 outputFileName,
-                options
+                options,
+                effectiveUserId(userId),
+                effectiveUsername(username)
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);

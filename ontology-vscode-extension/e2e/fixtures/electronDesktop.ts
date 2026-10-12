@@ -1,8 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, request as pwRequest } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import {
+  cleanupUserDataDir,
   findElectronMainPage,
   launchOntocodeElectron,
   readDesktopApiBase,
@@ -10,6 +11,7 @@ import {
   waitForDesktopShell,
 } from '../helpers/electronLauncher';
 import { STATE_PATH } from '../electron-global-setup';
+import { prepareIsolatedDesktopProject, warmOntology, waitForOwlApiReady } from '../helpers/desktopApi';
 
 const DESKTOP_USER = process.env.DESKTOP_E2E_USER || 'admin@ontocode.local';
 const DESKTOP_PASS = process.env.DESKTOP_E2E_PASSWORD || 'ontocode-desktop';
@@ -51,37 +53,58 @@ function writeAuthState(apiBase: string, token: string) {
 type ElectronFixtures = {
   electronApp: ElectronApplication;
   apiBase: string;
+  projectId: string;
 };
 
 export const test = base.extend<ElectronFixtures>({
   electronApp: [
     async ({}, use) => {
       console.log('[electron] Launching OntoCode Desktop…');
-      const app = await launchOntocodeElectron();
+      const { app, userDataDir } = await launchOntocodeElectron();
       try {
         const apiBaseDefault = (process.env.DESKTOP_API_BASE || 'http://127.0.0.1:18085').replace(/\/$/, '');
-        const [page] = await Promise.all([
-          findElectronMainPage(app),
-          waitForBackendHealth(apiBaseDefault, 480_000),
-        ]);
+        const page = await findElectronMainPage(app);
+        page.on('console', (msg) => console.log('[renderer]', msg.type(), msg.text()));
+        page.on('pageerror', (err) => console.log('[renderer:pageerror]', err.message));
+        await waitForBackendHealth(apiBaseDefault, 480_000);
         await page.waitForLoadState('domcontentloaded', { timeout: 120_000 }).catch(() => {});
         const apiBase = await readDesktopApiBase(page).catch(() => apiBaseDefault);
         const token = await loginDesktopApi(apiBase);
         writeAuthState(apiBase, token);
         await waitForDesktopShell(page);
+        await page.evaluate(async () => {
+          const api = (window as unknown as { electronAPI?: { ensureFuseki: () => Promise<unknown> } }).electronAPI;
+          await api?.ensureFuseki?.();
+        });
         console.log('[electron] Desktop ready at', apiBase);
         await use(app);
       } finally {
         await app.close().catch(() => {});
+        cleanupUserDataDir(userDataDir);
       }
     },
-    { scope: 'worker', timeout: 600_000 },
+    { scope: 'worker', timeout: 900_000 },
   ],
 
   apiBase: [
     async ({ electronApp }, use) => {
       const page = await findElectronMainPage(electronApp);
       await use(await readDesktopApiBase(page));
+    },
+    { scope: 'worker' },
+  ],
+
+  projectId: [
+    async ({ electronApp: _electronApp }, use) => {
+      const apiRequest = await pwRequest.newContext();
+      try {
+        const { projectId, token, apiBase } = await prepareIsolatedDesktopProject(apiRequest);
+        await warmOntology(apiRequest, projectId, token, apiBase, 180_000);
+        await waitForOwlApiReady(apiRequest, projectId, token, apiBase, 180_000);
+        await use(projectId);
+      } finally {
+        await apiRequest.dispose();
+      }
     },
     { scope: 'worker' },
   ],

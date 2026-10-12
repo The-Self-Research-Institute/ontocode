@@ -5,12 +5,14 @@ import { Loader2, Eye, EyeOff, ArrowLeft, Bug, RefreshCw } from 'lucide-react';
 import ReportIssueModal from './ReportIssueModal';
 import { AppVersionBadge } from './AppVersionBadge';
 import { OntoCodeLogo } from './OntoCodeLogo';
+import { DeploymentModePill } from './DeploymentModePill';
 
 interface LoginFormProps {
   onToggleForm: () => void;
   prefillEmail?: string;
   onBackToInvitation?: () => void;
-  onBackToWelcome?: () => void;
+  deploymentType: 'self-hosted' | 'cloud';
+  onSwitchDeploymentType: (type: 'self-hosted' | 'cloud') => void;
   onForgotPassword?: () => void;
 }
 
@@ -18,7 +20,8 @@ const LoginForm = ({
   onToggleForm,
   prefillEmail,
   onBackToInvitation,
-  onBackToWelcome,
+  deploymentType,
+  onSwitchDeploymentType,
   onForgotPassword,
 }: LoginFormProps) => {
   const [username, setUsername] = useState(prefillEmail || "");
@@ -83,6 +86,7 @@ const LoginForm = ({
           <div className="flex justify-center mb-3">
             <AppVersionBadge variant="dark" />
           </div>
+          <DeploymentModePill deploymentType={deploymentType} onSwitch={onSwitchDeploymentType} />
           <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Welcome to OntoCode Studio</h2>
           <p className="text-gray-300">Sign in to access your ontology editor</p>
         </div>
@@ -199,15 +203,6 @@ const LoginForm = ({
             >
               <ArrowLeft size={16} />
               Back to Invitation
-            </button>
-          )}
-          {onBackToWelcome && (
-            <button
-              onClick={onBackToWelcome}
-              className="flex items-center justify-center gap-2 w-full text-gray-400 hover:text-gray-300 text-sm"
-            >
-              <ArrowLeft size={16} />
-              Back to Welcome
             </button>
           )}
           {/* Desktop download link */}

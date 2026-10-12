@@ -49,6 +49,17 @@ def parse_lcov(lcov_text: str):
     return records
 
 
+def parse_jacoco(xml_text: str):
+    import xml.etree.ElementTree as ET
+    records = {}
+    for package in ET.fromstring(xml_text).iter("package"):
+        package_path = package.get("name", "")
+        for source in package.iter("sourcefile"):
+            path = f"{package_path}/{source.get('name')}" if package_path else source.get("name")
+            records[path] = {int(line.get("nr")): int(line.get("ci", "0")) for line in source.iter("line")}
+    return records
+
+
 def match_lcov_file(lcov_records, rel_path_from_repo_root, lcov_base_dir_from_repo_root):
     """LCOV SF paths are typically relative to the coverage tool's own cwd
     (e.g. webview-src), not the repo root git diff uses. Strip the known
@@ -64,7 +75,10 @@ def match_lcov_file(lcov_records, rel_path_from_repo_root, lcov_base_dir_from_re
 
 
 def compute_patch_coverage(repo_root: Path, base: str, head: str, changed_files, lcov_text: str, lcov_base_dir: str):
-    lcov_records = parse_lcov(lcov_text)
+    return compute_patch_coverage_from_records(repo_root, base, head, changed_files, parse_lcov(lcov_text), lcov_base_dir)
+
+
+def compute_patch_coverage_from_records(repo_root: Path, base: str, head: str, changed_files, lcov_records, lcov_base_dir: str):
     per_file = {}
     total_eligible = 0
     total_covered = 0
@@ -104,21 +118,24 @@ def _main(argv):
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
-    parser.add_argument("--lcov-file", required=True)
-    parser.add_argument("--lcov-base-dir", default="")
+    report = parser.add_mutually_exclusive_group(required=True)
+    report.add_argument("--lcov-file")
+    report.add_argument("--jacoco-xml")
+    parser.add_argument("--lcov-base-dir", "--source-base-dir", dest="lcov_base_dir", default="")
     parser.add_argument("--changed-file", action="append", default=[], dest="changed_files")
     parser.add_argument("--min-percent", type=float, default=None)
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo_root).resolve()
-    lcov_path = Path(args.lcov_file)
-    if not lcov_path.exists():
-        print(f"patch_coverage: LCOV report not found at {lcov_path}", file=sys.stderr)
+    report_path = Path(args.lcov_file or args.jacoco_xml)
+    if not report_path.exists():
+        print(f"patch_coverage: coverage report not found at {report_path}", file=sys.stderr)
         return 1
-    lcov_text = lcov_path.read_text(encoding="utf-8", errors="replace")
+    report_text = report_path.read_text(encoding="utf-8", errors="replace")
+    records = parse_lcov(report_text) if args.lcov_file else parse_jacoco(report_text)
 
-    result = compute_patch_coverage(
-        repo_root, args.base, args.head, args.changed_files, lcov_text, args.lcov_base_dir
+    result = compute_patch_coverage_from_records(
+        repo_root, args.base, args.head, args.changed_files, records, args.lcov_base_dir
     )
     print(json.dumps(result, indent=2))
 

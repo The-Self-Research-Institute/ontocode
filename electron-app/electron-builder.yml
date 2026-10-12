@@ -164,6 +164,11 @@ flatpak:
     - --socket=wayland
     - --socket=fallback-x11
     - --device=dri
+    - --env=GTK_USE_PORTAL=1
+    # Without this, the sandbox can't see /run/dbus/system_bus_socket at all (not a
+    # permissions issue, the path just doesn't exist inside the sandbox), and Chromium
+    # treats the resulting D-Bus disconnect as fatal, killing the whole process ~5s in.
+    - --socket=system-bus
   # electron-builder schema: each entry is [from, to] (not {from,to} objects)
   files:
     - ["build-assets/icon-512.png", "share/icons/hicolor/512x512/apps/${appId}.png"]

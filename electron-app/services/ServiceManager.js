@@ -6,6 +6,7 @@ const path = require('path');
 const fs   = require('fs');
 const http = require('http');
 const os   = require('os');
+const crypto = require('crypto');
 
 function jvmHeaps() {
     const totalGb = os.totalmem() / (1024 ** 3);
@@ -24,6 +25,10 @@ const FUSEKI_DATA_DIR = path.join(DATA_DIR, 'fuseki');
 const OWL_DATA_DIR    = path.join(DATA_DIR, 'ontologies');
 const LOGS_DIR        = path.join(app.getPath('userData'), 'logs');
 const FUSEKI_BASE_DIR = path.join(app.getPath('userData'), 'fuseki-base');
+
+const WINDOWS_JVM_FLAGS = process.platform === 'win32'
+    ? [`-Djdk.net.unixdomain.tmpdir=${path.join(DATA_DIR, 'unix-sockets-disabled')}`]
+    : [];
 
 const helperProcesses = new Set();
 let startupCancelled = false;
@@ -99,7 +104,10 @@ async function resolveAllPorts() {
     log('info', `Ports → MongoDB:${MONGO_PORT}  Fuseki:${FUSEKI_PORT}  Desktop:${DESKTOP_PORT}  SWRL:${SWRL_PORT}`);
 }
 
+const DESKTOP_LAUNCH_KEY = crypto.randomBytes(32).toString('hex');
+
 module.exports = {
+    get DESKTOP_LAUNCH_KEY() { return DESKTOP_LAUNCH_KEY; },
     get MONGO_PORT()   { return MONGO_PORT; },
     get FUSEKI_PORT()  { return FUSEKI_PORT; },
     get DESKTOP_PORT() { return DESKTOP_PORT; },
@@ -421,6 +429,7 @@ async function startFuseki() {
     const args = [
         `-Xmx${fusekiHeaps.fusekiXmx}`,
         '-Xms256m',
+        ...WINDOWS_JVM_FLAGS,
         '-jar', jar,
         '--port', String(FUSEKI_PORT),
         '--localhost',
@@ -659,6 +668,7 @@ async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env
             `-Djava.io.tmpdir=${path.join(scratchDir, 'tmp')}`,
             `-XX:ArchiveClassesAtExit=${tempArchive}`,
             '-Dspring.context.exit=onRefresh',
+            ...WINDOWS_JVM_FLAGS,
             '-jar', extractedJar,
             ...isolatedArgs,
         ], env, path.join(cdsDir, 'training.log'), { timeoutMs: CDS_TRAINING_TIMEOUT_MS, lowPriority: true });
@@ -805,6 +815,7 @@ async function startDesktop() {
         JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8',
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
+        ONTOCODE_DESKTOP_LAUNCH_KEY: DESKTOP_LAUNCH_KEY,
     };
 
     const { launchJar, cdsFlags } = await prepareCds(
@@ -814,7 +825,7 @@ async function startDesktop() {
     const args = [
         `-Xmx${heaps.desktopXmx}`,
         '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
-        ...(process.platform === 'win32' ? ['-Djava.nio.channels.spi.SelectorProvider=sun.nio.ch.WindowsSelectorProvider'] : []),
+        ...WINDOWS_JVM_FLAGS,
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
         '-jar', launchJar,
@@ -884,6 +895,7 @@ async function startSwrl() {
     assertNotCancelled();
     swrlProcess = spawnService('SWRL', swrlJava, [
         '-Xmx512m',
+        ...WINDOWS_JVM_FLAGS,
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
         '-jar', launchJar,

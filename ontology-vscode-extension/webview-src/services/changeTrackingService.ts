@@ -1,4 +1,7 @@
 import apiClient from './apiClient';
+import { requestChangeSet, type ChangeSetResult } from './changeSetService';
+
+export type { ChangeSetResult, ChangeSetItem, ChangeSetDirection } from './changeSetService';
 
 export interface SubChange {
   id: string;
@@ -36,6 +39,11 @@ export interface OntologyChange {
   status?: string;
   hasConflict?: boolean;
   commentCount?: number;
+  changeSetId?: string;
+  source?: 'AI' | 'MANUAL' | 'ROLLBACK';
+  ai?: { provider?: string; model?: string; sessionId?: string; groupId?: string; summary?: string };
+  draft?: boolean;
+  revertsChangeSetId?: string;
 }
 
 function resolveActor(): { userId: string; username: string } {
@@ -165,6 +173,14 @@ export const changeTrackingService = {
       console.error('[changeTrackingService] rollbackSubChange failed:', error);
       return { success: false, error: 'Rollback request failed' };
     }
+  },
+
+  undoChangeSet(projectId: string, changeSetId: string, options: { dryRun: boolean }): Promise<ChangeSetResult> {
+    return requestChangeSet(projectId, changeSetId, 'UNDO', options.dryRun, resolveActor());
+  },
+
+  redoChangeSet(projectId: string, changeSetId: string, options: { dryRun: boolean }): Promise<ChangeSetResult> {
+    return requestChangeSet(projectId, changeSetId, 'REDO', options.dryRun, resolveActor());
   },
 
   async approveChange(projectId: string, changeId: string): Promise<{ success: boolean; error?: string }> {

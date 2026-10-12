@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
-import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
@@ -37,8 +36,7 @@ public class DraftTrackingService {
     private final SparqlDatasetService datasetService;
     private final OntologyIndexService indexService;
     private final ProjectMetadataService metadataService;
-    private final ChangeTrackingService changeTrackingService;
-    private final OntologyHistoryService historyService;
+    private final DraftChangeHistoryRecorder draftChangeHistory;
     private final Executor metadataExecutor;
     private final CollaborativeEditService collaborativeEditService;
     private final DraftPublishService draftPublishService;
@@ -88,8 +86,7 @@ public class DraftTrackingService {
                                SparqlDatasetService datasetService,
                                OntologyIndexService indexService,
                                ProjectMetadataService metadataService,
-                               ChangeTrackingService changeTrackingService,
-                               OntologyHistoryService historyService,
+                               DraftChangeHistoryRecorder draftChangeHistory,
                                @Qualifier("metadataExecutor") Executor metadataExecutor,
                                CollaborativeEditService collaborativeEditService,
                                DraftPublishService draftPublishService,
@@ -101,8 +98,7 @@ public class DraftTrackingService {
         this.datasetService = datasetService;
         this.indexService = indexService;
         this.metadataService = metadataService;
-        this.changeTrackingService = changeTrackingService;
-        this.historyService = historyService;
+        this.draftChangeHistory = draftChangeHistory;
         this.metadataExecutor = metadataExecutor;
         this.collaborativeEditService = collaborativeEditService;
         this.draftPublishService = draftPublishService;
@@ -282,37 +278,56 @@ public class DraftTrackingService {
             }
             try {
                 draftPublishMergeService.publishWithThreeWayMerge(projectId, userId, analysis, resolutions);
+            } catch (Exception e) {
+                log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
+                return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+            }
+            draftChangeHistory.markPublished(projectId, userId);
+
+            try {
                 mainGraphRevisionService.incrementRevision(projectId);
                 draftPublishService.clearBaseline(projectId, userId);
                 if (springCacheEviction != null) {
                     springCacheEviction.evictForProject(projectId);
                 }
                 invalidateHierarchyCaches(projectId);
-                finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
+                int recordingFailures = finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
                 return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                        "Published draft with merge", false, analysis);
+                        "Published draft with merge" + recordingFailureSuffix(recordingFailures), false, analysis);
             } catch (Exception e) {
-                log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
-                return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+                log.error("[DRAFT] Merge publish succeeded but follow-up bookkeeping failed for project {} user {} — "
+                        + "data is already live, do not retry", projectId, userId, e);
+                return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                        "Published, but some follow-up updates failed (" + e.getMessage()
+                                + "). Refresh to see the latest state.", false, analysis);
             }
         }
 
         return applyDraftsViaMoveGraph(projectId, userId, force, false, unappliedDrafts);
     }
 
-    private void finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
+    private int finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
         if (unappliedDrafts.isEmpty()) {
-            return;
+            return 0;
         }
         unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
                 projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
-        recordDraftsAsChanges(projectId, unappliedDrafts);
+        int recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
         unappliedDrafts.forEach(draft -> draft.setApplied(true));
         draftRepository.saveAll(unappliedDrafts);
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);
             metadataService.writeMeta(projectId, meta);
         }, metadataExecutor);
+        return recordingFailures;
+    }
+
+    private static String recordingFailureSuffix(int recordingFailures) {
+        if (recordingFailures == 0) {
+            return "";
+        }
+        return " (" + recordingFailures + " change" + (recordingFailures == 1 ? "" : "s")
+                + " could not be recorded in history — refresh to see the latest state)";
     }
 
     /**
@@ -333,10 +348,17 @@ public class DraftTrackingService {
             return new ApplyDraftsResult(false, 0, message, true, null);
         }
 
+        log.info("[DRAFT] Publishing via MOVE GRAPH for project {} user {} (revision {} → {})",
+                projectId, userId, mainRevisionAtCopy, currentRevision);
         try {
-            log.info("[DRAFT] Publishing via MOVE GRAPH for project {} user {} (revision {} → {})",
-                    projectId, userId, mainRevisionAtCopy, currentRevision);
             datasetService.moveDraftToMain(projectId, userId);
+        } catch (Exception e) {
+            log.error("[DRAFT] MOVE GRAPH publish failed for project {} user {}", projectId, userId, e);
+            return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+        }
+        draftChangeHistory.markPublished(projectId, userId);
+
+        try {
             mainGraphRevisionService.incrementRevision(projectId);
             draftPublishService.clearBaseline(projectId, userId);
             if (springCacheEviction != null) {
@@ -344,10 +366,11 @@ public class DraftTrackingService {
             }
             invalidateHierarchyCaches(projectId);
 
+            int recordingFailures = 0;
             if (!unappliedDrafts.isEmpty()) {
                 unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
                         projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
-                recordDraftsAsChanges(projectId, unappliedDrafts);
+                recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
                 unappliedDrafts.forEach(draft -> draft.setApplied(true));
                 draftRepository.saveAll(unappliedDrafts);
             }
@@ -360,10 +383,13 @@ public class DraftTrackingService {
             log.info("[DRAFT] MOVE GRAPH publish complete for project {} user {} ({} Mongo ops)",
                     projectId, userId, unappliedDrafts.size());
             return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                    "Published draft successfully", false, null);
+                    "Published draft successfully" + recordingFailureSuffix(recordingFailures), false, null);
         } catch (Exception e) {
-            log.error("[DRAFT] MOVE GRAPH publish failed for project {} user {}", projectId, userId, e);
-            return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+            log.error("[DRAFT] Publish succeeded but follow-up bookkeeping failed for project {} user {} — "
+                    + "data is already live, do not retry", projectId, userId, e);
+            return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                    "Published, but some follow-up updates failed (" + e.getMessage()
+                            + "). Refresh to see the latest state.", false, null);
         }
     }
 
@@ -371,6 +397,27 @@ public class DraftTrackingService {
      * Discard all unapplied drafts for a project
      */
     public DiscardDraftsResult discardDrafts(String projectId, String userId) {
+        ReentrantLock lock = getProjectLock(projectId);
+        boolean lockAcquired = false;
+        try {
+            lockAcquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!lockAcquired) {
+                log.warn("[DRAFT] Could not acquire lock for project {} to discard drafts - another operation in progress", projectId);
+                return new DiscardDraftsResult(false, 0, "Another save operation is in progress. Please try again.");
+            }
+            return discardDraftsInternal(projectId, userId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("[DRAFT] Interrupted while waiting for lock on project {}", projectId);
+            return new DiscardDraftsResult(false, 0, "Operation interrupted");
+        } finally {
+            if (lockAcquired) {
+                lock.unlock();
+            }
+        }
+    }
+
+    private DiscardDraftsResult discardDraftsInternal(String projectId, String userId) {
         log.info("[DRAFT] Discarding drafts for project {} user {}", projectId, userId);
 
         List<DraftChange> unappliedDrafts = userId != null && !userId.isBlank()
@@ -408,6 +455,26 @@ public class DraftTrackingService {
      * Used by pull-from-public resolution when the user chooses "take_public" for specific entities.
      */
     public void discardDraftsByIris(String projectId, String userId, Set<String> iris) {
+        ReentrantLock lock = getProjectLock(projectId);
+        boolean lockAcquired = false;
+        try {
+            lockAcquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!lockAcquired) {
+                log.warn("[DRAFT] Could not acquire lock for project {} to discard drafts by IRI - another operation in progress", projectId);
+                return;
+            }
+            discardDraftsByIrisInternal(projectId, userId, iris);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("[DRAFT] Interrupted while waiting for lock on project {}", projectId);
+        } finally {
+            if (lockAcquired) {
+                lock.unlock();
+            }
+        }
+    }
+
+    private void discardDraftsByIrisInternal(String projectId, String userId, Set<String> iris) {
         List<DraftChange> candidates = userId != null && !userId.isBlank()
                 ? getUnappliedDraftsForUser(projectId, userId)
                 : getUnappliedDrafts(projectId);
@@ -428,6 +495,17 @@ public class DraftTrackingService {
     public void clearAppliedDrafts(String projectId) {
         log.info("[DRAFT] Clearing applied drafts for project {}", projectId);
         draftRepository.deleteByProjectIdAndAppliedTrue(projectId);
+    }
+
+    private static final int ORPHANED_DRAFT_RETENTION_DAYS = 30;
+
+    @org.springframework.scheduling.annotation.Scheduled(cron = "0 30 3 * * *")
+    public void cleanupOrphanedUnappliedDrafts() {
+        LocalDateTime cutoff = LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(ORPHANED_DRAFT_RETENTION_DAYS);
+        long deleted = draftRepository.deleteByAppliedFalseAndTimestampBefore(cutoff);
+        if (deleted > 0) {
+            log.info("[DRAFT] Cleaned up {} unapplied draft record(s) older than {} days", deleted, ORPHANED_DRAFT_RETENTION_DAYS);
+        }
     }
     
     /**
@@ -461,213 +539,6 @@ public class DraftTrackingService {
     }
     
 
-    private void recordDraftsAsChanges(String projectId, List<DraftChange> drafts) {
-        try {
-            for (DraftChange draft : drafts) {
-                OntologyChange.ChangeType changeType = mapOperationToChangeType(draft.getOperationType());
-                if (changeType == null) continue;
-
-                Map<String, Object> data = draft.getOperationData();
-                String entityIri = (String) data.get("iri");
-                String label = (String) data.get("label");
-                String oldValue = data.get("oldValue") != null ? data.get("oldValue").toString() : null;
-                String newValue = data.get("value") != null ? data.get("value").toString() :
-                                  (data.get("newValue") != null ? data.get("newValue").toString() : null);
-
-                log.info("[DRAFT] Recording change - operationType: {}, oldValue: '{}', newValue: '{}', entityIRI: {}",
-                    draft.getOperationType(), oldValue, newValue, entityIri);
-                log.info("[DRAFT] Operation data keys: {}", data.keySet());
-
-                OntologyChange change = new OntologyChange.Builder(
-                    projectId,
-                    draft.getUserId(),
-                    draft.getUsername(),
-                    changeType
-                )
-                .changeCategory(determineCategory(draft.getOperationType()))
-                .entityIRI(entityIri)
-                .entityLabel(label != null ? label : entityIri)
-                .description(formatChangeDescription(draft))
-                .sessionId(draft.getSessionId())
-                .oldValue(oldValue)
-                .newValue(newValue)
-                .build();
-
-                // Record to MongoDB via change tracking service
-                changeTrackingService.recordChange(change);
-            }
-
-            Map<String, List<DraftChange>> byEntity = new java.util.LinkedHashMap<>();
-            for (DraftChange draft : drafts) {
-                Object iri = draft.getOperationData().get("iri");
-                String key = iri != null ? iri.toString() : ("__no_entity__:" + draft.getId());
-                byEntity.computeIfAbsent(key, k -> new ArrayList<>()).add(draft);
-            }
-
-            for (List<DraftChange> group : byEntity.values()) {
-                DraftChange primary = group.stream()
-                        .filter(d -> d.getOperationType() != null && d.getOperationType().startsWith("create"))
-                        .findFirst()
-                        .orElse(group.get(0));
-
-                Map<String, Object> primaryData = primary.getOperationData();
-                String entityIri = (String) primaryData.get("iri");
-                String label = (String) primaryData.get("label");
-                String primaryAnnotationProperty = primaryData.get("property") != null
-                        ? primaryData.get("property").toString() : null;
-                String oldValue = primaryData.get("oldValue") != null ? primaryData.get("oldValue").toString() : null;
-                String newValue = primaryData.get("value") != null ? primaryData.get("value").toString()
-                        : (primaryData.get("newValue") != null ? primaryData.get("newValue").toString() : null);
-
-                List<Map<String, String>> subChanges = new ArrayList<>();
-                for (DraftChange draft : group) {
-                    if (draft == primary) continue;
-                    subChanges.add(toSubChangeMap(draft));
-                }
-
-                String description = subChanges.isEmpty()
-                        ? formatChangeDescription(primary)
-                        : formatChangeDescription(primary) + " (" + subChanges.size() + " additional change"
-                                + (subChanges.size() == 1 ? "" : "s") + ")";
-
-                historyService.recordEdit(
-                        projectId,
-                        primary.getUserId(),
-                        primary.getUsername(),
-                        primary.getOperationType(),
-                        entityIri,
-                        label != null ? label : entityIri,
-                        oldValue,
-                        newValue,
-                        description,
-                        primaryAnnotationProperty,
-                        subChanges,
-                        false
-                );
-            }
-
-            log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries)",
-                    drafts.size(), byEntity.size());
-        } catch (Exception e) {
-            log.error("[DRAFT] Failed to record changes to change tracking", e);
-            // Don't fail the save if change tracking fails
-        }
-    }
-
-
-    private Map<String, String> toSubChangeMap(DraftChange draft) {
-        Map<String, Object> data = draft.getOperationData();
-        String opType = draft.getOperationType();
-        boolean addition = opType == null || !(opType.startsWith("remove") || opType.startsWith("delete"));
-
-        Map<String, String> subChange = new HashMap<>();
-        subChange.put("addition", String.valueOf(addition));
-
-        String predicate;
-        if ("addSubClassOf".equals(opType) || "deleteSubClassOf".equals(opType)) {
-            predicate = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
-            Object parent = data.get("parent");
-            subChange.put(addition ? "newValue" : "oldValue", parent != null ? parent.toString() : null);
-        } else if (data.get("property") != null) {
-            predicate = data.get("property").toString();
-            Object value = data.get("value") != null ? data.get("value") : data.get("newValue");
-            String valueStr = value != null ? value.toString() : null;
-            // "annotationProperty" here isn't limited to true OWL annotation properties — it's
-            // this codebase's signal (see ChangeTrackingController#appendSubChangeInverseMutations)
-            // for "a predicate + literal value, invertible via generic add/deleteAnnotation SPARQL".
-            // A plain data-property statement like hasPrice/servingNote is exactly that shape, so
-            // it needs the same signal — only an IRI-valued (object property) statement doesn't,
-            // since wrapping an IRI in annotationLiteral() would quote it as a literal instead of
-            // emitting a real reference.
-            boolean looksLikeIri = valueStr != null && (valueStr.startsWith("http://") || valueStr.startsWith("https://"));
-            if (!looksLikeIri) {
-                subChange.put("annotationProperty", predicate);
-            }
-            subChange.put(addition ? "newValue" : "oldValue", valueStr);
-        } else {
-            predicate = opType;
-            Object value = data.get("value") != null ? data.get("value") : data.get("newValue");
-            subChange.put(addition ? "newValue" : "oldValue", value != null ? value.toString() : null);
-        }
-        subChange.put("predicate", predicate);
-        return subChange;
-    }
-
-    /**
-     * Map operation type to ChangeType
-     */
-    private OntologyChange.ChangeType mapOperationToChangeType(String operationType) {
-        return switch (operationType) {
-            case "createClass" -> OntologyChange.ChangeType.ADD_CLASS;
-            case "deleteClass" -> OntologyChange.ChangeType.REMOVE_CLASS;
-            case "updateClassLabel" -> OntologyChange.ChangeType.RENAME_CLASS;
-            case "createIndividual" -> OntologyChange.ChangeType.ADD_INDIVIDUAL;
-            case "deleteIndividual" -> OntologyChange.ChangeType.REMOVE_INDIVIDUAL;
-            case "createObjectProperty" -> OntologyChange.ChangeType.ADD_OBJECT_PROPERTY;
-            case "deleteObjectProperty" -> OntologyChange.ChangeType.REMOVE_OBJECT_PROPERTY;
-            case "createDataProperty" -> OntologyChange.ChangeType.ADD_DATA_PROPERTY;
-            case "deleteDataProperty" -> OntologyChange.ChangeType.REMOVE_DATA_PROPERTY;
-            case "addAnnotation" -> OntologyChange.ChangeType.ADD_ANNOTATION;
-            case "updateAnnotation" -> OntologyChange.ChangeType.MODIFY_ANNOTATION;
-            case "deleteAnnotation" -> OntologyChange.ChangeType.REMOVE_ANNOTATION;
-            case "addSubClassOf" -> OntologyChange.ChangeType.ADD_SUBCLASS;
-            case "deleteSubClassOf" -> OntologyChange.ChangeType.REMOVE_SUBCLASS;
-            case "addEquivalentClass", "deleteEquivalentClass", "addDisjointWith", "deleteDisjointWith" -> OntologyChange.ChangeType.ADD_AXIOM;
-            case "addPropertyDomain" -> OntologyChange.ChangeType.ADD_DOMAIN;
-            case "deletePropertyDomain" -> OntologyChange.ChangeType.REMOVE_DOMAIN;
-            case "addPropertyRange" -> OntologyChange.ChangeType.ADD_RANGE;
-            case "deletePropertyRange" -> OntologyChange.ChangeType.REMOVE_RANGE;
-            case "addSubPropertyOf", "deleteSubPropertyOf" -> OntologyChange.ChangeType.ADD_AXIOM;
-            default -> OntologyChange.ChangeType.OTHER;
-        };
-    }
-    
-    /**
-     * Determine change category from operation type
-     */
-    private String determineCategory(String operationType) {
-        if (operationType.contains("Class")) return "CLASS";
-        if (operationType.contains("Individual")) return "INDIVIDUAL";
-        if (operationType.contains("Property")) return "PROPERTY";
-        if (operationType.contains("Annotation")) return "ANNOTATION";
-        if (operationType.contains("Axiom")) return "AXIOM";
-        return "OTHER";
-    }
-    
-    /**
-     * Format change description
-     */
-    private String formatChangeDescription(DraftChange draft) {
-        Map<String, Object> data = draft.getOperationData();
-        String label = (String) data.get("label");
-        String iri = (String) data.get("iri");
-        String displayName = label != null ? label : iri;
-        
-        return switch (draft.getOperationType()) {
-            case "createClass" -> "Created class: " + displayName;
-            case "deleteClass" -> "Deleted class: " + displayName;
-            case "updateClassLabel" -> "Updated label: " + displayName;
-            case "createIndividual" -> "Created individual: " + displayName;
-            case "deleteIndividual" -> "Deleted individual: " + displayName;
-            case "createObjectProperty" -> "Created property: " + displayName;
-            case "deleteObjectProperty" -> "Deleted property: " + displayName;
-            case "createDataProperty" -> "Created data property: " + displayName;
-            case "deleteDataProperty" -> "Deleted data property: " + displayName;
-            case "createAnnotationProperty" -> "Created annotation property: " + displayName;
-            case "deleteAnnotationProperty" -> "Deleted annotation property: " + displayName;
-            case "addAnnotation" -> "Added annotation to: " + displayName;
-            case "updateAnnotation" -> "Updated annotation for: " + displayName;
-            case "deleteAnnotation" -> "Removed annotation from: " + displayName;
-            case "addSubClassOf" -> "Added subclass axiom for: " + displayName;
-            case "deleteSubClassOf" -> "Removed subclass axiom from: " + displayName;
-            case "addEquivalentClass" -> "Added equivalent class for: " + displayName;
-            case "deleteEquivalentClass" -> "Removed equivalent class from: " + displayName;
-            case "addDisjointWith" -> "Added disjoint axiom for: " + displayName;
-            case "deleteDisjointWith" -> "Removed disjoint axiom from: " + displayName;
-            default -> "Modified: " + displayName;
-        };
-    }
-    
     /**
      * Convert DraftChange to MutationOp
      */

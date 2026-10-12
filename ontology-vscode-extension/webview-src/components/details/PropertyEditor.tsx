@@ -5,6 +5,7 @@ import { ManchesterSyntaxEditor, PropertyChainDialog, IRIEditorDialog } from '..
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
+import { withDraftScope } from '../../utils/draftScope';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { Property } from '../../types';
 
@@ -31,7 +32,7 @@ const PropertyUsageTab: React.FC<{ projectId: string; propertyIri: string; label
       if (!projectId || !propertyIri) return;
       setLoading(true);
       try {
-        const res = await apiClient.get<any>(`/api/ontology/properties/usage/${projectId}`, { propertyIri });
+        const res = await apiClient.get<any>(withDraftScope(`/api/ontology/properties/usage/${projectId}`), { propertyIri });
         const payload = res?.data || res;
         const items = payload?.data || payload || [];
         setUsageItems(Array.isArray(items) ? items : []);
@@ -221,7 +222,7 @@ const PropertyEditor: React.FC<{
         let alive = true;
         (async () => {
             try {
-                const resp = await apiClient.get<any>(`/api/ontology/classes/all/${projectId}?limit=5000`);
+                const resp = await apiClient.get<any>(withDraftScope(`/api/ontology/classes/all/${projectId}?limit=5000`));
                 if (!alive) return;
                 const classes: any[] = resp?.data?.classes ?? resp?.data ?? resp?.classes ?? (Array.isArray(resp) ? resp : []);
                 const lookup = new Map<string, string>();

@@ -27,23 +27,12 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
 
-/**
- * One-time job, run in the background after startup (web and desktop): projects imported before
- * namespace capture existed have no saved prefixes, so the panel shows none and exports fall back
- * to the shared Fuseki namespace list. For each such project, add the namespace declarations from
- * its original upload to the saved prefixes (keeping any the user added by hand) and clear its
- * Code View cache. A marker document in
- * MongoDB makes it run only once per database (the server's, or each desktop's local one).
- */
 @Component
 public class PrefixBackfillStartupJob {
 
     private static final Logger log = LoggerFactory.getLogger(PrefixBackfillStartupJob.class);
 
     private static final String MIGRATIONS = "app_migrations";
-    // v2: also reads the original upload from GridFS (v1 only read the on-disk copy, which
-    // containers without a data volume lose on every redeploy).
-    // v3: also fills old projects that already had prefixes added by hand (v2 skipped them).
     private static final String MARKER_ID = "prefix-backfill-v3";
     private static final List<String> UPLOADED_FILES = List.of(
             "ontology.current.owl", "ontology.current.ttl", "ontology.current.nt", "ontology.current.jsonld");
@@ -102,8 +91,6 @@ public class PrefixBackfillStartupJob {
     private String backfill(String projectId) {
         try {
             if (isDeletedFile(projectId)) {
-                // Its GridFS upload is gone from the library, and the disk copy of a saved project
-                // is a re-export that carried the shared Fuseki prefix list, so it is no source.
                 return "deleted";
             }
             Map<String, Object> meta = new HashMap<>(metadataService.readMeta(projectId).orElseGet(HashMap::new));
@@ -113,13 +100,8 @@ public class PrefixBackfillStartupJob {
                 return "no-file";
             }
             if (wasCapturedAtImport(existing, scan.prefixes)) {
-                // Imported with namespace capture: anything missing now was removed by the user.
                 return "skipped";
             }
-            // Same list a fresh upload ends up with, keeping whatever the user already saved
-            // (e.g. prefixes added by hand before this job ran): saved entries win, and the
-            // file's prefixes, the default prefix from the ontology IRI (the import's re-save
-            // adds it) and the standard prefixes getPrefixes() always adds only fill the gaps.
             Map<String, String> merged = new LinkedHashMap<>(existing);
             Set<String> names = new HashSet<>();
             existing.keySet().forEach(k -> names.add(bareName(k)));
@@ -169,13 +151,6 @@ public class PrefixBackfillStartupJob {
         return prefix.endsWith(":") ? prefix.substring(0, prefix.length() - 1) : prefix;
     }
 
-    /**
-     * True when the saved list already holds the file's own namespaces, i.e. the import captured
-     * them. Compared by namespace, so a prefix the user renamed still counts. Projects imported
-     * before capture existed have none of them saved: nothing, only standard prefixes, or only
-     * prefixes the user added by hand. A file declaring only standard prefixes gives nothing to
-     * compare, so any non-standard saved prefix is then taken as the user's complete list.
-     */
     private static boolean wasCapturedAtImport(Map<String, String> saved, Map<String, String> fromFile) {
         Set<String> fileNamespaces = new HashSet<>();
         fromFile.forEach((prefix, ns) -> {
@@ -192,7 +167,6 @@ public class PrefixBackfillStartupJob {
         return saved.values().stream().anyMatch(fileNamespaces::contains);
     }
 
-    /** The ontology IRI as a namespace ("…/ontology" → "…/ontology#"), as the import's re-save writes it. */
     private static String defaultNamespace(Object metaOntologyIri, String fileOntologyIri) {
         String iri = metaOntologyIri instanceof String s && !s.isBlank() ? s : fileOntologyIri;
         if (iri == null || iri.isBlank() || iri.contains(" ")) {
@@ -201,11 +175,6 @@ public class PrefixBackfillStartupJob {
         return iri.endsWith("#") || iri.endsWith("/") ? iri : iri + "#";
     }
 
-    /**
-     * The original upload: GridFS first (the exact file the user uploaded; kept on every platform),
-     * then the on-disk copy (ontology.current.*) as a fallback. ontology.original.* is never used:
-     * it is an app export.
-     */
     private HeaderScan scanOriginalUpload(String projectId) throws Exception {
         HeaderScan fromGridFs = scanGridFs(projectId);
         if (fromGridFs != null && !fromGridFs.prefixes.isEmpty()) {
@@ -221,7 +190,6 @@ public class PrefixBackfillStartupJob {
         }
     }
 
-    /** True when the project's file was deleted from the library (file_metadata.isDeleted). */
     private boolean isDeletedFile(String projectId) {
         int sep = projectId.indexOf("--");
         if (sep < 0) {
@@ -232,7 +200,6 @@ public class PrefixBackfillStartupJob {
         return fileMeta != null && Boolean.TRUE.equals(fileMeta.getBoolean("isDeleted"));
     }
 
-    /** Project ids are "<parent>--<fileId>"; file_metadata maps that fileId to its GridFS upload. */
     private HeaderScan scanGridFs(String projectId) throws Exception {
         int sep = projectId.indexOf("--");
         if (sep < 0) {
@@ -255,10 +222,6 @@ public class PrefixBackfillStartupJob {
         }
     }
 
-    /**
-     * Namespace declarations from the file header, plus the ontology IRI when the first statement
-     * declares it. Stops at the first statement: declarations sit in the header.
-     */
     private static HeaderScan scanHeader(InputStream in, String fileName, String source) throws Exception {
         HeaderScan scan = new HeaderScan(source);
         RDFFormat format = Rio.getParserFormatForFileName(fileName).orElse(RDFFormat.RDFXML);

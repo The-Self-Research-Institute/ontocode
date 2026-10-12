@@ -14,7 +14,7 @@ export class ElectronEditorPage extends EditorPage {
 
   async openEditorForProject(projectId: string) {
     await this.assertInElectron();
-    await this.page.evaluate((pid) => {
+    await this.page.evaluate(async (pid) => {
       localStorage.setItem('deploymentType', 'self-hosted');
       localStorage.setItem('skipWorkspaceMode', 'true');
       localStorage.setItem('ontocode_suppress_workspace_auto_open', 'true');
@@ -22,6 +22,11 @@ export class ElectronEditorPage extends EditorPage {
       const auth = localStorage.getItem('authToken');
       if (!auth) {
         /* token injected via API login in worker fixture — renderer may need reload */
+      }
+      const api = (window as unknown as { electronAPI?: { getAppVersion?: () => Promise<string> } }).electronAPI;
+      const version = await api?.getAppVersion?.().catch(() => '');
+      if (version) {
+        localStorage.setItem('ontocode_release_notes_seen', version);
       }
     }, projectId);
 

@@ -688,6 +688,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openFile:  ()                    => ipcRenderer.invoke('file:open'),
     saveAs:    (content, name)       => ipcRenderer.invoke('file:saveAs', { content, defaultName: name }),
 
+    getAssistantKey: ()              => ipcRenderer.invoke('assistantKey:get'),
+    setAssistantKey: (key)           => ipcRenderer.invoke('assistantKey:set', key),
+
     getProfile: ()                   => ipcRenderer.invoke('profile:get'),
     saveProfile: (profile)           => ipcRenderer.invoke('profile:save', profile),
 

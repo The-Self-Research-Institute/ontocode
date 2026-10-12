@@ -54,12 +54,12 @@ public class AxiomAnnotationService {
 
     public void addAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
                               String annotationProperty, String value, String language) throws Exception {
-        addAnnotation(projectId, entityIri, relatedIri, sectionName, annotationProperty, value, language, false, null);
+        addAnnotation(projectId, entityIri, relatedIri, sectionName, annotationProperty, value, language, false, null, null);
     }
 
     public void addAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
                               String annotationProperty, String value, String language,
-                              boolean draft, String userId) throws Exception {
+                              boolean draft, String userId, String username) throws Exception {
         if (annotationProperty == null || annotationProperty.isBlank()) {
             throw new IllegalArgumentException("annotationProperty is required");
         }
@@ -80,16 +80,16 @@ public class AxiomAnnotationService {
 
         OWLAxiom base = axiom.getAxiomWithoutAnnotations();
         OWLAxiom annotated = base.getAnnotatedAxiom(merged);
-        replaceAxiom(projectId, base, annotated, draft, userId);
+        replaceAxiom(projectId, base, annotated, draft, userId, username);
     }
 
     public void deleteAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
                                  String annotationProperty, String value) throws Exception {
-        deleteAnnotation(projectId, entityIri, relatedIri, sectionName, annotationProperty, value, false, null);
+        deleteAnnotation(projectId, entityIri, relatedIri, sectionName, annotationProperty, value, false, null, null);
     }
 
     public void deleteAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
-                                 String annotationProperty, String value, boolean draft, String userId) throws Exception {
+                                 String annotationProperty, String value, boolean draft, String userId, String username) throws Exception {
         OWLOntology ontology = loadOntology(projectId, draft, userId);
         OWLAxiom axiom = axiomLookupService.findFirst(ontology, entityIri, relatedIri, sectionName);
         if (axiom == null) {
@@ -111,10 +111,10 @@ public class AxiomAnnotationService {
 
         OWLAxiom base = axiom.getAxiomWithoutAnnotations();
         OWLAxiom updated = remaining.isEmpty() ? base : base.getAnnotatedAxiom(remaining);
-        replaceAxiom(projectId, base, updated, draft, userId);
+        replaceAxiom(projectId, base, updated, draft, userId, username);
     }
 
-    private void replaceAxiom(String projectId, OWLAxiom previous, OWLAxiom next, boolean draft, String userId)
+    private void replaceAxiom(String projectId, OWLAxiom previous, OWLAxiom next, boolean draft, String userId, String username)
             throws Exception {
         String delete = OwlAxiomSparqlWriter.toDeleteData(Set.of(previous));
         if (delete.isBlank()) {
@@ -124,7 +124,7 @@ public class AxiomAnnotationService {
         if (insert.isBlank()) {
             throw new IllegalStateException("Failed to serialize annotated axiom");
         }
-        mutationService.applyRawUpdate(projectId, delete + ";\n" + insert, draft, userId);
+        mutationService.applyRawUpdateWithHistory(projectId, delete + ";\n" + insert, draft, userId, username);
         log.info("Updated axiom annotations for project {} (draft={})", projectId, draft);
     }
 

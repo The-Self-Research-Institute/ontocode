@@ -6,6 +6,7 @@ import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDial
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
+import { withDraftScope } from '../../utils/draftScope';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 
 interface UsageItem {
@@ -39,7 +40,7 @@ const IndividualUsageTab: React.FC<{
   const loadUsages = async () => {
     setLoading(true);
     try {
-      const response = await apiClient.get<any>(`/api/ontology/individuals/usage/${projectId}?individualIri=${encodeURIComponent(individualIri)}`);
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/individuals/usage/${projectId}?individualIri=${encodeURIComponent(individualIri)}`));
       const usageData = response?.data?.data || response?.data || response || [];
       setUsages(Array.isArray(usageData) ? usageData : []);
     } catch (error) {
@@ -176,7 +177,7 @@ const IndividualEditor: React.FC<{
     if (!projectId || !item.id) return;
     setIsLoading(true);
     try {
-      const response = await apiClient.get<any>(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(item.id)}`);
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(item.id)}`));
       const details = response?.data || response;
       if (details) {
         onUpdate({
@@ -186,6 +187,7 @@ const IndividualEditor: React.FC<{
           propertyAssertions: details.propertyAssertions || [],
           sameIndividualAs: details.sameIndividualAs || item.sameIndividualAs,
           differentIndividualFrom: details.differentIndividualFrom || item.differentIndividualFrom,
+          fuzzyMemberships: details.fuzzyMemberships || [],
         });
         setDetailsFetched(item.id);
       }
@@ -238,7 +240,7 @@ const IndividualEditor: React.FC<{
     (async () => {
       try {
         // Use query parameter endpoint to avoid URL encoding issues with IRI containing #
-        const response = await apiClient.get<any>(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(currentId)}`);
+        const response = await apiClient.get<any>(withDraftScope(`/api/ontology/individual-details/${projectId}?individualIri=${encodeURIComponent(currentId)}`));
         if (!alive || currentId !== item.id) return;
 
         const details = response?.data || response;
@@ -260,6 +262,7 @@ const IndividualEditor: React.FC<{
             propertyAssertions: details.propertyAssertions || [],
             sameIndividualAs: details.sameIndividualAs || item.sameIndividualAs,
             differentIndividualFrom: details.differentIndividualFrom || item.differentIndividualFrom,
+            fuzzyMemberships: details.fuzzyMemberships || [],
           };
           onUpdate(updatedItem);
           setDetailsFetched(currentId);
@@ -419,8 +422,8 @@ const IndividualEditor: React.FC<{
     try {
       if (!projectId) return;
       const [propsRes, indsRes] = await Promise.all([
-        apiClient.get<any>(`/api/ontology/${isObjectProperty ? 'object-properties' : 'data-properties'}/${projectId}`),
-        isObjectProperty ? apiClient.get<any>(`/api/ontology/individuals/${projectId}?limit=10000`) : Promise.resolve({ data: [] })
+        apiClient.get<any>(withDraftScope(`/api/ontology/${isObjectProperty ? 'object-properties' : 'data-properties'}/${projectId}`)),
+        isObjectProperty ? apiClient.get<any>(withDraftScope(`/api/ontology/individuals/${projectId}?limit=10000`)) : Promise.resolve({ data: [] })
       ]);
 
       const props = Array.isArray(propsRes?.data) ? propsRes.data : (propsRes?.properties || propsRes?.data?.properties || []);
@@ -461,7 +464,7 @@ const IndividualEditor: React.FC<{
   const openSameDifferentDialog = async (mode: 'same' | 'different', editingIri?: string) => {
     setSameDiffDialog({ mode, editingIri });
     try {
-      const res = await apiClient.get<any>(`/api/ontology/individuals/${projectId}?limit=10000`);
+      const res = await apiClient.get<any>(withDraftScope(`/api/ontology/individuals/${projectId}?limit=10000`));
       const inds = Array.isArray(res?.data) ? res.data : res?.data?.individuals || [];
       setAllIndividuals(inds);
     } catch (e) {
@@ -686,6 +689,30 @@ const IndividualEditor: React.FC<{
                 )}
               </div>
             </div>
+
+            {item.fuzzyMemberships && item.fuzzyMemberships.length > 0 && (
+              <div className="mb-4 last:mb-0">
+                <div className="flex justify-between items-center mb-1">
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Fuzzy memberships</h4>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-md overflow-hidden shadow-sm p-1.5 space-y-1">
+                  {item.fuzzyMemberships.map((membership) => (
+                    <div
+                      key={membership.classIri}
+                      className="text-xs p-1 bg-pink-50 rounded border border-pink-100 flex items-center justify-between gap-2 cursor-pointer hover:bg-pink-100"
+                      onClick={() => onNavigate?.(membership.classIri, 'class')}
+                      title={membership.classIri}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-2 h-2 rounded-full bg-pink-500 flex-shrink-0"></div>
+                        <span className="truncate text-pink-900">{membership.classIri.split('#').pop()?.split('/').pop()}</span>
+                      </div>
+                      <span className="text-[9px] uppercase text-pink-600 font-semibold flex-shrink-0">{membership.degree.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Object Property Assertions */}
             <div className="mb-4 last:mb-0">

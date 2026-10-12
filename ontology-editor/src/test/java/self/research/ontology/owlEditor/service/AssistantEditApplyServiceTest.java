@@ -1,0 +1,457 @@
+package self.research.ontology.owlEditor.service;
+
+import org.eclipse.rdf4j.rio.RDFFormat;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import self.research.ontology.owlEditor.document.AssistantApplyOperationDocument;
+import self.research.ontology.owlEditor.document.AssistantApplyOperationDocument.ApplyOperationStatus;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.AssistantEditGroupStatus;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.EditEntry;
+import self.research.ontology.owlEditor.document.AssistantSessionDocument;
+import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
+import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
+import self.research.ontology.owlEditor.service.AssistantAuditService.AssistantAuditEvent;
+import self.research.ontology.owlEditor.service.AssistantEditApplyService.ApplyResult;
+import self.research.ontology.owlEditor.service.CodeViewReimportPipeline.ReimportResult;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class AssistantEditApplyServiceTest extends AssistantEditApplyTestBase {
+
+    @Test
+    void unknownGroupReturnsProposalNotFound() {
+        when(groupRepository.findById("g1")).thenReturn(Optional.empty());
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("PROPOSAL_NOT_FOUND", result.getErrorCode());
+    }
+
+    @Test
+    void wrongUserGetsTheSameProposalNotFoundAsAnUnknownGroup() {
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.PENDING)));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "attacker@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("PROPOSAL_NOT_FOUND", result.getErrorCode());
+    }
+
+    @Test
+    void appliedGroupReplaysIdempotentlyWithoutReapplying() throws Exception {
+        AssistantEditGroupDocument applied = group(AssistantEditGroupStatus.APPLIED);
+        applied.setAppliedRevision(42L);
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(applied));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        assertTrue(result.isApplied());
+        assertEquals(42L, result.getNewRevision());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void discardedGroupReturnsValidationFailed() {
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.DISCARDED)));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("VALIDATION_FAILED", result.getErrorCode());
+    }
+
+    @Test
+    void staleGroupReturnsStaleGroupErrorCode() {
+        AssistantEditGroupDocument stale = group(AssistantEditGroupStatus.STALE);
+        stale.setStaleReason("overlaps committed group g0");
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(stale));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("STALE_GROUP", result.getErrorCode());
+        assertEquals("overlaps committed group g0", result.getMessage());
+    }
+
+    @Test
+    void conflictGroupReturnsConflictErrorCode() {
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.CONFLICT)));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("CONFLICT", result.getErrorCode());
+    }
+
+    @Test
+    void pendingWithMatchingVersionStillChecksLiveTextButSkipsSyntaxRecheckAndApplies() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 10L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
+                .thenReturn(List.of());
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        assertEquals(10L, result.getNewRevision());
+        verify(storageManager).readCodeViewPage("proj-1", "turtle", 1, 1);
+        verify(syntaxValidator, never()).isValid(anyString(), anyString(), any());
+        verify(referenceCoverageValidator, never()).check(anyString(), anyString(), any());
+    }
+
+    @Test
+    void pendingWithChangedVersionButMatchingContentStillApplies() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(99L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("old", 1, 1, 10, 100));
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 11L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
+                .thenReturn(List.of());
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        assertEquals(11L, result.getNewRevision());
+    }
+
+    @Test
+    void pendingWithChangedVersionAndMismatchedContentMarksConflict() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(99L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("something else entirely", 1, 1, 10, 100));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+
+        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
+        verify(groupRepository).save(captor.capture());
+        assertEquals(AssistantEditGroupStatus.CONFLICT, captor.getValue().getStatus());
+    }
+
+    @Test
+    void successfulApplyTriggersRemapAndReportsTouchedSiblings() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        AssistantEditGroupDocument touchedSibling = AssistantEditGroupDocument.builder()
+                .id("sib-1").status(AssistantEditGroupStatus.PENDING).edits(List.of()).build();
+        AssistantEditGroupDocument untouchedSibling = AssistantEditGroupDocument.builder()
+                .id("sib-2").status(AssistantEditGroupStatus.PENDING).edits(List.of()).build();
+
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 20L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus("proj-1", "turtle", AssistantEditGroupStatus.PENDING))
+                .thenReturn(List.of(touchedSibling, untouchedSibling));
+        when(remapService.remap(eq(pending), any())).thenReturn(List.of(touchedSibling));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        assertEquals(2, result.getRemappedPendingGroups().size());
+        assertTrue(result.getRemappedPendingGroups().stream()
+                .anyMatch(r -> r.serverGroupId().equals("sib-1") && r.remapped()));
+        assertTrue(result.getRemappedPendingGroups().stream()
+                .anyMatch(r -> r.serverGroupId().equals("sib-2") && !r.remapped()));
+        verify(groupRepository).saveAll(List.of(touchedSibling));
+    }
+
+    @Test
+    void pendingWithChangedVersionAndMatchingTextButBrokenSyntaxMarksConflict() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(99L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("old", 1, 1, 10, 100));
+        when(syntaxValidator.isValid(eq("proj-1"), eq("turtle"), any())).thenReturn(false);
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void liveMismatchSkipsRedundantSyntaxRecheck() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(99L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("something else entirely", 1, 1, 10, 100));
+
+        applyService.applyGroup("s1", "g1", "u@x.com");
+
+        verify(syntaxValidator, never()).isValid(anyString(), anyString(), any());
+    }
+
+    @Test
+    void applyRequestsReimportWithSanitizationSkipped() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 10L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
+                .thenReturn(List.of());
+
+        applyService.applyGroup("s1", "g1", "u@x.com");
+
+        ArgumentCaptor<CodeViewReimportPipeline.ReimportRequest> captor =
+                ArgumentCaptor.forClass(CodeViewReimportPipeline.ReimportRequest.class);
+        verify(reimportPipeline).reimport(captor.capture());
+        assertTrue(captor.getValue().skipSanitization());
+    }
+
+    @Test
+    void unexpectedReimportFailureReturnsRecoveryRequiredNotACrash() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("GraphDB unreachable"));
+        when(reimportPipeline.restoreSnapshot(anyString(), any())).thenThrow(new java.io.IOException("still down"));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
+    }
+
+    @Test
+    void reimportFailureWithGraphLeftEmptyRequiresRecoveryNotRetry() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("connection reset mid-stream"));
+        when(reimportPipeline.restoreSnapshot(anyString(), any())).thenThrow(new java.io.IOException("still down"));
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of(), List.of(), false, null));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
+        assertTrue(result.getMessage().contains("haven't been verified"));
+        assertTrue(result.getMessage().contains("won't be applied again"));
+    }
+
+    @Test
+    void reimportFailureWithGraphStillPopulatedStillRequiresRecoveryNotRetry() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("connection reset mid-stream"));
+        when(reimportPipeline.restoreSnapshot(anyString(), any())).thenThrow(new java.io.IOException("still down"));
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenReturn(new SparqlDatasetService.CappedSparqlResult(List.of("s"), List.of(Map.of("s", "x")), false, null));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
+        assertTrue(result.getMessage().contains("haven't been verified"));
+        assertTrue(result.getMessage().contains("won't be applied again"));
+        assertFalse(result.getMessage().toLowerCase().contains("safe"));
+    }
+
+    @Test
+    void reimportFailureMarksGroupRecoveryRequiredSoItCannotBeReappliedByAccident() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenThrow(new java.io.IOException("connection reset mid-stream"));
+        when(reimportPipeline.restoreSnapshot(anyString(), any())).thenThrow(new java.io.IOException("still down"));
+
+        applyService.applyGroup("s1", "g1", "u@x.com");
+
+        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
+        verify(groupRepository).save(captor.capture());
+        assertEquals(AssistantEditGroupStatus.RECOVERY_REQUIRED, captor.getValue().getStatus());
+    }
+
+    @Test
+    void recoveryRequiredGroupIsNeverReappliedOnRetry() throws Exception {
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.RECOVERY_REQUIRED)));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("RECOVERY_REQUIRED", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
+    }
+
+    @Test
+    void groupFromAnotherSessionIsRejectedLikeAnUnknownProposalAndNeverReimported() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+
+        ApplyResult result = applyService.applyGroup("s-other", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("PROPOSAL_NOT_FOUND", result.getErrorCode());
+        assertEquals("Unknown or unauthorized proposal", result.getMessage());
+        verify(reimportPipeline, never()).reimport(any());
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
+    }
+
+    @Test
+    void missingSessionIdIsRejected() throws Exception {
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"))));
+
+        ApplyResult result = applyService.applyGroup(null, "g1", "u@x.com");
+
+        assertEquals("PROPOSAL_NOT_FOUND", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void matchingVersionWithChangedLiveTextIsAConflictSoARestartCannotHideAnEdit() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 1, 1))
+                .thenReturn(new StorageManager.CodeViewPage("edited elsewhere", 1, 1, 10, 100));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+        verify(spliceWriter, never()).splice(any(), anyString(), any());
+        ArgumentCaptor<AssistantEditGroupDocument> captor = ArgumentCaptor.forClass(AssistantEditGroupDocument.class);
+        verify(groupRepository).save(captor.capture());
+        assertEquals(AssistantEditGroupStatus.CONFLICT, captor.getValue().getStatus());
+    }
+
+    @Test
+    void everyReplacedRangeIsCheckedNotJustTheFirst() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"), edit(20, 2, "a\nb", "c"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(storageManager.readCodeViewPage("proj-1", "turtle", 20, 2))
+                .thenReturn(new StorageManager.CodeViewPage("a\nchanged", 20, 2, 10, 100));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void insertionWithUnchangedVersionIsAppliedWithoutAComparison() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(3, 0, "", "ex:new a owl:Class ."));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(5L);
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 12L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
+                .thenReturn(List.of());
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        verify(storageManager, never()).readCodeViewPage(anyString(), anyString(), anyLong(), anyInt());
+    }
+
+    @Test
+    void insertionOnlyGroupWithChangedVersionIsAConflictBecauseItsPositionCannotBeVerified() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(3, 0, "", "ex:new a owl:Class ."));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(6L);
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertFalse(result.isOk());
+        assertEquals("CONFLICT", result.getErrorCode());
+        assertTrue(result.getMessage().contains("inserted lines"));
+        verify(reimportPipeline, never()).reimport(any());
+        verify(syntaxValidator, never()).isValid(anyString(), anyString(), any());
+    }
+
+    @Test
+    void mixedGroupWithAnInsertionAndChangedVersionIsAConflict() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING,
+                edit(1, 1, "old", "new"), edit(8, 0, "", "ex:x a owl:Class ."));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(6L);
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void changedVersionWithMatchingTextButLostReferenceCoverageIsAConflict() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"));
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(6L);
+        when(referenceCoverageValidator.check(eq("proj-1"), eq("turtle"), any()))
+                .thenReturn(new AssistantEditReferenceCoverageValidator.CoverageResult(false, "ex:old still used"));
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertEquals("CONFLICT", result.getErrorCode());
+        verify(syntaxValidator).isValid(eq("proj-1"), eq("turtle"), any());
+        verify(reimportPipeline, never()).reimport(any());
+    }
+
+    @Test
+    void missingProposeVersionIsTreatedAsChanged() throws Exception {
+        AssistantEditGroupDocument pending = group(AssistantEditGroupStatus.PENDING, edit(1, 1, "old", "new"));
+        pending.setPublicGraphVersionAtPropose(null);
+        when(groupRepository.findById("g1")).thenReturn(Optional.of(pending));
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(0L);
+        when(reimportPipeline.reimport(any())).thenReturn(new ReimportResult("turtle", RDFFormat.TURTLE, 3L));
+        when(groupRepository.findByProjectIdAndTargetPathAndStatus(anyString(), anyString(), any()))
+                .thenReturn(List.of());
+
+        ApplyResult result = applyService.applyGroup("s1", "g1", "u@x.com");
+
+        assertTrue(result.isOk());
+        verify(syntaxValidator).isValid(eq("proj-1"), eq("turtle"), any());
+    }
+}

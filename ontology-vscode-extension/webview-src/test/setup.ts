@@ -7,6 +7,7 @@ vi.mock('../config/deploymentConfig', () => ({
 
 vi.mock('../utils/desktop', () => ({
   isDesktop: () => false,
+  isRealVSCode: () => false,
 }));
 
 Object.defineProperty(window, 'vscode', {

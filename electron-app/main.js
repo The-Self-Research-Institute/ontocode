@@ -12,7 +12,7 @@
  */
 
 const {
-    app, BrowserWindow, ipcMain, dialog, Notification, shell, Menu, Tray,
+    app, BrowserWindow, ipcMain, dialog, Notification, shell, Menu, Tray, safeStorage,
 } = require('electron');
 const path     = require('path');
 const fs       = require('fs');
@@ -297,6 +297,7 @@ function createMainWindow() {
     mainWindow.webContents.on('did-finish-load', () => {
         mainWindow.webContents.executeJavaScript(`
             window.__DESKTOP_API_URL__ = '${editorUrl}';
+            window.__DESKTOP_LAUNCH_KEY__ = '${svcMgr.DESKTOP_LAUNCH_KEY}';
             window.__DESKTOP_MODE__ = true;
             window.__IS_DEV__ = ${IS_DEV};
             // Plugins (UMD bundles) call fetch() against window.API_BASE_URL.
@@ -507,6 +508,35 @@ ipcMain.handle('file:clearActivePath', () => {
 ipcMain.handle('auth:get',   ()         => store.get('authToken', null));
 ipcMain.handle('auth:save',  (_, token) => store.set('authToken', token));
 ipcMain.handle('auth:clear', ()         => store.delete('authToken'));
+
+function assistantKeyEncryptionIsSecure() {
+    if (!safeStorage.isEncryptionAvailable()) return false;
+    if (process.platform !== 'linux') return true;
+    return safeStorage.getSelectedStorageBackend() !== 'basic_text';
+}
+
+ipcMain.handle('assistantKey:get', () => {
+    const secure = assistantKeyEncryptionIsSecure();
+    const sealed = store.get('assistantKeySealed', null);
+    if (!secure || !sealed) return { value: '', secure };
+    try {
+        return { value: safeStorage.decryptString(Buffer.from(sealed, 'base64')), secure };
+    } catch {
+        store.delete('assistantKeySealed');
+        return { value: '', secure };
+    }
+});
+
+ipcMain.handle('assistantKey:set', (_, key) => {
+    const secure = assistantKeyEncryptionIsSecure();
+    const trimmed = typeof key === 'string' ? key.trim() : '';
+    if (!trimmed || !secure) {
+        store.delete('assistantKeySealed');
+        return { secure };
+    }
+    store.set('assistantKeySealed', safeStorage.encryptString(trimmed).toString('base64'));
+    return { secure };
+});
 
 /** Local display-name storage (desktop-only, no account needed) */
 ipcMain.handle('profile:get',  ()      => store.get('localProfile', null));

@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns="http://example.org/petclinic#"
+         xml:base="http://example.org/petclinic"
+         xmlns:pc="http://example.org/petclinic#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+
+    <owl:Ontology rdf:about="http://example.org/petclinic">
+        <rdfs:label xml:lang="en">Pet Clinic</rdfs:label>
+        <rdfs:comment xml:lang="en">Demo ontology for Code View + Ask AI: animals, owners, vets, appointments and treatments at a small veterinary clinic.</rdfs:comment>
+        <owl:versionInfo>1.0</owl:versionInfo>
+    </owl:Ontology>
+
+    <!-- Classes -->
+
+    <owl:Class rdf:about="http://example.org/petclinic#Animal">
+        <rdfs:label xml:lang="en">Animal</rdfs:label>
+        <rdfs:comment xml:lang="en">Any animal registered as a patient at the clinic.</rdfs:comment>
+        <owl:disjointWith rdf:resource="http://example.org/petclinic#Person"/>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Mammal">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Animal"/>
+        <rdfs:label xml:lang="en">Mammal</rdfs:label>
+        <rdfs:comment xml:lang="en">A warm-blooded animal with fur or hair.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Bird">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Animal"/>
+        <rdfs:label xml:lang="en">Bird</rdfs:label>
+        <rdfs:comment xml:lang="en">A feathered, egg-laying animal.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Dog">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Mammal"/>
+        <rdfs:subClassOf>
+            <owl:Restriction>
+                <owl:onProperty rdf:resource="http://example.org/petclinic#hasOwner"/>
+                <owl:someValuesFrom rdf:resource="http://example.org/petclinic#Owner"/>
+            </owl:Restriction>
+        </rdfs:subClassOf>
+        <owl:disjointWith rdf:resource="http://example.org/petclinic#Cat"/>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Cat">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Mammal"/>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Rabbit">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Mammal"/>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Parrot">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Bird"/>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Person">
+        <rdfs:label xml:lang="en">Person</rdfs:label>
+        <rdfs:comment xml:lang="en">A human involved with the clinic.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Owner">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Person"/>
+        <rdfs:label xml:lang="en">Owner</rdfs:label>
+        <rdfs:comment xml:lang="en">A person who owns at least one registered animal.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Veterinarian">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Person"/>
+        <rdfs:label xml:lang="en">Veterinarian</rdfs:label>
+        <rdfs:comment xml:lang="en">A licensed vet working at a clinic.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Clinic">
+        <rdfs:label xml:lang="en">Clinic</rdfs:label>
+        <rdfs:comment xml:lang="en">A veterinary practice.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Appointment">
+        <rdfs:label xml:lang="en">Appointment</rdfs:label>
+        <rdfs:comment xml:lang="en">A scheduled visit of one animal to a vet.</rdfs:comment>
+        <rdfs:subClassOf>
+            <owl:Restriction>
+                <owl:onProperty rdf:resource="http://example.org/petclinic#treatedBy"/>
+                <owl:someValuesFrom rdf:resource="http://example.org/petclinic#Veterinarian"/>
+            </owl:Restriction>
+        </rdfs:subClassOf>
+        <rdfs:subClassOf>
+            <owl:Restriction>
+                <owl:onProperty rdf:resource="http://example.org/petclinic#forPatient"/>
+                <owl:cardinality rdf:datatype="http://www.w3.org/2001/XMLSchema#nonNegativeInteger">1</owl:cardinality>
+            </owl:Restriction>
+        </rdfs:subClassOf>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Treatment">
+        <rdfs:label xml:lang="en">Treatment</rdfs:label>
+        <rdfs:comment xml:lang="en">A medical procedure carried out during an appointment.</rdfs:comment>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Vaccination">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Treatment"/>
+    </owl:Class>
+
+    <owl:Class rdf:about="http://example.org/petclinic#Surgery">
+        <rdfs:subClassOf rdf:resource="http://example.org/petclinic#Treatment"/>
+        <rdfs:label xml:lang="en">Surgery</rdfs:label>
+        <rdfs:comment xml:lang="en">An operative treatment.</rdfs:comment>
+    </owl:Class>
+
+    <!-- Object properties -->
+
+    <owl:ObjectProperty rdf:about="http://example.org/petclinic#hasOwner">
+        <rdfs:label xml:lang="en">has owner</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Animal"/>
+        <rdfs:range rdf:resource="http://example.org/petclinic#Owner"/>
+        <owl:inverseOf rdf:resource="http://example.org/petclinic#ownsPet"/>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://example.org/petclinic#ownsPet">
+        <rdfs:label xml:lang="en">owns pet</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Owner"/>
+        <rdfs:range rdf:resource="http://example.org/petclinic#Animal"/>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://example.org/petclinic#primaryVet">
+        <rdfs:label xml:lang="en">primary vet</rdfs:label>
+        <rdfs:comment xml:lang="en">The vet an animal normally sees.</rdfs:comment>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Animal"/>
+        <rdfs:range rdf:resource="http://example.org/petclinic#Veterinarian"/>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://example.org/petclinic#treatedBy">
+        <rdfs:label xml:lang="en">treated by</rdfs:label>
+        <rdfs:comment xml:lang="en">The vet who handled a specific appointment.</rdfs:comment>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Appointment"/>
+        <rdfs:range rdf:resource="http://example.org/petclinic#Veterinarian"/>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://example.org/petclinic#forPatient">
+        <rdfs:label xml:lang="en">for patient</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Appointment"/>
+        <rdfs:range rdf:resource="http://example.org/petclinic#Animal"/>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://example.org/petclinic#includesTreatment">
+        <rdfs:label xml:lang="en">includes treatment</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Appointment"/>
+        <rdfs:range rdf:resource="http://example.org/petclinic#Treatment"/>
+    </owl:ObjectProperty>
+
+    <owl:ObjectProperty rdf:about="http://example.org/petclinic#worksAt">
+        <rdfs:label xml:lang="en">works at</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Veterinarian"/>
+        <rdfs:range rdf:resource="http://example.org/petclinic#Clinic"/>
+    </owl:ObjectProperty>
+
+    <!-- Data properties -->
+
+    <owl:DatatypeProperty rdf:about="http://example.org/petclinic#hasName">
+        <rdfs:label xml:lang="en">has name</rdfs:label>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://example.org/petclinic#dateOfBirth">
+        <rdfs:label xml:lang="en">date of birth</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Animal"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#date"/>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://example.org/petclinic#weightKg">
+        <rdfs:label xml:lang="en">weight (kg)</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Animal"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://example.org/petclinic#lastVaccinationDate">
+        <rdfs:label xml:lang="en">last vaccination date</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Animal"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#date"/>
+    </owl:DatatypeProperty>
+
+    <owl:DatatypeProperty rdf:about="http://example.org/petclinic#appointmentDate">
+        <rdfs:label xml:lang="en">appointment date</rdfs:label>
+        <rdfs:domain rdf:resource="http://example.org/petclinic#Appointment"/>
+        <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#dateTime"/>
+    </owl:DatatypeProperty>
+
+    <!-- Individuals: clinic and people -->
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#CityPetClinic">
+        <rdf:type rdf:resource="http://example.org/petclinic#Clinic"/>
+        <pc:hasName>City Pet Clinic</pc:hasName>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#DrPatel">
+        <rdf:type rdf:resource="http://example.org/petclinic#Veterinarian"/>
+        <pc:hasName>Dr. Priya Patel</pc:hasName>
+        <pc:worksAt rdf:resource="http://example.org/petclinic#CityPetClinic"/>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#DrOkafor">
+        <rdf:type rdf:resource="http://example.org/petclinic#Veterinarian"/>
+        <pc:hasName>Dr. Tunde Okafor</pc:hasName>
+        <pc:worksAt rdf:resource="http://example.org/petclinic#CityPetClinic"/>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Alice">
+        <rdf:type rdf:resource="http://example.org/petclinic#Owner"/>
+        <pc:hasName>Alice Moreau</pc:hasName>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Ben">
+        <rdf:type rdf:resource="http://example.org/petclinic#Owner"/>
+        <pc:hasName>Ben Adeyemi</pc:hasName>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Chen">
+        <rdf:type rdf:resource="http://example.org/petclinic#Owner"/>
+        <pc:hasName>Chen Wei</pc:hasName>
+    </owl:NamedIndividual>
+
+    <!-- Individuals: animals -->
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Rex">
+        <rdf:type rdf:resource="http://example.org/petclinic#Dog"/>
+        <pc:hasName>Rex</pc:hasName>
+        <pc:hasOwner rdf:resource="http://example.org/petclinic#Alice"/>
+        <pc:primaryVet rdf:resource="http://example.org/petclinic#DrPatel"/>
+        <pc:dateOfBirth rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2019-04-12</pc:dateOfBirth>
+        <pc:weightKg rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">32.5</pc:weightKg>
+        <pc:lastVaccinationDate rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2025-03-10</pc:lastVaccinationDate>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Bella">
+        <rdf:type rdf:resource="http://example.org/petclinic#Dog"/>
+        <pc:hasName>Bella</pc:hasName>
+        <pc:hasOwner rdf:resource="http://example.org/petclinic#Ben"/>
+        <pc:primaryVet rdf:resource="http://example.org/petclinic#DrOkafor"/>
+        <pc:dateOfBirth rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2022-08-01</pc:dateOfBirth>
+        <pc:weightKg rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">24.0</pc:weightKg>
+        <pc:lastVaccinationDate rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2026-06-01</pc:lastVaccinationDate>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Whiskers">
+        <rdf:type rdf:resource="http://example.org/petclinic#Cat"/>
+        <pc:hasName>Whiskers</pc:hasName>
+        <pc:hasOwner rdf:resource="http://example.org/petclinic#Alice"/>
+        <pc:primaryVet rdf:resource="http://example.org/petclinic#DrPatel"/>
+        <pc:weightKg rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">4.2</pc:weightKg>
+        <pc:lastVaccinationDate rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2024-11-20</pc:lastVaccinationDate>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Thumper">
+        <rdf:type rdf:resource="http://example.org/petclinic#Rabbit"/>
+        <pc:hasName>Thumper</pc:hasName>
+        <pc:hasOwner rdf:resource="http://example.org/petclinic#Chen"/>
+        <pc:weightKg rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">1.8</pc:weightKg>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Kiwi">
+        <rdf:type rdf:resource="http://example.org/petclinic#Parrot"/>
+        <pc:hasName>Kiwi</pc:hasName>
+        <pc:hasOwner rdf:resource="http://example.org/petclinic#Ben"/>
+        <pc:primaryVet rdf:resource="http://example.org/petclinic#DrOkafor"/>
+        <pc:lastVaccinationDate rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2026-01-15</pc:lastVaccinationDate>
+    </owl:NamedIndividual>
+
+    <!-- Individuals: treatments and appointments -->
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#RabiesShot2026">
+        <rdf:type rdf:resource="http://example.org/petclinic#Vaccination"/>
+        <pc:hasName>Rabies booster</pc:hasName>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Neutering">
+        <rdf:type rdf:resource="http://example.org/petclinic#Surgery"/>
+        <pc:hasName>Neutering</pc:hasName>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Appt001">
+        <rdf:type rdf:resource="http://example.org/petclinic#Appointment"/>
+        <pc:forPatient rdf:resource="http://example.org/petclinic#Bella"/>
+        <pc:treatedBy rdf:resource="http://example.org/petclinic#DrOkafor"/>
+        <pc:includesTreatment rdf:resource="http://example.org/petclinic#RabiesShot2026"/>
+        <pc:appointmentDate rdf:datatype="http://www.w3.org/2001/XMLSchema#dateTime">2026-06-01T10:30:00</pc:appointmentDate>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Appt002">
+        <rdf:type rdf:resource="http://example.org/petclinic#Appointment"/>
+        <pc:forPatient rdf:resource="http://example.org/petclinic#Rex"/>
+        <pc:treatedBy rdf:resource="http://example.org/petclinic#DrPatel"/>
+        <pc:includesTreatment rdf:resource="http://example.org/petclinic#Neutering"/>
+        <pc:appointmentDate rdf:datatype="http://www.w3.org/2001/XMLSchema#dateTime">2026-07-14T09:00:00</pc:appointmentDate>
+    </owl:NamedIndividual>
+
+    <owl:NamedIndividual rdf:about="http://example.org/petclinic#Appt003">
+        <rdf:type rdf:resource="http://example.org/petclinic#Appointment"/>
+        <pc:forPatient rdf:resource="http://example.org/petclinic#Whiskers"/>
+        <pc:treatedBy rdf:resource="http://example.org/petclinic#DrPatel"/>
+        <pc:appointmentDate rdf:datatype="http://www.w3.org/2001/XMLSchema#dateTime">2026-09-02T15:45:00</pc:appointmentDate>
+    </owl:NamedIndividual>
+
+</rdf:RDF>
