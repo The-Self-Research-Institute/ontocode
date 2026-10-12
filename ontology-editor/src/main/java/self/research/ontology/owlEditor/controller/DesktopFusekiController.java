@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler;
 import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.DesktopOpenMetricsService;
+import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.StorageManager;
 
@@ -24,6 +25,8 @@ public class DesktopFusekiController {
 
     private static final Logger log = LoggerFactory.getLogger(DesktopFusekiController.class);
 
+    private static final String DESKTOP_USER_ID = "desktop-user-local";
+
     private final ProjectImportService projectImportService;
     private final DesktopOpenMetricsService openMetricsService;
     @Nullable
@@ -31,17 +34,20 @@ public class DesktopFusekiController {
     @Nullable
     private final DesktopOntologyLoader desktopOntologyLoader;
     private final StorageManager storageManager;
+    private final DraftTrackingService draftTrackingService;
 
     public DesktopFusekiController(ProjectImportService projectImportService,
                                    DesktopOpenMetricsService openMetricsService,
                                    @Autowired(required = false) @Nullable DesktopFusekiSyncScheduler fusekiSyncScheduler,
                                    @Autowired(required = false) @Nullable DesktopOntologyLoader desktopOntologyLoader,
-                                   StorageManager storageManager) {
+                                   StorageManager storageManager,
+                                   DraftTrackingService draftTrackingService) {
         this.projectImportService = projectImportService;
         this.openMetricsService = openMetricsService;
         this.fusekiSyncScheduler = fusekiSyncScheduler;
         this.desktopOntologyLoader = desktopOntologyLoader;
         this.storageManager = storageManager;
+        this.draftTrackingService = draftTrackingService;
     }
 
     @PostMapping("/api/desktop/save/{projectId:.+}")
@@ -52,6 +58,16 @@ public class DesktopFusekiController {
         }
         try {
             boolean saved = desktopOntologyLoader.saveProject(projectId);
+            if (saved) {
+                // The file-based save above is the desktop source of truth; the Mongo-tracked
+                // draft records exist only to drive the "pending drafts" UI, so once the save
+                // lands they're stale and must be cleared or that UI shows unsaved work forever.
+                try {
+                    draftTrackingService.discardDrafts(projectId, DESKTOP_USER_ID);
+                } catch (Exception e) {
+                    log.warn("[Desktop] Failed to clear draft tracking after save for {}: {}", projectId, e.getMessage());
+                }
+            }
             return ResponseEntity.ok(Map.of("saved", saved, "hasDraft", storageManager.hasDraft(projectId)));
         } catch (java.io.IOException e) {
             log.error("[Desktop] Save failed for {}: {}", projectId, e.getMessage());

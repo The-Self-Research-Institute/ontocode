@@ -7,7 +7,10 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.ConsistencyCheckRecord;
+import self.research.ontology.owlEditor.document.AssistantEditGroupDocument.ConsistencyCheckState;
 import self.research.ontology.owlEditor.dto.ProposeEditRequest;
+import self.research.ontology.owlEditor.service.AssistantConsistencyCheckService;
 import self.research.ontology.owlEditor.service.AssistantEditApplyService;
 import self.research.ontology.owlEditor.service.AssistantEditApplyService.ApplyResult;
 import self.research.ontology.owlEditor.service.AssistantEditProposalService;
@@ -19,6 +22,7 @@ import self.research.ontology.owlEditor.service.AssistantEditProposalService.Pro
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -35,12 +39,15 @@ class AssistantEditControllerTest {
     @Mock
     private AssistantEditApplyService applyService;
 
+    @Mock
+    private AssistantConsistencyCheckService consistencyCheckService;
+
     private AssistantEditController controller;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        controller = new AssistantEditController(proposalService, applyService);
+        controller = new AssistantEditController(proposalService, applyService, consistencyCheckService);
     }
 
     @Test
@@ -192,6 +199,64 @@ class AssistantEditControllerTest {
         assertEquals(true, body.get("ok"));
         assertNull(body.get("newRevision"));
         assertEquals(List.of(), body.get("remappedPendingGroups"));
+    }
+
+    @Test
+    void consistencyCheckReturnsUnauthorizedWithoutBearerToken() {
+        ResponseEntity<?> response = controller.consistencyCheck("s1", "g1", new MockHttpServletRequest());
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    @Test
+    void consistencyCheckReturnsNotFoundForAnUnknownOrForeignGroup() {
+        when(consistencyCheckService.getRecord(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+
+        ResponseEntity<?> response = controller.consistencyCheck("s1", "g1", requestWithBearerToken());
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void consistencyCheckReportsPendingWithAStatusField() {
+        when(consistencyCheckService.getRecord(anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                ConsistencyCheckRecord.builder().state(ConsistencyCheckState.PENDING)
+                        .detail("Checking…").build()));
+
+        ResponseEntity<?> response = controller.consistencyCheck("s1", "g1", requestWithBearerToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(true, body.get("passed"));
+        assertEquals("pending", body.get("status"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void consistencyCheckReportsFailedWithNoStatusFieldOnceResolved() {
+        when(consistencyCheckService.getRecord(anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                ConsistencyCheckRecord.builder().state(ConsistencyCheckState.FAILED)
+                        .detail("Applying this would make the ontology logically inconsistent.").build()));
+
+        ResponseEntity<?> response = controller.consistencyCheck("s1", "g1", requestWithBearerToken());
+
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(false, body.get("passed"));
+        assertFalse(body.containsKey("status"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void consistencyCheckTreatsAnErrorOrTimeoutAsNonBlocking() {
+        when(consistencyCheckService.getRecord(anyString(), anyString(), anyString())).thenReturn(Optional.of(
+                ConsistencyCheckRecord.builder().state(ConsistencyCheckState.TIMED_OUT)
+                        .detail("Couldn't verify in time — treated as inconclusive.").build()));
+
+        ResponseEntity<?> response = controller.consistencyCheck("s1", "g1", requestWithBearerToken());
+
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertEquals(true, body.get("passed"));
     }
 
     private MockHttpServletRequest requestWithBearerToken() {

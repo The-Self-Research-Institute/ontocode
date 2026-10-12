@@ -49,24 +49,12 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
     ]);
 
     const items: SidebarItem[] = [
-      this.buildStatusItem(status),
       new SidebarItem(
-        'Insert Citation (Sci2Code)',
-        new vscode.ThemeIcon('book'),
-        { command: 'ontocode.insertCitation', title: 'Insert Citation (Sci2Code)' }
+        'Open OntoCode Editor',
+        new vscode.ThemeIcon('edit'),
+        { command: 'ontocode.openWebview', title: 'Open OntoCode Editor' }
       ),
-      new SidebarItem(
-        // configureZotero itself now also covers changing the key and
-        // disconnecting once already connected — see zoteroApiService.ts.
-        'Configure Zotero API Key',
-        new vscode.ThemeIcon('gear'),
-        { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' }
-      ),
-      new SidebarItem(
-        'Open Webview',
-        new vscode.ThemeIcon('preview'),
-        { command: 'ontocode.openWebview', title: 'Open Webview' }
-      ),
+      ...this.buildCitationLibraryItems(status),
     ];
 
     // Only meaningful (and only offered) when there's an actual session.
@@ -88,25 +76,27 @@ export class OntoCodeSidebarProvider implements vscode.TreeDataProvider<SidebarI
     return items;
   }
 
-  private buildStatusItem(status: 'connected' | 'not-configured' | 'unavailable'): SidebarItem {
+  private buildCitationLibraryItems(status: 'connected' | 'not-configured' | 'unavailable'): SidebarItem[] {
     if (status === 'connected') {
-      return new SidebarItem(
-        'Zotero: Connected',
-        new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green')),
+      return [
+        new SidebarItem(
+          'Zotero: Connected',
+          new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green')),
+          { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' }
+        ),
+        new SidebarItem(
+          'Insert Citation (Sci2Code)',
+          new vscode.ThemeIcon('book'),
+          { command: 'ontocode.insertCitation', title: 'Insert Citation (Sci2Code)' }
+        ),
+      ];
+    }
+    return [
+      new SidebarItem(
+        'Set up Citation Library (optional)',
+        new vscode.ThemeIcon('book'),
         { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' }
-      );
-    }
-    if (status === 'not-configured') {
-      return new SidebarItem(
-        'Zotero: Not Configured',
-        new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow')),
-        { command: 'ontocode.configureZotero', title: 'Configure Zotero API Key' },
-        'Click to configure'
-      );
-    }
-    return new SidebarItem(
-      'Zotero: Unavailable',
-      new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('charts.red'))
-    );
+      ),
+    ];
   }
 }

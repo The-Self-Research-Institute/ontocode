@@ -79,9 +79,11 @@ import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { cancelOntologyExport } from "../services/exportService";
 import { resolveMutationActor } from "../utils/mutationActor";
+import { isDraftScopeActive, withDraftScope, withDraftAndUser } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
+import { toFriendlyErrorMessage } from "./codeAssistantPanelHelpers";
 import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
 import {
   validateJsonLdSyntax,
@@ -147,6 +149,16 @@ import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
 import { useAskAiCodeViewSync } from "./dashboard-parts/hooks/useAskAiCodeViewSync";
+import {
+  entityDetailsUrl,
+  entityKindOf,
+  isEditingFormField,
+  mergeFreshDetails,
+  unwrapDetails,
+} from "./dashboard-parts/entityRefresh";
+import { searchScopeNoteFor } from "./codeSearch";
+import { isSaveDisabledInDraft } from "./dashboard-parts/draftSave";
+import { discardDraftMessage, runDraftDiscard } from "./dashboard-parts/discardDraft";
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
 import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
@@ -207,6 +219,9 @@ import PRsModal from "./PRsModal";
 import DraftPRPanel from "./DraftPRPanel";
 import PullPreviewDialog from "./PullPreviewDialog";
 
+const DRAFT_SAVE_DISABLED_HINT =
+  "Save is off in draft mode. Your edits are kept in your draft; raise a pull request to publish them.";
+
 const TopMenuBar = ({
   fileList,
   myFiles,
@@ -219,6 +234,7 @@ const TopMenuBar = ({
   hasUnsavedChanges,
   isSaving,
   draftCount,
+  saveDisabledInDraft,
   conflictStatus,
   onOpenDialog,
   onOpenPluginMarketplace,
@@ -279,6 +295,7 @@ const TopMenuBar = ({
   hasUnsavedChanges: boolean;
   isSaving: boolean;
   draftCount?: number;
+  saveDisabledInDraft?: boolean;
   conflictStatus?: 'idle' | 'checking' | 'clean' | 'conflict';
   onOpenDialog: () => void;
   onOpenPluginMarketplace: () => void;
@@ -857,7 +874,8 @@ const TopMenuBar = ({
                         await onSave();
                         setOpenMenu(null);
                       }}
-                      disabled={!hasUnsavedChanges || isSaving || !currentProjectId}
+                      disabled={saveDisabledInDraft || !hasUnsavedChanges || isSaving || !currentProjectId}
+                      title={saveDisabledInDraft ? DRAFT_SAVE_DISABLED_HINT : undefined}
                       className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                       Save {draftCount && draftCount > 0 ? `(${draftCount})` : ""}
@@ -1138,33 +1156,12 @@ const TopMenuBar = ({
 
 
 
-function isDraftScopeActive(): boolean {
-  return !isDesktop() && ontologyMutationService.isPrivateEditMode();
-}
-
 // Webapp + public/live sync: every mutation already writes straight to the shared
 // graph (no per-user draft record), so there's nothing pending to flush and the
 // "unsaved changes" dot should never light up. Desktop always tracks its own
 // unsaved-to-disk state regardless of sync mode.
 function isLiveWriteMode(): boolean {
   return !isDesktop() && !ontologyMutationService.isPrivateEditMode();
-}
-
-function withDraftScope(url: string): string {
-  if (!isDraftScopeActive()) return url;
-  return url + (url.includes("?") ? "&draft=true" : "?draft=true");
-}
-
-/**
- * Like withDraftScope but also appends userId — required by the ontology-metadata WRITE
- * endpoints (annotations/imports/iri) to scope the write to the caller's draft graph. Reads
- * can rely on the header userId, but these writes read userId explicitly from the request.
- */
-function withDraftAndUser(url: string): string {
-  if (!isDraftScopeActive()) return url;
-  const uid = resolveMutationActor().userId;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}draft=true&userId=${encodeURIComponent(uid || "")}`;
 }
 
 /**
@@ -1199,6 +1196,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 }) => {
   // #region State
   const { user, logout } = useAuth();
+  useEffect(() => {
+    (window as any).vscodeUser = user
+      ? { id: user.userId, email: user.email, username: user.username }
+      : undefined;
+  }, [user]);
   const collaboration = useCollaboration();
   const { actualMode } = useTheme();
   const subscription = useSubscription();
@@ -1610,6 +1612,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => { onGoToProjectDashboardRef.current = onGoToProjectDashboard; }, [onGoToProjectDashboard]);
   const autoLoadNewFileRef = useRef(false); // Set when user clicks "Create New File" — skip loading dialog on fileReady
   const codeViewDirtyRef = useRef(false);
+  const codeViewFetchTokenRef = useRef(0);
   const metadataRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
@@ -5276,11 +5279,18 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Saving prefix:", payload);
-      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, { ...payload, ...draftBodyFields() });
+      const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
+      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, {
+        ...payload,
+        ...draftBodyFields(),
+        actorUserId: actor.userId,
+        actorUsername: actor.username,
+      });
 
       // Refresh prefixes from server
       await refreshPrefixes();
       void silentRefreshMetadata();
+      void fetchCodeViewContent(codeViewFormat, false, true);
 
       notificationService.success(
         isEdit ? "Prefix Updated" : "Prefix Added",
@@ -5300,13 +5310,18 @@ const Dashboard: React.FC<DashboardProps> = ({
       const cleanedPrefix = prefix.endsWith(":") ? prefix.slice(0, -1) : prefix;
 
       console.log("[Dashboard] Deleting prefix:", cleanedPrefix);
+      const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
       await apiClient.delete(
-        withDraftAndUser(`/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}`),
+        withDraftAndUser(
+          `/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}` +
+            `&actorUserId=${encodeURIComponent(actor.userId)}&actorUsername=${encodeURIComponent(actor.username)}`,
+        ),
       );
 
       // Refresh from server
       await refreshPrefixes();
       void silentRefreshMetadata();
+      void fetchCodeViewContent(codeViewFormat, false, true);
 
       notificationService.success("Prefix Deleted", "Prefix deleted successfully.");
     } catch (error) {
@@ -8808,6 +8823,8 @@ const updateItemInState = useCallback(
             console.log("[Dashboard] No API endpoint matched, doing full refresh");
             if (projectId) fetchData(projectId, false);
           }
+        } else if (detail?.source !== "AI") {
+          refreshAfterBulkWriteRef.current("rollback");
         }
       }, 1500); // Increased delay to ensure GraphDB fully processes the rollback
     };
@@ -9157,6 +9174,7 @@ const updateItemInState = useCallback(
       // See hierarchyUserId/draftScopeParam comment above — userId isn't a scope signal.
       const metaDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}?userId=${encodeURIComponent(metaUserId)}${metaDraftScopeParam}`);
+      void refreshPrefixes();
       const data = res?.data || res;
       if (data) {
         setMetadata((prev) => prev ? {
@@ -9262,6 +9280,10 @@ const updateItemInState = useCallback(
         const resp: any = await apiClient.post(`/api/desktop/save/${encodeURIComponent(projectId)}`);
         const d = resp?.data || resp;
         setHasUnsavedChanges(false);
+        setDraftCount(0);
+        if (d?.saved) {
+          void fetchCodeViewContent(codeViewFormat, false, true);
+        }
         notificationService.success(
           "Saved",
           d?.saved ? "Your changes were saved." : "Nothing to save — already up to date.",
@@ -9309,6 +9331,7 @@ const updateItemInState = useCallback(
         );
 
         await fetchData(projectId, false, undefined, true);
+        void fetchCodeViewContent(codeViewFormat, false, true);
         collaborationPanelRef.current?.refreshChanges();
       } else {
         const errorMsg = (data && data.error) || "Save failed - no response from server";
@@ -9822,8 +9845,11 @@ const updateItemInState = useCallback(
             updatedItem.label = value;
           }
           updateItemInState(updatedItem);
+          void fetchCodeViewContent(codeViewFormat, false, true);
         } else {
           // Ontology annotation
+          markAsUnsaved();
+
           updateActiveOntologyAnnotations((current) => [
             ...current,
             {
@@ -9843,6 +9869,7 @@ const updateItemInState = useCallback(
           });
 
           await refreshOntologyAnnotations();
+          void fetchCodeViewContent(codeViewFormat, false, true);
         }
 
         showNotification("Annotation added successfully!", "info");
@@ -11601,6 +11628,7 @@ const updateItemInState = useCallback(
           prev ? { ...prev, classCount: Math.max(0, ((prev as any).classCount || 0) - iris.length) } : prev,
         );
         console.log(`[MUTATION:delete] ✓ Classes:${iris.join(", ")}`);
+        markAsUnsaved();
         showNotification(
           iris.length > 1 ? `Deleted ${iris.length} classes successfully!` : "Class deleted successfully!",
           "info",
@@ -11612,7 +11640,7 @@ const updateItemInState = useCallback(
         isMutatingRef.current = false;
       }
     },
-    [projectId, user, showNotification, classHierarchy, refreshClassHierarchy],
+    [projectId, user, showNotification, classHierarchy, refreshClassHierarchy, markAsUnsaved],
   );
 
   const handleDeleteItem = useCallback(
@@ -11756,6 +11784,7 @@ const updateItemInState = useCallback(
               );
             }
             console.log(`[MUTATION:delete] ✓ ${activeTab}:${item.id}`);
+            markAsUnsaved();
             showNotification(`"${item.label}" deleted successfully!`, "info");
           } catch (error) {
             console.error("Failed to delete item:", error);
@@ -11766,7 +11795,7 @@ const updateItemInState = useCallback(
         },
       });
     },
-    [selectedItem, entitiesTab, projectId, refreshProperties, handleRefreshAnnotationProperties],
+    [selectedItem, entitiesTab, projectId, refreshProperties, handleRefreshAnnotationProperties, markAsUnsaved],
   );
 
   const handleChangeEntityIri = useCallback(
@@ -12326,6 +12355,8 @@ const updateItemInState = useCallback(
       keepEditorMounted: boolean = false,
     ) => {
       if (!projectId) return;
+      const requestToken = ++codeViewFetchTokenRef.current;
+      const isStale = () => codeViewFetchTokenRef.current !== requestToken;
       const setBusy = keepEditorMounted && codeViewContent ? setCodeViewRefreshing : setCodeViewLoading;
 
       // Clear any previous syntax error / lint warnings when loading new content
@@ -12368,6 +12399,7 @@ const updateItemInState = useCallback(
         if (!isDraftScopeActive()) {
           try {
             const probe = await requestCodeViewPage(projectId, format, 0);
+            if (isStale()) return;
             if (probe?.success && Number(probe.totalBytes) > getCodeViewEditableCeiling(format)) {
               setCodeViewContent(probe.content ?? "");
               setCodeViewPage(toCodeViewPage(probe, 0));
@@ -12397,6 +12429,7 @@ const updateItemInState = useCallback(
           forceRefresh: forceRefresh ? "true" : "false",
           ...(isDraftScopeActive() ? { draft: "true", userId: codeViewContentEffectiveUserId } : {}),
         });
+        if (isStale()) return;
         if (response.success) {
           setCodeViewSourceVersion(response.sourceVersion != null ? Number(response.sourceVersion) : null);
           // Guard the editor against huge documents (see codeViewTruncation).
@@ -12443,12 +12476,14 @@ const updateItemInState = useCallback(
         }
       } catch (error: any) {
         console.error("Failed to fetch code view content:", error);
-        const msg = error?.message || error?.toString() || "Unknown error";
-        setCodeViewTruncation(null);
-        setCodeViewContent(
-          `// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`,
-        );
-        setCodeViewFormat(format);
+        if (!isStale()) {
+          const msg = error?.message || error?.toString() || "Unknown error";
+          setCodeViewTruncation(null);
+          setCodeViewContent(
+            `// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`,
+          );
+          setCodeViewFormat(format);
+        }
       } finally {
         setBusy(false);
       }
@@ -12463,9 +12498,77 @@ const updateItemInState = useCallback(
   }, []);
 
 
+  const [entityDetailsRefreshKey, setEntityDetailsRefreshKey] = useState(0);
+
+  const refreshSelectedEntity = async () => {
+    const current = selectedItem;
+    if (!projectId || !current?.id) return;
+    const kind = entityKindOf(current as any, entitiesTab);
+    try {
+      const response = await apiClient.get<any>(withDraftScope(entityDetailsUrl(kind, projectId, current.id)));
+      const details = unwrapDetails(response);
+      if (!details || details.success === false) return;
+      const merged = mergeFreshDetails(kind, current as any, details) as SelectableItem;
+      setSelectedItem((prev) => (prev?.id === current.id ? merged : prev));
+      updateItemInState(merged, false);
+    } catch (error: any) {
+      console.warn("[Dashboard] Could not refresh the selected entity after a bulk write:", error?.message);
+    }
+  };
+
+  const refreshAfterBulkWrite = (op: string) => {
+    lastClassHierarchyRefreshAt.current = 0;
+    refreshClassHierarchy();
+    refreshProperties();
+    handleRefreshAnnotationProperties();
+    handleRefreshIndividuals();
+    handleRefreshDatatypes();
+    silentRefreshMetadata();
+    try {
+      window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: [op] } }));
+    } catch {
+      /* non-fatal */
+    }
+    void refreshSelectedEntity();
+    if (!isEditingFormField(document.activeElement)) {
+      setEntityDetailsRefreshKey((key) => key + 1);
+    }
+  };
+  const handleDiscardDraft = () => {
+    if (!projectId) return;
+    setConfirmDialog({
+      isOpen: true,
+      title: "Discard draft",
+      message: discardDraftMessage(draftCount),
+      confirmLabel: "Discard draft",
+      onConfirm: () => {
+        void runDraftDiscard({
+          projectId,
+          userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+          discard: (id, actor) => draftTrackingService.discardDrafts(id, actor),
+          onDiscarded: () => {
+            setDraftCount(0);
+            setHasUnsavedChanges(false);
+            codeViewDirtyRef.current = false;
+            fetchData(projectId, false);
+            void fetchCodeViewContent(codeViewFormat, false, true);
+            notificationService.success("Draft discarded", "Your draft now matches the current Public version.");
+          },
+          onFailed: (message) => notificationService.error("Discard failed", message),
+        });
+      },
+    });
+  };
+
+  const refreshAfterBulkWriteRef = useRef(refreshAfterBulkWrite);
+  refreshAfterBulkWriteRef.current = refreshAfterBulkWrite;
+
   const recovery = useProjectRecovery(projectId || undefined, user?.token, {
     onRecoveryChanged: () => setRecoveryVersion((v) => v + 1),
-    onProjectRestored: () => void fetchCodeViewContent(codeViewFormat, false, true),
+    onProjectRestored: () => {
+      void fetchCodeViewContent(codeViewFormat, false, true);
+      refreshAfterBulkWriteRef.current("projectRestored");
+    },
   });
 
   // Navigate to another window of a large document in paged Code View mode.
@@ -12510,6 +12613,14 @@ const updateItemInState = useCallback(
     fetchCodeViewContent,
     loadCodeViewPage,
   });
+
+  const handleCodeAssistantApplied = useCallback(
+    (...args: Parameters<typeof handleAskAiApplySuccess>) => {
+      handleAskAiApplySuccess(...args);
+      refreshAfterBulkWriteRef.current("codeAssistantApply");
+    },
+    [handleAskAiApplySuccess],
+  );
 
   const { isDownloading: isDownloadingCodeView, download: downloadFullCodeViewFile } = useCodeViewDownload(projectId, codeViewFormat);
 
@@ -12735,7 +12846,7 @@ const updateItemInState = useCallback(
           const errMsg = syncError?.message || "Failed to reach the save endpoint";
           console.error("[Dashboard] code-view-save request failed:", errMsg);
           setCodeViewSaveConflict(false);
-          setCodeViewSaveError(errMsg);
+          setCodeViewSaveError(toFriendlyErrorMessage(errMsg));
           return;
         }
 
@@ -12750,24 +12861,10 @@ const updateItemInState = useCallback(
             setCodeViewSourceVersion(Number(response.sourceVersion));
           }
           // The ontology file was rewritten — reload all entity views to reflect the new state
-          lastClassHierarchyRefreshAt.current = 0;
-          refreshClassHierarchy();
-          refreshProperties();
-          handleRefreshAnnotationProperties();
-          handleRefreshIndividuals();
-          handleRefreshDatatypes();
-          silentRefreshMetadata();
-          // Let other open views (Graph View plugin, etc.) know the ontology changed so they
-          // can drop their caches and refetch too — mirrors ontologyMutationService's broadcast
-          // for normal entity-editor mutations, which this save path bypasses (it POSTs directly
-          // to code-view-save, not through applyMutations()).
-          try {
-            window.dispatchEvent(new CustomEvent("ontology:mutated", {
-              detail: { projectId, ops: ["codeViewSave"] },
-            }));
-          } catch {
-            /* non-fatal */
-          }
+          refreshAfterBulkWriteRef.current("codeViewSave");
+          window.dispatchEvent(
+            new CustomEvent("ontologyChangesSaved", { detail: { projectId, draft: isDraftScopeActive() } }),
+          );
           void (async () => {
             try {
               const followUpParams = new URLSearchParams({ userId: codeViewEffectiveUserId });
@@ -12817,7 +12914,7 @@ const updateItemInState = useCallback(
       } catch (error: any) {
         console.error("[Dashboard] Error saving code content:", error);
         setCodeViewSaveConflict(false);
-        setCodeViewSaveError(error.message || "Failed to save content to backend");
+        setCodeViewSaveError(toFriendlyErrorMessage(error.message || "Failed to save content to backend"));
       } finally {
         setSavingCodeView(false);
       }
@@ -15322,6 +15419,7 @@ const updateItemInState = useCallback(
                         onUnsavedChangesChange={setCodeViewHasUnsavedEdits}
                         highlightedLineNumbers={highlightedLineNumbers}
                         onSelectionChange={setCodeViewSelection}
+                        searchScopeNote={searchScopeNoteFor(codeViewPage, codeViewTruncation)}
                       />
                     )}
                   </div>
@@ -15358,11 +15456,14 @@ const updateItemInState = useCallback(
                   documentPath={activeFileName || undefined}
                   hasUnsavedCodeViewChanges={codeViewHasUnsavedEdits}
                   onClose={() => setShowCodeAssistant(false)}
-                  onApplySuccess={handleAskAiApplySuccess}
+                  onApplySuccess={handleCodeAssistantApplied}
                   onShowInCodeView={handleShowInCodeView}
                   recoveryVersion={recoveryVersion}
                   onRecoveryChanged={() => void recovery.refreshRecovery()}
-                  onProjectRestored={() => void fetchCodeViewContent(codeViewFormat, false, true)}
+                  onProjectRestored={() => {
+                    void fetchCodeViewContent(codeViewFormat, false, true);
+                    refreshAfterBulkWriteRef.current("projectRestored");
+                  }}
                   editorSelection={
                     codeViewSelection
                       ? { ...codeViewSelection, format: codeViewFormat, pageStartLine: codeViewPage?.startLine ?? 0 }
@@ -18337,6 +18438,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           hasUnsavedChanges={hasUnsavedChanges}
           isSaving={isSaving}
           draftCount={draftCount}
+          saveDisabledInDraft={isSaveDisabledInDraft(syncMode, isDesktop())}
           conflictStatus={publishConflictStatus}
           onOpenDialog={() => setShowOpenDialog(true)}
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
@@ -18560,6 +18662,17 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   <span className="hidden sm:inline">Pull</span>
                 </button>
               )}
+              {syncMode === 'private' && projectId && (
+                <button
+                  onClick={handleDiscardDraft}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
+                  style={{ borderColor: "var(--color-border)" }}
+                  title="Discard all your draft changes and start again from the current public version"
+                >
+                  <Trash2 size={12} />
+                  <span className="hidden sm:inline">Discard</span>
+                </button>
+              )}
               {/* PR button — opens DraftPRPanel for everyone (reviewers and draft editors) */}
               {showPRButton && (
                 <button
@@ -18729,6 +18842,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
               <section className="flex-1 min-w-0 min-h-[90dvh] md:min-h-[600px] overflow-hidden p-2 bg-slate-200 flex flex-col">
                 <div className="flex-1 min-w-0 min-h-0 overflow-y-auto flex flex-col">
                   <DetailsPanel
+                    key={entityDetailsRefreshKey}
                     selectedItem={selectedItem}
                     entitiesTab={entitiesTab}
                     activeTheme={activeTheme}
@@ -19458,6 +19572,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onPRApproved={() => {
             refreshOpenPRCount();
             if (projectId) fetchData(projectId, false, undefined, true);
+            window.dispatchEvent(new CustomEvent("ontologyChangesSaved", { detail: { projectId } }));
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
           }}
         />

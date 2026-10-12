@@ -38,6 +38,8 @@ export function useCodeAssistantApply(options: ApplyOptions) {
     if (applyBusyRef.current || optionsRef.current.blockedReason()) return;
     const entry = chat.findReviewEntry(entryId);
     if (!entry || (entry.decisions[serverGroupId] ?? "pending") !== "pending") return;
+    const group = entry.groups.find((g) => g.serverGroupId === serverGroupId);
+    if (!group || group.validation.checks.some((c) => c.status === "pending")) return;
     setApplyBusyNow(true);
     try {
       await applyGroupOnce(entryId, sessionId, serverGroupId);

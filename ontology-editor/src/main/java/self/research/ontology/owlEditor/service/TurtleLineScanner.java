@@ -51,6 +51,12 @@ public final class TurtleLineScanner {
         return copy;
     }
 
+    public TurtleLineScanner fork(Map<String, String> extraPrefixes) {
+        TurtleLineScanner copy = fork();
+        copy.prefixes.putAll(extraPrefixes);
+        return copy;
+    }
+
     public Map<String, String> prefixes() {
         return prefixes;
     }

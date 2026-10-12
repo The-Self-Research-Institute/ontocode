@@ -17,6 +17,14 @@ public class CodeViewRangeMatcher {
 
     public record ExpectedRange(long startLine, int lineCount, String originalText) {}
 
+    public record MatchResult(boolean matches, String detail) {
+        static final MatchResult OK = new MatchResult(true, null);
+
+        static MatchResult mismatch(String detail) {
+            return new MatchResult(false, detail);
+        }
+    }
+
     private final StorageManager storageManager;
 
     public CodeViewRangeMatcher(StorageManager storageManager) {
@@ -24,12 +32,22 @@ public class CodeViewRangeMatcher {
     }
 
     public boolean allMatch(String projectId, String format, List<ExpectedRange> ranges) {
+        return matchWithDetail(projectId, format, ranges).matches();
+    }
+
+    public boolean allMatch(String projectId, String format, List<ExpectedRange> ranges,
+                            StorageManager.ContentScope scope) {
+        return matchWithDetail(projectId, format, ranges, scope).matches();
+    }
+
+    public MatchResult matchWithDetail(String projectId, String format, List<ExpectedRange> ranges) {
         List<ExpectedRange> sorted = sortAndFilter(ranges);
         if (sorted.isEmpty()) {
-            return true;
+            return MatchResult.OK;
         }
-        if (overlaps(sorted)) {
-            return false;
+        MatchResult overlap = checkOverlap(sorted);
+        if (overlap != null) {
+            return overlap;
         }
         try {
             Path file = storageManager.ensureCodeViewFile(projectId, format);
@@ -38,21 +56,22 @@ public class CodeViewRangeMatcher {
             }
         } catch (Exception e) {
             log.warn("[Assistant] Live-content check failed for {} {}: {}", projectId, format, e.getMessage());
-            return false;
+            return MatchResult.mismatch("Could not read the document to check it (" + e.getMessage() + ").");
         }
     }
 
-    public boolean allMatch(String projectId, String format, List<ExpectedRange> ranges,
-                            StorageManager.ContentScope scope) {
+    public MatchResult matchWithDetail(String projectId, String format, List<ExpectedRange> ranges,
+                                       StorageManager.ContentScope scope) {
         if (!scope.draft()) {
-            return allMatch(projectId, format, ranges);
+            return matchWithDetail(projectId, format, ranges);
         }
         List<ExpectedRange> sorted = sortAndFilter(ranges);
         if (sorted.isEmpty()) {
-            return true;
+            return MatchResult.OK;
         }
-        if (overlaps(sorted)) {
-            return false;
+        MatchResult overlap = checkOverlap(sorted);
+        if (overlap != null) {
+            return overlap;
         }
         try {
             Path file = storageManager.resolveCodeViewFile(projectId, format, scope);
@@ -61,7 +80,7 @@ public class CodeViewRangeMatcher {
             }
         } catch (Exception e) {
             log.warn("[Assistant] Live-content check failed for {} {}: {}", projectId, format, e.getMessage());
-            return false;
+            return MatchResult.mismatch("Could not read the document to check it (" + e.getMessage() + ").");
         }
     }
 
@@ -72,17 +91,17 @@ public class CodeViewRangeMatcher {
                 .toList();
     }
 
-    private static boolean overlaps(List<ExpectedRange> sorted) {
+    private static MatchResult checkOverlap(List<ExpectedRange> sorted) {
         for (int i = 1; i < sorted.size(); i++) {
             ExpectedRange previous = sorted.get(i - 1);
             if (previous.startLine() + previous.lineCount() > sorted.get(i).startLine()) {
-                return true;
+                return MatchResult.mismatch("Two of this edit's expected line ranges overlap in the document.");
             }
         }
-        return false;
+        return null;
     }
 
-    private static boolean matchSequentially(BufferedReader reader, List<ExpectedRange> sorted) throws IOException {
+    private static MatchResult matchSequentially(BufferedReader reader, List<ExpectedRange> sorted) throws IOException {
         long lineNo = 0;
         String line = reader.readLine();
         for (ExpectedRange range : sorted) {
@@ -93,7 +112,8 @@ public class CodeViewRangeMatcher {
             StringBuilder live = new StringBuilder();
             for (int k = 0; k < range.lineCount(); k++) {
                 if (line == null) {
-                    return false;
+                    return MatchResult.mismatch("The document is shorter than expected at line "
+                            + (range.startLine() + 1) + " — it may have changed since this edit was proposed.");
                 }
                 if (k > 0) {
                     live.append('\n');
@@ -103,9 +123,10 @@ public class CodeViewRangeMatcher {
                 lineNo++;
             }
             if (!live.toString().equals(range.originalText())) {
-                return false;
+                return MatchResult.mismatch("The document changed at line " + (range.startLine() + 1)
+                        + " since this edit was proposed.");
             }
         }
-        return true;
+        return MatchResult.OK;
     }
 }

@@ -392,7 +392,9 @@ describe("CodeAssistantPanel failed checks", () => {
     renderPanel();
     await send("Make Thumper a Hamster");
 
-    expect(container.textContent).toContain("Referenced names exist in the ontology: ex:Hamster is not defined");
+    expect(container.textContent).toContain(
+      "This refers to a name that doesn't exist in the ontology: ex:Hamster is not defined",
+    );
     expect(container.textContent).toContain("turtle · insert at line 10");
   });
 });

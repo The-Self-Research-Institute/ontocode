@@ -43,6 +43,20 @@ describe("toFriendlyErrorMessage", () => {
 
     expect(toFriendlyErrorMessage(raw)).toBe("Something went wrong on the server. Try again in a moment.");
   });
+
+  it("keeps a short, specific message even if it mentions a technical-sounding word", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const raw = "Couldn't save this — the request may be too large. Try a smaller batch of changes.";
+
+    expect(toFriendlyErrorMessage(raw)).toBe(raw);
+  });
+
+  it("still falls back to a generic message for a short message that is an actual stack trace line", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const raw = "at self.research.ontology.owlEditor.service.Foo.bar(Foo.java:42)";
+
+    expect(toFriendlyErrorMessage(raw)).toBe("Something went wrong on the server. Try again in a moment.");
+  });
 });
 
 describe("buildConversationHistory", () => {
@@ -220,7 +234,7 @@ describe("buildSystemPrompt", () => {
 
   it("stays short", () => {
     for (const action of ["ask", "local-edit", "project-findings"] as const) {
-      expect(buildSystemPrompt(action, "a.ttl").length).toBeLessThan(1200);
+      expect(buildSystemPrompt(action, "a.ttl").length).toBeLessThan(1350);
     }
   });
 });

@@ -13,6 +13,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +56,25 @@ class ChangeOriginRecordingTest {
         assertEquals("claude-sonnet-5", change.getAi().getModel());
         assertEquals("Add a PizzaOrder class with a label", change.getAi().getSummary());
         assertNotNull(change.getSubChanges().get(0).getId());
+    }
+
+    @Test
+    void syncedTimestampsAreStoredAsUtcRegardlessOfServerTimezone() {
+        HistoryChangeRepository repository = mock(HistoryChangeRepository.class);
+        when(repository.existsByProjectIdAndEditId(anyString(), anyString())).thenReturn(false);
+        HistorySyncService sync = new HistorySyncService(repository, mock(MongoTemplate.class), mock(OntologyHistoryService.class));
+        Instant instant = Instant.parse("2026-10-08T15:20:32Z");
+        Map<String, Object> data = new HashMap<>();
+        data.put("userId", "u@x.com");
+        data.put("username", "u@x.com");
+        data.put("operationType", "createClass");
+        data.put("timestamp", instant.toEpochMilli());
+
+        sync.syncChange("p", "edit-1", data);
+
+        ArgumentCaptor<HistoryChange> saved = ArgumentCaptor.forClass(HistoryChange.class);
+        verify(repository).save(saved.capture());
+        assertEquals("2026-10-08T15:20:32Z", saved.getValue().getTimestampIso());
     }
 
     @Test

@@ -171,7 +171,7 @@ public class DraftPublishService {
                     row.put("changedBy", c.getUsername());
                     row.put("changedByUserId", c.getUserId());
                     row.put("description", c.getDescription());
-                    row.put("timestamp", c.getTimestamp() != null ? c.getTimestamp().toString() : null);
+                    row.put("timestamp", c.getTimestampIso());
                     return row;
                 })
                 .collect(Collectors.toList());

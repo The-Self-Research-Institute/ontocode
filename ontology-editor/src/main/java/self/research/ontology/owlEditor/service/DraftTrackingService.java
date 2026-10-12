@@ -278,37 +278,56 @@ public class DraftTrackingService {
             }
             try {
                 draftPublishMergeService.publishWithThreeWayMerge(projectId, userId, analysis, resolutions);
+            } catch (Exception e) {
+                log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
+                return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+            }
+            draftChangeHistory.markPublished(projectId, userId);
+
+            try {
                 mainGraphRevisionService.incrementRevision(projectId);
                 draftPublishService.clearBaseline(projectId, userId);
                 if (springCacheEviction != null) {
                     springCacheEviction.evictForProject(projectId);
                 }
                 invalidateHierarchyCaches(projectId);
-                finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
+                int recordingFailures = finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
                 return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                        "Published draft with merge", false, analysis);
+                        "Published draft with merge" + recordingFailureSuffix(recordingFailures), false, analysis);
             } catch (Exception e) {
-                log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
-                return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+                log.error("[DRAFT] Merge publish succeeded but follow-up bookkeeping failed for project {} user {} — "
+                        + "data is already live, do not retry", projectId, userId, e);
+                return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                        "Published, but some follow-up updates failed (" + e.getMessage()
+                                + "). Refresh to see the latest state.", false, analysis);
             }
         }
 
         return applyDraftsViaMoveGraph(projectId, userId, force, false, unappliedDrafts);
     }
 
-    private void finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
+    private int finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
         if (unappliedDrafts.isEmpty()) {
-            return;
+            return 0;
         }
         unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
                 projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
-        draftChangeHistory.record(projectId, unappliedDrafts);
+        int recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
         unappliedDrafts.forEach(draft -> draft.setApplied(true));
         draftRepository.saveAll(unappliedDrafts);
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);
             metadataService.writeMeta(projectId, meta);
         }, metadataExecutor);
+        return recordingFailures;
+    }
+
+    private static String recordingFailureSuffix(int recordingFailures) {
+        if (recordingFailures == 0) {
+            return "";
+        }
+        return " (" + recordingFailures + " change" + (recordingFailures == 1 ? "" : "s")
+                + " could not be recorded in history — refresh to see the latest state)";
     }
 
     /**
@@ -329,10 +348,17 @@ public class DraftTrackingService {
             return new ApplyDraftsResult(false, 0, message, true, null);
         }
 
+        log.info("[DRAFT] Publishing via MOVE GRAPH for project {} user {} (revision {} → {})",
+                projectId, userId, mainRevisionAtCopy, currentRevision);
         try {
-            log.info("[DRAFT] Publishing via MOVE GRAPH for project {} user {} (revision {} → {})",
-                    projectId, userId, mainRevisionAtCopy, currentRevision);
             datasetService.moveDraftToMain(projectId, userId);
+        } catch (Exception e) {
+            log.error("[DRAFT] MOVE GRAPH publish failed for project {} user {}", projectId, userId, e);
+            return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+        }
+        draftChangeHistory.markPublished(projectId, userId);
+
+        try {
             mainGraphRevisionService.incrementRevision(projectId);
             draftPublishService.clearBaseline(projectId, userId);
             if (springCacheEviction != null) {
@@ -340,10 +366,11 @@ public class DraftTrackingService {
             }
             invalidateHierarchyCaches(projectId);
 
+            int recordingFailures = 0;
             if (!unappliedDrafts.isEmpty()) {
                 unappliedDrafts.forEach(draft -> collaborativeEditService.broadcastMutation(
                         projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
-                draftChangeHistory.record(projectId, unappliedDrafts);
+                recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
                 unappliedDrafts.forEach(draft -> draft.setApplied(true));
                 draftRepository.saveAll(unappliedDrafts);
             }
@@ -356,10 +383,13 @@ public class DraftTrackingService {
             log.info("[DRAFT] MOVE GRAPH publish complete for project {} user {} ({} Mongo ops)",
                     projectId, userId, unappliedDrafts.size());
             return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                    "Published draft successfully", false, null);
+                    "Published draft successfully" + recordingFailureSuffix(recordingFailures), false, null);
         } catch (Exception e) {
-            log.error("[DRAFT] MOVE GRAPH publish failed for project {} user {}", projectId, userId, e);
-            return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+            log.error("[DRAFT] Publish succeeded but follow-up bookkeeping failed for project {} user {} — "
+                    + "data is already live, do not retry", projectId, userId, e);
+            return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                    "Published, but some follow-up updates failed (" + e.getMessage()
+                            + "). Refresh to see the latest state.", false, null);
         }
     }
 
@@ -367,6 +397,27 @@ public class DraftTrackingService {
      * Discard all unapplied drafts for a project
      */
     public DiscardDraftsResult discardDrafts(String projectId, String userId) {
+        ReentrantLock lock = getProjectLock(projectId);
+        boolean lockAcquired = false;
+        try {
+            lockAcquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!lockAcquired) {
+                log.warn("[DRAFT] Could not acquire lock for project {} to discard drafts - another operation in progress", projectId);
+                return new DiscardDraftsResult(false, 0, "Another save operation is in progress. Please try again.");
+            }
+            return discardDraftsInternal(projectId, userId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("[DRAFT] Interrupted while waiting for lock on project {}", projectId);
+            return new DiscardDraftsResult(false, 0, "Operation interrupted");
+        } finally {
+            if (lockAcquired) {
+                lock.unlock();
+            }
+        }
+    }
+
+    private DiscardDraftsResult discardDraftsInternal(String projectId, String userId) {
         log.info("[DRAFT] Discarding drafts for project {} user {}", projectId, userId);
 
         List<DraftChange> unappliedDrafts = userId != null && !userId.isBlank()
@@ -404,6 +455,26 @@ public class DraftTrackingService {
      * Used by pull-from-public resolution when the user chooses "take_public" for specific entities.
      */
     public void discardDraftsByIris(String projectId, String userId, Set<String> iris) {
+        ReentrantLock lock = getProjectLock(projectId);
+        boolean lockAcquired = false;
+        try {
+            lockAcquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!lockAcquired) {
+                log.warn("[DRAFT] Could not acquire lock for project {} to discard drafts by IRI - another operation in progress", projectId);
+                return;
+            }
+            discardDraftsByIrisInternal(projectId, userId, iris);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("[DRAFT] Interrupted while waiting for lock on project {}", projectId);
+        } finally {
+            if (lockAcquired) {
+                lock.unlock();
+            }
+        }
+    }
+
+    private void discardDraftsByIrisInternal(String projectId, String userId, Set<String> iris) {
         List<DraftChange> candidates = userId != null && !userId.isBlank()
                 ? getUnappliedDraftsForUser(projectId, userId)
                 : getUnappliedDrafts(projectId);
@@ -424,6 +495,17 @@ public class DraftTrackingService {
     public void clearAppliedDrafts(String projectId) {
         log.info("[DRAFT] Clearing applied drafts for project {}", projectId);
         draftRepository.deleteByProjectIdAndAppliedTrue(projectId);
+    }
+
+    private static final int ORPHANED_DRAFT_RETENTION_DAYS = 30;
+
+    @org.springframework.scheduling.annotation.Scheduled(cron = "0 30 3 * * *")
+    public void cleanupOrphanedUnappliedDrafts() {
+        LocalDateTime cutoff = LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(ORPHANED_DRAFT_RETENTION_DAYS);
+        long deleted = draftRepository.deleteByAppliedFalseAndTimestampBefore(cutoff);
+        if (deleted > 0) {
+            log.info("[DRAFT] Cleaned up {} unapplied draft record(s) older than {} days", deleted, ORPHANED_DRAFT_RETENTION_DAYS);
+        }
     }
     
     /**

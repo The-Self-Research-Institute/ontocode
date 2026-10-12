@@ -56,7 +56,8 @@ class AssistantSwrlToolServiceTest {
         ReflectionTestUtils.setField(toolService, "swrlServiceUrl", "http://127.0.0.1:18084");
         when(sessionService.tryConsumeTokenBudget(anyString(), anyInt())).thenReturn(true);
         when(sessionService.isRevisionStale(any())).thenReturn(false);
-        when(pluginInstallChecker.isInstalled(anyString(), any())).thenReturn(true);
+        when(pluginInstallChecker.checkInstalled(anyString(), any()))
+                .thenReturn(AssistantPluginInstallChecker.InstallStatus.INSTALLED);
     }
 
     @SuppressWarnings("unchecked")
@@ -104,12 +105,40 @@ class AssistantSwrlToolServiceTest {
     @Test
     void returnsPluginNotInstalledBeforeSpendingARetrievalAttempt() {
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
-        when(pluginInstallChecker.isInstalled(eq("swrl-editor-plugin"), any())).thenReturn(false);
+        when(pluginInstallChecker.checkInstalled(eq("swrl-editor-plugin"), any()))
+                .thenReturn(AssistantPluginInstallChecker.InstallStatus.NOT_INSTALLED);
 
         SwrlToolResult result = toolService.runRule("s1", "u@x.com", "Bearer t");
 
         assertFalse(result.isOk());
         assertEquals("PLUGIN_NOT_INSTALLED", result.getErrorCode());
+        verify(sessionService, never()).tryConsumeRetrievalAttempt(anyString());
+    }
+
+    @Test
+    void returnsServiceCheckFailedWhenThePluginServiceCannotBeReachedRatherThanNotInstalled() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(pluginInstallChecker.checkInstalled(eq("swrl-editor-plugin"), any()))
+                .thenReturn(AssistantPluginInstallChecker.InstallStatus.CHECK_FAILED);
+
+        SwrlToolResult result = toolService.runRule("s1", "u@x.com", "Bearer t");
+
+        assertFalse(result.isOk());
+        assertEquals("SWRL_SERVICE_CHECK_FAILED", result.getErrorCode());
+        verify(sessionService, never()).tryConsumeRetrievalAttempt(anyString());
+    }
+
+    @Test
+    void asksTheUserToSignInAgainWhenThePluginServiceRejectsTheirLogin() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(pluginInstallChecker.checkInstalled(eq("swrl-editor-plugin"), any()))
+                .thenReturn(AssistantPluginInstallChecker.InstallStatus.NOT_AUTHORIZED);
+
+        SwrlToolResult result = toolService.runRule("s1", "u@x.com", "Bearer t");
+
+        assertFalse(result.isOk());
+        assertEquals("SWRL_PLUGIN_CHECK_UNAUTHORIZED", result.getErrorCode());
+        assertTrue(result.getMessage().contains("Sign in again"));
         verify(sessionService, never()).tryConsumeRetrievalAttempt(anyString());
     }
 
@@ -143,6 +172,119 @@ class AssistantSwrlToolServiceTest {
         verify(restTemplate).exchange(urlCaptor.capture(), eq(HttpMethod.POST), entityCaptor.capture(), eq(Map.class));
         assertEquals("http://127.0.0.1:18084/api/swrl/proj-1/execute", urlCaptor.getValue());
         assertEquals("Bearer abc123", entityCaptor.getValue().getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
+    }
+
+    private static Map<String, Object> assertion(int i) {
+        Map<String, Object> axiom = new HashMap<>();
+        axiom.put("axiomType", "ClassAssertion");
+        axiom.put("description", "ClassAssertion(<http://example.org/pizza#VegetarianPizza> <http://example.org/pizza#Pizza" + i + ">)");
+        axiom.put("readable", "ClassAssertion(VegetarianPizza Pizza" + i + ")");
+        axiom.put("subjectIri", "http://example.org/pizza#Pizza" + i);
+        axiom.put("predicateIri", "http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
+        axiom.put("objectIri", "http://example.org/pizza#VegetarianPizza");
+        return axiom;
+    }
+
+    private static Map<String, Object> generalInference(int i) {
+        Map<String, Object> axiom = new HashMap<>();
+        axiom.put("axiomType", i % 2 == 0 ? "SubClassOf" : "EquivalentClasses");
+        axiom.put("description", "SubClassOf(<http://example.org/pizza#Topping" + i + "> <http://example.org/pizza#Food>)");
+        axiom.put("readable", "SubClassOf(Topping" + i + " Food)");
+        return axiom;
+    }
+
+    private static Map<String, Object> swrlResult(int assertions, int generalInferences) {
+        java.util.List<Map<String, Object>> axioms = new java.util.ArrayList<>();
+        for (int i = 0; i < assertions; i++) {
+            axioms.add(assertion(i));
+        }
+        for (int i = 0; i < generalInferences; i++) {
+            axioms.add(generalInference(i));
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", true);
+        body.put("inferredAxiomsCount", axioms.size());
+        body.put("inferredAxioms", axioms);
+        return body;
+    }
+
+    private SwrlToolResult runWith(Map<String, Object> swrlBody) {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        mockExchange(new ResponseEntity<>(swrlBody, HttpStatus.OK));
+        return toolService.runRule("s1", "u@x.com", "Bearer t");
+    }
+
+    @Test
+    void generalReasonerConclusionsAreSummarisedNotListedBecauseTheyCannotBeAddedAsFacts() {
+        SwrlToolResult result = runWith(swrlResult(0, 227));
+
+        assertTrue(result.isOk());
+        assertEquals(java.util.List.of(), result.getData().get("inferredAxioms"));
+        assertEquals(227, result.getData().get("inferredAxiomsCount"));
+        assertEquals(227, result.getData().get("otherInferredCount"));
+        assertEquals(Map.of("EquivalentClasses", 113, "SubClassOf", 114), result.getData().get("otherInferredByType"));
+        assertTrue(((String) result.getData().get("note")).contains("SWRL tab"));
+        org.mockito.ArgumentCaptor<Integer> charged = org.mockito.ArgumentCaptor.forClass(Integer.class);
+        verify(sessionService).tryConsumeTokenBudget(eq("s1"), charged.capture());
+        assertTrue(charged.getValue() < 400, "charged " + charged.getValue());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void addableAssertionsAreKeptInFullAndTheNoiseAroundThemIsDropped() {
+        SwrlToolResult result = runWith(swrlResult(3, 50));
+
+        java.util.List<Map<String, Object>> kept = (java.util.List<Map<String, Object>>) result.getData().get("inferredAxioms");
+        assertEquals(3, kept.size());
+        assertEquals("http://example.org/pizza#Pizza0", kept.get(0).get("subjectIri"));
+        assertEquals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type", kept.get(0).get("predicateIri"));
+        assertEquals("http://example.org/pizza#VegetarianPizza", kept.get(0).get("objectIri"));
+        assertFalse(kept.get(0).containsKey("description"));
+        assertEquals(50, result.getData().get("otherInferredCount"));
+        assertFalse(result.getData().containsKey("truncated"));
+    }
+
+    @Test
+    void anEnormousListOfAddableAssertionsIsStillCappedToFitTheBudget() {
+        SwrlToolResult result = runWith(swrlResult(2000, 0));
+
+        assertEquals(true, result.getData().get("truncated"));
+        int shown = (Integer) result.getData().get("inferredAxiomsShown");
+        assertTrue(shown > 0 && shown < 2000);
+        assertEquals(shown, ((java.util.List<?>) result.getData().get("inferredAxioms")).size());
+        org.mockito.ArgumentCaptor<Integer> charged = org.mockito.ArgumentCaptor.forClass(Integer.class);
+        verify(sessionService).tryConsumeTokenBudget(eq("s1"), charged.capture());
+        assertTrue(charged.getValue() <= 6_000, "charged " + charged.getValue());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theCapFollowsWhatIsLeftOfTheSessionBudgetNotAFixedFigure() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(
+                AssistantSessionDocument.builder().id("s1").projectId("proj-1").pinnedRevision(42L)
+                        .tokenBudgetRemaining(2500).status(AssistantSessionStatus.ACTIVE).build()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        mockExchange(new ResponseEntity<>(swrlResult(500, 0), HttpStatus.OK));
+
+        SwrlToolResult result = toolService.runRule("s1", "u@x.com", "Bearer t");
+
+        assertEquals(true, result.getData().get("truncated"));
+        org.mockito.ArgumentCaptor<Integer> charged = org.mockito.ArgumentCaptor.forClass(Integer.class);
+        verify(sessionService).tryConsumeTokenBudget(eq("s1"), charged.capture());
+        assertTrue(charged.getValue() <= 2500, "charged " + charged.getValue() + " of 2500 left");
+    }
+
+    @Test
+    void aResultWithoutAnAxiomListIsPassedThroughUntouched() {
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", false);
+        body.put("errorMessage", "No rules defined");
+
+        SwrlToolResult result = runWith(body);
+
+        assertEquals("No rules defined", result.getData().get("errorMessage"));
+        assertFalse(result.getData().containsKey("note"));
     }
 
     @Test
@@ -214,6 +356,7 @@ class AssistantSwrlToolServiceTest {
                 .id("s1")
                 .projectId("proj-1")
                 .pinnedRevision(42L)
+                .tokenBudgetRemaining(8000)
                 .status(AssistantSessionStatus.ACTIVE)
                 .build();
     }

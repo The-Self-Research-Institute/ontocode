@@ -48,6 +48,8 @@ public class AssistantEditGroupDocument {
 
     private Instant appliedAt;
 
+    private ConsistencyCheckRecord consistencyCheck;
+
     @Data
     @Builder
     @NoArgsConstructor
@@ -58,6 +60,21 @@ public class AssistantEditGroupDocument {
         private String originalText;
         private String newText;
         private int lineDelta;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ConsistencyCheckRecord {
+        private String jobId;
+        private ConsistencyCheckState state;
+        private String detail;
+        private Instant resolvedAt;
+    }
+
+    public enum ConsistencyCheckState {
+        PENDING, PASSED, FAILED, ERROR, TIMED_OUT
     }
 
     public enum AssistantEditGroupStatus {

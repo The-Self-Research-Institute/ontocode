@@ -5,6 +5,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -50,7 +51,7 @@ public class HistoryChange {
     private String description;
     
     // Collaboration features
-    private String status = "PENDING"; // PENDING, APPROVED, REJECTED
+    private String status = "SAVED";
     private String approvedBy;
     private LocalDateTime approvedAt;
     private String rejectedBy;
@@ -90,6 +91,7 @@ public class HistoryChange {
         private String oldValue;
         private String newValue;
         private String annotationProperty;
+        private String category;
         private boolean addition;
 
         // Rollback tracking (granular rollback of this sub-change alone)
@@ -163,6 +165,14 @@ public class HistoryChange {
             this.annotationProperty = annotationProperty;
         }
 
+        public String getCategory() {
+            return category;
+        }
+
+        public void setCategory(String category) {
+            this.category = category;
+        }
+
         public boolean isAddition() {
             return addition;
         }
@@ -179,7 +189,7 @@ public class HistoryChange {
         private LocalDateTime timestamp;
         
         public CommentEntry() {
-            this.timestamp = LocalDateTime.now();
+            this.timestamp = LocalDateTime.now(ZoneOffset.UTC);
         }
         
         public CommentEntry(String userId, String username, String text) {
@@ -221,12 +231,16 @@ public class HistoryChange {
         public void setTimestamp(LocalDateTime timestamp) {
             this.timestamp = timestamp;
         }
+
+        public String getTimestampIso() {
+            return timestamp == null ? null : timestamp.toInstant(ZoneOffset.UTC).toString();
+        }
     }
 
     // Constructors
     public HistoryChange() {
-        this.timestamp = LocalDateTime.now();
-        this.syncedAt = LocalDateTime.now();
+        this.timestamp = LocalDateTime.now(ZoneOffset.UTC);
+        this.syncedAt = LocalDateTime.now(ZoneOffset.UTC);
     }
 
     public HistoryChange(String projectId, String editId, String userId, String username) {
@@ -406,6 +420,10 @@ public class HistoryChange {
         this.timestamp = timestamp;
     }
 
+    public String getTimestampIso() {
+        return timestamp == null ? null : timestamp.toInstant(ZoneOffset.UTC).toString();
+    }
+
     public String getOperationType() {
         return operationType;
     }
@@ -494,6 +512,10 @@ public class HistoryChange {
         this.approvedAt = approvedAt;
     }
 
+    public String getApprovedAtIso() {
+        return approvedAt == null ? null : approvedAt.toInstant(ZoneOffset.UTC).toString();
+    }
+
     public String getRejectedBy() {
         return rejectedBy;
     }
@@ -508,6 +530,10 @@ public class HistoryChange {
 
     public void setRejectedAt(LocalDateTime rejectedAt) {
         this.rejectedAt = rejectedAt;
+    }
+
+    public String getRejectedAtIso() {
+        return rejectedAt == null ? null : rejectedAt.toInstant(ZoneOffset.UTC).toString();
     }
 
     public Map<String, CommentEntry> getComments() {
@@ -548,6 +574,10 @@ public class HistoryChange {
 
     public void setResolvedAt(LocalDateTime resolvedAt) {
         this.resolvedAt = resolvedAt;
+    }
+
+    public String getResolvedAtIso() {
+        return resolvedAt == null ? null : resolvedAt.toInstant(ZoneOffset.UTC).toString();
     }
 
     public Map<String, String> getMetadata() {

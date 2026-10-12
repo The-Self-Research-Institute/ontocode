@@ -567,13 +567,21 @@ public class DraftController {
             }
 
             DraftTrackingService.ApplyDraftsResult result =
-                    draftTrackingService.applyDrafts(projectId, pr.getAuthorId(), true, false, null);
+                    draftTrackingService.applyDrafts(projectId, pr.getAuthorId(), false, false, null);
 
             if (!result.isSuccess() && result.isConflictBlocked()) {
                 return ResponseEntity.status(409).body(Map.of(
                         "success", false,
                         "error", "Merge conflicts detected. Resolve conflicts before approving.",
                         "conflictBlocked", true
+                ));
+            }
+            if (!result.isSuccess()) {
+                log.error("[DRAFT PR] Approval did not actually apply for prId={} project={} author={}: {}",
+                        prId, projectId, pr.getAuthorId(), result.getMessage());
+                return ResponseEntity.status(500).body(Map.of(
+                        "success", false,
+                        "error", result.getMessage() != null ? result.getMessage() : "Could not apply this pull request's changes"
                 ));
             }
 

@@ -10,9 +10,10 @@ function actionClass(details: any): string {
 }
 
 function statusClass(status: string): string {
-  return status === 'APPROVED' ? 'bg-green-100 text-green-700' :
-    status === 'REJECTED' ? 'bg-red-100 text-red-700' :
-    status === 'PENDING' ? 'bg-yellow-100 text-yellow-700' :
+  const normalized = (status || 'saved').toLowerCase();
+  return normalized === 'saved' ? 'bg-green-100 text-green-700' :
+    normalized === 'conflicted' ? 'bg-red-100 text-red-700' :
+    normalized === 'draft' ? 'bg-yellow-100 text-yellow-700' :
     'bg-gray-100 text-gray-700';
 }
 
@@ -35,7 +36,7 @@ const InfoGrid: React.FC<{ details: any }> = ({ details }) => (
     <div>
       <span className="text-gray-500">Status:</span>
       <span className={`ml-2 px-1.5 py-0.5 text-xs rounded ${statusClass(details.status)}`}>
-        {details.status || 'approved'}
+        {(details.status || 'saved').toLowerCase()}
       </span>
     </div>
   </div>

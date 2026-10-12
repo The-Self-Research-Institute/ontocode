@@ -8,15 +8,18 @@ interface Conflict {
   localChange: string;
   remoteChange: string;
   baseValue?: string;
+  remoteAuthor?: string;
+  remoteTimestamp?: string;
 }
 
 interface ConflictResolverProps {
   conflict: Conflict;
-  onResolve: (resolution: 'accept_local' | 'accept_remote' | 'merge') => void;
+  onResolve: (resolution: 'accept_local' | 'accept_remote' | 'merge', mergedValue?: string) => void;
   onCancel: () => void;
+  isResolving?: boolean;
 }
 
-const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve, onCancel }) => {
+const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve, onCancel, isResolving }) => {
   const [selectedResolution, setSelectedResolution] = useState<'accept_local' | 'accept_remote' | 'merge' | null>(null);
   const [mergedValue, setMergedValue] = useState('');
 
@@ -31,7 +34,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
 
   const handleResolve = () => {
     if (selectedResolution) {
-      onResolve(selectedResolution);
+      onResolve(selectedResolution, selectedResolution === 'merge' ? mergedValue : undefined);
     }
   };
 
@@ -104,7 +107,9 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
                   <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
                     <span className="text-green-600 font-semibold">R</span>
                   </div>
-                  <span className="font-semibold text-gray-900">Their Change</span>
+                  <span className="font-semibold text-gray-900">
+                    {conflict.remoteAuthor ? `${conflict.remoteAuthor}'s Change` : 'Their Change'}
+                  </span>
                 </div>
                 {selectedResolution === 'accept_remote' && (
                   <CheckCircle className="w-5 h-5 text-green-600" />
@@ -113,6 +118,11 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
               <div className="font-mono text-sm text-gray-800 bg-white p-3 rounded border break-all">
                 {conflict.remoteChange}
               </div>
+              {conflict.remoteTimestamp && (
+                <div className="text-xs text-gray-500 mt-2">
+                  {new Date(conflict.remoteTimestamp).toLocaleString()}
+                </div>
+              )}
             </div>
           </div>
 
@@ -169,15 +179,15 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
           </button>
           <button
             onClick={handleResolve}
-            disabled={!selectedResolution}
+            disabled={!selectedResolution || isResolving}
             className={`px-4 py-2 rounded flex items-center gap-2 ${
-              selectedResolution
+              selectedResolution && !isResolving
                 ? 'bg-green-600 text-white hover:bg-green-700'
                 : 'bg-gray-300 text-gray-500 cursor-not-allowed'
             }`}
           >
             <CheckCircle className="w-4 h-4" />
-            Resolve Conflict
+            {isResolving ? 'Resolving…' : 'Resolve Conflict'}
           </button>
         </div>
       </div>

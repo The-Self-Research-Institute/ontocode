@@ -35,6 +35,12 @@ public class OntologyHistoryService {
     @Lazy
     private OntologyHistoryService self;
 
+    public void markDraftHistoryPublished(String projectId, String userId) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsPublished(projectId, userId);
+        }
+    }
+
     private static final ValueFactory vf = SimpleValueFactory.getInstance();
 
     private static final String HISTORY_NS = "http://ontology.research/history#";
@@ -220,6 +226,8 @@ public class OntologyHistoryService {
                 }
             }
 
+            addCreationParent(primary, subChanges);
+
             String primaryOpType;
             String label;
             String description;
@@ -254,6 +262,48 @@ public class OntologyHistoryService {
         }
     }
 
+    private static final String OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing";
+
+    static void addCreationParent(
+            self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp primary,
+            List<Map<String, String>> subChanges) {
+        if (primary == null || primary.type() == null || !primary.type().startsWith("create")) {
+            return;
+        }
+        String predicate;
+        String parent;
+        switch (primary.type()) {
+            case "createClass" -> {
+                predicate = RDFS_SUBCLASSOF;
+                parent = primary.parent();
+            }
+            case "createObjectProperty", "createDataProperty", "createAnnotationProperty" -> {
+                predicate = RDFS_SUBPROPERTYOF;
+                parent = primary.parent();
+            }
+            case "createIndividual" -> {
+                predicate = RDF_TYPE;
+                parent = primary.classIri();
+            }
+            default -> {
+                return;
+            }
+        }
+        if (parent == null || parent.isBlank() || OWL_THING_IRI.equals(parent)) {
+            return;
+        }
+        for (Map<String, String> existing : subChanges) {
+            if (predicate.equals(existing.get("predicate")) && parent.equals(existing.get("newValue"))) {
+                return;
+            }
+        }
+        Map<String, String> sc = new HashMap<>();
+        sc.put("predicate", predicate);
+        sc.put("newValue", parent);
+        sc.put("addition", "true");
+        subChanges.add(0, sc);
+    }
+
     private Map<String, String> mutationOpToSubChange(
             self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op) {
         String type = op.type();
@@ -285,6 +335,7 @@ public class OntologyHistoryService {
             }
         }
         sc.put("addition", String.valueOf(addition));
+        sc.put("category", determineEntityType(type));
         return sc;
     }
 

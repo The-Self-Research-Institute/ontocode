@@ -104,7 +104,7 @@ const ChangeSetList: React.FC<Props> = ({ projectId, entries, searchQuery, sourc
       return <RollbackRow key={item.key} event={item.event} entries={entries} onRedo={setTarget}
         onShow={key ? () => showSet(key) : undefined} />;
     }
-    return <ChangeSetCard key={item.key} set={item.set} expanded={isExpanded(item.key)} onToggle={() => toggle(item.key)}
+    return <ChangeSetCard key={item.key} projectId={projectId} set={item.set} expanded={isExpanded(item.key)} onToggle={() => toggle(item.key)}
       onUndo={setTarget} onDetails={onOpenDetails} highlighted={flashKey === item.key} />;
   };
 

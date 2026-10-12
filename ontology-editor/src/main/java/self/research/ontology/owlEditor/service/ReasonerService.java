@@ -16,9 +16,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
@@ -64,6 +67,13 @@ public class ReasonerService {
         t.setDaemon(true);
         return t;
     });
+
+    private final ExecutorService saveConsistencyExecutor = new ThreadPoolExecutor(1, 2, 60, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(10), r -> {
+                Thread t = new Thread(r, "reasoner-save-consistency-worker");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.AbortPolicy());
 
     /**
      * Create or get cached reasoner for an ontology
@@ -603,7 +613,14 @@ public class ReasonerService {
         OWLOntology reasoningOntology = stripSwrlRules(ontology);
         OWLReasoner reasoner = createReasoner(reasoningOntology, type);
         long consistencyStart = System.currentTimeMillis();
-        CompletableFuture<Boolean> future = CompletableFuture.supplyAsync(reasoner::isConsistent, inferredTypesExecutor);
+        CompletableFuture<Boolean> future;
+        try {
+            future = CompletableFuture.supplyAsync(reasoner::isConsistent, saveConsistencyExecutor);
+        } catch (RejectedExecutionException ree) {
+            log.warn("Too many concurrent save-time consistency checks; allowing save through unchecked");
+            try { reasoner.dispose(); } catch (Exception ignored) {}
+            return SaveConsistencyResult.timedOut();
+        }
 
         boolean consistent;
         try {

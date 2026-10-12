@@ -3,6 +3,7 @@ import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from '../utils/doi
 import type { EditorSelectionContext } from "./codeSelection";
 import { useCodeSelectionReporting, useUnsavedChangesReporting } from "./useCodeSelectionReporting";
 import { escapeRegex, markChangedRange, parseErrorLines, type ChangedLineRange } from "./codeHighlighterMarks";
+import { searchLines, searchResultWindow } from "./codeSearch";
 import {
   Search,
   X,
@@ -53,6 +54,7 @@ interface CodeHighlighterProps {
   onUnsavedChangesChange?: (hasUnsavedChanges: boolean) => void;
   highlightedLineNumbers?: Map<number, ChangedLineRange>;
   onSelectionChange?: (selection: EditorSelectionContext | null) => void;
+  searchScopeNote?: string;
 }
 
 /** Imperative handle so callers outside the editor (e.g. a Problems panel) can jump to a line. */
@@ -73,9 +75,6 @@ const GUTTER_PADDING_TOP = 16; // matches the textarea's own padding-top
 const GUTTER_OVERSCAN_ROWS = 30; // rendered above/below the viewport so fast scrolls don't flash blank
 const FOLD_RECOMPUTE_DEBOUNCE_MS = 300; // defer the O(n) bracket-matching scan while the user is actively typing
 const CONTEXT_LINES = 500; // Lines to show above and below selection
-const MAX_SEARCH_LINES = 10000; // Limit search to prevent hanging on huge files
-const SEARCH_CHUNK_SIZE = 100; // Process 100 lines per chunk for search
-const SEARCH_CHUNK_DELAY = 8; // 8ms delay between search chunks
 
 export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighlighterProps>(({
   content,
@@ -95,6 +94,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
   onUnsavedChangesChange,
   highlightedLineNumbers,
   onSelectionChange,
+  searchScopeNote,
 }, forwardedRef) => {
   const [displayedLines, setDisplayedLines] = useState(MAX_LINES_INITIAL);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -362,68 +362,37 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
     setSearchProgress(0);
     searchCancelRef.current = false;
 
-    let searchTimeout: NodeJS.Timeout;
-    let animationFrameId: number;
-
-    const startSearch = () => {
-      const lines = content.split(/\r?\n/);
-      const matches: number[] = [];
-      const query = caseSensitive ? debouncedSearchQuery : debouncedSearchQuery.toLowerCase();
-      const maxLines = Math.min(lines.length, MAX_SEARCH_LINES);
-
-      // Process in smaller chunks with progress updates
-      let processed = 0;
-
-      const processChunk = () => {
-        // Check if search was cancelled
-        if (searchCancelRef.current) {
-          setIsSearching(false);
-          setSearchProgress(0);
-          return;
-        }
-
-        const end = Math.min(processed + SEARCH_CHUNK_SIZE, maxLines);
-
-        for (let i = processed; i < end; i++) {
-          const searchLine = caseSensitive ? lines[i] : lines[i].toLowerCase();
-          if (searchLine.includes(query)) {
-            matches.push(i);
-          }
-        }
-
-        processed = end;
-        const progress = Math.floor((processed / maxLines) * 100);
-        setSearchProgress(progress);
-
-        if (processed < maxLines) {
-          // Continue processing with delay to prevent hanging
-          searchTimeout = setTimeout(() => {
-            animationFrameId = requestAnimationFrame(processChunk);
-          }, SEARCH_CHUNK_DELAY);
-        } else {
-          // Done
+    let progressResetTimeout: ReturnType<typeof setTimeout> | undefined;
+    const search = searchLines(
+      content,
+      debouncedSearchQuery,
+      caseSensitive,
+      {
+        onProgress: setSearchProgress,
+        onDone: (matches) => {
           setSearchResults(matches);
           setCurrentMatchIndex(0);
           setIsSearching(false);
           setSearchProgress(100);
           setShowSearchPanel(matches.length > 0);
-
-          // Clear progress after a delay
-          setTimeout(() => setSearchProgress(0), 500);
-        }
-      };
-
-      animationFrameId = requestAnimationFrame(processChunk);
-    };
-
-    searchTimeout = setTimeout(startSearch, 100);
+          progressResetTimeout = setTimeout(() => setSearchProgress(0), 500);
+        },
+      },
+      { isCancelled: () => searchCancelRef.current },
+    );
 
     return () => {
-      if (searchTimeout) clearTimeout(searchTimeout);
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      search.cancel();
+      if (progressResetTimeout) clearTimeout(progressResetTimeout);
       searchCancelRef.current = true;
     };
   }, [debouncedSearchQuery, content, caseSensitive]);
+
+  const resultPanelLines = useMemo(
+    () => (showSearchPanel && searchResults.length > 0 ? content.split(/\r?\n/) : []),
+    [content, showSearchPanel, searchResults.length],
+  );
+  const resultWindow = searchResultWindow(searchResults.length, currentMatchIndex);
 
   // Scroll to current match
   useEffect(() => {
@@ -1356,6 +1325,12 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
           )}
         </div>
 
+        {searchQuery && searchScopeNote && (
+          <span className="text-xs text-amber-300 whitespace-nowrap" title={searchScopeNote}>
+            {searchScopeNote}
+          </span>
+        )}
+
         {isSearching && (
           <div className="flex items-center gap-2">
             <div className="w-32 bg-gray-700 rounded-full h-2 overflow-hidden">
@@ -1534,9 +1509,15 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
               </button>
             </div>
             <div className="space-y-1">
-              {searchResults.map((lineIndex, idx) => {
-                const lines = content.split(/\r?\n/);
-                const lineContent = lines[lineIndex] || "";
+              {searchResults.length > resultWindow.end - resultWindow.start && (
+                <div className="px-2 py-1 text-[11px] text-gray-400">
+                  Showing matches {resultWindow.start + 1}–{resultWindow.end} of {searchResults.length}. Use the arrows to
+                  move through the rest.
+                </div>
+              )}
+              {searchResults.slice(resultWindow.start, resultWindow.end).map((lineIndex, windowIdx) => {
+                const idx = resultWindow.start + windowIdx;
+                const lineContent = resultPanelLines[lineIndex] || "";
                 const preview = lineContent.length > 80 ? lineContent.substring(0, 80) + "..." : lineContent;
                 const isCurrentMatch = idx === currentMatchIndex;
 
@@ -1771,7 +1752,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
 CodeHighlighter.displayName = "CodeHighlighter";
 
 // Line-by-line highlighting functions (no background colors, only text colors)
-function highlightTurtleLine(line: string): string {
+export function highlightTurtleLine(line: string): string {
   // Debug logging for DOI detection
   if (line.includes("bibo:doi") || line.includes("dc:identifier")) {
     console.log("🐢 highlightTurtleLine called with DOI line:", { line, escaped: escapeHtml(line) });
@@ -1799,9 +1780,9 @@ function highlightTurtleLine(line: string): string {
       /(@prefix|@base)(\s+)/g,
       (_match, keyword, space) => `${store(`<span style="color:#c586c0">${keyword}</span>`)}${space}`,
     )
-    .replace(/(&lt;[^&gt;]+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
+    .replace(/(&lt;(?:(?!&gt;).)+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
     .replace(
-      /("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
+      /(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
       (_match, str, lang) =>
         `${store(`<span style="color:#ce9178">${str}</span>`)}${store(`<span style="color:#4fc1ff">${lang}</span>`)}`,
     )
@@ -1820,7 +1801,7 @@ function highlightTurtleLine(line: string): string {
       const displayValue = doiUrl; // Show full URL
       return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI'),2000);" title="Click to open DOI: ${doiUrl}">&quot;${displayValue}&quot;</a>`)}`;
     })
-    .replace(/("(?:[^"\\]|\\.)*")/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
+    .replace(/(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
     .replace(/(\^\^)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`))
     .replace(
       /\b([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)\b/g,
@@ -1855,13 +1836,13 @@ function highlightRDFXMLLine(line: string): string {
     .replace(/(&lt;\?xml[^?]*\?&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
     .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
     // Special highlighting for DOI elements - handle tags with or without xmlns attributes
-    .replace(/(&lt;bibo:doi(?:\s+[^&gt;]*)?&gt;)([^&lt;]+)(&lt;\/bibo:doi&gt;)/gi, (_match, open, doiValue, close) => {
+    .replace(/(&lt;bibo:doi(?:\s+(?:(?!&gt;).)*)?&gt;)((?:(?!&lt;).)+)(&lt;\/bibo:doi&gt;)/gi, (_match, open, doiValue, close) => {
       console.log("🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi:", { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
       const displayValue = doiUrl; // Show full URL
       // Extract tag parts for proper highlighting
-      const openTagMatch = open.match(/(&lt;)(bibo)(:)(doi)(\s+[^&gt;]*)?(&gt;)/i);
+      const openTagMatch = open.match(/(&lt;)(bibo)(:)(doi)(\s+(?:(?!&gt;).)*)?(&gt;)/i);
       if (openTagMatch) {
         const openTag = `${store(`<span style="color:#808080">&lt;</span>`)}${store(`<span style="color:#569cd6">bibo</span>`)}:${store(`<span style="color:#4ec9b0">doi</span>`)}${openTagMatch[5] || ""}${store(`<span style="color:#808080">&gt;</span>`)}`;
         const closeTag = `${store(`<span style="color:#808080">&lt;/</span>`)}${store(`<span style="color:#569cd6">bibo</span>`)}:${store(`<span style="color:#4ec9b0">doi</span>`)}${store(`<span style="color:#808080">&gt;</span>`)}`;
@@ -1870,7 +1851,7 @@ function highlightRDFXMLLine(line: string): string {
       return _match; // Fallback if parsing fails
     })
     // Special handling for dc:identifier with doi: prefix
-    .replace(/(&lt;dc:identifier&gt;)doi:([^&lt;]+)(&lt;\/dc:identifier&gt;)/gi, (_match, open, doiValue, close) => {
+    .replace(/(&lt;dc:identifier&gt;)doi:((?:(?!&lt;).)+)(&lt;\/dc:identifier&gt;)/gi, (_match, open, doiValue, close) => {
       console.log("🔗 DOI PATTERN MATCHED in RDF/XML dc:identifier:", { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue}`;
@@ -1879,7 +1860,7 @@ function highlightRDFXMLLine(line: string): string {
       const closeTag = `${store(`<span style="color:#808080">&lt;/</span>`)}${store(`<span style="color:#569cd6">dc</span>`)}:${store(`<span style="color:#4ec9b0">identifier</span>`)}${store(`<span style="color:#808080">&gt;</span>`)}`;
       return `${openTag}${store(`<span style="color:#ce9178">doi:</span>`)}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeTag}`;
     })
-    .replace(/(bibo:doi)=(&quot;)([^&quot;]+)(&quot;)/gi, (_match, attr, openQuote, doiValue, closeQuote) => {
+    .replace(/(bibo:doi)=(&quot;)((?:(?!&quot;).)+)(&quot;)/gi, (_match, attr, openQuote, doiValue, closeQuote) => {
       console.log("🔗 DOI PATTERN MATCHED in RDF/XML bibo:doi attribute:", { doiValue, fullMatch: _match });
       // Handle both raw DOI and full URL
       const doiUrl = doiValue.startsWith("http") ? doiValue : `https://doi.org/${doiValue.replace(/^doi:/, "")}`;
@@ -1887,7 +1868,7 @@ function highlightRDFXMLLine(line: string): string {
       return `${store(`<span style="color:#9cdcfe">${attr}</span>`)}=${openQuote}${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">${displayValue}</a>`)}${closeQuote}`;
     })
     .replace(
-      /=(&quot;[^&quot;]*&quot;)/g,
+      /=(&quot;(?:(?!&quot;).)*&quot;)/g,
       (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`,
     )
     .replace(
@@ -1940,7 +1921,7 @@ function highlightOWLXMLLine(line: string): string {
   // Pattern 1: <Literal>doi:value</Literal> or <Literal>10.xxxx/...</Literal>
   let result = escaped
     .replace(
-      /(&lt;Literal(?:\s+[^&gt;]*)?)&gt;(doi:)?(\d+\.\d+\/[^&lt;]+)(&lt;\/Literal&gt;)/gi,
+      /(&lt;Literal(?:\s+(?:(?!&gt;).)*)?)&gt;(doi:)?(\d+\.\d+\/(?:(?!&lt;).)+)(&lt;\/Literal&gt;)/gi,
       (_match, openTag, doiPrefix, doiValue, closeTag) => {
         console.log("🔗 DOI PATTERN MATCHED in OWL/XML Literal:", { doiPrefix, doiValue, fullMatch: _match });
         const fullDoiValue = (doiPrefix || "") + doiValue;
@@ -1954,7 +1935,7 @@ function highlightOWLXMLLine(line: string): string {
     )
     // Pattern 2: Highlight AnnotationProperty IRI with bibo/doi
     .replace(
-      /(&lt;AnnotationProperty\s+IRI=&quot;[^&quot;]*(?:bibo\/doi|identifier)[^&quot;]*&quot;\s*\/&gt;)/gi,
+      /(&lt;AnnotationProperty\s+IRI=&quot;(?:(?!&quot;).)*(?:bibo\/doi|identifier)(?:(?!&quot;).)*&quot;\s*\/&gt;)/gi,
       (match) => {
         console.log("🔗 DOI AnnotationProperty detected in OWL/XML:", { match });
         return store(`<span style="color:#4ec9b0;font-weight:bold">${match}</span>`);
@@ -1964,7 +1945,7 @@ function highlightOWLXMLLine(line: string): string {
     .replace(/(&lt;\?xml[^?]*\?&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
     .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
     .replace(
-      /=(&quot;[^&quot;]*&quot;)/g,
+      /=(&quot;(?:(?!&quot;).)*&quot;)/g,
       (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`,
     )
     .replace(
@@ -2053,13 +2034,13 @@ function highlightNTriplesLine(line: string): string {
         return `${store(`<span style="color:#4ec9b0">${subject}</span>`)} ${store(`<span style="color:#4ec9b0">${predicate}</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
       },
     )
-    .replace(/(&lt;[^&gt;]+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
+    .replace(/(&lt;(?:(?!&gt;).)+&gt;)/g, (match) => store(`<span style="color:#4ec9b0">${match}</span>`))
     .replace(
-      /("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
+      /(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
       (_match, str, lang) =>
         `${store(`<span style="color:#ce9178">${str}</span>`)}${store(`<span style="color:#4fc1ff">${lang}</span>`)}`,
     )
-    .replace(/("(?:[^"\\]|\\.)*")/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
+    .replace(/(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)/g, (match) => store(`<span style="color:#ce9178">${match}</span>`))
     .replace(/(\^\^)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`))
     .replace(/(\s\.\s*$)/g, (match) => store(`<span style="color:#d4d4d4">${match}</span>`));
 
@@ -2098,7 +2079,7 @@ function highlightOWLLine(line: string): string {
   let result = escaped
     .replace(/(&lt;\?xml[^?]*\?&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
     .replace(/(&lt;!--.*?--&gt;)/g, (match) => store(`<span style="color:#6a9955">${match}</span>`))
-    .replace(/(&lt;!DOCTYPE[^&gt;]*&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
+    .replace(/(&lt;!DOCTYPE(?:(?!&gt;).)*&gt;)/g, (match) => store(`<span style="color:#569cd6">${match}</span>`))
     // Functional syntax: AnnotationAssertion(<http://.../bibo/doi> <subject> "value")
     .replace(
       /(AnnotationAssertion\()(&lt;.+?bibo\/doi&gt;)\s+(&lt;.+?&gt;)\s+&quot;(.+?)&quot;\)/gi,
@@ -2145,7 +2126,7 @@ function highlightOWLLine(line: string): string {
       return `${store(`<span style="color:#9cdcfe">dc</span>`)}:${store(`<span style="color:#dcdcaa">identifier</span>`)} ${store(`<a href="${doiUrl}" target="_blank" rel="noopener noreferrer" style="color:#00d4ff !important;background-color:rgba(0,212,255,0.15);padding:2px 6px;border-radius:3px;text-decoration:underline !important;cursor:pointer !important;font-weight:700;border:1px solid rgba(0,212,255,0.3);pointer-events:auto;user-select:text" onmouseover="this.style.backgroundColor='rgba(0,212,255,0.25)';this.style.borderColor='rgba(0,212,255,0.5)'" onmouseout="this.style.backgroundColor='rgba(0,212,255,0.15)';this.style.borderColor='rgba(0,212,255,0.3)'" oncontextmenu="event.preventDefault();navigator.clipboard.writeText('${doiUrl}');this.setAttribute('title','Link copied!');setTimeout(()=>this.setAttribute('title','Click to open DOI: ${displayValue}'),2000);" title="Click to open DOI: ${displayValue}">&quot;doi:${displayValue}&quot;</a>`)}`;
     })
     .replace(
-      /=(&quot;[^&quot;]*&quot;)/g,
+      /=(&quot;(?:(?!&quot;).)*&quot;)/g,
       (_match, value) => `=${store(`<span style="color:#ce9178">${value}</span>`)}`,
     )
     .replace(
@@ -2201,14 +2182,14 @@ function highlightTurtle(lines: string[]): string {
       // Prefixes and base
       .replace(/(@prefix|@base)(\s+)/g, '<span style="color:#c586c0">$1</span>$2')
       // URIs in angle brackets
-      .replace(/(&lt;[^&gt;]+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
+      .replace(/(&lt;(?:(?!&gt;).)+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
       // Literals with language tags
       .replace(
-        /("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
+        /(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
         '<span style="color:#ce9178">$1</span><span style="color:#4fc1ff">$2</span>',
       )
       // Literals without language tags
-      .replace(/("(?:[^"\\]|\\.)*")/g, '<span style="color:#ce9178">$1</span>')
+      .replace(/(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)/g, '<span style="color:#ce9178">$1</span>')
       // Datatype indicators
       .replace(/(\^\^)/g, '<span style="color:#d4d4d4">$1</span>')
       // Prefixed names
@@ -2241,7 +2222,7 @@ function highlightRDFXML(lines: string[]): string {
       // Comments
       .replace(/(&lt;!--.*?--&gt;)/g, '<span style="color:#6a9955">$1</span>')
       // Attribute values (before tags to avoid conflicts)
-      .replace(/=(&quot;[^&quot;]*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
+      .replace(/=(&quot;(?:(?!&quot;).)*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
       // Opening/closing tags with namespace
       .replace(
         /(&lt;\/?)([a-zA-Z_][\w-]*):([a-zA-Z_][\w-]*)/g,
@@ -2283,14 +2264,14 @@ function highlightNTriples(lines: string[]): string {
     // Apply highlighting
     escaped = escaped
       // URIs in angle brackets
-      .replace(/(&lt;[^&gt;]+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
+      .replace(/(&lt;(?:(?!&gt;).)+&gt;)/g, '<span style="color:#4ec9b0">$1</span>')
       // Literals with language tags
       .replace(
-        /("(?:[^"\\]|\\.)*")(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
+        /(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)(@[a-z]{2}(?:-[A-Z]{2})?)\b/g,
         '<span style="color:#ce9178">$1</span><span style="color:#4fc1ff">$2</span>',
       )
       // Literals without language tags
-      .replace(/("(?:[^"\\]|\\.)*")/g, '<span style="color:#ce9178">$1</span>')
+      .replace(/(&quot;(?:\\\\|\\&quot;|(?!&quot;).)*&quot;)/g, '<span style="color:#ce9178">$1</span>')
       // Datatype indicators
       .replace(/(\^\^)/g, '<span style="color:#d4d4d4">$1</span>')
       // Triple terminator
@@ -2316,9 +2297,9 @@ function highlightOWL(lines: string[]): string {
       // Comments
       .replace(/(&lt;!--.*?--&gt;)/g, '<span style="color:#6a9955">$1</span>')
       // DOCTYPE
-      .replace(/(&lt;!DOCTYPE[^&gt;]*&gt;)/g, '<span style="color:#569cd6">$1</span>')
+      .replace(/(&lt;!DOCTYPE(?:(?!&gt;).)*&gt;)/g, '<span style="color:#569cd6">$1</span>')
       // Attribute values (before tags to avoid conflicts)
-      .replace(/=(&quot;[^&quot;]*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
+      .replace(/=(&quot;(?:(?!&quot;).)*&quot;|"[^"]*")/g, '=<span style="color:#ce9178">$1</span>')
       // OWL and RDF elements with namespace
       .replace(
         /(&lt;\/?)((owl|rdf|rdfs|xsd|dc|dcterms):([a-zA-Z_][\w-]*))/g,

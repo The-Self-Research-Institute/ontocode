@@ -109,8 +109,14 @@
       },
       {
         "command": "ontocode.openWebview",
-        "title": "Open WebView",
+        "title": "Open OntoCode Editor",
         "category": "OntoCode Studio"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "ontocode.sidebarView",
+        "contents": "Edit OWL, TTL, and RDF ontologies with AI assistance.\n[Open OntoCode Editor](command:ontocode.openWebview)"
       }
     ],
     "menus": {

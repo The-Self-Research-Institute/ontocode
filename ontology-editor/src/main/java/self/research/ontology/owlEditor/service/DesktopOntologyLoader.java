@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
+import org.eclipse.rdf4j.rio.RDFFormat;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
@@ -585,6 +586,34 @@ public class DesktopOntologyLoader {
             return desktopHierarchyService.declarationCounts(projectId);
         }
         return Map.of();
+    }
+
+    private static final String FUSEKI_SYNC_PENDING_MARKER = "fuseki-sync-pending";
+
+    public void refreshDraftFromTripleStore(String projectId) {
+        if (!owlApiFirst || datasetService == null) {
+            return;
+        }
+        Path draft = storageManager.draftOntologyPath(projectId);
+        try {
+            Files.createDirectories(draft.getParent());
+            AtomicFileWrite.write(draft, out -> datasetService.exportDatasetToStream(projectId, RDFFormat.RDFXML, out));
+            log.info("[Desktop] Rewrote the unsaved draft for {} from the triple store after a bulk write", projectId);
+        } catch (Exception e) {
+            if (Files.exists(storageManager.projectDir(projectId).resolve(FUSEKI_SYNC_PENDING_MARKER))) {
+                log.error("[Desktop] Could not rewrite the draft for {} from the triple store and the triple store "
+                        + "is behind the draft, so the old draft is kept to avoid losing unsaved edits: {}",
+                        projectId, e.getMessage());
+                return;
+            }
+            log.error("[Desktop] Could not rewrite the draft for {} from the triple store, removing it so the next "
+                    + "load re-exports from the triple store instead: {}", projectId, e.getMessage());
+            try {
+                Files.deleteIfExists(draft);
+            } catch (java.io.IOException deleteEx) {
+                log.error("[Desktop] Could not remove the outdated draft for {}: {}", projectId, deleteEx.getMessage());
+            }
+        }
     }
 
     /** Persist in-memory OWLAPI model to the DRAFT file (autosave after each mutation).

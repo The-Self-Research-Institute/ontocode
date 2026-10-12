@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { X, Download, AlertTriangle, CheckCircle, Loader2, RefreshCw, GitMerge } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { extractLocalName } from "../utils/draftChangeHelpers";
+import { applyRefusal, canKeepBoth, phaseForAnalysis, rowKindLabel } from "./pullPreviewState";
 
 interface PullPreviewDialogProps {
   isOpen: boolean;
@@ -16,10 +17,11 @@ interface ChangeRow {
   entityLabel: string;
   publicAxioms?: string;
   yourAxioms?: string;
+  kind?: string;
 }
 
-type Resolution = "keep_draft" | "take_public";
-type Phase = "analyzing" | "no_changes" | "ready" | "merging" | "done" | "error";
+type Resolution = "keep_draft" | "take_public" | "merge";
+type Phase = "analyzing" | "no_changes" | "baseline_lost" | "ready" | "merging" | "done" | "error";
 
 const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
   isOpen, onClose, onConfirm, projectId, userId,
@@ -29,6 +31,8 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
   const [conflicts, setConflicts] = useState<ChangeRow[]>([]);
   const [resolutions, setResolutions] = useState<Record<string, Resolution>>({});
   const [errorMsg, setErrorMsg] = useState("");
+  const [directNote, setDirectNote] = useState("");
+  const [draftOnlyCount, setDraftOnlyCount] = useState(0);
 
   const analyze = useCallback(() => {
     setPhase("analyzing");
@@ -42,7 +46,11 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
         setSafeChanges(safe);
         setConflicts(conf);
         setResolutions({});
-        setPhase(safe.length === 0 && conf.length === 0 ? "no_changes" : "ready");
+        const next = phaseForAnalysis(data);
+        setErrorMsg(next.phase === "baseline_lost" ? next.message : "");
+        setDirectNote(next.phase === "baseline_lost" ? "" : next.message);
+        setDraftOnlyCount(next.draftOnlyCount);
+        setPhase(next.phase);
       })
       .catch((e: any) => {
         setErrorMsg(e?.message || "Could not analyse differences with the public version.");
@@ -67,7 +75,13 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
     setPhase("merging");
     apiClient
       .post<any>(`/api/ontology/${projectId}/pull-from-public/apply`, { resolutions }, { params: { userId } })
-      .then(() => {
+      .then((res) => {
+        const refusal = applyRefusal(res?.data || res);
+        if (refusal) {
+          setErrorMsg(refusal);
+          setPhase("baseline_lost");
+          return;
+        }
         setPhase("done");
         setTimeout(() => {
           onConfirm();
@@ -125,6 +139,14 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
             </div>
           )}
 
+          {phase === "baseline_lost" && (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+              <AlertTriangle size={22} className="text-amber-500" />
+              <span className="font-medium">Can't tell what changed in Public</span>
+              <p className="opacity-70 max-w-sm">{errorMsg}</p>
+            </div>
+          )}
+
           {phase === "merging" && (
             <div className="flex flex-col items-center justify-center py-10 gap-2 opacity-70">
               <Loader2 size={20} className="animate-spin" />
@@ -158,6 +180,23 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
 
           {phase === "ready" && (
             <>
+              {directNote && (
+                <div
+                  className="flex items-start gap-2 rounded-md px-3 py-2 border"
+                  style={{ borderColor: "rgba(59,130,246,0.4)", backgroundColor: "rgba(59,130,246,0.08)" }}
+                >
+                  <AlertTriangle size={14} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div className="opacity-90">
+                    {directNote}
+                    {draftOnlyCount > 0 && (
+                      <>
+                        {" "}
+                        {draftOnlyCount} item{draftOnlyCount !== 1 ? "s" : ""} exist only in your draft and will be kept.
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
               {conflicts.length > 0 ? (
                 <div
                   className="flex items-start gap-2 rounded-md px-3 py-2 border"
@@ -165,8 +204,17 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                 >
                   <AlertTriangle size={14} className="text-amber-500 flex-shrink-0 mt-0.5" />
                   <div className="text-amber-600 dark:text-amber-400">
-                    <strong>{conflicts.length} conflict{conflicts.length !== 1 ? "s" : ""}</strong> —
-                    entities changed in both your draft and public. Choose which version to keep for each.
+                    {directNote ? (
+                      <>
+                        <strong>{conflicts.length} difference{conflicts.length !== 1 ? "s" : ""}</strong> — choose
+                        which version to keep for each.
+                      </>
+                    ) : (
+                      <>
+                        <strong>{conflicts.length} conflict{conflicts.length !== 1 ? "s" : ""}</strong> —
+                        items changed in both your draft and Public. Choose what to keep for each.
+                      </>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -204,7 +252,12 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                           className="flex items-center justify-between px-3 py-1.5 border-b text-[11px] font-medium"
                           style={{ borderColor: "var(--color-border)", backgroundColor: "rgba(128,128,128,0.06)" }}
                         >
-                          <span className="truncate">{c.entityLabel || extractLocalName(c.entityIri)}</span>
+                          <span className="truncate">
+                            {c.entityLabel || extractLocalName(c.entityIri)}
+                            {rowKindLabel(c.kind) && (
+                              <span className="ml-2 font-normal opacity-60">{rowKindLabel(c.kind)}</span>
+                            )}
+                          </span>
                           {resolution && (
                             <span className="flex items-center gap-1 text-green-500 flex-shrink-0">
                               <CheckCircle size={10} /> Resolved
@@ -220,10 +273,10 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                             }}
                           >
                             <div className="text-[10px] font-semibold text-blue-500 mb-1 uppercase tracking-wide">
-                              Your Draft
+                              Keep mine (your draft)
                             </div>
-                            <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words line-clamp-4">
-                              {c.yourAxioms || "(no axioms)"}
+                            <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                              {c.yourAxioms || "Nothing different on this side"}
                             </p>
                           </button>
                           <button
@@ -234,13 +287,31 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                             }}
                           >
                             <div className="text-[10px] font-semibold text-purple-500 mb-1 uppercase tracking-wide">
-                              Public Version
+                              Use Public's version
                             </div>
-                            <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words line-clamp-4">
-                              {c.publicAxioms || "(no axioms)"}
+                            <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                              {c.publicAxioms || "Nothing different on this side"}
                             </p>
                           </button>
                         </div>
+                        {canKeepBoth(c.kind) && (
+                          <button
+                            onClick={() => setResolution(c.entityIri, "merge")}
+                            className="w-full text-left px-2.5 py-2 border-t transition-colors hover:opacity-90"
+                            style={{
+                              borderColor: "var(--color-border)",
+                              backgroundColor: resolution === "merge" ? "rgba(34,197,94,0.12)" : "transparent",
+                            }}
+                          >
+                            <div className="text-[10px] font-semibold text-green-500 uppercase tracking-wide">
+                              Keep both
+                            </div>
+                            <p className="opacity-70 leading-relaxed">
+                              Combine both versions. For a name or description this gives the item two, which you can
+                              tidy up later.
+                            </p>
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -269,7 +340,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <GitMerge size={12} />
-              {conflicts.length > 0 ? "Apply & Merge" : "Pull & Merge"}
+              {conflicts.length > 0 ? "Apply my choices" : "Pull changes into my draft"}
             </button>
           )}
         </div>

@@ -24,4 +24,6 @@ public interface DraftChangeRepository extends MongoRepository<DraftChange, Stri
     void deleteByProjectIdAndAppliedTrue(String projectId);
 
     long countByProjectIdAndAppliedFalse(String projectId);
+
+    long deleteByAppliedFalseAndTimestampBefore(LocalDateTime cutoff);
 }

@@ -40,6 +40,7 @@ export function buildSystemPrompt(action: CodeAssistantAction, documentPath?: st
       ? [
           "For an entity's exact text/range, use read_context with a \"statement\" target, then propose_edit with grouped edits.",
           "To rename an identifier, use propose_rename instead of editing each occurrence.",
+          "Before deleting an identifier, check its references via read_context so the removal covers every occurrence.",
           "Insert new statements only between complete statements (after a line ending \" .\"), never inside one.",
           "add_inferred_axioms echoes back run_swrl_rule's results as new facts; add_fuzzy_membership adds a new " +
             "degree (0-1, full IRIs) only if that pair doesn't already exist.",
@@ -214,10 +215,13 @@ export function resolveApplyBlock(state: { hasUnsavedCodeViewChanges: boolean; r
   return null;
 }
 
-const TECHNICAL_ERROR_PATTERN = /Exception|\{[a-zA-Z]+=|com\.[a-z][\w.]*\.|Caused by:|StackTrace|at [\w.$]+\(/;
+const STACK_TRACE_PATTERN = /Caused by:|StackTrace|at [\w.$]+\(|\.java:\d+/;
+const TECHNICAL_WORD_PATTERN = /Exception|\{[a-zA-Z]+=|com\.[a-z][\w.]*\./;
 
 export function toFriendlyErrorMessage(raw: string): string {
-  const looksTechnical = raw.length > 180 || TECHNICAL_ERROR_PATTERN.test(raw);
+  const looksLikeTrace = STACK_TRACE_PATTERN.test(raw);
+  const tooLong = raw.length > 180;
+  const looksTechnical = looksLikeTrace || tooLong || TECHNICAL_WORD_PATTERN.test(raw);
   if (!looksTechnical) return raw;
   // eslint-disable-next-line no-console
   console.error("[Ask AI] raw error:", raw);
@@ -226,6 +230,9 @@ export function toFriendlyErrorMessage(raw: string): string {
   }
   if (/socket|connection|unreachable|refused/i.test(raw)) {
     return "Couldn't reach a required service on the server. Try again shortly.";
+  }
+  if (!looksLikeTrace && !tooLong) {
+    return raw;
   }
   return "Something went wrong on the server. Try again in a moment.";
 }

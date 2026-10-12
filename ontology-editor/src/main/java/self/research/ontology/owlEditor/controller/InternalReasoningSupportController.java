@@ -93,6 +93,18 @@ public class InternalReasoningSupportController {
                 .body(body);
     }
 
+    @GetMapping(value = "/reasoning/{projectId}/whatif/{whatIfKey}/export.nt", produces = "application/n-triples")
+    public ResponseEntity<String> exportWhatIfNTriples(@PathVariable String projectId, @PathVariable String whatIfKey) {
+        try {
+            String content = datasetService.exportDraftGraphContent(projectId, whatIfKey, RDFFormat.NTRIPLES);
+            return ResponseEntity.ok().contentType(MediaType.parseMediaType("application/n-triples")).body(content);
+        } catch (Exception e) {
+            log.warn("[InternalReasoning] What-if export failed for project {} key {}: {}",
+                    projectId, whatIfKey, e.getMessage());
+            return ResponseEntity.status(500).build();
+        }
+    }
+
     private Optional<OWLOntology> snapshotOntology(String projectId) {
         return owlApiContext.ontology(projectId).map(live -> {
             try {

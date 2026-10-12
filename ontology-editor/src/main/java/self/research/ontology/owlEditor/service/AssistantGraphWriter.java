@@ -49,7 +49,7 @@ final class AssistantGraphWriter {
                 return new Outcome(patched.get(), null);
             }
         }
-        return reimport(group, splicedFile, userEmail, perf, origin);
+        return reimport(group, sourceFile, splicedFile, userEmail, perf, origin);
     }
 
     private static void seedIndex(Path cacheFile, TriplePatchPlanner.TriplePatch patch) {
@@ -92,11 +92,13 @@ final class AssistantGraphWriter {
             removed.addAll(patch.restoredTrees());
             Model added = new LinkedHashModel(patch.added());
             added.addAll(patch.insertedTrees());
+            attachPrefixes(group.getTargetPath(), sourceFile, splicedFile, removed, added);
             long version = reimportPipeline.finishPatch(projectId, group.getTargetPath(), splicedFile, userEmail,
                     userEmail, removed, added, origin);
             operationService.markCommitted(operation);
             seedIndex(sourceFile, patch);
-            datasetService.captureAndPersistPrefixesFromFile(projectId, splicedFile, group.getTargetPath(), false, null);
+            datasetService.captureAndPersistPrefixesFromFile(projectId, splicedFile, group.getTargetPath(),
+                    group.isDraft(), group.getDraftUserId());
             perf.mark("patchFinish");
             log.info("[Assistant] Patched {} removed and {} added triples for group {} instead of reimporting",
                     removed.size(), added.size(), group.getId());
@@ -109,7 +111,16 @@ final class AssistantGraphWriter {
         }
     }
 
-    private Outcome reimport(AssistantEditGroupDocument group, Path splicedFile, String userEmail, PerfPhases perf,
+    private static void attachPrefixes(String format, Path sourceFile, Path splicedFile, Model removed, Model added) {
+        try {
+            PrefixScanner.scan(sourceFile, format).forEach(removed::setNamespace);
+            PrefixScanner.scan(splicedFile, format).forEach(added::setNamespace);
+        } catch (Exception scanEx) {
+            log.debug("[Assistant] Could not compare prefix declarations for the change history: {}", scanEx.getMessage());
+        }
+    }
+
+    private Outcome reimport(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile, String userEmail, PerfPhases perf,
                              ChangeOrigin origin) {
         AssistantApplyOperationDocument operation;
         try {
@@ -139,8 +150,20 @@ final class AssistantGraphWriter {
             return new Outcome(null, failed);
         }
         perf.mark("reimport");
+        recordPrefixChanges(group, sourceFile, splicedFile, draft, draft ? draftUserId : userEmail, userEmail, origin);
         operationService.markCommitted(operation);
         return new Outcome(new Written(result.sourceVersion(), result.cacheMatchesSubmittedContent(), false), null);
+    }
+
+    private void recordPrefixChanges(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile, boolean draft,
+                                     String historyUserId, String username, ChangeOrigin origin) {
+        try {
+            reimportPipeline.recordPrefixChanges(group.getProjectId(), historyUserId, username, draft, origin,
+                    PrefixScanner.scan(sourceFile, group.getTargetPath()),
+                    PrefixScanner.scan(splicedFile, group.getTargetPath()));
+        } catch (Exception scanEx) {
+            log.debug("[Assistant] Could not compare prefix declarations for the change history: {}", scanEx.getMessage());
+        }
     }
 
     private static List<TriplePatchPlanner.Edit> edits(AssistantEditGroupDocument group) {

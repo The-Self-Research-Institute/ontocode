@@ -110,6 +110,16 @@ class AssistantSessionServiceTest {
     }
 
     @Test
+    void createSessionHonoursABudgetUpToTheNewMaximum() {
+        when(metadataService.getMutationVersion("proj-1")).thenReturn(1L);
+
+        AssistantSessionDocument session = service.createSession(
+                "proj-1", "user@example.com", "/doc.owl", "ask", "ctx", "claude", "m", 35000, 8);
+
+        assertEquals(35000, session.getTokenBudgetRemaining());
+    }
+
+    @Test
     void createSessionClampsAnOutOfRangeBudgetInsteadOfRejectingIt() {
         when(metadataService.getMutationVersion("proj-1")).thenReturn(1L);
 
@@ -118,7 +128,7 @@ class AssistantSessionServiceTest {
         AssistantSessionDocument tooLow = service.createSession(
                 "proj-1", "user@example.com", "/doc.owl", "ask", "ctx", "claude", "m", 10, 0);
 
-        assertEquals(20000, tooHigh.getTokenBudgetRemaining());
+        assertEquals(50000, tooHigh.getTokenBudgetRemaining());
         assertEquals(30, tooHigh.getRetrievalAttemptsRemaining());
         assertEquals(2000, tooLow.getTokenBudgetRemaining());
         assertEquals(2, tooLow.getRetrievalAttemptsRemaining());

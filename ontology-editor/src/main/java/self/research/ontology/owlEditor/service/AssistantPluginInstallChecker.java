@@ -8,6 +8,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -32,9 +33,11 @@ public class AssistantPluginInstallChecker {
         this.restTemplate = new RestTemplate(f);
     }
 
-    public boolean isInstalled(String pluginId, String authorizationHeader) {
+    public enum InstallStatus { INSTALLED, NOT_INSTALLED, NOT_AUTHORIZED, CHECK_FAILED }
+
+    public InstallStatus checkInstalled(String pluginId, String authorizationHeader) {
         if (desktopMode) {
-            return true;
+            return InstallStatus.INSTALLED;
         }
         HttpHeaders headers = new HttpHeaders();
         if (authorizationHeader != null && !authorizationHeader.isBlank()) {
@@ -45,11 +48,17 @@ public class AssistantPluginInstallChecker {
                     pluginServiceUrl + "/api/plugins/" + pluginId + "/is-installed",
                     HttpMethod.GET, new HttpEntity<>(headers), Map.class);
             Map<?, ?> body = response.getBody();
-            return body != null && Boolean.TRUE.equals(body.get("installed"));
+            boolean installed = body != null
+                    && (Boolean.TRUE.equals(body.get("isInstalled")) || Boolean.TRUE.equals(body.get("installed")));
+            return installed ? InstallStatus.INSTALLED : InstallStatus.NOT_INSTALLED;
+        } catch (HttpStatusCodeException e) {
+            log.warn("[Assistant] Plugin service answered {} when checking install status for plugin {}",
+                    e.getStatusCode(), pluginId);
+            int status = e.getStatusCode().value();
+            return status == 401 || status == 403 ? InstallStatus.NOT_AUTHORIZED : InstallStatus.CHECK_FAILED;
         } catch (RestClientException e) {
-            log.warn("[Assistant] Could not check install status for plugin {} (treating as not installed): {}",
-                    pluginId, e.getMessage());
-            return false;
+            log.warn("[Assistant] Could not check install status for plugin {}: {}", pluginId, e.getMessage());
+            return InstallStatus.CHECK_FAILED;
         }
     }
 }

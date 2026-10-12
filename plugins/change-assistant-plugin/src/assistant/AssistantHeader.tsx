@@ -11,9 +11,10 @@ interface AssistantHeaderProps {
   stats: ChangeStats;
   onRefresh: () => void;
   filters: React.ComponentProps<typeof FilterBar>;
+  isDraftActive: boolean;
 }
 
-const AssistantHeader: React.FC<AssistantHeaderProps> = ({ isLoading, lastRefresh, stats, onRefresh, filters }) => (
+const AssistantHeader: React.FC<AssistantHeaderProps> = ({ isLoading, lastRefresh, stats, onRefresh, filters, isDraftActive }) => (
   <div className="border-b p-4">
     <div className="flex items-center justify-between mb-4">
       <div className="flex items-center gap-2">
@@ -34,7 +35,7 @@ const AssistantHeader: React.FC<AssistantHeaderProps> = ({ isLoading, lastRefres
         </button>
       </div>
     </div>
-    <StatCards stats={stats} />
+    <StatCards stats={stats} isDraftActive={isDraftActive} />
     <FilterBar {...filters} />
   </div>
 );

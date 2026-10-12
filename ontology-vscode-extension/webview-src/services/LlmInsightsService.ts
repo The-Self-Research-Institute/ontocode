@@ -146,8 +146,8 @@ export function setStoredMaxResponseTokens(value: number): void {
 
 const SESSION_TOKEN_BUDGET_STORAGE = 'ontocode_llm_session_token_budget';
 export const DEFAULT_SESSION_TOKEN_BUDGET = 8000;
-const MIN_SESSION_TOKEN_BUDGET = 2000;
-const MAX_SESSION_TOKEN_BUDGET = 20000;
+export const MIN_SESSION_TOKEN_BUDGET = 2000;
+export const MAX_SESSION_TOKEN_BUDGET = 50000;
 
 export function getStoredSessionTokenBudget(): number {
   try {

@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -45,6 +46,15 @@ public class AssistantReasonerToolService {
 
     @Value("${assistant.reasoner.max-explanation-bytes:50000}")
     private int maxExplanationBytes;
+
+    @Value("${assistant.reasoner.async-wait-ms:45000}")
+    private long asyncWaitMs;
+
+    @Value("${assistant.reasoner.async-poll-ms:1500}")
+    private long asyncPollMs;
+
+    @Autowired(required = false)
+    private ReasonerWorkerClient reasonerWorkerClient;
 
     public AssistantReasonerToolService(AssistantSessionService sessionService,
                                          AssistantAdmissionLimiter admissionLimiter) {
@@ -176,15 +186,39 @@ public class AssistantReasonerToolService {
                     describeFailure(responseBody));
         }
         if (response.getStatusCode() == HttpStatus.ACCEPTED) {
-            // async: true / pollUrl shape (reasoner-worker mode submitted a job we have no
-            // way to poll from here yet — see AssistantReasonerToolServiceTest for why this
-            // isn't a real polling loop today).
-            throw new ReasonerCallException("REASONER_UNAVAILABLE",
-                    "This deployment runs the reasoner in asynchronous mode, which the assistant doesn't "
-                            + "support yet. Try again directly from the Reasoner tab, or ask an admin to disable "
-                            + "ontocode.reasoner-worker.enabled.");
+            return awaitJob(responseBody);
         }
         return responseBody;
+    }
+
+    private Map<String, Object> awaitJob(Map<String, Object> accepted) throws ReasonerCallException {
+        Object jobId = accepted.getOrDefault("jobId", accepted.get("taskId"));
+        if (jobId == null || reasonerWorkerClient == null) {
+            throw new ReasonerCallException("REASONER_UNAVAILABLE",
+                    "The reasoner started this check in the background but the assistant can't follow it here. "
+                            + "Run it from the Reasoner tab instead.");
+        }
+        long deadline = System.currentTimeMillis() + asyncWaitMs;
+        while (true) {
+            Map<String, Object> job = reasonerWorkerClient.getJob(String.valueOf(jobId));
+            String status = job == null ? "" : String.valueOf(job.get("status")).toUpperCase(java.util.Locale.ROOT);
+            if ("COMPLETED".equals(status)) {
+                return job;
+            }
+            if ("FAILED".equals(status) || (job != null && Boolean.FALSE.equals(job.get("success")))) {
+                throw new ReasonerCallException("REASONER_ERROR", describeFailure(job));
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                throw new ReasonerCallException("REASONER_UNAVAILABLE",
+                        "The reasoner is still working on this. Try again in a few seconds; it keeps running in the background.");
+            }
+            try {
+                Thread.sleep(asyncPollMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ReasonerCallException("REASONER_UNAVAILABLE", "Interrupted while waiting for the reasoner.");
+            }
+        }
     }
 
     private static String describeFailure(Map<String, Object> body) {

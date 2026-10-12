@@ -14,10 +14,14 @@ export const CodeViewAskAiSidebar: React.FC<CodeViewAskAiSidebarProps> = ({ resi
     <>
       <div
         onMouseDown={resize.onDragStart}
-        className="w-1 flex-shrink-0 cursor-col-resize bg-gray-200 hover:bg-purple-400 active:bg-purple-500"
+        className="hidden md:block w-1 flex-shrink-0 cursor-col-resize bg-gray-200 hover:bg-purple-400 active:bg-purple-500"
         title="Drag to resize"
       />
-      <div ref={resize.panelRef} style={{ width: resize.width }} className="flex-shrink-0 border-l border-gray-200 overflow-hidden">
+      <div
+        ref={resize.panelRef}
+        style={{ ['--panel-width' as any]: `${resize.width}px` }}
+        className="w-full md:w-[var(--panel-width)] flex-shrink-0 border-l border-gray-200 overflow-hidden"
+      >
         <CodeAssistantPanel {...panelProps} recoveryShownByHost />
       </div>
     </>

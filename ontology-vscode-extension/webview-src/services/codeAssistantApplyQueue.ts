@@ -20,7 +20,7 @@ export interface ApplyFailure {
 
 export interface ReviewGroupLike {
   serverGroupId: string;
-  validation: { passed: boolean };
+  validation: { passed: boolean; checks?: { status?: string }[] };
 }
 
 export interface RemapLike {
@@ -123,7 +123,12 @@ export function isRemapStale(remap: RemapLike): boolean {
 
 export function buildApplyAllQueue(groups: ReviewGroupLike[], decisions: Record<string, GroupDecision>): string[] {
   return groups
-    .filter((g) => g.validation.passed && (decisions[g.serverGroupId] ?? "pending") === "pending")
+    .filter(
+      (g) =>
+        g.validation.passed &&
+        (decisions[g.serverGroupId] ?? "pending") === "pending" &&
+        !(g.validation.checks ?? []).some((c) => c.status === "pending"),
+    )
     .map((g) => g.serverGroupId);
 }
 

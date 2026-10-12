@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Loader2, Search, Edit3 } from 'lucide-react';
 import { Panel, AnnotationsDisplay, CollaboratorPresenceBar } from './common';
 import apiClient from '../../services/apiClient';
+import { withDraftScope } from '../../utils/draftScope';
 import datatypeDefinitionService, { DatatypeDefinition } from '../../services/datatypeDefinitionService';
 import type { Datatype} from '../../types';
 import ontologyMutationService from '../../services/ontologyMutationService';
@@ -37,7 +38,7 @@ const UsageTab: React.FC<{
   const loadUsages = async () => {
     setLoading(true);
     try {
-      const response = await apiClient.get<any>(`/api/ontology/datatypes/usage/${projectId}?datatypeIri=${encodeURIComponent(datatypeIri)}`);
+      const response = await apiClient.get<any>(withDraftScope(`/api/ontology/datatypes/usage/${projectId}?datatypeIri=${encodeURIComponent(datatypeIri)}`));
       const usageData = response?.data?.data || response?.data || response || [];
       setUsages(Array.isArray(usageData) ? usageData : []);
     } catch (error) {

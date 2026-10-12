@@ -26,16 +26,38 @@ public class DraftChangeHistoryRecorder {
         this.historyService = historyService;
     }
 
-    public void record(String projectId, List<DraftChange> drafts) {
+    public void markPublished(String projectId, String userId) {
         try {
-            drafts.forEach(draft -> recordTrackedChange(projectId, draft));
-            Map<String, List<DraftChange>> byEntity = groupByEntity(drafts);
-            byEntity.values().forEach(group -> recordBundledHistory(projectId, group));
-            log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries)",
-                    drafts.size(), byEntity.size());
+            historyService.markDraftHistoryPublished(projectId, userId);
         } catch (Exception e) {
-            log.error("[DRAFT] Failed to record changes to change tracking", e);
+            log.warn("[DRAFT] Could not mark published draft history entries for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
         }
+    }
+
+    public int record(String projectId, List<DraftChange> drafts) {
+        int failures = 0;
+        for (DraftChange draft : drafts) {
+            try {
+                recordTrackedChange(projectId, draft);
+            } catch (Exception e) {
+                failures++;
+                log.error("[DRAFT] Failed to record a tracked change for draft {} on project {}: {}",
+                        draft.getId(), projectId, e.getMessage());
+            }
+        }
+        Map<String, List<DraftChange>> byEntity = groupByEntity(drafts);
+        for (List<DraftChange> group : byEntity.values()) {
+            try {
+                recordBundledHistory(projectId, group);
+            } catch (Exception e) {
+                failures++;
+                log.error("[DRAFT] Failed to record bundled history on project {}: {}", projectId, e.getMessage());
+            }
+        }
+        log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries, {} failed)",
+                drafts.size(), byEntity.size(), failures);
+        return failures;
     }
 
     private void recordTrackedChange(String projectId, DraftChange draft) {
@@ -77,7 +99,8 @@ public class DraftChangeHistoryRecorder {
 
     private void recordBundledHistory(String projectId, List<DraftChange> group) {
         DraftChange primary = group.stream()
-                .filter(d -> d.getOperationType() != null && d.getOperationType().startsWith("create"))
+                .filter(d -> d.getOperationType() != null
+                        && (d.getOperationType().startsWith("create") || d.getOperationType().startsWith("delete")))
                 .findFirst()
                 .orElse(group.get(0));
         Map<String, Object> primaryData = primary.getOperationData();
@@ -90,6 +113,7 @@ public class DraftChangeHistoryRecorder {
                 subChanges.add(toSubChangeMap(draft));
             }
         }
+        addCreationParent(primary, primaryData, subChanges);
         String description = subChanges.isEmpty()
                 ? formatChangeDescription(primary)
                 : formatChangeDescription(primary) + " (" + subChanges.size() + " additional change"
@@ -98,6 +122,36 @@ public class DraftChangeHistoryRecorder {
         historyService.recordEdit(projectId, primary.getUserId(), primary.getUsername(), primary.getOperationType(),
                 entityIri, label != null ? label : entityIri, stringOrNull(primaryData.get("oldValue")),
                 newValueOf(primaryData), description, stringOrNull(primaryData.get("property")), subChanges, false);
+    }
+
+    private static void addCreationParent(DraftChange primary, Map<String, Object> data,
+                                          List<Map<String, String>> subChanges) {
+        String type = primary.getOperationType();
+        String predicate;
+        String parent;
+        if ("createClass".equals(type)) {
+            predicate = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
+            parent = stringOrNull(data.get("parent"));
+        } else if ("createObjectProperty".equals(type) || "createDataProperty".equals(type)
+                || "createAnnotationProperty".equals(type)) {
+            predicate = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
+            parent = stringOrNull(data.get("parent"));
+        } else {
+            return;
+        }
+        if (parent == null || parent.isBlank() || "http://www.w3.org/2002/07/owl#Thing".equals(parent)) {
+            return;
+        }
+        for (Map<String, String> existing : subChanges) {
+            if (predicate.equals(existing.get("predicate")) && parent.equals(existing.get("newValue"))) {
+                return;
+            }
+        }
+        Map<String, String> sc = new HashMap<>();
+        sc.put("predicate", predicate);
+        sc.put("newValue", parent);
+        sc.put("addition", "true");
+        subChanges.add(0, sc);
     }
 
     private static String stringOrNull(Object value) {
@@ -115,6 +169,9 @@ public class DraftChangeHistoryRecorder {
 
         Map<String, String> subChange = new HashMap<>();
         subChange.put("addition", String.valueOf(addition));
+        if (opType != null) {
+            subChange.put("category", determineCategory(opType));
+        }
 
         String predicate;
         if ("addSubClassOf".equals(opType) || "deleteSubClassOf".equals(opType)) {

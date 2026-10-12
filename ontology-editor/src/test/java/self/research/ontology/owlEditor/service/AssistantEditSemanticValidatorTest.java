@@ -208,6 +208,29 @@ class AssistantEditSemanticValidatorTest {
     }
 
     @Test
+    void aPrefixDeclaredByOneEditIsVisibleToAnotherEditInTheSameGroup() {
+        List<CheckResult> checks = check("turtle",
+                edit(3, ":Pizza a owl:Class .",
+                        ":Pizza a owl:Class .\ncustom:GourmetSpecialtyPizza a owl:Class ; rdfs:subClassOf :Pizza ."),
+                edit(9, ":Soup a owl:Class .",
+                        "@prefix custom: <http://www.example.org/custom#> .\n:Soup a owl:Class ."));
+
+        CheckResult references = named(checks, "references_resolve");
+        assertTrue(references.passed(), references.detail());
+    }
+
+    @Test
+    void aPrefixNeverDeclaredAnywhereInTheGroupIsStillCaught() {
+        List<CheckResult> checks = check("turtle",
+                edit(3, ":Pizza a owl:Class .",
+                        ":Pizza a owl:Class .\ncustom:GourmetSpecialtyPizza a owl:Class ; rdfs:subClassOf :Pizza ."));
+
+        CheckResult references = named(checks, "references_resolve");
+        assertFalse(references.passed());
+        assertTrue(references.detail().contains("custom:GourmetSpecialtyPizza"), references.detail());
+    }
+
+    @Test
     void predicateOnAContinuationLineIsNotMistakenForADeclaredSubject() {
         List<CheckResult> checks = check("turtle",
                 edit(6, "    rdfs:label \"Margherita\" .", "    :hasTopingg :Pizza ."));

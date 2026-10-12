@@ -2,7 +2,7 @@ import { AiInfo, ChangeSource, SubChange } from '../changeSets/types';
 
 export type ChangeType = 'class' | 'property' | 'individual' | 'axiom' | 'annotation' | 'import';
 export type ChangeAction = 'added' | 'deleted' | 'modified';
-export type ChangeStatus = 'pending' | 'approved' | 'rejected' | 'conflicted' | 'draft';
+export type ChangeStatus = 'saved' | 'draft' | 'reverted' | 'conflicted';
 export type AssistantTab = 'live' | 'drafts' | 'changes' | 'conflicts' | 'history' | 'stats';
 
 export interface OntologyChange {
@@ -51,6 +51,10 @@ export interface ConflictInfo {
   description: string;
   conflictingChangeId?: string;
   suggestedResolution?: string;
+  theirValue?: string;
+  theirUserId?: string;
+  theirUsername?: string;
+  theirTimestamp?: string;
 }
 
 export interface ChangeWarning {
@@ -62,9 +66,6 @@ export interface ChangeWarning {
 
 export interface ChangeStats {
   totalChanges: number;
-  pendingChanges: number;
-  approvedChanges: number;
-  rejectedChanges: number;
   draftChanges: number;
   conflicts: number;
   activeAuthors: number;
@@ -89,9 +90,6 @@ export interface AssistantNotification {
 
 export const EMPTY_STATS: ChangeStats = {
   totalChanges: 0,
-  pendingChanges: 0,
-  approvedChanges: 0,
-  rejectedChanges: 0,
   draftChanges: 0,
   conflicts: 0,
   activeAuthors: 0,

@@ -60,6 +60,11 @@ function mapChangeType(operationType: string, entityType: string): ChangeType {
   return 'axiom';
 }
 
+export function changeMatchesType(change: OntologyChange, filterType: ChangeType): boolean {
+  if (change.type === filterType) return true;
+  return (change.subChanges || []).some(sc => sc.category?.toLowerCase() === filterType);
+}
+
 function mapAction(operationType: string): ChangeAction {
   const lowerOp = operationType?.toLowerCase() || '';
   if (lowerOp.includes('add') || lowerOp.includes('create') || lowerOp.includes('insert')) return 'added';
@@ -97,7 +102,7 @@ export function parseChange(change: any) {
     authorEmail: change.userId || '',
     type: mapChangeType(originalOperationType, change.changeCategory || change.entityType),
     action: mapAction(originalOperationType),
-    status: (change.status?.toLowerCase() || 'approved') as ChangeStatus,
+    status: (change.status?.toLowerCase() || 'saved') as ChangeStatus,
     entityUri: change.entityIRI,
     entityLabel: change.entityLabel || extractLabelFromIRI(change.entityIRI),
     oldValue: change.oldValue,
@@ -106,7 +111,17 @@ export function parseChange(change: any) {
     commitId: change.editId,
     branch: undefined,
     comments: [],
-    conflicts: change.hasConflict ? [{ conflictType: 'concurrent_edit' as const, description: 'Conflict detected' }] : [],
+    conflicts: change.hasConflict ? [{
+      conflictType: 'concurrent_edit' as const,
+      description: change.conflictPartnerUsername
+        ? `${change.conflictPartnerUsername} changed this around the same time`
+        : 'Conflict detected',
+      conflictingChangeId: change.conflictPartnerChangeId ?? undefined,
+      theirValue: change.conflictPartnerValue,
+      theirUserId: change.conflictPartnerUserId,
+      theirUsername: change.conflictPartnerUsername,
+      theirTimestamp: change.conflictPartnerTimestamp,
+    }] : [],
     warnings: [],
     commentCount: change.commentCount || 0,
     operationType: originalOperationType,
@@ -129,9 +144,6 @@ export function computeStats(parsedChanges: any[], draftChanges: OntologyChange[
     .reduce((sum, c) => sum + (c.warnings?.length || 0), 0);
   return {
     totalChanges: parsedChanges.length,
-    pendingChanges: parsedChanges.filter((c: any) => c.status === 'pending').length,
-    approvedChanges: parsedChanges.filter((c: any) => c.status === 'approved').length,
-    rejectedChanges: parsedChanges.filter((c: any) => c.status === 'rejected').length,
     draftChanges: draftChanges.length,
     conflicts: parsedChanges.filter((c: any) => c.conflicts?.length > 0).length,
     activeAuthors: new Set(parsedChanges.map((c: any) => c.author)).size,

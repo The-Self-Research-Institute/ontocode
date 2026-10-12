@@ -48,7 +48,21 @@ function valueRow(entry: ChangeEntry, raw: string, addition: boolean): PropertyR
   };
 }
 
+function prefixRow(entry: ChangeEntry, raw: string, addition: boolean): PropertyRow {
+  return {
+    ...valueRow(entry, raw, addition),
+    label: `Prefix ${entry.entityLabel || ''}`.trim(),
+    value: raw
+  };
+}
+
 export function propertyRows(entry: ChangeEntry): PropertyRow[] {
+  if (PREFIX_VERBS[entry.operationType || '']) {
+    const prefixRows: PropertyRow[] = [];
+    if (entry.oldValue) prefixRows.push(prefixRow(entry, entry.oldValue, false));
+    if (entry.newValue) prefixRows.push(prefixRow(entry, entry.newValue, true));
+    return prefixRows;
+  }
   const subs = entry.subChanges || [];
   if (subs.length > 0) return subs.map(sc => subChangeRow(entry, sc));
   const rows: PropertyRow[] = [];
@@ -68,6 +82,7 @@ export function canUndoEntry(entry: ChangeEntry): boolean {
 }
 
 function otherChangesLabel(entry: ChangeEntry): string {
+  if (entry.operationType === 'projectImported') return 'File imported';
   const count = (entry.description || '').match(/modified (\d+) structural/i);
   if (count) return `${count[1]} other axioms`;
   return /structural/i.test(entry.operationType || '') ? 'Other axioms' : 'Other changes';
@@ -95,7 +110,24 @@ export function buildEntityRow(entry: ChangeEntry): EntityRow {
   };
 }
 
+const PREFIX_VERBS: Record<string, string> = {
+  prefixAdded: 'Added',
+  prefixModified: 'Changed',
+  prefixDeleted: 'Removed'
+};
+
 export function manualHeading(entry: ChangeEntry): SetHeading {
+  if (entry.operationType === 'projectImported') {
+    return { verb: 'Imported', name: entry.entityLabel || (entry.description || '').replace(/^Imported\s+/, '') || 'file' };
+  }
+  const prefixVerb = PREFIX_VERBS[entry.operationType || ''];
+  if (prefixVerb) {
+    return {
+      verb: prefixVerb,
+      name: `prefix ${entry.entityLabel || ''}`.trim(),
+      ...(entry.description ? { detail: entry.description } : {})
+    };
+  }
   const badge = entityBadge(entry);
   const parent = entry.reverted ? undefined
     : (entry.subChanges || []).find(sc => sc.addition && !sc.reverted && sc.newValue && /subClassOf$/.test(sc.predicate || ''));

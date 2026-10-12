@@ -122,19 +122,17 @@ public class OntologyQueryController {
         if (!owlApiFirst) {
             return false;
         }
+        String userId = SparqlQueryContext.getUserId();
+        boolean hasDraft = userId != null && !userId.isBlank() && datasetService != null
+                && datasetService.hasActiveDraftOverlay(projectId, userId);
+        if (hasDraft) {
+            return false;
+        }
         if (desktopMode) {
             // Desktop: OWLAPI is authoritative; Fuseki may not be started yet.
             return owlApiContext != null || desktopOntologyLoader != null;
         }
-        if (desktopOntologyLoader == null) {
-            return false;
-        }
-        String userId = SparqlQueryContext.getUserId();
-        if (userId != null && !userId.isBlank() && datasetService != null
-                && datasetService.hasActiveDraftOverlay(projectId, userId)) {
-            return false;
-        }
-        return true;
+        return desktopOntologyLoader != null;
     }
 
     /** Desktop owlapi-first: SPARQL failures become warming/202 instead of 503. */

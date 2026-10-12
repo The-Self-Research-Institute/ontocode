@@ -61,6 +61,7 @@ class DraftChangeHistoryRecorderTest {
         assertEquals("http://example.org/note", sub.get("predicate"));
         assertEquals("thin crust", sub.get("newValue"));
         assertEquals("http://example.org/note", sub.get("annotationProperty"));
+        assertEquals("ANNOTATION", sub.get("category"));
         verify(history).recordEdit(eq("p1"), eq("u1"), eq("Uma"), eq("createClass"), eq(SAUCE), eq("Sauce"),
                 isNull(), isNull(), eq("Created class: Sauce"), isNull(), eq(List.of()), eq(false));
     }
@@ -88,6 +89,18 @@ class DraftChangeHistoryRecorderTest {
     }
 
     @Test
+    void aDeleteIsPickedAsPrimaryOverAMereAnnotationSoTheRowIsClassifiedByTheRealOperation() {
+        DraftChange note = draft("d1", "addAnnotation",
+                Map.of("iri", PIZZA, "property", "http://example.org/note", "value", "thin crust"));
+        DraftChange delete = draft("d2", "deleteClass", Map.of("iri", PIZZA, "label", "Pizza"));
+
+        recorder.record("p1", List.of(note, delete));
+
+        verify(history).recordEdit(eq("p1"), eq("u1"), eq("Uma"), eq("deleteClass"), eq(PIZZA), eq("Pizza"),
+                isNull(), isNull(), anyString(), isNull(), anyList(), eq(false));
+    }
+
+    @Test
     void draftsWithoutAnEntityAreEachRecordedOnTheirOwn() {
         DraftChange first = draft("d1", "addAxiom", Map.of("value", "A SubClassOf B"));
         DraftChange second = draft("d2", "addAxiom", Map.of("value", "C SubClassOf D"));
@@ -99,12 +112,42 @@ class DraftChangeHistoryRecorderTest {
     }
 
     @Test
-    void aChangeTrackingFailureNeverFailsThePublish() {
+    void aChangeTrackingFailureNeverFailsThePublishAndTheBundledHistoryStillGetsRecorded() {
         doThrow(new RuntimeException("mongo down")).when(changeTracking).recordChange(any(OntologyChange.class));
 
-        assertDoesNotThrow(() -> recorder.record("p1",
+        int failures = assertDoesNotThrow(() -> recorder.record("p1",
                 List.of(draft("d1", "createClass", Map.of("iri", PIZZA, "label", "Pizza")))));
-        verify(history, times(0)).recordEdit(anyString(), anyString(), anyString(), anyString(), anyString(),
-                anyString(), any(), any(), anyString(), any(), anyList(), anyBoolean());
+
+        assertEquals(1, failures);
+        verify(history).recordEdit(eq("p1"), eq("u1"), eq("Uma"), eq("createClass"), eq(PIZZA), eq("Pizza"),
+                isNull(), isNull(), eq("Created class: Pizza"), isNull(), eq(List.of()), eq(false));
+    }
+
+    @Test
+    void aBundledHistoryFailureIsCountedButOtherEntitiesStillGetRecorded() {
+        doThrow(new RuntimeException("graphdb down")).when(history).recordEdit(anyString(), anyString(), anyString(),
+                anyString(), eq(PIZZA), anyString(), any(), any(), anyString(), any(), anyList(), anyBoolean());
+        DraftChange failing = draft("d1", "createClass", Map.of("iri", PIZZA, "label", "Pizza"));
+        DraftChange other = draft("d2", "createClass", Map.of("iri", SAUCE, "label", "Sauce"));
+
+        int failures = assertDoesNotThrow(() -> recorder.record("p1", List.of(failing, other)));
+
+        assertEquals(1, failures);
+        verify(history).recordEdit(eq("p1"), eq("u1"), eq("Uma"), eq("createClass"), eq(SAUCE), eq("Sauce"),
+                isNull(), isNull(), eq("Created class: Sauce"), isNull(), eq(List.of()), eq(false));
+    }
+
+    @Test
+    void markPublishedPassesTheProjectAndUserToTheHistoryService() {
+        recorder.markPublished("p1", "u1");
+
+        verify(history).markDraftHistoryPublished("p1", "u1");
+    }
+
+    @Test
+    void markPublishedNeverFailsAPublishThatAlreadyWentThrough() {
+        doThrow(new RuntimeException("mongo down")).when(history).markDraftHistoryPublished(anyString(), anyString());
+
+        assertDoesNotThrow(() -> recorder.markPublished("p1", "u1"));
     }
 }

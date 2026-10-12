@@ -168,8 +168,8 @@ describe("model helpers", () => {
     expect(getStoredSessionTokenBudget()).toBe(8000);
     expect(setStoredSessionTokenBudget(100)).toBe(2000);
     expect(getStoredSessionTokenBudget()).toBe(2000);
-    expect(setStoredSessionTokenBudget(1_000_000)).toBe(20000);
-    expect(getStoredSessionTokenBudget()).toBe(20000);
+    expect(setStoredSessionTokenBudget(1_000_000)).toBe(50000);
+    expect(getStoredSessionTokenBudget()).toBe(50000);
     expect(setStoredSessionTokenBudget(5000.4)).toBe(5000);
     expect(getStoredSessionTokenBudget()).toBe(5000);
     localStorage.setItem("ontocode_llm_session_token_budget", "1000.5");

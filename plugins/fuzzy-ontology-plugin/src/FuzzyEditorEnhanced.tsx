@@ -100,38 +100,6 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
   const [queryError, setQueryError] = useState<string>('');
   const [loadError, setLoadError] = useState<string>('');
 
-  const fuzzyOntology = useMemo(() => {
-    const ontology = new FuzzyOntology();
-    const classUris = new Set(memberships.map(m => m.fuzzyClass));
-    for (const uri of classUris) {
-      ontology.addConcept({ uri, instances: new Map() });
-    }
-    for (const m of memberships) {
-      ontology.setMembershipDegree(m.entity, m.fuzzyClass, getEffectiveDegree(m));
-    }
-    return ontology;
-  }, [memberships]);
-
-  const conceptNameMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const m of memberships) {
-      const hashIdx = m.fuzzyClass.lastIndexOf('#');
-      const slashIdx = m.fuzzyClass.lastIndexOf('/');
-      const splitIdx = Math.max(hashIdx, slashIdx);
-      const localName = splitIdx >= 0 ? m.fuzzyClass.slice(splitIdx + 1) : m.fuzzyClass;
-      map.set(localName, m.fuzzyClass);
-    }
-    return map;
-  }, [memberships]);
-
-  const resolveConceptNames = (query: string): string => {
-    let resolved = query;
-    for (const [localName, fullUri] of conceptNameMap) {
-      resolved = resolved.replace(new RegExp(`\\b${localName}\\b`, 'g'), fullUri);
-    }
-    return resolved;
-  };
-
   useEffect(() => {
     // Clear state when switching projects
     setMemberships([]);
@@ -215,6 +183,38 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       default:
         return 0;
     }
+  };
+
+  const fuzzyOntology = useMemo(() => {
+    const ontology = new FuzzyOntology();
+    const classUris = new Set(memberships.map(m => m.fuzzyClass));
+    for (const uri of classUris) {
+      ontology.addConcept({ uri, instances: new Map() });
+    }
+    for (const m of memberships) {
+      ontology.setMembershipDegree(m.entity, m.fuzzyClass, getEffectiveDegree(m));
+    }
+    return ontology;
+  }, [memberships]);
+
+  const conceptNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of memberships) {
+      const hashIdx = m.fuzzyClass.lastIndexOf('#');
+      const slashIdx = m.fuzzyClass.lastIndexOf('/');
+      const splitIdx = Math.max(hashIdx, slashIdx);
+      const localName = splitIdx >= 0 ? m.fuzzyClass.slice(splitIdx + 1) : m.fuzzyClass;
+      map.set(localName, m.fuzzyClass);
+    }
+    return map;
+  }, [memberships]);
+
+  const resolveConceptNames = (query: string): string => {
+    let resolved = query;
+    for (const [localName, fullUri] of conceptNameMap) {
+      resolved = resolved.replace(new RegExp(`\\b${localName}\\b`, 'g'), fullUri);
+    }
+    return resolved;
   };
 
   const loadFuzzyData = async () => {

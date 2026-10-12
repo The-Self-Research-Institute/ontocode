@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.model.DatatypeDefinitionEntity;
 import self.research.ontology.owlEditor.service.DatatypeDefinitionService;
+import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
@@ -25,13 +28,18 @@ import java.util.Optional;
 @CrossOrigin
 public class DatatypeDefinitionController {
 
+    private static final Logger log = LoggerFactory.getLogger(DatatypeDefinitionController.class);
+
     private final DatatypeDefinitionService definitionService;
     private final CollaborativeEditService collaborativeEditService;
+    private final OntologyHistoryService historyService;
 
     public DatatypeDefinitionController(DatatypeDefinitionService definitionService,
-                                        CollaborativeEditService collaborativeEditService) {
+                                        CollaborativeEditService collaborativeEditService,
+                                        OntologyHistoryService historyService) {
         this.definitionService = definitionService;
         this.collaborativeEditService = collaborativeEditService;
+        this.historyService = historyService;
     }
 
     private void broadcastDatatypeChange(String projectId, String datatypeIri, String mutationType,
@@ -40,6 +48,19 @@ public class DatatypeDefinitionController {
             new MutationOp(mutationType, datatypeIri, null, null, null, null, null, null, null, null, null, null, null, null, null),
             userId != null ? userId : "anonymous",
             username != null ? username : "Anonymous");
+    }
+
+    private void recordDatatypeHistory(String projectId, String datatypeIri, String mutationType,
+                                       String userId, String username) {
+        try {
+            MutationOp op = new MutationOp(mutationType, datatypeIri, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            historyService.recordGroupedMutations(projectId,
+                    userId != null ? userId : "anonymous",
+                    username != null ? username : "Anonymous",
+                    List.of(op), false);
+        } catch (Exception e) {
+            log.warn("[DATATYPE] Failed to record history for project={}: {}", projectId, e.getMessage());
+        }
     }
 
     @GetMapping("/{projectId}")
@@ -60,6 +81,7 @@ public class DatatypeDefinitionController {
         String type = isBlank(request.definitionType) ? "expression" : request.definitionType;
         DatatypeDefinitionEntity created = definitionService.createDefinition(projectId, request.datatypeIri, request.expression, type);
         broadcastDatatypeChange(projectId, request.datatypeIri, "addDatatypeDefinition", userId, username);
+        recordDatatypeHistory(projectId, request.datatypeIri, "addDatatypeDefinition", userId, username);
         return ResponseEntity.ok(Map.of("success", true, "data", created));
     }
 
@@ -78,8 +100,10 @@ public class DatatypeDefinitionController {
         if (updated.isEmpty()) {
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
         }
-        updated.ifPresent(def ->
-            broadcastDatatypeChange(projectId, def.getDatatypeIri(), "updateDatatypeDefinition", userId, username));
+        updated.ifPresent(def -> {
+            broadcastDatatypeChange(projectId, def.getDatatypeIri(), "updateDatatypeDefinition", userId, username);
+            recordDatatypeHistory(projectId, def.getDatatypeIri(), "updateDatatypeDefinition", userId, username);
+        });
         return ResponseEntity.ok(Map.of("success", true, "data", updated.get()));
     }
 
@@ -93,8 +117,10 @@ public class DatatypeDefinitionController {
         if (!deleted) {
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
         }
-        toDelete.ifPresent(def ->
-            broadcastDatatypeChange(projectId, def.getDatatypeIri(), "deleteDatatypeDefinition", userId, username));
+        toDelete.ifPresent(def -> {
+            broadcastDatatypeChange(projectId, def.getDatatypeIri(), "deleteDatatypeDefinition", userId, username);
+            recordDatatypeHistory(projectId, def.getDatatypeIri(), "deleteDatatypeDefinition", userId, username);
+        });
         return ResponseEntity.ok(Map.of("success", true));
     }
 

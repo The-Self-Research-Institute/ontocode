@@ -9,6 +9,7 @@ import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
 import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '../../utils/desktop';
+import { withDraftScope } from '../../utils/draftScope';
 import { useAuth } from '../../custom-hook/useAuth';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
@@ -77,7 +78,7 @@ const UsageTab: React.FC<{
     }, 30_000);
     try {
       const response = await apiClient.get<any>(
-        `/api/ontology/classes/usage/${projectId}?classIri=${encodeURIComponent(classIri)}`,
+        withDraftScope(`/api/ontology/classes/usage/${projectId}?classIri=${encodeURIComponent(classIri)}`),
         undefined,
         { signal: controller.signal },
       );
@@ -519,7 +520,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
         const annUserId = user?.email || user?.userId;
         const annUserParam = annUserId ? `&userId=${encodeURIComponent(annUserId)}` : '';
         const annResp = await apiClient.get<any>(
-          `/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}${annUserParam}`,
+          withDraftScope(`/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}${annUserParam}`),
           undefined,
           { signal },
         );
@@ -600,7 +601,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
   const loadProperties = async () => {
     try {
       // Load all properties (both object and data)
-      const allPropsResponse = await apiClient.get(`/api/ontology/properties/${projectId}`);
+      const allPropsResponse = await apiClient.get(withDraftScope(`/api/ontology/properties/${projectId}`));
       // Backend returns { success: true, data: [...] }
       // apiClient might wrap it in { data: {...} }
       const allProps = allPropsResponse?.data?.data || allPropsResponse?.data || [];
@@ -702,7 +703,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
     // Reuse the lookup only if it was loaded for this same project.
     if (allClassesLookup.size > 0 && allClassesLookupProjectRef.current === projectId) return;
     try {
-      const resp = await apiClient.get<any>(`/api/ontology/classes/all/${projectId}?limit=5000`);
+      const resp = await apiClient.get<any>(withDraftScope(`/api/ontology/classes/all/${projectId}?limit=5000`));
       const classes: any[] = resp?.data?.classes ?? resp?.data ?? resp?.classes ?? (Array.isArray(resp) ? resp : []);
       const lookup = new Map<string, string>();
       for (const c of classes) {
@@ -747,14 +748,14 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
       // Bust any intermediary cache after mutations so new restrictions appear immediately.
       let response = await apiClient.get<any>(
-        `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`,
+        withDraftScope(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`),
         undefined,
         signal ? { signal } : undefined,
       );
       if (afterMutation && isOwlApiWarmingResponse(response)) {
         await waitForDesktopOwlApiReady(projectId);
         response = await apiClient.get<any>(
-          `/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`,
+          withDraftScope(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`),
           undefined,
           signal ? { signal } : undefined,
         );
@@ -928,7 +929,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
   const loadInstances = async (signal?: AbortSignal): Promise<any[]> => {
     try {
       const response = await apiClient.get<any>(
-        `/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(item.id)}`,
+        withDraftScope(`/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(item.id)}`),
         undefined,
         signal ? { signal } : undefined,
       );

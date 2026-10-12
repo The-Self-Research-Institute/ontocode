@@ -54,6 +54,7 @@ public class AssistantEditProposalService {
     private final ProjectWriteLockRegistry lockRegistry;
     private final AssistantAuditService auditService;
     private final AssistantInsertionSnapper insertionSnapper;
+    private final AssistantConsistencyCheckService consistencyCheckService;
 
     @Value("${assistant.propose.max-edit-bytes:200000}")
     private int maxEditBytes;
@@ -87,7 +88,8 @@ public class AssistantEditProposalService {
                                          AssistantEditSemanticValidator semanticValidator,
                                          AssistantAuditService auditService,
                                          ProjectWriteLockRegistry lockRegistry,
-                                         AssistantInsertionSnapper insertionSnapper) {
+                                         AssistantInsertionSnapper insertionSnapper,
+                                         AssistantConsistencyCheckService consistencyCheckService) {
         this.sessionService = sessionService;
         this.groupRepository = groupRepository;
         this.storageManager = storageManager;
@@ -100,6 +102,7 @@ public class AssistantEditProposalService {
         this.auditService = auditService;
         this.lockRegistry = lockRegistry;
         this.insertionSnapper = insertionSnapper;
+        this.consistencyCheckService = consistencyCheckService;
     }
 
     public ProposeEditResult propose(String sessionId, String userEmail, List<EditGroupInput> groups) {
@@ -176,7 +179,7 @@ public class AssistantEditProposalService {
         String renameSummary = null;
         if (derived) {
             OperationEdits operationEdits = deriveOperationEdits(session, groupInput, inputEdits, publicGraphVersion,
-                    now, expiresAt, perf, checks);
+                    now, expiresAt, perf, checks, scope);
             if (operationEdits.rejection() != null) {
                 return operationEdits.rejection();
             }
@@ -205,6 +208,16 @@ public class AssistantEditProposalService {
         boolean structurallySound = addStructuralChecks(session, targetPath, sortedEdits, derived, maxDerivedEdits,
                 checks, scope);
         perf.mark("structuralAndLiveMatch");
+
+        boolean sizeOk = checks.stream().filter(c -> "size_limits".equals(c.name()))
+                .findFirst().map(CheckResult::passed).orElse(true);
+        if (!sizeOk) {
+            String rejectSummary = renameSummary != null ? renameSummary
+                    : sortedEdits.size() + " edit" + (sortedEdits.size() == 1 ? "" : "s") + " on " + targetPath;
+            return persistGroup(session, groupInput, targetPath, List.of(), false, publicGraphVersion, now,
+                    expiresAt, checks, List.of(), rejectSummary);
+        }
+
         sortedEdits = addContentChecks(session, targetPath, sortedEdits, structurallySound, derived,
                 introducedByOperation, checks, perf, scope);
         boolean passed = checks.stream().allMatch(CheckResult::passed);
@@ -217,6 +230,14 @@ public class AssistantEditProposalService {
         GroupProposalOutcome outcome = persistGroup(session, groupInput, targetPath, editEntries, passed,
                 publicGraphVersion, now, expiresAt, checks, diff, summary);
         perf.mark("persist");
+
+        boolean consistencyCheckDispatched = checks.stream()
+                .anyMatch(c -> AssistantConsistencyCheckService.CONSISTENCY_PRESERVED_CHECK.equals(c.name())
+                        && AssistantConsistencyCheckService.PENDING_STATUS.equals(c.status()));
+        if (consistencyCheckDispatched) {
+            consistencyCheckService.startAsyncCheck(outcome.getServerGroupId(), session.getProjectId(), targetPath,
+                    editEntries, scope);
+        }
         log.info("[Assistant] [PERF] propose project={} session={} format={} edits={} rename={} passed={} {}",
                 session.getProjectId(), session.getId(), targetPath, sortedEdits.size(), derived, passed,
                 perf.summary());
@@ -228,7 +249,8 @@ public class AssistantEditProposalService {
 
     private OperationEdits deriveOperationEdits(AssistantSessionDocument session, EditGroupInput groupInput,
                                                 List<EditInput> inputEdits, long publicGraphVersion, Instant now,
-                                                Instant expiresAt, PerfPhases perf, List<CheckResult> checks) {
+                                                Instant expiresAt, PerfPhases perf, List<CheckResult> checks,
+                                                StorageManager.ContentScope scope) {
         EditOperation operation = groupInput.operation();
         String operationPath = operation.targetPath() == null ? "" : operation.targetPath();
         if (!inputEdits.isEmpty()) {
@@ -246,7 +268,7 @@ public class AssistantEditProposalService {
                     expiresAt, perf, checks);
         }
         AssistantRenameService.RenameDerivation derivation =
-                renameService.derive(session.getProjectId(), operation, maxRenameLines);
+                renameService.derive(session.getProjectId(), operation, maxRenameLines, scope);
         perf.mark("renameDerive");
         if (!derivation.ok()) {
             return new OperationEdits(null, null, null,
@@ -333,16 +355,34 @@ public class AssistantEditProposalService {
         checks.add(new CheckResult("no_intra_group_overlap", noOverlap, overlapCheck.detail()));
 
         int maxEdits = derived ? maxDerivedEdits : maxEditsPerGroup;
-        boolean sizeOk = sortedEdits.size() <= maxEdits
-                && sortedEdits.stream().allMatch(e -> e.newText() != null && e.newText().length() <= maxEditBytes);
-        checks.add(new CheckResult("size_limits", sizeOk));
+        boolean editCountOk = sortedEdits.size() <= maxEdits;
+        Optional<EditInput> oversizedEdit = sortedEdits.stream()
+                .filter(e -> e.newText() == null || e.newText().length() > maxEditBytes)
+                .findFirst();
+        boolean sizeOk = editCountOk && oversizedEdit.isEmpty();
+        String sizeDetail = !editCountOk
+                ? "This batch has " + sortedEdits.size() + " edits, more than the " + maxEdits + " allowed at once."
+                : oversizedEdit.isPresent()
+                        ? "One of these edits is larger than the " + maxEditBytes + "-byte limit for a single edit."
+                        : null;
+        checks.add(new CheckResult("size_limits", sizeOk, sizeDetail));
 
         String projectId = session.getProjectId();
-        boolean liveMatch = singleTargetPath && rangeWellFormed
-                && (derived ? noOverlap
-                        && ProposedEdits.matchesLiveContentInOnePass(storageManager, projectId, targetPath, sortedEdits, scope)
-                : sortedEdits.stream().allMatch(e -> ProposedEdits.matchesLiveContent(storageManager, projectId, e, scope)));
-        checks.add(new CheckResult("original_text_matches_live", liveMatch));
+        CodeViewRangeMatcher.MatchResult liveMatchResult;
+        if (!singleTargetPath || !rangeWellFormed) {
+            liveMatchResult = CodeViewRangeMatcher.MatchResult.OK;
+        } else if (derived) {
+            liveMatchResult = !noOverlap ? CodeViewRangeMatcher.MatchResult.mismatch(overlapCheck.detail())
+                    : ProposedEdits.liveMatchDetailInOnePass(storageManager, projectId, targetPath, sortedEdits, scope);
+        } else {
+            liveMatchResult = sortedEdits.stream()
+                    .map(e -> ProposedEdits.liveMatchDetail(storageManager, projectId, e, scope))
+                    .filter(r -> !r.matches())
+                    .findFirst()
+                    .orElse(CodeViewRangeMatcher.MatchResult.OK);
+        }
+        boolean liveMatch = liveMatchResult.matches();
+        checks.add(new CheckResult("original_text_matches_live", liveMatch, liveMatchResult.detail()));
 
         return hasEdits && singleTargetPath && rangeWellFormed && noOverlap && sizeOk && liveMatch;
     }
@@ -392,6 +432,14 @@ public class AssistantEditProposalService {
         }
 
         perf.mark("semantic");
+
+        CheckResult consistencyGate = (!structurallySound || !syntax.passed())
+                ? new CheckResult(AssistantConsistencyCheckService.CONSISTENCY_PRESERVED_CHECK, true,
+                        "Skipped because the group failed an earlier check.")
+                : consistencyCheckService.gateCheck(session.getProjectId(), targetPath, sortedEdits);
+        checks.add(consistencyGate);
+        perf.mark("consistencyGate");
+
         return sortedEdits;
     }
 
@@ -406,7 +454,7 @@ public class AssistantEditProposalService {
         if (!singleInsertPoint || !insertionSnapper.supports(targetPath)) {
             return null;
         }
-        OptionalLong boundary = insertionSnapper.nextStatementBoundary(projectId, targetPath, insertLine);
+        OptionalLong boundary = insertionSnapper.nextStatementBoundary(projectId, targetPath, insertLine, scope);
         if (boundary.isEmpty()) {
             return null;
         }
@@ -457,7 +505,13 @@ public class AssistantEditProposalService {
                 .updatedAt(now)
                 .expiresAt(expiresAt)
                 .build();
-        groupRepository.save(document);
+        try {
+            groupRepository.save(document);
+        } catch (Exception e) {
+            log.error("[Assistant] Failed to save proposed edit group for session {}: {}",
+                    session.getId(), e.getMessage(), e);
+            throw new RuntimeException("Couldn't save this proposal — try a smaller batch of changes.", e);
+        }
 
         log.info("[Assistant] Proposed group {} for session {} status={}",
                 document.getId(), session.getId(), document.getStatus());
@@ -498,9 +552,13 @@ public class AssistantEditProposalService {
         return new CheckResult("complete_reference_coverage", result.covered(), result.detail());
     }
 
-    public record CheckResult(String name, boolean passed, String detail) {
+    public record CheckResult(String name, boolean passed, String detail, String status) {
         public CheckResult(String name, boolean passed) {
-            this(name, passed, null);
+            this(name, passed, null, null);
+        }
+
+        public CheckResult(String name, boolean passed, String detail) {
+            this(name, passed, detail, null);
         }
     }
 

@@ -126,10 +126,17 @@ export interface ProposedDiffEntry {
   lineCount?: number | null;
 }
 
+export interface ProposedCheckResult {
+  name: string;
+  passed: boolean;
+  detail?: string;
+  status?: "pending";
+}
+
 export interface ProposedEditGroupResult {
   clientGroupId: string;
   serverGroupId: string;
-  validation: { passed: boolean; checks: Array<{ name: string; passed: boolean; detail?: string }> };
+  validation: { passed: boolean; checks: ProposedCheckResult[] };
   diff: ProposedDiffEntry[];
 }
 

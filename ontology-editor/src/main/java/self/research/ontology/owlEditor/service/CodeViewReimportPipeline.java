@@ -24,12 +24,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -55,6 +57,14 @@ public class CodeViewReimportPipeline {
     @Autowired(required = false)
     @Nullable
     private OntologyQueryService ontologyQueryService;
+
+    @Autowired(required = false)
+    @Nullable
+    private OntologySpringCacheEvictionService springCacheEviction;
+
+    @Autowired(required = false)
+    @Nullable
+    private DesktopOntologyLoader desktopOntologyLoader;
 
     @Autowired(required = false)
     @Nullable
@@ -93,12 +103,27 @@ public class CodeViewReimportPipeline {
 
     public record ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
                                    String userId, String username, String targetGraphOverride,
-                                   Path oldContentFileForDiff, boolean skipSanitization, ChangeOrigin origin) {
+                                   Path oldContentFileForDiff, boolean skipSanitization, ChangeOrigin origin,
+                                   boolean scratch) {
         public ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
                                String userId, String username, String targetGraphOverride,
                                Path oldContentFileForDiff, boolean skipSanitization) {
             this(projectId, format, contentFile, draft, userId, username, targetGraphOverride,
-                    oldContentFileForDiff, skipSanitization, null);
+                    oldContentFileForDiff, skipSanitization, null, false);
+        }
+
+        public ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
+                               String userId, String username, String targetGraphOverride,
+                               Path oldContentFileForDiff, boolean skipSanitization, ChangeOrigin origin) {
+            this(projectId, format, contentFile, draft, userId, username, targetGraphOverride,
+                    oldContentFileForDiff, skipSanitization, origin, false);
+        }
+
+        public ReimportRequest(String projectId, String format, Path contentFile, boolean draft,
+                               String userId, String username, String targetGraphOverride,
+                               Path oldContentFileForDiff, boolean skipSanitization, boolean scratch) {
+            this(projectId, format, contentFile, draft, userId, username, targetGraphOverride,
+                    oldContentFileForDiff, skipSanitization, null, scratch);
         }
     }
 
@@ -125,32 +150,40 @@ public class CodeViewReimportPipeline {
             importWithRetry(req, files);
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
-            invalidateReasonerCaches(req.projectId());
+            if (!req.scratch()) {
+                invalidateReasonerCaches(req.projectId());
+            }
 
             perf.mark("graphImport");
             ChangeOrigin origin = recordHistoryDiff(req, files);
 
             perf.mark("historyDiff");
             if (req.draft()) {
-                invalidateAfterDraftReplaced(req.projectId(), req.userId());
+                if (!req.scratch()) {
+                    invalidateAfterDraftReplaced(req.projectId(), req.userId());
+                }
                 perf.mark("invalidate");
                 completed = true;
                 return new ReimportResult(format, files.rdfFormat,
                         storageManager.getDraftGraphVersion(req.projectId(), req.userId()), false);
             }
-            invalidateAfterGraphReplaced(req.projectId(), MetadataRefresh.NOW);
-            log.info("[CODE-VIEW-SAVE] All format caches cleared");
-            perf.mark("invalidate");
+            if (!req.scratch()) {
+                invalidateAfterGraphReplaced(req.projectId(), MetadataRefresh.NOW);
+                log.info("[CODE-VIEW-SAVE] All format caches cleared");
+                perf.mark("invalidate");
 
-            String cachedContent = isOwlApiFormat
-                    ? Files.readString(req.contentFile(), StandardCharsets.UTF_8)
-                    : Files.readString(files.importSourceFile, StandardCharsets.UTF_8);
-            storageManager.storeCodeViewCache(req.projectId(), cachedContent, format);
-            log.info("[CODE-VIEW-SAVE] Current format cache restored");
-            perf.mark("cacheWrite");
+                String cachedContent = isOwlApiFormat
+                        ? Files.readString(req.contentFile(), StandardCharsets.UTF_8)
+                        : Files.readString(files.importSourceFile, StandardCharsets.UTF_8);
+                storageManager.storeCodeViewCache(req.projectId(), cachedContent, format);
+                log.info("[CODE-VIEW-SAVE] Current format cache restored");
+                perf.mark("cacheWrite");
+            }
 
             completed = true;
-            announce(req.projectId(), req.userId(), req.username(), origin);
+            if (!req.scratch()) {
+                announce(req.projectId(), req.userId(), req.username(), origin);
+            }
             boolean cacheMatches = !files.reserializedOnRetry && (isOwlApiFormat || req.skipSanitization());
             return new ReimportResult(format, files.rdfFormat, storageManager.getPublicGraphVersion(req.projectId()),
                     cacheMatches);
@@ -240,7 +273,7 @@ public class CodeViewReimportPipeline {
     }
 
     private ChangeOrigin recordHistoryDiff(ReimportRequest req, ReimportFiles files) {
-        if (req.oldContentFileForDiff() == null) {
+        if (req.scratch() || req.oldContentFileForDiff() == null) {
             return null;
         }
         ChangeOrigin origin = req.origin() != null ? req.origin() : ChangeOrigin.manual();
@@ -248,11 +281,46 @@ public class CodeViewReimportPipeline {
             Model oldModel = parseToModel(req.oldContentFileForDiff(), RdfFiles.snapshotFormat(req.oldContentFileForDiff()));
             Model newModel = parseToModel(files.importSourceFile, files.rdfFormat);
             historyRecorder.record(req.projectId(), CodeViewHistoryRecorder.effectiveUserId(req.userId(), desktopMode),
-                    CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft(), origin);
+                    CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft(), origin,
+                    !oldModel.getNamespaces().isEmpty());
             return origin;
         } catch (Exception diffEx) {
             log.warn("[CODE-VIEW-SAVE] Failed to record change history diff (save itself succeeded): {}", diffEx.getMessage());
             return null;
+        }
+    }
+
+    public void recordPrefixChanges(String projectId, String userId, String username, boolean draft,
+                                    ChangeOrigin origin, Map<String, String> oldPrefixes, Map<String, String> newPrefixes) {
+        try {
+            historyRecorder.recordPrefixes(projectId, CodeViewHistoryRecorder.effectiveUserId(userId, desktopMode),
+                    CodeViewHistoryRecorder.effectiveUsername(username), oldPrefixes, newPrefixes, draft, origin);
+        } catch (Exception e) {
+            log.warn("[CODE-VIEW-SAVE] Failed to record prefix changes (the edit itself succeeded): {}", e.getMessage());
+        }
+        if (draft && userId != null && !userId.isBlank()) {
+            syncDraftPrefixSideChannel(projectId, userId, oldPrefixes, newPrefixes);
+        }
+    }
+
+    private void syncDraftPrefixSideChannel(String projectId, String userId, Map<String, String> oldPrefixes,
+                                            Map<String, String> newPrefixes) {
+        try {
+            for (Map.Entry<String, String> entry : newPrefixes.entrySet()) {
+                String prefix = entry.getKey();
+                String iri = entry.getValue();
+                if (!iri.equals(oldPrefixes.get(prefix))) {
+                    datasetService.updateDraftPrefix(projectId, userId, prefix, iri, null);
+                }
+            }
+            for (String oldPrefix : oldPrefixes.keySet()) {
+                if (!newPrefixes.containsKey(oldPrefix)) {
+                    datasetService.deleteDraftPrefix(projectId, userId, oldPrefix);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[CODE-VIEW-SAVE] Failed to sync draft prefix side-channel (the edit itself succeeded): {}",
+                    e.getMessage());
         }
     }
 
@@ -303,7 +371,7 @@ public class CodeViewReimportPipeline {
         } catch (Exception diffEx) {
             log.warn("[CODE-VIEW-SAVE] Failed to record change history for a patched apply: {}", diffEx.getMessage());
         }
-        invalidateAfterGraphReplaced(projectId, MetadataRefresh.BACKGROUND);
+        invalidateAfterGraphReplaced(projectId, MetadataRefresh.BACKGROUND, touchedIris(removed, added));
         storageManager.storeCodeViewCacheFile(projectId, format, patchedFile);
         if (recorded) {
             announce(projectId, userId, username, resolved);
@@ -327,13 +395,33 @@ public class CodeViewReimportPipeline {
         }
     }
 
+    static List<String> touchedIris(Model removed, Model added) {
+        return Stream.concat(removed.stream(), added.stream())
+                .flatMap(st -> Stream.of(st.getSubject(), st.getPredicate(), st.getObject()))
+                .filter(org.eclipse.rdf4j.model.Value::isIRI)
+                .map(org.eclipse.rdf4j.model.Value::stringValue)
+                .distinct()
+                .toList();
+    }
+
     private void invalidateAfterDraftReplaced(String projectId, String userId) {
-        invalidateDerivedCaches(projectId);
+        invalidateDerivedCaches(projectId, null, true);
+        if (springCacheEviction != null) {
+            springCacheEviction.evictForProjectAndUser(projectId, userId);
+        }
         storageManager.bumpDraftGraphVersion(projectId, userId);
     }
 
     private void invalidateAfterGraphReplaced(String projectId, MetadataRefresh refresh) {
-        invalidateDerivedCaches(projectId);
+        invalidateAfterGraphReplaced(projectId, refresh, null);
+    }
+
+    private void invalidateAfterGraphReplaced(String projectId, MetadataRefresh refresh,
+                                              @Nullable List<String> touchedIris) {
+        if (ontologyMutationService != null) {
+            ontologyMutationService.bumpMainGraphRevision(projectId);
+        }
+        invalidateDerivedCaches(projectId, touchedIris, false);
         storageManager.clearCodeViewCache(projectId);
         datasetService.evictPublicReadCache(projectId);
         if (indexService == null) {
@@ -364,16 +452,35 @@ public class CodeViewReimportPipeline {
         }
     }
 
-    private void invalidateDerivedCaches(String projectId) {
+    private void invalidateDerivedCaches(String projectId, @Nullable List<String> touchedIris, boolean draft) {
         datasetService.markProjectDirty(projectId);
+        boolean desktopWorkingCopy = !draft && desktopOntologyLoader != null && desktopOntologyLoader.isOwlApiFirst();
+        if (desktopWorkingCopy) {
+            desktopOntologyLoader.refreshDraftFromTripleStore(projectId);
+        }
         if (ontologyCache != null) {
             ontologyCache.evict(projectId);
             log.info("[CODE-VIEW-SAVE] Evicted in-memory OWLAPI cache for project {} (now stale vs. reimported Fuseki data)", projectId);
         }
         metadataService.incrementMutationVersion(projectId);
 
-        if (hierarchyIndexService != null) {
+        if (ontologyMutationService != null) {
+            try {
+                ontologyMutationService.invalidateEntityCaches(projectId, touchedIris, draft);
+            } catch (Exception cacheEx) {
+                log.warn("[CODE-VIEW-SAVE] Failed invalidating entity caches for project {} (non-fatal): {}",
+                        projectId, cacheEx.getMessage());
+            }
+        } else if (hierarchyIndexService != null) {
             hierarchyIndexService.scheduleBuild(projectId);
+        }
+        if (!draft && springCacheEviction != null) {
+            try {
+                springCacheEviction.evictForProject(projectId);
+            } catch (Exception evictEx) {
+                log.warn("[CODE-VIEW-SAVE] Failed evicting query caches for project {} (non-fatal): {}",
+                        projectId, evictEx.getMessage());
+            }
         }
 
         if (ontologyQueryService != null) {
@@ -381,6 +488,9 @@ public class CodeViewReimportPipeline {
         }
         if (editorReasonerCache != null) {
             editorReasonerCache.invalidateOntology(projectId);
+        }
+        if (desktopWorkingCopy) {
+            desktopOntologyLoader.scheduleRewarm(projectId);
         }
     }
 
