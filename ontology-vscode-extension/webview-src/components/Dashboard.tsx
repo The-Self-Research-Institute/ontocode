@@ -1612,6 +1612,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => { onGoToProjectDashboardRef.current = onGoToProjectDashboard; }, [onGoToProjectDashboard]);
   const autoLoadNewFileRef = useRef(false); // Set when user clicks "Create New File" — skip loading dialog on fileReady
   const codeViewDirtyRef = useRef(false);
+  const codeViewFetchTokenRef = useRef(0);
   const metadataRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
@@ -9811,8 +9812,11 @@ const updateItemInState = useCallback(
             updatedItem.label = value;
           }
           updateItemInState(updatedItem);
+          void fetchCodeViewContent(codeViewFormat, false, true);
         } else {
           // Ontology annotation
+          markAsUnsaved();
+
           updateActiveOntologyAnnotations((current) => [
             ...current,
             {
@@ -9832,6 +9836,7 @@ const updateItemInState = useCallback(
           });
 
           await refreshOntologyAnnotations();
+          void fetchCodeViewContent(codeViewFormat, false, true);
         }
 
         showNotification("Annotation added successfully!", "info");
@@ -12317,6 +12322,8 @@ const updateItemInState = useCallback(
       keepEditorMounted: boolean = false,
     ) => {
       if (!projectId) return;
+      const requestToken = ++codeViewFetchTokenRef.current;
+      const isStale = () => codeViewFetchTokenRef.current !== requestToken;
       const setBusy = keepEditorMounted && codeViewContent ? setCodeViewRefreshing : setCodeViewLoading;
 
       // Clear any previous syntax error / lint warnings when loading new content
@@ -12359,6 +12366,7 @@ const updateItemInState = useCallback(
         if (!isDraftScopeActive()) {
           try {
             const probe = await requestCodeViewPage(projectId, format, 0);
+            if (isStale()) return;
             if (probe?.success && Number(probe.totalBytes) > getCodeViewEditableCeiling(format)) {
               setCodeViewContent(probe.content ?? "");
               setCodeViewPage(toCodeViewPage(probe, 0));
@@ -12388,6 +12396,7 @@ const updateItemInState = useCallback(
           forceRefresh: forceRefresh ? "true" : "false",
           ...(isDraftScopeActive() ? { draft: "true", userId: codeViewContentEffectiveUserId } : {}),
         });
+        if (isStale()) return;
         if (response.success) {
           setCodeViewSourceVersion(response.sourceVersion != null ? Number(response.sourceVersion) : null);
           // Guard the editor against huge documents (see codeViewTruncation).
@@ -12434,12 +12443,14 @@ const updateItemInState = useCallback(
         }
       } catch (error: any) {
         console.error("Failed to fetch code view content:", error);
-        const msg = error?.message || error?.toString() || "Unknown error";
-        setCodeViewTruncation(null);
-        setCodeViewContent(
-          `// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`,
-        );
-        setCodeViewFormat(format);
+        if (!isStale()) {
+          const msg = error?.message || error?.toString() || "Unknown error";
+          setCodeViewTruncation(null);
+          setCodeViewContent(
+            `// Error loading ${format} content: ${msg}\n// The backend may not support this format for this ontology.\n// Try using Turtle or RDF/XML format instead.`,
+          );
+          setCodeViewFormat(format);
+        }
       } finally {
         setBusy(false);
       }

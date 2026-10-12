@@ -130,7 +130,8 @@ public class OntologyQueryService {
      * Cached in the "topLevelClasses" cache so the 2s status poll costs one query, not one
      * per poll; the cache is evicted on every mutation and import.
      */
-    @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()", sync = true)
+    @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()", sync = true)
     public int topLevelClassCount(String projectId) {
         String countQuery = PREFIXES + """
             SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
@@ -471,7 +472,8 @@ public class OntologyQueryService {
      * Get ALL classes (including children) in a single SPARQL query.
      * Used by the graph visualization to render the full class hierarchy.
      */
-    @Cacheable(value = "allClasses", key = "#projectId + '_' + #limit + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
+    @Cacheable(value = "allClasses", key = "#projectId + '_' + #limit + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
     public List<OntologyDto.TreeNode> allClasses(String projectId, int limit) {
         long startTime = System.currentTimeMillis();
 
@@ -836,7 +838,8 @@ public class OntologyQueryService {
      * Get all properties for a project.
      * OPTIMIZED: Cached + simplified query (details loaded on-demand per property).
      */
-    @Cacheable(value = "ontologyProperties", key = "#projectId + '_' + #type + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
+    @Cacheable(value = "ontologyProperties", key = "#projectId + '_' + #type + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
     public List<PropertyDto> properties(String projectId, String type, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         String filter = switch (normalize(type)) {
@@ -1203,7 +1206,8 @@ public class OntologyQueryService {
      * Get individuals for a project.
      * OPTIMIZED: Cached for repeated access.
      */
-    @Cacheable(value = "ontologyIndividuals", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
+    @Cacheable(value = "ontologyIndividuals", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
     public List<IndividualDto> individuals(String projectId, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
@@ -1246,7 +1250,8 @@ public class OntologyQueryService {
         return individuals;
     }
 
-    @Cacheable(value = "individualCount", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
+    @Cacheable(value = "individualCount", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
     public long individualCount(String projectId) {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
@@ -1269,7 +1274,8 @@ public class OntologyQueryService {
         return count;
     }
 
-    @Cacheable(value = "ontologyAnnotationProperties", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
+    @Cacheable(value = "ontologyAnnotationProperties", key = "#projectId + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
     public List<AnnotationPropertyDto> annotationProperties(String projectId, int limit, int offset) {
         long startTime = System.currentTimeMillis();
         String query = PREFIXES + """
@@ -2188,7 +2194,8 @@ public class OntologyQueryService {
         return imports;
     }
 
-    @Cacheable(value = "debugInfo", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
+    @Cacheable(value = "debugInfo", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
     public Map<String, Object> debugInfo(String projectId) {
         long startTime = System.currentTimeMillis();
         // Count all triples
@@ -4105,7 +4112,8 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
      * Returns both asserted and inferred instances.
      * OPTIMIZED: Cached + combined into single SPARQL query with BIND for isInferred flag.
      */
-    @Cacheable(value = "classInstances", key = "#projectId + '_' + #classIri + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
+    @Cacheable(value = "classInstances", key = "#projectId + '_' + #classIri + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
     public List<Map<String, Object>> getClassInstances(String projectId, String classIri) {
         safeIri(classIri);
         long startTime = System.currentTimeMillis();
@@ -4155,7 +4163,8 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
      * Get per-class instance counts.
      * OPTIMIZED: Cached + simplified query (skip inferred graph for speed).
      */
-    @Cacheable(value = "classInstanceCounts", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()")
+    @Cacheable(value = "classInstanceCounts", key = "#projectId + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
     public Map<String, Map<String, Integer>> getClassInstanceCounts(String projectId) {
         long startTime = System.currentTimeMillis();
         Map<String, Map<String, Integer>> counts = new LinkedHashMap<>();
