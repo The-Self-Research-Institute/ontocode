@@ -1996,7 +1996,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                                   ai !== justification.axioms.length - 1
                                     ? (isDark ? 'border-b border-gray-800' : 'border-b border-gray-200')
                                     : ''
-                                }`}
+                                } ${axiom.role === 'CONFLICT' && explainTarget?.entailmentType === 'UNSATISFIABLE_CLASS' ? (isDark ? 'bg-red-900/70 border-l-4 border-l-red-500' : 'bg-red-300 border-l-4 border-l-red-600') : ''}`}
                               >
                                 <div className="flex items-baseline justify-between gap-3">
                                   <span className="flex items-baseline gap-2 min-w-0">
@@ -2246,7 +2246,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                                         ai !== justification.axioms.length - 1
                                           ? (isDark ? 'border-b border-gray-800' : 'border-b border-gray-200')
                                           : ''
-                                      }`}
+                                      } ${axiom.role === 'CONFLICT' ? (isDark ? 'bg-red-900/70 border-l-4 border-l-red-500' : 'bg-red-300 border-l-4 border-l-red-600') : ''}`}
                                     >
                                       <div className="flex items-baseline justify-between gap-3">
                                         <span className="flex items-baseline gap-2 min-w-0">

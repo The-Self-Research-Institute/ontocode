@@ -297,7 +297,7 @@ export type EntailmentPayload = {
 
 type EntailmentJustification = {
   label: string;
-  axioms: Array<{ text: string; membershipNote: string; entities?: { iri: string; label: string; kind: string }[] }>;
+  axioms: Array<{ text: string; membershipNote: string; role?: 'CONFLICT' | 'CONTRIBUTING'; entities?: { iri: string; label: string; kind: string }[] }>;
 };
 
 const OWL_AXIOM_KEYWORDS = [

@@ -753,6 +753,7 @@ public class ReasonerService {
                     : membershipCount == 1 ? "In NO other justifications"
                     : "In " + (membershipCount - 1) + " other justifications");
                 entry.put("entities", extractEntities(axiom, ontology));
+                entry.put("role", isConflictAxiom(axiom) ? "CONFLICT" : "CONTRIBUTING");
                 axiomEntries.add(entry);
             }
             justification.put("axioms", axiomEntries);
@@ -784,6 +785,27 @@ public class ReasonerService {
         if (entity.isOWLAnnotationProperty()) return "annotationProperty";
         if (entity.isOWLDatatype()) return "datatype";
         return "entity";
+    }
+
+    private static final Set<AxiomType<?>> CONFLICT_AXIOM_TYPES = Set.of(
+        AxiomType.DISJOINT_CLASSES,
+        AxiomType.DISJOINT_UNION,
+        AxiomType.DISJOINT_OBJECT_PROPERTIES,
+        AxiomType.DISJOINT_DATA_PROPERTIES,
+        AxiomType.IRREFLEXIVE_OBJECT_PROPERTY,
+        AxiomType.ASYMMETRIC_OBJECT_PROPERTY
+    );
+
+    private boolean isConflictAxiom(OWLAxiom axiom) {
+        if (CONFLICT_AXIOM_TYPES.contains(axiom.getAxiomType())) {
+            return true;
+        }
+        for (OWLClassExpression ce : axiom.getNestedClassExpressions()) {
+            if (ce instanceof OWLObjectComplementOf) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public OWLAxiom buildEntailmentAxiom(String entailmentType, String subjectIri, String targetIri,
