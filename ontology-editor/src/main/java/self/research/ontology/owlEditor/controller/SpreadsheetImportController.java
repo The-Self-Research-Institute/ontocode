@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.controller;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.owlEditor.service.DraftNotReadyException;
+import self.research.ontology.owlEditor.service.SparqlQueryContext;
 import self.research.ontology.owlEditor.service.spreadsheet.GenerationResult;
 import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportService;
 import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetParseException;
@@ -58,7 +60,10 @@ public class SpreadsheetImportController {
     public ResponseEntity<?> preview(@PathVariable String projectId,
                                      @RequestParam("file") MultipartFile file,
                                      @RequestParam("rules") String rulesJson,
-                                     @RequestParam(defaultValue = "5000") int limit) {
+                                     @RequestParam(defaultValue = "5000") int limit,
+                                     @RequestParam(required = false) String userId,
+                                     HttpServletRequest request) {
+        useCallersDraft(SpreadsheetImportCaller.resolve(request, userId, null));
         if (file == null || file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "No file uploaded"));
         }
@@ -88,7 +93,10 @@ public class SpreadsheetImportController {
                                     @RequestParam("rules") String rulesJson,
                                     @RequestParam(defaultValue = "false") boolean draft,
                                     @RequestParam(required = false) String userId,
-                                    @RequestParam(required = false) String username) {
+                                    @RequestParam(required = false) String username,
+                                    HttpServletRequest request) {
+        SpreadsheetImportCaller.Caller caller = SpreadsheetImportCaller.resolve(request, userId, username);
+        useCallersDraft(caller);
         if (file == null || file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "No file uploaded"));
         }
@@ -101,7 +109,7 @@ public class SpreadsheetImportController {
         String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "upload";
         try (InputStream in = file.getInputStream()) {
             SpreadsheetImportService.CommitResult r = importService.commit(projectId, in, fileName,
-                rules == null ? List.of() : rules, draft, userId, username);
+                rules == null ? List.of() : rules, draft, caller.userId(), caller.username());
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("importId", r.importId());
             data.put("axiomCount", r.axiomCount());
@@ -128,6 +136,12 @@ public class SpreadsheetImportController {
             }
             log.error("[SpreadsheetImport] Commit failed for project {}", projectId, e);
             return ResponseEntity.status(500).body(Map.of("success", false, "error", "The import failed: " + e.getMessage()));
+        }
+    }
+
+    private static void useCallersDraft(SpreadsheetImportCaller.Caller caller) {
+        if (caller.userId() != null && !caller.userId().isBlank()) {
+            SparqlQueryContext.setUserId(caller.userId());
         }
     }
 

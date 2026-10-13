@@ -11,9 +11,11 @@ import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -31,13 +33,20 @@ public class SpreadsheetParserService {
 
     public static final int MAX_ROWS_PER_SHEET = 100_000;
     public static final int MAX_COLUMNS = 1_000;
+    public static final int MAX_FILE_BYTES = 2 * 1024 * 1024;
+    static final long MAX_UNPACKED_PART_BYTES = 50L * 1024 * 1024;
+
+    static {
+        ZipSecureFile.setMaxEntrySize(MAX_UNPACKED_PART_BYTES);
+    }
 
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ISO_LOCAL_DATE;
 
-    public SpreadsheetWorkbook parse(InputStream in, String fileName) {
+    public SpreadsheetWorkbook parse(InputStream file, String fileName) {
         String format = formatOf(fileName);
         try {
+            InputStream in = withinSizeLimit(file, fileName);
             return switch (format) {
                 case "csv" -> parseCsv(in, fileName);
                 case "xlsx", "xls" -> parseExcel(in, fileName, format);
@@ -47,6 +56,15 @@ public class SpreadsheetParserService {
         } catch (IOException e) {
             throw new SpreadsheetParseException("Could not read '" + fileName + "': " + e.getMessage(), e);
         }
+    }
+
+    private static InputStream withinSizeLimit(InputStream in, String fileName) throws IOException {
+        byte[] data = in.readNBytes(MAX_FILE_BYTES + 1);
+        if (data.length > MAX_FILE_BYTES) {
+            throw new SpreadsheetParseException("'" + fileName + "' is larger than "
+                + (MAX_FILE_BYTES / (1024 * 1024)) + " MB. Split it into smaller files and import each one.");
+        }
+        return new ByteArrayInputStream(data);
     }
 
     static String formatOf(String fileName) {
@@ -125,7 +143,7 @@ public class SpreadsheetParserService {
     private SpreadsheetWorkbook parseCsv(InputStream in, String fileName) throws IOException {
         BOMInputStream bomFree = BOMInputStream.builder().setInputStream(in).get();
         BufferedReader reader = new BufferedReader(new InputStreamReader(bomFree, StandardCharsets.UTF_8));
-        reader.mark(1024 * 1024);
+        reader.mark(MAX_FILE_BYTES + 1);
         char delimiter = detectDelimiter(reader.readLine());
         reader.reset();
 

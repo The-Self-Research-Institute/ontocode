@@ -86,6 +86,23 @@ class SpreadsheetParserServiceTest {
     }
 
     @Test
+    void rejectsFilesOverTheSizeLimit() {
+        byte[] big = new byte[SpreadsheetParserService.MAX_FILE_BYTES + 1];
+        SpreadsheetParseException e = assertThrows(SpreadsheetParseException.class,
+            () -> parser.parse(new ByteArrayInputStream(big), "huge.xlsx"));
+        assertEquals("'huge.xlsx' is larger than 2 MB. Split it into smaller files and import each one.",
+            e.getMessage());
+    }
+
+    @Test
+    void acceptsAFileExactlyAtTheSizeLimit() {
+        byte[] csv = new byte[SpreadsheetParserService.MAX_FILE_BYTES];
+        java.util.Arrays.fill(csv, (byte) 'a');
+        SpreadsheetWorkbook workbook = parser.parse(new ByteArrayInputStream(csv), "edge.csv");
+        assertEquals(1, workbook.sheets().get(0).rowCount());
+    }
+
+    @Test
     void convertsColumnLetters() {
         assertEquals("A", SpreadsheetParserService.columnLetter(1));
         assertEquals("Z", SpreadsheetParserService.columnLetter(26));

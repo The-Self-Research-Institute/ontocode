@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -44,10 +45,11 @@ public class SpreadsheetRuleSetController {
     }
 
     @PostMapping
-    public ResponseEntity<?> create(@PathVariable String projectId, @RequestBody RuleSetRequest request) {
+    public ResponseEntity<?> create(@PathVariable String projectId, @RequestBody RuleSetRequest request,
+                                    HttpServletRequest http) {
         try {
             SpreadsheetRuleSetEntity saved = ruleSets.create(projectId, request.name(), request.description(),
-                request.rules(), request.user());
+                request.rules(), savedBy(http, request));
             return ResponseEntity.ok(Map.of("success", true, "data", saved));
         } catch (SpreadsheetRuleSetService.DuplicateNameException e) {
             return ResponseEntity.status(409).body(Map.of("success", false, "error", e.getMessage()));
@@ -58,9 +60,10 @@ public class SpreadsheetRuleSetController {
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable String projectId, @PathVariable String id,
-                                    @RequestBody RuleSetRequest request) {
+                                    @RequestBody RuleSetRequest request, HttpServletRequest http) {
         try {
-            return ruleSets.update(projectId, id, request.name(), request.description(), request.rules(), request.user())
+            return ruleSets.update(projectId, id, request.name(), request.description(), request.rules(),
+                    savedBy(http, request))
                 .<ResponseEntity<?>>map(r -> ResponseEntity.ok(Map.of("success", true, "data", r)))
                 .orElseGet(() -> notFound());
         } catch (SpreadsheetRuleSetService.DuplicateNameException e) {
@@ -75,6 +78,10 @@ public class SpreadsheetRuleSetController {
         return ruleSets.delete(projectId, id)
             ? ResponseEntity.ok(Map.of("success", true))
             : notFound();
+    }
+
+    private static String savedBy(HttpServletRequest http, RuleSetRequest request) {
+        return SpreadsheetImportCaller.resolve(http, request.user(), request.user()).username();
     }
 
     private static ResponseEntity<?> notFound() {
