@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle, Loader, Lock } from "lucide-react";
 import { useCollaboration } from "../../contexts/CollaborationContext";
+import { useTheme } from "../../contexts/ThemeContext";
 import apiClient from "../../services/apiClient";
 import axiomAnnotationService from "../../services/axiomAnnotationService";
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
@@ -469,9 +470,12 @@ export const AxiomRow: React.FC<{
   parentEntityIri?: string;
   sectionName?: string;
   resolveGCAAxiom?: (definition: string) => { subjectIris: string[]; targetIri: string } | null;
-}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations: hasAxiomAnnotationsProp = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, sectionName, resolveGCAAxiom }) => {
+  conflictIris?: Set<string>;
+}> = ({ axiom, onDelete, onEdit, onEditClick, isInferred: isInferredProp = false, isInActiveOntology = false, ontologyIri, hasAxiomAnnotations: hasAxiomAnnotationsProp = false, properties = [], dataProperties = [], onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, sectionName, resolveGCAAxiom, conflictIris }) => {
   // Handle isInferred from prop or axiom object (can be boolean or string 'true')
   const isInferred = isInferredProp || axiom.isInferred === true || axiom.isInferred === 'true';
+  const { actualMode } = useTheme();
+  const isDarkMode = actualMode === 'dark';
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showAxiomAnnotations, setShowAxiomAnnotations] = useState(false);
@@ -493,6 +497,7 @@ export const AxiomRow: React.FC<{
 
   const relatedIri = axiom.id?.includes('|||') ? axiom.id.split('|||')[0] : axiom.id;
   const hasAxiomAnnotations = hasAxiomAnnotationsProp || axiomAnnotations.length > 0;
+  const isConflict = !!relatedIri && !!conflictIris?.has(relatedIri);
 
   const explainPayload: EntailmentPayload | null = (() => {
     if (!parentEntityIri) return null;
@@ -694,8 +699,12 @@ export const AxiomRow: React.FC<{
       data-axiom-type={axiom.type}
       style={{
         borderColor: 'var(--border)',
-        backgroundColor: isInferred ? 'var(--warning-tint)' : 'var(--surface-1)',
-        borderLeft: isInActiveOntology ? '3px solid #D97706' : 'none',
+        backgroundColor: isConflict
+          ? (isDarkMode ? 'rgba(127, 29, 29, 0.7)' : '#fca5a5')
+          : isInferred ? 'var(--warning-tint)' : 'var(--surface-1)',
+        borderLeft: isConflict
+          ? `3px solid ${isDarkMode ? '#ef4444' : '#dc2626'}`
+          : isInActiveOntology ? '3px solid #D97706' : 'none',
       }}
     >
     <div
@@ -957,7 +966,8 @@ export const AxiomSubsection: React.FC<{
   projectId?: string;
   parentEntityIri?: string;
   resolveGCAAxiom?: (definition: string) => { subjectIris: string[]; targetIri: string } | null;
-}> = ({ title, axioms, inferredAxioms, viewMode = 'asserted', onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, resolveGCAAxiom }) => {
+  conflictIris?: Set<string>;
+}> = ({ title, axioms, inferredAxioms, viewMode = 'asserted', onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, resolveGCAAxiom, conflictIris }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -1111,6 +1121,7 @@ export const AxiomSubsection: React.FC<{
                 parentEntityIri={parentEntityIri}
                 sectionName={title}
                 resolveGCAAxiom={resolveGCAAxiom}
+                conflictIris={conflictIris}
               />
             ))}
             {/* Inferred axioms (only in inferred view) */}

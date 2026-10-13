@@ -307,6 +307,68 @@ const ClassEditor: React.FC<{
   const [axiomsLoaded, setAxiomsLoaded] = useState(false);
   const [descriptionTimedOut, setDescriptionTimedOut] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
+  const [conflictIris, setConflictIris] = useState<Set<string> | undefined>(undefined);
+
+  useEffect(() => {
+    if (!projectId || !item.id) {
+      setConflictIris(undefined);
+      return;
+    }
+    let cancelled = false;
+
+    const loadConflictIris = async () => {
+      // item.isUnsatisfiable is only populated while viewing the Inferred hierarchy —
+      // the Asserted tree never carries it — so confirm unsatisfiability against the
+      // live reasoner list first rather than trusting that flag.
+      let unsatisfiable = item.isUnsatisfiable === true;
+      if (!unsatisfiable) {
+        try {
+          const quick: any = await apiClient.get(`/api/ontology/${projectId}/unsatisfiable-classes-quick`);
+          const list: string[] = Array.isArray(quick?.unsatisfiableClasses) ? quick.unsatisfiableClasses : [];
+          // The quick-check endpoint returns bare local names (e.g. "MeatTopping"), not
+          // full IRIs, so compare against item.id's fragment/last path segment too.
+          const localName = item.id.includes('#') ? item.id.split('#').pop() : item.id.split('/').pop();
+          unsatisfiable = list.includes(item.id) || (!!localName && list.includes(localName));
+        } catch (e) {
+          console.warn('[ClassEditor] conflictIris: unsatisfiable-classes-quick failed', e);
+          unsatisfiable = false;
+        }
+      }
+      if (cancelled) return;
+      if (!unsatisfiable) {
+        setConflictIris(undefined);
+        return;
+      }
+
+      try {
+        const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
+          entailmentType: 'UNSATISFIABLE_CLASS',
+          subjectIri: item.id,
+          mode: 'regular',
+          maxJustifications: 10,
+        });
+        if (cancelled) return;
+        const data = (res as any)?.data ?? res;
+        const justifications = data?.justifications ?? [];
+        const iris = new Set<string>();
+        for (const justification of justifications) {
+          for (const axiom of justification?.axioms ?? []) {
+            if (axiom?.role !== 'CONFLICT') continue;
+            for (const entity of axiom?.entities ?? []) {
+              if (entity?.iri && entity.iri !== item.id) iris.add(entity.iri);
+            }
+          }
+        }
+        setConflictIris(iris);
+      } catch (e) {
+        console.warn('[ClassEditor] conflictIris: explain-entailment failed', e);
+        if (!cancelled) setConflictIris(undefined);
+      }
+    };
+
+    void loadConflictIris();
+    return () => { cancelled = true; };
+  }, [item.id, item.isUnsatisfiable, projectId]);
 
   // Manchester Syntax Editor State
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -2332,6 +2394,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                conflictIris={conflictIris}
               />
 
               {/* SubClass Of Section */}
@@ -2355,6 +2418,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                conflictIris={conflictIris}
               />
 
               {/* General Class Axioms Section */}
@@ -2374,6 +2438,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 parentEntityIri={item.id}
                 resolveGCAAxiom={resolveGCAAxiom}
                 onNavigate={handleNavigate}
+                conflictIris={conflictIris}
               />
 
               {/* SubClass Of (Anonymous Ancestor) */}
@@ -2511,6 +2576,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                conflictIris={conflictIris}
               />
 
               {/* Disjoint Union Of Section */}
@@ -2531,6 +2597,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 projectId={projectId}
                 parentEntityIri={item.id}
                 onNavigate={handleNavigate}
+                conflictIris={conflictIris}
               />
             </div>
             )}
