@@ -57,6 +57,7 @@ import {
   Monitor,
   Scale,
   EyeOff,
+  FileSpreadsheet,
 } from "lucide-react";
 import apiClient, { ApiError, getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
@@ -3489,6 +3490,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         "change-assistant-plugin": "Changes",
         "sparql-query-plugin": "SPARQL",
         "reasoner-plugin": "Reasoner",
+        "spreadsheet-import-plugin": "SpreadsheetImport",
       };
 
       const tabId = pluginToTabMap[pluginId];
@@ -3574,6 +3576,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         "change-assistant-plugin": "Changes",
         "sparql-query-plugin": "SPARQL",
         "reasoner-plugin": "Reasoner",
+        "spreadsheet-import-plugin": "SpreadsheetImport",
       };
 
       const tabId = pluginToTabMap[pluginId];
@@ -8639,6 +8642,11 @@ const updateItemInState = useCallback(
 
       showNotification(message, "info");
 
+      if (String(detail?.entityIRI ?? "").startsWith("urn:ontocode:spreadsheet-import:")) {
+        refreshAfterBulkWriteRef.current("rollback");
+        return;
+      }
+
       // Check if this is a rollback of an "added" change (which means deleting the entity)
       const isAddedRollback = detail.action && detail.action.toLowerCase() === "added";
 
@@ -8892,6 +8900,7 @@ const updateItemInState = useCallback(
           "change-assistant-plugin": "Changes",
           "sparql-query-plugin": "SPARQL",
           "reasoner-plugin": "Reasoner",
+          "spreadsheet-import-plugin": "SpreadsheetImport",
         };
 
         const tabsToShow = pluginIds.map((id) => pluginToTabMap[id]).filter(Boolean);
@@ -15610,6 +15619,51 @@ const updateItemInState = useCallback(
           />
         );
       }
+      case "SpreadsheetImport": {
+        const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "spreadsheet-import-plugin");
+        const loadingState = pluginLoadingStates["spreadsheet-import-plugin"];
+
+        if (plugin?.component && projectId) {
+          const PluginComponent = plugin.component;
+          const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
+          return (
+            <PluginComponent
+              projectId={projectId}
+              context={{ apiClient }}
+              userId={actor.userId}
+              username={actor.username}
+              draftMode={!isDesktop() && syncMode === "private"}
+              onImported={() => {
+                codeViewDirtyRef.current = true;
+                refreshAfterBulkWriteRef.current("spreadsheetImport");
+              }}
+            />
+          );
+        }
+
+        return (
+          <PluginPlaceholder
+            pluginId="spreadsheet-import-plugin"
+            pluginName="Spreadsheet Import"
+            description="Turn spreadsheet rows into classes, individuals and property values with transformation rules, preview the axioms, and import them as one undoable change."
+            icon={<FileSpreadsheet size={32} className="text-white" />}
+            features={[
+              "Excel and CSV",
+              "Cellfie-style rules",
+              "Axiom preview",
+              "Per-row errors",
+              "One-step undo",
+              "Saved rule sets",
+            ]}
+            accentColor="from-lime-500 via-green-500 to-emerald-600"
+            onInstall={() => handleInstallPlugin("spreadsheet-import-plugin")}
+            onRetryLoad={() => handleRetryLoadPlugin("spreadsheet-import-plugin")}
+            isInstalled={installedPlugins.has("spreadsheet-import-plugin")}
+            isLoading={loadingState?.loading || false}
+            error={loadingState?.error}
+          />
+        );
+      }
       case "Changes": {
         const plugin = pluginLoader.getInstalledPlugins().find((p: any) => p.id === "change-assistant-plugin");
         const loadingState = pluginLoadingStates["change-assistant-plugin"];
@@ -17580,6 +17634,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
     Fuzzy: { label: "Fuzzy Ontology", icon: Sparkles },
     Changes: { label: "Change Assistant", icon: GitBranch },
     Reasoner: { label: "Reasoner", icon: Zap },
+    SpreadsheetImport: { label: "Spreadsheet Import", icon: FileSpreadsheet },
   };
 
   // Don't show welcome screen - just render empty editor if no project loaded
