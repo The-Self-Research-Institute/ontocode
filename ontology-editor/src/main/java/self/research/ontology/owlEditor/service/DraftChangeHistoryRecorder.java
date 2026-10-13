@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.OntologyChange;
+import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportDraftSupport;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -36,8 +37,11 @@ public class DraftChangeHistoryRecorder {
     }
 
     public int record(String projectId, List<DraftChange> drafts) {
+        List<DraftChange> tracked = drafts.stream()
+                .filter(draft -> !SpreadsheetImportDraftSupport.isImportSession(draft.getSessionId()))
+                .toList();
         int failures = 0;
-        for (DraftChange draft : drafts) {
+        for (DraftChange draft : tracked) {
             try {
                 recordTrackedChange(projectId, draft);
             } catch (Exception e) {
@@ -46,7 +50,7 @@ public class DraftChangeHistoryRecorder {
                         draft.getId(), projectId, e.getMessage());
             }
         }
-        Map<String, List<DraftChange>> byEntity = groupByEntity(drafts);
+        Map<String, List<DraftChange>> byEntity = groupByEntity(tracked);
         for (List<DraftChange> group : byEntity.values()) {
             try {
                 recordBundledHistory(projectId, group);
@@ -56,7 +60,7 @@ public class DraftChangeHistoryRecorder {
             }
         }
         log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries, {} failed)",
-                drafts.size(), byEntity.size(), failures);
+                tracked.size(), byEntity.size(), failures);
         return failures;
     }
 
