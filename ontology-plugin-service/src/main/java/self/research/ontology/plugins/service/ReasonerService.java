@@ -82,7 +82,13 @@ public class ReasonerService {
         return t;
     });
 
- @Value("${ontocode.reasoner.justification-timeout-ms:90000}")
+  
+    private final ExecutorService justificationExecutor = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "reasoner-justification-worker");
+        t.setDaemon(true);
+        return t;
+    });
+ @Value("${ontocode.reasoner.justification-timeout-ms:55000}")
     private long JUSTIFICATION_TIMEOUT_MS;
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int MAX_JUSTIFICATIONS;
@@ -689,6 +695,32 @@ public class ReasonerService {
         return buildJustificationsResult(explanations, ontology);
     }
 
+
+    public List<Map<String, Object>> findEquivalentClassesJustifications(
+            OWLOntology ontology, String subjectIri, String targetIri, ReasonerType type, int limit, String mode) {
+        OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+        OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+        String subjectLabel = getLabel(subject, ontology);
+        String targetLabel = getLabel(target, ontology);
+
+        List<Map<String, Object>> forward = findEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, target), type, limit, mode);
+        List<Map<String, Object>> backward = findEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(target, subject), type, limit, mode);
+
+        List<Map<String, Object>> combined = new ArrayList<>();
+        combined.addAll(prefixLabels(forward, subjectLabel + " ⊑ " + targetLabel));
+        combined.addAll(prefixLabels(backward, targetLabel + " ⊑ " + subjectLabel));
+        return combined;
+    }
+
+    private List<Map<String, Object>> prefixLabels(List<Map<String, Object>> justifications, String prefix) {
+        for (Map<String, Object> justification : justifications) {
+            justification.put("label", prefix + " — " + justification.get("label"));
+        }
+        return justifications;
+    }
+
     public List<Map<String, Object>> findInconsistencyJustifications(
             OWLOntology ontology, ReasonerType type, int limit, String mode) {
         OWLOntology reasoningOntology = stripSwrlRules(ontology);
@@ -710,11 +742,14 @@ public class ReasonerService {
     }
 
     private Set<Explanation<OWLAxiom>> runWithTimeout(Supplier<Set<Explanation<OWLAxiom>>> search) {
+      
+        java.util.concurrent.Future<Set<Explanation<OWLAxiom>>> future =
+            justificationExecutor.submit(search::get);
         try {
-            return CompletableFuture.supplyAsync(search, realizationExecutor)
-                .get(JUSTIFICATION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            return future.get(JUSTIFICATION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException te) {
-  throw new RuntimeException(
+            future.cancel(true);
+            throw new RuntimeException(
                 "Justification search timed out after " + JUSTIFICATION_TIMEOUT_MS
                     + "ms — the reasoner may still be warming up on its first request; try again.",
                 te);
@@ -722,6 +757,7 @@ public class ReasonerService {
             throw new RuntimeException("Justification search failed: "
                 + (e.getMessage() != null ? e.getMessage() : e.toString()), e);
         } catch (InterruptedException ie) {
+            future.cancel(true);
             Thread.currentThread().interrupt();
             throw new RuntimeException("Justification search was interrupted", ie);
         }

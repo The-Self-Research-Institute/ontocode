@@ -84,6 +84,9 @@ public class ProjectLoadController {
     private final java.util.Set<String> importInFlight =
         java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
 
+    private record QuickUnsatCacheEntry(long version, java.util.List<String> unsatisfiableClasses) {}
+    private final ConcurrentHashMap<String, QuickUnsatCacheEntry> quickUnsatCache = new ConcurrentHashMap<>();
+
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
     private final ProjectImportService importService;
@@ -1398,10 +1401,24 @@ public class ProjectLoadController {
             body.put("unsatisfiableClasses", java.util.List.of());
             return ResponseEntity.ok(body);
         }
+        boolean isDraft = draft && userId != null && !userId.isBlank();
+        String cacheKey = isDraft ? "draft::" + projectId + "::" + userId : "public::" + projectId;
         try {
+            long currentVersion = isDraft
+                    ? storageManager.getDraftGraphVersion(projectId, userId)
+                    : storageManager.getPublicGraphVersion(projectId);
+
+            QuickUnsatCacheEntry cached = quickUnsatCache.get(cacheKey);
+            if (cached != null && cached.version() == currentVersion) {
+                body.put("success", true);
+                body.put("projectId", projectId);
+                body.put("unsatisfiableClasses", cached.unsatisfiableClasses());
+                return ResponseEntity.ok(body);
+            }
+
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             OWLOntology ontology;
-            if (draft && userId != null && !userId.isBlank()) {
+            if (isDraft) {
                 String draftContent = datasetService.exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
                 try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
                     ontology = manager.loadOntologyFromOntologyDocument(is);
@@ -1414,6 +1431,7 @@ public class ProjectLoadController {
             }
             java.util.List<String> unsatisfiable =
                     owlEditorReasonerService.getUnsatisfiableClassesQuick(ontology, ReasonerType.HERMIT);
+            quickUnsatCache.put(cacheKey, new QuickUnsatCacheEntry(currentVersion, unsatisfiable));
             body.put("success", true);
             body.put("projectId", projectId);
             body.put("unsatisfiableClasses", unsatisfiable);

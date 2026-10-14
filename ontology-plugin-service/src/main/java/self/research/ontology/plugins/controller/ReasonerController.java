@@ -16,6 +16,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import self.research.ontology.common.ReasoningFriendlyErrors;
 import self.research.ontology.plugins.service.ReasonerService;
 import self.research.ontology.plugins.service.ReasonerType;
@@ -113,6 +115,8 @@ public class ReasonerController {
     // and each entry is a bare Object (negligible memory).
     private final ConcurrentHashMap<String, Object> loadLocks = new ConcurrentHashMap<>();
 
+    private final Map<String, OWLOntology> lastDraftOntology = new ConcurrentHashMap<>();
+
     // Async classification task tracking
     private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
     private final Set<String> cleanupScheduledTaskIds = ConcurrentHashMap.newKeySet();
@@ -156,6 +160,25 @@ public class ReasonerController {
         return baseId;
     }
 
+ 
+    private String resolveUserId(String clientSuppliedUserId) {
+        if (clientSuppliedUserId == null || clientSuppliedUserId.isBlank()) {
+            return clientSuppliedUserId;
+        }
+        org.springframework.web.context.request.RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+        if (attrs instanceof ServletRequestAttributes servletAttrs) {
+            Object verified = servletAttrs.getRequest().getAttribute("authenticatedUserId");
+            if (verified instanceof String verifiedUserId && !verifiedUserId.isBlank()) {
+                if (!verifiedUserId.equals(clientSuppliedUserId)) {
+                    log.warn("Ignoring client-supplied userId '{}' for draft load — using authenticated userId '{}' instead",
+                        clientSuppliedUserId, verifiedUserId);
+                }
+                return verifiedUserId;
+            }
+        }
+        return clientSuppliedUserId;
+    }
+
     /**
      * Load ontology from multiple sources in priority order:
      * 1. Editor service (for ontologies being edited)
@@ -165,7 +188,8 @@ public class ReasonerController {
      * Tries the full {@code projectId} first (e.g. {@code proj-abc--uuid}), then the parent
      * prefix before the first {@code --} for legacy partition/file-scoped IDs.
      */
-    private OWLOntology loadOntology(String projectId, String userId) throws Exception {
+    private OWLOntology loadOntology(String projectId, String clientSuppliedUserId) throws Exception {
+        String userId = resolveUserId(clientSuppliedUserId);
         log.info("Loading ontology for project: {} (userId={})", projectId, userId);
 
         OWLOntology ontology = tryLoadOntologyForId(projectId, userId);
@@ -318,7 +342,18 @@ public class ReasonerController {
         // whatever the ontology looked like the first time it was loaded. Always fetch
         // fresh and never cache; only the published snapshot below is worth caching.
         if (userId != null && !userId.isBlank()) {
-            return loadOntologyFromEditorService(lookupId, userId);
+            String draftKey = cacheKeyFor(lookupId, userId);
+            Object lock = loadLocks.computeIfAbsent(draftKey, k -> new Object());
+            synchronized (lock) {
+                OWLOntology fresh = loadOntologyFromEditorService(lookupId, userId);
+                if (fresh != null) {
+                    OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
+                    if (previous != null && previous != fresh) {
+                        reasonerService.disposeReasoners(previous);
+                    }
+                }
+                return fresh;
+            }
         }
 
         // Fast path: return cached without acquiring a lock.
@@ -883,11 +918,22 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
                 entailmentType, subjectIri, targetIri, projectId, type, mode);
 
             OWLOntology ontology = loadOntology(projectId, request.get("userId"));
-            OWLAxiom entailment = reasonerService.buildEntailmentAxiom(
-                entailmentType, subjectIri, targetIri, propertyIri, literalValue);
 
-            List<Map<String, Object>> justifications =
-                reasonerService.findEntailmentJustifications(ontology, entailment, type, maxJustifications, mode);
+            List<Map<String, Object>> justifications;
+            if ("EQUIVALENT_CLASSES".equals(entailmentType)) {
+                if (targetIri == null) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "error", "targetIri is required for EQUIVALENT_CLASSES"));
+                }
+                justifications = reasonerService.findEquivalentClassesJustifications(
+                    ontology, subjectIri, targetIri, type, maxJustifications, mode);
+            } else {
+                OWLAxiom entailment = reasonerService.buildEntailmentAxiom(
+                    entailmentType, subjectIri, targetIri, propertyIri, literalValue);
+                justifications =
+                    reasonerService.findEntailmentJustifications(ontology, entailment, type, maxJustifications, mode);
+            }
 
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);

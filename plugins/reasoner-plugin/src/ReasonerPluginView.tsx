@@ -413,6 +413,27 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     window.addEventListener('mouseup', onUp);
     window.addEventListener('touchend', onUp);
   }, []);
+
+  useEffect(() => {
+    const clampToSidebar = () => {
+      const sidebarEl = topPanelRef.current?.parentElement;
+      const sidebarHeight = sidebarEl?.getBoundingClientRect().height ?? 0;
+      if (sidebarHeight <= 0) return;
+      const maxTop = Math.max(120, sidebarHeight - 160);
+      setTopPanelHeight((prev) => {
+        if (prev == null) return prev;
+        const clamped = Math.min(maxTop, Math.max(100, prev));
+        if (clamped !== prev) {
+          try { localStorage.setItem(TOP_PANEL_HEIGHT_KEY, String(clamped)); } catch { /* non-blocking */ }
+        }
+        return clamped;
+      });
+    };
+    clampToSidebar();
+    window.addEventListener('resize', clampToSidebar);
+    return () => window.removeEventListener('resize', clampToSidebar);
+  }, []);
+
   const [reasonerStatus, setReasonerStatus] = useState<string>('Not initialized');
   const [stats, setStats] = useState<any>(null);
   const [selectedClassIri, setSelectedClassIri] = useState<string | null>(null);

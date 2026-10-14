@@ -1,9 +1,19 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle, Loader, Lock } from "lucide-react";
+import { ChevronRight, ChevronDown, Plus, Trash2, Edit2, MessageCircle, Tag, MousePointer2, HelpCircle, AtSign, Circle, Loader, Lock, Copy, Hash } from "lucide-react";
 import { useCollaboration } from "../../contexts/CollaborationContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import apiClient from "../../services/apiClient";
 import axiomAnnotationService from "../../services/axiomAnnotationService";
+import { notificationService } from "../../services/notificationService";
+import { isDraftScopeActive } from "../../utils/draftScope";
+import { resolveMutationActor } from "../../utils/mutationActor";
+
+function copyEntityIdToClipboard(iri: string, kind: 'IRI' | 'Fragment'): void {
+  const text = kind === 'Fragment' ? (iri.includes('#') ? iri.split('#').pop()! : iri.split('/').pop()!) : iri;
+  navigator.clipboard.writeText(text)
+    .then(() => notificationService.info('Copied', `${kind} copied to clipboard`))
+    .catch(() => notificationService.error('Copy failed', `Could not copy ${kind.toLowerCase()} to clipboard`));
+}
 import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
 import type { Axiom } from '../../types';
 
@@ -152,13 +162,16 @@ const ColorizedAxiomDefinition: React.FC<{
         
         // Find filler entity info
         const fillerEntity = findEntityIri(fillerText);
-        
+
+        const isDataProp = dataProperties.some(p => p.id === axiom.propertyIri);
+        const propertyNavType = isDataProp ? 'dataProperty' : 'objectProperty';
+
         return (
           <span className="font-bold text-gray-900">
             {/* Property name - can be a link */}
-            <span 
+            <span
               className={onNavigate ? "text-blue-600 underline cursor-pointer hover:text-blue-800" : "text-gray-900"}
-              onClick={onNavigate ? () => onNavigate(axiom.propertyIri!, 'property') : undefined}
+              onClick={onNavigate ? () => onNavigate(axiom.propertyIri!, propertyNavType) : undefined}
               title={axiom.propertyIri}
             >
               '{propertyParts.join(' ')}'
@@ -370,9 +383,20 @@ export const ExplanationModal: React.FC<{
   limitAll: boolean;
   onLimitAllChange: (all: boolean) => void;
   limitValue: number;
-  onLimitValueChange: (value: number) => void;
+  /** Fires once, on blur/Enter, with the parsed+clamped value — not per keystroke. */
+  onLimitCommit: (value: number) => void;
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ isOpen, onClose, label, loading, error, justifications, mode, onModeChange, limitAll, onLimitAllChange, limitValue, onLimitValueChange, onNavigate }) => {
+}> = ({ isOpen, onClose, label, loading, error, justifications, mode, onModeChange, limitAll, onLimitAllChange, limitValue, onLimitCommit, onNavigate }) => {
+ 
+  const [limitInput, setLimitInput] = useState(String(limitValue));
+  useEffect(() => { setLimitInput(String(limitValue)); }, [limitValue]);
+
+  const commitLimitInput = (raw: string) => {
+    const parsed = Math.max(1, Math.min(99, parseInt(raw, 10) || 1));
+    setLimitInput(String(parsed));
+    onLimitCommit(parsed);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -399,9 +423,10 @@ export const ExplanationModal: React.FC<{
             <input type="radio" checked={!limitAll} onChange={() => onLimitAllChange(false)} className="accent-blue-600" />
             Limit justifications to
             <input
-              type="number" min={1} max={99} value={limitValue}
-              onChange={(e) => onLimitValueChange(Math.max(1, parseInt(e.target.value) || 1))}
-              onFocus={() => onLimitAllChange(false)}
+              type="number" min={1} max={99} value={limitInput}
+              onChange={(e) => setLimitInput(e.target.value)}
+              onBlur={(e) => commitLimitInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { commitLimitInput(e.currentTarget.value); e.currentTarget.blur(); } }}
               className="w-12 px-1 py-0 border border-gray-300 rounded text-[11px]"
             />
           </label>
@@ -494,6 +519,7 @@ export const AxiomRow: React.FC<{
   const [explainJustifications, setExplainJustifications] = useState<EntailmentJustification[] | null>(null);
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainError, setExplainError] = useState<string | null>(null);
+  const explainRequestIdRef = useRef(0);
 
   const relatedIri = axiom.id?.includes('|||') ? axiom.id.split('|||')[0] : axiom.id;
   const hasAxiomAnnotations = hasAxiomAnnotationsProp || axiomAnnotations.length > 0;
@@ -507,8 +533,12 @@ export const AxiomRow: React.FC<{
     if (axiom.type === 'Instance' && hasPlainRelatedIri) {
       return { entailmentType: 'CLASS_ASSERTION', subjectIri: relatedIri, targetIri: parentEntityIri };
     }
-    if (!isComplex && hasPlainRelatedIri && (axiom.type === 'SubClassOf' || axiom.type === 'EquivalentTo')) {
+    if (!isComplex && hasPlainRelatedIri && axiom.type === 'SubClassOf') {
       return { entailmentType: 'SUBCLASS_OF', subjectIri: parentEntityIri, targetIri: relatedIri };
+    }
+    if (!isComplex && hasPlainRelatedIri && axiom.type === 'EquivalentTo') {
+     
+      return { entailmentType: 'EQUIVALENT_CLASSES', subjectIri: parentEntityIri, targetIri: relatedIri };
     }
     if (!isComplex && hasPlainRelatedIri && axiom.type === 'DisjointWith') {
       return { entailmentType: 'DISJOINT_CLASSES', subjectIri: parentEntityIri, targetIri: relatedIri };
@@ -557,6 +587,8 @@ export const AxiomRow: React.FC<{
 
   const fetchExplainEntailment = useCallback(async (mode: 'regular' | 'laconic', limit: number) => {
     if (!projectId || !explainPayload) return;
+    
+    const requestId = ++explainRequestIdRef.current;
     setExplainLoading(true);
     setExplainError(null);
     try {
@@ -564,13 +596,16 @@ export const AxiomRow: React.FC<{
         ...explainPayload,
         mode,
         maxJustifications: limit,
+        ...(isDraftScopeActive() ? { userId: resolveMutationActor().userId } : {}),
       });
+      if (requestId !== explainRequestIdRef.current) return;
       const data = (res as any)?.data ?? res;
       setExplainJustifications(data?.justifications ?? []);
     } catch (e: any) {
+      if (requestId !== explainRequestIdRef.current) return;
       setExplainError(e?.response?.data?.error ?? e?.message ?? 'Failed to load explanation');
     } finally {
-      setExplainLoading(false);
+      if (requestId === explainRequestIdRef.current) setExplainLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri]);
@@ -760,6 +795,27 @@ export const AxiomRow: React.FC<{
               </button>
             )}
 
+            {!!relatedIri && relatedIri.startsWith('http') && (
+              <>
+                <button
+                  onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(relatedIri, 'IRI'); }}
+                  className={`p-1 rounded hover:bg-blue-100 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-400 hover:text-blue-600`}
+                  title="Copy IRI"
+                  aria-label="Copy IRI"
+                >
+                  <Copy size={14} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(relatedIri, 'Fragment'); }}
+                  className={`p-1 rounded hover:bg-blue-100 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-400 hover:text-blue-600`}
+                  title="Copy Fragment"
+                  aria-label="Copy Fragment"
+                >
+                  <Hash size={14} />
+                </button>
+              </>
+            )}
+
             {/* Axiom Annotations button */}
             <button
               onClick={(e) => {
@@ -936,7 +992,7 @@ export const AxiomRow: React.FC<{
           limitAll={explainLimitAll}
           onLimitAllChange={(all) => { setExplainLimitAll(all); fetchExplainEntailment(explainMode, all ? 99 : explainLimitValue); }}
           limitValue={explainLimitValue}
-          onLimitValueChange={(value) => { setExplainLimitValue(value); if (!explainLimitAll) fetchExplainEntailment(explainMode, value); }}
+          onLimitCommit={(value) => { setExplainLimitAll(false); setExplainLimitValue(value); fetchExplainEntailment(explainMode, value); }}
           onNavigate={onNavigate ? (iri, type) => { setShowExplain(false); onNavigate(iri, type); } : undefined}
         />
       )}
@@ -1390,6 +1446,7 @@ export const MultiSelectItem: React.FC<{
     const [explainJustifications, setExplainJustifications] = useState<EntailmentJustification[] | null>(null);
     const [explainLoading, setExplainLoading] = useState(false);
     const [explainError, setExplainError] = useState<string | null>(null);
+    const explainRequestIdRef = useRef(0);
     const [showAddAnnotationForm, setShowAddAnnotationForm] = useState(false);
     const [newAnnotProp, setNewAnnotProp] = useState('http://www.w3.org/2000/01/rdf-schema#comment');
     const [newAnnotValue, setNewAnnotValue] = useState('');
@@ -1456,6 +1513,7 @@ export const MultiSelectItem: React.FC<{
 
     const fetchExplainEntailment = useCallback(async (mode: 'regular' | 'laconic', limit: number) => {
         if (!projectId || !explainPayload) return;
+        const requestId = ++explainRequestIdRef.current;
         setExplainLoading(true);
         setExplainError(null);
         try {
@@ -1463,13 +1521,16 @@ export const MultiSelectItem: React.FC<{
                 ...explainPayload,
                 mode,
                 maxJustifications: limit,
+                ...(isDraftScopeActive() ? { userId: resolveMutationActor().userId } : {}),
             });
+            if (requestId !== explainRequestIdRef.current) return;
             const data = (res as any)?.data ?? res;
             setExplainJustifications(data?.justifications ?? []);
         } catch (e: any) {
+            if (requestId !== explainRequestIdRef.current) return;
             setExplainError(e?.response?.data?.error ?? e?.message ?? 'Failed to load explanation');
         } finally {
-            setExplainLoading(false);
+            if (requestId === explainRequestIdRef.current) setExplainLoading(false);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri]);
@@ -1625,6 +1686,26 @@ export const MultiSelectItem: React.FC<{
                             <HelpCircle size={14} />
                         </button>
                     )}
+                    {!!displayItem && displayItem.startsWith('http') && (
+                        <>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(displayItem, 'IRI'); }}
+                                className="p-1 rounded transition-all text-gray-400 hover:bg-blue-100 hover:text-blue-600"
+                                title="Copy IRI"
+                                aria-label="Copy IRI"
+                            >
+                                <Copy size={14} />
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(displayItem, 'Fragment'); }}
+                                className="p-1 rounded transition-all text-gray-400 hover:bg-blue-100 hover:text-blue-600"
+                                title="Copy Fragment"
+                                aria-label="Copy Fragment"
+                            >
+                                <Hash size={14} />
+                            </button>
+                        </>
+                    )}
                     {!isInferred && (
                         <>
                             {/* @ — Axiom annotations */}
@@ -1688,7 +1769,7 @@ export const MultiSelectItem: React.FC<{
                     limitAll={explainLimitAll}
                     onLimitAllChange={(all) => { setExplainLimitAll(all); fetchExplainEntailment(explainMode, all ? 99 : explainLimitValue); }}
                     limitValue={explainLimitValue}
-                    onLimitValueChange={(value) => { setExplainLimitValue(value); if (!explainLimitAll) fetchExplainEntailment(explainMode, value); }}
+                    onLimitCommit={(value) => { setExplainLimitAll(false); setExplainLimitValue(value); fetchExplainEntailment(explainMode, value); }}
                     onNavigate={onNavigate ? (iri, type) => { setShowExplain(false); onNavigate(iri, type); } : undefined}
                 />
             )}

@@ -303,6 +303,10 @@ public class ReasonerController {
         try {
             OWLOntology ontology = loadOntology(projectId);
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
+           
+            if (effectiveType.equalsIgnoreCase("ELK")) {
+                effectiveType = "OPENLLET";
+            }
             int axiomCount = ontology.getAxiomCount();
             if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
                     && !effectiveType.equalsIgnoreCase("ELK") && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {

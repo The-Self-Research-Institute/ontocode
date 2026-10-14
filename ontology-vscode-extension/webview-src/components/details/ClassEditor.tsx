@@ -9,7 +9,8 @@ import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
 import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '../../utils/desktop';
-import { withDraftScope } from '../../utils/draftScope';
+import { withDraftScope, withDraftAndUser, isDraftScopeActive } from '../../utils/draftScope';
+import { resolveMutationActor } from '../../utils/mutationActor';
 import { useAuth } from '../../custom-hook/useAuth';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
@@ -323,7 +324,7 @@ const ClassEditor: React.FC<{
       let unsatisfiable = item.isUnsatisfiable === true;
       if (!unsatisfiable) {
         try {
-          const quick: any = await apiClient.get(`/api/ontology/${projectId}/unsatisfiable-classes-quick`);
+          const quick: any = await apiClient.get(withDraftAndUser(`/api/ontology/${projectId}/unsatisfiable-classes-quick`));
           const list: string[] = Array.isArray(quick?.unsatisfiableClasses) ? quick.unsatisfiableClasses : [];
           // The quick-check endpoint returns bare local names (e.g. "MeatTopping"), not
           // full IRIs, so compare against item.id's fragment/last path segment too.
@@ -346,6 +347,7 @@ const ClassEditor: React.FC<{
           subjectIri: item.id,
           mode: 'regular',
           maxJustifications: 10,
+          ...(isDraftScopeActive() ? { userId: resolveMutationActor().userId } : {}),
         });
         if (cancelled) return;
         const data = (res as any)?.data ?? res;
@@ -368,7 +370,12 @@ const ClassEditor: React.FC<{
 
     void loadConflictIris();
     return () => { cancelled = true; };
-  }, [item.id, item.isUnsatisfiable, projectId]);
+    // classDetails is included so fixing (or introducing) the conflict on THIS same
+    // class re-checks the highlight immediately — loadClassDetails() gets a fresh
+    // object after every axiom mutation (add/delete/disjoint/etc.), and without this
+    // dependency the highlight only ever updated when navigating to a different class.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, item.isUnsatisfiable, projectId, classDetails]);
 
   // Manchester Syntax Editor State
   const [isEditorOpen, setIsEditorOpen] = useState(false);

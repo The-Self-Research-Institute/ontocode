@@ -3387,6 +3387,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const encodedProjectId = encodeURIComponent(projectId);
       const resp = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/explain-inconsistency`, {
         reasonerType,
+        ...draftBodyFields(),
       });
       const data = extractResponseData(resp);
       setExplanationState({ open: true, loading: false, data, error: null });
@@ -9246,8 +9247,14 @@ const updateItemInState = useCallback(
         buildInferredTreeFromFlatList((results as any)?.classHierarchy),
         (results as any)?.unsatisfiableClasses,
       );
-      const bundleObjectPropertyHierarchy = (results as any)?.objectPropertyHierarchy;
-      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList((results as any)?.objectPropertyHierarchy);
+      const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.objectPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
+      );
+      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.dataPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topDataProperty", label: "owl:topDataProperty" },
+      );
       if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
         setInferredClassHierarchy(bundleClassHierarchy);
       }
