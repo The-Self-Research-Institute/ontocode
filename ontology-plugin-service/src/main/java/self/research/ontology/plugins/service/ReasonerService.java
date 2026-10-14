@@ -29,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.JustificationRendering;
 import java.util.*;
 import java.util.function.Supplier;
 import java.util.concurrent.CompletableFuture;
@@ -690,7 +691,7 @@ public class ReasonerService {
 
     private List<Map<String, Object>> findEntailmentJustifications(
             OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode, long timeoutMs) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
         OWLReasonerFactory reasonerFactory = getReasonerFactory(type);
         Supplier<OWLOntologyManager> ontologyManagerSupplier = OWLManager::createOWLOntologyManager;
 
@@ -791,7 +792,7 @@ public class ReasonerService {
 
     public List<Map<String, Object>> findInconsistencyJustifications(
             OWLOntology ontology, ReasonerType type, int limit, String mode) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
         OWLReasonerFactory reasonerFactory = getReasonerFactory(type);
         Supplier<OWLOntologyManager> ontologyManagerSupplier = OWLManager::createOWLOntologyManager;
         OWLAxiom inconsistencyEntailment = DATA_FACTORY.getOWLSubClassOfAxiom(
@@ -860,65 +861,19 @@ public class ReasonerService {
                     .count();
 
                 Map<String, Object> entry = new HashMap<>();
-                entry.put("text", renderAxiom(axiom, ontology));
+                entry.put("text", JustificationRendering.renderAxiom(axiom, ontology, this::getLabel));
                 entry.put("membershipNote",
                     membershipCount == allAxiomSets.size() ? "In ALL other justifications"
                     : membershipCount == 1 ? "In NO other justifications"
                     : "In " + (membershipCount - 1) + " other justifications");
-                entry.put("entities", extractEntities(axiom, ontology));
-                entry.put("role", isConflictAxiom(axiom) ? "CONFLICT" : "CONTRIBUTING");
+                entry.put("entities", JustificationRendering.extractEntities(axiom, ontology, this::getLabel));
+                entry.put("role", JustificationRendering.isConflictAxiom(axiom) ? "CONFLICT" : "CONTRIBUTING");
                 axiomEntries.add(entry);
             }
             justification.put("axioms", axiomEntries);
             justifications.add(justification);
         }
         return justifications;
-    }
-
-    private List<Map<String, Object>> extractEntities(OWLAxiom axiom, OWLOntology ontology) {
-        List<Map<String, Object>> entities = new ArrayList<>();
-        for (OWLEntity entity : axiom.getSignature()) {
-            if (entity.isTopEntity() || entity.isBottomEntity()) {
-                continue;
-            }
-            Map<String, Object> entry = new HashMap<>();
-            entry.put("iri", entity.getIRI().toString());
-            entry.put("label", getLabel(entity, ontology));
-            entry.put("kind", entityKind(entity));
-            entities.add(entry);
-        }
-        return entities;
-    }
-
-    private String entityKind(OWLEntity entity) {
-        if (entity.isOWLClass()) return "class";
-        if (entity.isOWLNamedIndividual()) return "individual";
-        if (entity.isOWLObjectProperty()) return "objectProperty";
-        if (entity.isOWLDataProperty()) return "dataProperty";
-        if (entity.isOWLAnnotationProperty()) return "annotationProperty";
-        if (entity.isOWLDatatype()) return "datatype";
-        return "entity";
-    }
-
-    private static final Set<AxiomType<?>> CONFLICT_AXIOM_TYPES = Set.of(
-        AxiomType.DISJOINT_CLASSES,
-        AxiomType.DISJOINT_UNION,
-        AxiomType.DISJOINT_OBJECT_PROPERTIES,
-        AxiomType.DISJOINT_DATA_PROPERTIES,
-        AxiomType.IRREFLEXIVE_OBJECT_PROPERTY,
-        AxiomType.ASYMMETRIC_OBJECT_PROPERTY
-    );
-
-    private boolean isConflictAxiom(OWLAxiom axiom) {
-        if (CONFLICT_AXIOM_TYPES.contains(axiom.getAxiomType())) {
-            return true;
-        }
-        for (OWLClassExpression ce : axiom.getNestedClassExpressions()) {
-            if (ce instanceof OWLObjectComplementOf) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public OWLAxiom buildEntailmentAxiom(String entailmentType, String subjectIri, String targetIri,
@@ -1073,129 +1028,7 @@ public class ReasonerService {
     }
 
     public Map<String, Object> describeEntailment(OWLAxiom axiom) {
-        if (axiom instanceof OWLSubClassOfAxiom) {
-            OWLSubClassOfAxiom ax = (OWLSubClassOfAxiom) axiom;
-            if (!ax.getSubClass().isAnonymous() && !ax.getSuperClass().isAnonymous()) {
-                Map<String, Object> descriptor = new HashMap<>();
-                boolean isNothing = ax.getSuperClass().asOWLClass().isOWLNothing();
-                descriptor.put("entailmentType", isNothing ? "UNSATISFIABLE_CLASS" : "SUBCLASS_OF");
-                descriptor.put("subjectIri", ax.getSubClass().asOWLClass().getIRI().toString());
-                if (!isNothing) {
-                    descriptor.put("targetIri", ax.getSuperClass().asOWLClass().getIRI().toString());
-                }
-                return descriptor;
-            }
-        } else if (axiom instanceof OWLClassAssertionAxiom) {
-            OWLClassAssertionAxiom ax = (OWLClassAssertionAxiom) axiom;
-            if (!ax.getIndividual().isAnonymous() && !ax.getClassExpression().isAnonymous()) {
-                Map<String, Object> descriptor = new HashMap<>();
-                descriptor.put("entailmentType", "CLASS_ASSERTION");
-                descriptor.put("subjectIri", ax.getIndividual().asOWLNamedIndividual().getIRI().toString());
-                descriptor.put("targetIri", ax.getClassExpression().asOWLClass().getIRI().toString());
-                return descriptor;
-            }
-        } else if (axiom instanceof OWLObjectPropertyAssertionAxiom) {
-            OWLObjectPropertyAssertionAxiom ax = (OWLObjectPropertyAssertionAxiom) axiom;
-            if (!ax.getSubject().isAnonymous() && !ax.getObject().isAnonymous() && !ax.getProperty().isAnonymous()) {
-                Map<String, Object> descriptor = new HashMap<>();
-                descriptor.put("entailmentType", "OBJECT_PROPERTY_ASSERTION");
-                descriptor.put("subjectIri", ax.getSubject().asOWLNamedIndividual().getIRI().toString());
-                descriptor.put("targetIri", ax.getObject().asOWLNamedIndividual().getIRI().toString());
-                descriptor.put("propertyIri", ax.getProperty().getNamedProperty().getIRI().toString());
-                return descriptor;
-            }
-        } else if (axiom instanceof OWLDataPropertyAssertionAxiom) {
-            OWLDataPropertyAssertionAxiom ax = (OWLDataPropertyAssertionAxiom) axiom;
-            if (!ax.getSubject().isAnonymous() && !ax.getProperty().isAnonymous()) {
-                Map<String, Object> descriptor = new HashMap<>();
-                descriptor.put("entailmentType", "DATA_PROPERTY_ASSERTION");
-                descriptor.put("subjectIri", ax.getSubject().asOWLNamedIndividual().getIRI().toString());
-                descriptor.put("propertyIri", ax.getProperty().asOWLDataProperty().getIRI().toString());
-                descriptor.put("literalValue", ax.getObject().getLiteral());
-                return descriptor;
-            }
-        }
-        return null;
-    }
-
-private OWLOntology stripSwrlRules(OWLOntology ontology) {
-    Set<OWLAxiom> axioms = ontology.getAxioms().stream()
-        .filter(ax -> ax.getAxiomType() != AxiomType.SWRL_RULE)
-        .collect(Collectors.toSet());
-    try {
-        OWLOntologyManager mgr = OWLManager.createOWLOntologyManager();
-        return mgr.createOntology(axioms);
-    } catch (OWLOntologyCreationException e) {
-        log.warn("Failed to strip SWRL rules, falling back to original ontology", e);
-        return ontology;
-    }
-}
-
-    private String renderAxiom(OWLAxiom axiom, OWLOntology ontology) {
-        if (axiom instanceof OWLClassAssertionAxiom) {
-            OWLClassAssertionAxiom ax = (OWLClassAssertionAxiom) axiom;
-            if (!ax.getIndividual().isAnonymous() && !ax.getClassExpression().isAnonymous()) {
-                return getLabel(ax.getIndividual().asOWLNamedIndividual(), ontology) + " Type "
-                    + getLabel(ax.getClassExpression().asOWLClass(), ontology);
-            }
-        } else if (axiom instanceof OWLSubClassOfAxiom) {
-            OWLSubClassOfAxiom ax = (OWLSubClassOfAxiom) axiom;
-            if (!ax.getSubClass().isAnonymous() && !ax.getSuperClass().isAnonymous()) {
-                return getLabel(ax.getSubClass().asOWLClass(), ontology) + " SubClassOf "
-                    + getLabel(ax.getSuperClass().asOWLClass(), ontology);
-            }
-        } else if (axiom instanceof OWLDisjointClassesAxiom) {
-            String names = ((OWLDisjointClassesAxiom) axiom).getClassesInSignature().stream()
-                .map(c -> getLabel(c, ontology))
-                .collect(Collectors.joining(", "));
-            return "DisjointClasses: " + names;
-        } else if (axiom instanceof OWLDisjointUnionAxiom) {
-            OWLDisjointUnionAxiom ax = (OWLDisjointUnionAxiom) axiom;
-            String disjuncts = ax.getClassExpressions().stream()
-                .filter(ce -> !ce.isAnonymous())
-                .map(ce -> getLabel(ce.asOWLClass(), ontology))
-                .collect(Collectors.joining(", "));
-            return getLabel(ax.getOWLClass(), ontology) + " DisjointUnionOf " + disjuncts;
-        } else if (axiom instanceof OWLEquivalentClassesAxiom) {
-            String names = ((OWLEquivalentClassesAxiom) axiom).getClassExpressions().stream()
-                .filter(ce -> !ce.isAnonymous())
-                .map(ce -> getLabel(ce.asOWLClass(), ontology))
-                .collect(Collectors.joining(" ≡ "));
-            return "EquivalentClasses: " + names;
-        } else if (axiom instanceof OWLObjectPropertyAssertionAxiom) {
-            OWLObjectPropertyAssertionAxiom ax = (OWLObjectPropertyAssertionAxiom) axiom;
-            if (!ax.getSubject().isAnonymous() && !ax.getObject().isAnonymous()) {
-                return getLabel(ax.getSubject().asOWLNamedIndividual(), ontology) + " "
-                    + getLabel(ax.getProperty().getNamedProperty(), ontology) + " "
-                    + getLabel(ax.getObject().asOWLNamedIndividual(), ontology);
-            }
-        } else if (axiom instanceof OWLDifferentIndividualsAxiom) {
-            String names = ((OWLDifferentIndividualsAxiom) axiom).getIndividualsInSignature().stream()
-                .map(i -> getLabel(i, ontology))
-                .collect(Collectors.joining(", "));
-            return "DifferentIndividuals: " + names;
-        } else if (axiom instanceof OWLSameIndividualAxiom) {
-            String names = ((OWLSameIndividualAxiom) axiom).getIndividualsInSignature().stream()
-                .map(i -> getLabel(i, ontology))
-                .collect(Collectors.joining(" = "));
-            return "SameIndividual: " + names;
-        } else if (axiom instanceof OWLFunctionalObjectPropertyAxiom) {
-            return "FunctionalObjectProperty: " + getLabel(
-                ((OWLFunctionalObjectPropertyAxiom) axiom).getProperty().getNamedProperty(), ontology);
-        } else if (axiom instanceof OWLInverseFunctionalObjectPropertyAxiom) {
-            return "InverseFunctionalObjectProperty: " + getLabel(
-                ((OWLInverseFunctionalObjectPropertyAxiom) axiom).getProperty().getNamedProperty(), ontology);
-        }
-
-        String rendered = axiom.toString();
-        for (OWLEntity entity : axiom.getSignature()) {
-            String label = getLabel(entity, ontology);
-            String iri = entity.getIRI().toString();
-            if (label != null && !label.isBlank() && !label.equals(iri)) {
-                rendered = rendered.replace("<" + iri + ">", label);
-            }
-        }
-        return rendered;
+        return JustificationRendering.describeEntailment(axiom);
     }
 
     /**
@@ -1546,7 +1379,7 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
      * Returns detailed information about contradictions and problematic axioms
      */
     public Map<String, Object> explainInconsistency(OWLOntology ontology, ReasonerType type, int maxJustifications, String mode) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
         OWLReasoner reasoner = createReasoner(reasoningOntology, type);
         Map<String, Object> explanation = new HashMap<>();
         
