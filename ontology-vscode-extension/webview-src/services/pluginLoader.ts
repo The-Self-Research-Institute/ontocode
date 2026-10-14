@@ -10,6 +10,7 @@ const BUILTIN_PLUGIN_IDS = [
   'change-assistant-plugin',
   'sparql-query-plugin',
   'reasoner-plugin',
+  'spreadsheet-import-plugin',
 ] as const;
 
 const PLUGIN_LIBRARY_NAMES: Record<string, string> = {
@@ -19,6 +20,7 @@ const PLUGIN_LIBRARY_NAMES: Record<string, string> = {
   'change-assistant-plugin': 'ChangeAssistantPlugin',
   'sparql-query-plugin': 'SparqlQueryPlugin',
   'reasoner-plugin': 'ReasonerPlugin',
+  'spreadsheet-import-plugin': 'SpreadsheetImportPlugin',
 };
 
 /**

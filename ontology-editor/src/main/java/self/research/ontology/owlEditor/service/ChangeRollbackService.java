@@ -10,6 +10,7 @@ import self.research.ontology.owlEditor.model.RollbackAudit;
 import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Kind;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Plan;
+import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportService;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -70,6 +71,13 @@ public class ChangeRollbackService {
         this.locks = locks;
         this.draftTracking = draftTracking;
         this.recorder = new RollbackRecorder(audits, history, messaging);
+    }
+
+    private SpreadsheetImportService spreadsheetImports;
+
+    @Autowired(required = false)
+    void setSpreadsheetImports(SpreadsheetImportService spreadsheetImports) {
+        this.spreadsheetImports = spreadsheetImports;
     }
 
     public Result undoChangeSet(String projectId, String changeSetId, Actor actor, boolean dryRun) {
@@ -265,6 +273,9 @@ public class ChangeRollbackService {
         if (isRollbackEntry(entry)) {
             return skip(entry, "This is itself an undo or redo; use Undo or Redo on the original change");
         }
+        if (isSpreadsheetImport(entry)) {
+            return evaluateImport(req, entry);
+        }
         if (entry.getEntityIRI() == null || entry.getEntityIRI().isBlank()) {
             return skip(entry, "This kind of change can't be undone automatically");
         }
@@ -272,6 +283,31 @@ public class ChangeRollbackService {
             return evaluateSubChange(req, entry);
         }
         return UNDO.equals(req.direction()) ? evaluateUndo(req, entry) : evaluateRedo(req, entry);
+    }
+
+    private boolean isSpreadsheetImport(HistoryChange entry) {
+        return spreadsheetImports != null && SpreadsheetImportService.isImportEntry(entry.getOperationType());
+    }
+
+    private Work evaluateImport(Request req, HistoryChange entry) {
+        boolean undo = UNDO.equals(req.direction());
+        if (req.subChangeId() != null) {
+            return skip(entry, "A spreadsheet import is undone as a whole");
+        }
+        if (undo && entry.isReverted()) {
+            return skip(entry, "Already undone");
+        }
+        boolean undone = entry.isReverted()
+                && (req.undoAuditId() == null || req.undoAuditId().equals(entry.getRevertedAuditId()));
+        if (!undo && !undone) {
+            return skip(entry, "It hasn't been undone");
+        }
+        List<String> updates = spreadsheetImports.rollbackUpdates(req.projectId(), entry.getEntityIRI(), undo);
+        if (updates == null) {
+            return skip(entry, "The record of this import was not found");
+        }
+        Plan plan = new Plan(List.of(), updates, Set.of(), List.of());
+        return new Work(entry, plan, List.of(), new ArrayList<>(), true, false);
     }
 
     private Work evaluateUndo(Request req, HistoryChange entry) {
@@ -391,10 +427,17 @@ public class ChangeRollbackService {
                 mutations.applyForRollback(req.projectId(), work.plan().mutations());
             }
         }
-        for (String raw : work.plan().rawUpdates()) {
-            mutations.applyRawUpdate(req.projectId(), raw, draft, entry.getUserId());
+        boolean appliedOnDesktop = !draft && isSpreadsheetImport(entry)
+                && spreadsheetImports.applyOnDesktop(req.projectId(), work.plan().rawUpdates());
+        if (!appliedOnDesktop) {
+            for (String raw : work.plan().rawUpdates()) {
+                mutations.applyRawUpdate(req.projectId(), raw, draft, entry.getUserId());
+            }
         }
         boolean undo = UNDO.equals(req.direction());
+        if (isSpreadsheetImport(entry)) {
+            spreadsheetImports.markUndone(req.projectId(), entry.getEntityIRI(), undo, req.actor().username());
+        }
         Set<String> handled = work.plan().handledSubChangeIds();
         historySync.setSubChangesReverted(entry.getId(), handled, undo, undo ? auditId : null);
         if (work.completesEntry() && req.subChangeId() == null) {

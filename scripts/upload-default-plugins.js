@@ -81,6 +81,18 @@ const DEFAULT_PLUGINS = [
     keywords: ['reasoner', 'hermit', 'owl', 'inference', 'classification', 'consistency', 'realization', 'entailment'],
     icon: null,
     screenshots: []
+  },
+  {
+    pluginId: 'spreadsheet-import-plugin',
+    name: 'Spreadsheet Import',
+    description: 'Cellfie-style bulk import: turn spreadsheet rows (xlsx, xls, csv) into classes, individuals and property values with transformation rules, preview the axioms, and import them as one undoable change',
+    version: '1.0.0',
+    category: 'Import/Export',
+    author: 'OntoCode Team',
+    authorEmail: 'admin@ontocode.com',
+    keywords: ['spreadsheet', 'excel', 'csv', 'import', 'cellfie', 'mapping', 'owl', 'ontology'],
+    icon: null,
+    screenshots: []
   }
 ];
 

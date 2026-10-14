@@ -10,6 +10,7 @@ import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
+import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportDraftSupport;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -283,6 +284,7 @@ public class DraftTrackingService {
                 return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
             }
             draftChangeHistory.markPublished(projectId, userId);
+            promoteSpreadsheetImports(projectId, userId);
 
             try {
                 mainGraphRevisionService.incrementRevision(projectId);
@@ -304,6 +306,26 @@ public class DraftTrackingService {
         }
 
         return applyDraftsViaMoveGraph(projectId, userId, force, false, unappliedDrafts);
+    }
+
+    
+    private SpreadsheetImportDraftSupport spreadsheetImportDrafts;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSpreadsheetImportDrafts(SpreadsheetImportDraftSupport spreadsheetImportDrafts) {
+        this.spreadsheetImportDrafts = spreadsheetImportDrafts;
+    }
+
+    private void promoteSpreadsheetImports(String projectId, String userId) {
+        if (spreadsheetImportDrafts == null) {
+            return;
+        }
+        try {
+            spreadsheetImportDrafts.promoteDraftImports(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark spreadsheet imports as published for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
     }
 
     private int finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
@@ -357,6 +379,7 @@ public class DraftTrackingService {
             return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
         }
         draftChangeHistory.markPublished(projectId, userId);
+        promoteSpreadsheetImports(projectId, userId);
 
         try {
             mainGraphRevisionService.incrementRevision(projectId);
