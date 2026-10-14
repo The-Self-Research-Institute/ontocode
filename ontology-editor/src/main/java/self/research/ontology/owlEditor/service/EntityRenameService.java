@@ -67,10 +67,7 @@ public void renameEntity(String projectId, String oldIri, String newIri, String 
         throw new IllegalArgumentException("Target IRI already exists in ontology: " + newIri);
     }
 
-    String sparql =
-        "DELETE { ?s ?p <" + oldIri + "> } INSERT { ?s ?p <" + newIri + "> } WHERE { ?s ?p <" + oldIri + "> } ;\n" +
-        "DELETE { <" + oldIri + "> ?p ?o } INSERT { <" + newIri + "> ?p ?o } WHERE { <" + oldIri + "> ?p ?o } ;\n" +
-        "DELETE { ?s <" + oldIri + "> ?o } INSERT { ?s <" + newIri + "> ?o } WHERE { ?s <" + oldIri + "> ?o }";
+    String sparql = EntityRenameSparql.build(oldIri, newIri);
 
     ontologyMutationService.applyRawUpdate(projectId, sparql, false, null);
 

@@ -7,9 +7,21 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.RollbackAudit;
+import self.research.ontology.owlEditor.service.delta.ExactReversal;
 import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Kind;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Plan;
+import self.research.ontology.owlEditor.service.RollbackWorkSupport.Presence;
+import self.research.ontology.owlEditor.service.RollbackWorkSupport.Work;
+
+import static self.research.ontology.owlEditor.service.RollbackWorkSupport.appliedItems;
+import static self.research.ontology.owlEditor.service.RollbackWorkSupport.emptyPlan;
+import static self.research.ontology.owlEditor.service.RollbackWorkSupport.findSubChange;
+import static self.research.ontology.owlEditor.service.RollbackWorkSupport.isRollbackEntry;
+import static self.research.ontology.owlEditor.service.RollbackWorkSupport.item;
+import static self.research.ontology.owlEditor.service.RollbackWorkSupport.skip;
+import static self.research.ontology.owlEditor.service.RollbackWorkSupport.skipSub;
+import static self.research.ontology.owlEditor.service.RollbackWorkSupport.unsupportedItems;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -30,9 +42,6 @@ public class ChangeRollbackService {
 
     public record Result(int status, boolean ok, boolean dryRun, String direction, String scopeId,
                          List<Item> applied, List<Item> skipped, String auditId, String message) {}
-
-    private record Work(HistoryChange entry, Plan plan, List<HistoryChange.SubChange> targets,
-                        List<Item> skipped, boolean completesEntry, boolean subLevel) {}
 
     static final String CHANGESET = "CHANGESET";
     static final String ENTRY = "ENTRY";
@@ -55,6 +64,9 @@ public class ChangeRollbackService {
     private final ProjectWriteLockRegistry locks;
     private final RollbackRecorder recorder;
     private final DraftTrackingService draftTracking;
+
+    @Autowired(required = false)
+    private RollbackActionRunner actionRunner;
 
     @Autowired
     public ChangeRollbackService(HistorySyncService historySync, RollbackMutationPlanner planner,
@@ -262,11 +274,12 @@ public class ChangeRollbackService {
     }
 
     private Work evaluate(Request req, HistoryChange entry) {
-        if (isRollbackEntry(entry)) {
-            return skip(entry, "This is itself an undo or redo; use Undo or Redo on the original change");
-        }
-        if (entry.getEntityIRI() == null || entry.getEntityIRI().isBlank()) {
-            return skip(entry, "This kind of change can't be undone automatically");
+        if (isRollbackEntry(entry)) { return skip(entry, "This is itself an undo or redo; use Undo or Redo on the original change"); }
+        boolean entityless = entry.getEntityIRI() == null || entry.getEntityIRI().isBlank();
+        Kind entryKind = RollbackMutationPlanner.kindOf(entry);
+        if (entityless && entryKind != Kind.PREFIX && entryKind != Kind.EXACT) { return skip(entry, "This kind of change can't be undone automatically"); }
+        if (ExactReversal.needsWholeChangeSet(entry) && !CHANGESET.equals(req.level()) && req.subChangeId() == null) {
+            return skip(entry, "These edits were saved together; undo them together");
         }
         if (req.subChangeId() != null && UNDO.equals(req.direction())) {
             return evaluateSubChange(req, entry);
@@ -275,22 +288,22 @@ public class ChangeRollbackService {
     }
 
     private Work evaluateUndo(Request req, HistoryChange entry) {
-        if (entry.isReverted()) {
-            return skip(entry, "Already undone");
-        }
+        if (entry.isReverted()) { return skip(entry, "Already undone"); }
         Kind kind = RollbackMutationPlanner.kindOf(entry);
-        boolean exists = exists(req, entry);
-        if (kind == Kind.DELETE && exists) {
-            return skip(entry, "It was re-created since this change");
+        if (kind == Kind.DELETE && facts.storeRecordsExact(req.projectId(), entry.isDraft())) { return skip(entry, RollbackWorkSupport.INEXACT_DELETE); }
+        Presence presence = RollbackWorkSupport.presence(entry, kind, true);
+        if (presence != Presence.IGNORED && (presence == Presence.REQUIRED) != exists(req, entry)) {
+            return skip(entry, presence == Presence.REQUIRED ? "It no longer exists" : "It was re-created since this change");
         }
-        if (kind != Kind.DELETE && !exists) {
-            return skip(entry, "It no longer exists");
-        }
+        if (kind == Kind.RENAME && facts.entityExists(req.projectId(), entry.getOldValue(), entry.isDraft(), entry.getUserId())) { return skip(entry, "The old name is in use again"); }
+        if (ENTRY.equals(req.level()) && RollbackWorkSupport.isCreation(entry, kind) && facts.referencedByOthers(req.projectId(), entry.getEntityIRI(), entry.isDraft(), entry.getUserId())) { return skip(entry, "Other items still refer to it"); }
+        if (!deltaHolds(req, entry, true)) { return skip(entry, "It was changed since this edit"); }
         List<Item> skipped = new ArrayList<>();
         List<HistoryChange.SubChange> targets = kind == Kind.GROUPED_MODIFY
                 ? currentSubChanges(req, entry, RollbackMutationPlanner.active(entry), true, skipped)
                 : RollbackMutationPlanner.active(entry);
         Plan plan = planner.planUndo(entry, targets);
+        if (!actionsHold(req, entry, plan)) { return skip(entry, "It was changed since this edit"); }
         return finish(entry, plan, targets, skipped, kind);
     }
 
@@ -305,18 +318,17 @@ public class ChangeRollbackService {
             return evaluateSubRedo(req, entry, undone);
         }
         Kind kind = RollbackMutationPlanner.kindOf(entry);
-        boolean exists = exists(req, entry);
-        if (kind == Kind.CREATE && exists) {
-            return skip(entry, "It already exists again");
+        Presence presence = RollbackWorkSupport.presence(entry, kind, false);
+        if (presence != Presence.IGNORED && (presence == Presence.REQUIRED) != exists(req, entry)) {
+            return skip(entry, presence == Presence.REQUIRED ? "It no longer exists" : "It already exists again");
         }
-        if (kind != Kind.CREATE && !exists) {
-            return skip(entry, "It no longer exists");
-        }
+        if (!deltaHolds(req, entry, false)) { return skip(entry, "It was changed since this edit"); }
         List<Item> skipped = new ArrayList<>();
         List<HistoryChange.SubChange> targets = kind == Kind.GROUPED_MODIFY
                 ? currentSubChanges(req, entry, undone, false, skipped)
                 : undone;
         Plan plan = planner.planRedo(entry, targets);
+        if (!actionsHold(req, entry, plan)) { return skip(entry, "It was changed since this edit"); }
         return finish(entry, plan, targets, skipped, kind);
     }
 
@@ -394,6 +406,10 @@ public class ChangeRollbackService {
         for (String raw : work.plan().rawUpdates()) {
             mutations.applyRawUpdate(req.projectId(), raw, draft, entry.getUserId());
         }
+        for (RollbackAction action : work.plan().actions()) {
+            if (actionRunner == null) { throw new IllegalStateException("This kind of change can't be undone on this server"); }
+            actionRunner.run(req.projectId(), action, entry.isDraft(), entry.getUserId());
+        }
         boolean undo = UNDO.equals(req.direction());
         Set<String> handled = work.plan().handledSubChangeIds();
         historySync.setSubChangesReverted(entry.getId(), handled, undo, undo ? auditId : null);
@@ -402,66 +418,17 @@ public class ChangeRollbackService {
         }
     }
 
-    private List<Item> appliedItems(Work work) {
-        List<Item> items = new ArrayList<>();
-        if (work.plan().isEmpty()) {
-            return items;
-        }
-        HistoryChange entry = work.entry();
-        Set<String> handled = work.plan().handledSubChangeIds();
-        List<HistoryChange.SubChange> handledTargets = work.targets().stream()
-                .filter(sc -> handled.contains(sc.getId())).toList();
-        boolean perProperty = work.subLevel() || RollbackMutationPlanner.kindOf(entry) == Kind.GROUPED_MODIFY;
-        if (perProperty) {
-            handledTargets.forEach(sc -> items.add(item(entry, sc, null)));
-        } else {
-            items.add(new Item(entry.getId(), null, entry.getEntityIRI(), entry.getEntityLabel(), null, null));
-        }
-        return items;
+    private boolean actionsHold(Request req, HistoryChange entry, Plan plan) {
+        return actionRunner == null || plan.actions().stream()
+                .allMatch(action -> actionRunner.holds(req.projectId(), action, entry.isDraft(), entry.getUserId()));
     }
 
-    private List<Item> unsupportedItems(HistoryChange entry, Plan plan) {
-        List<Item> items = new ArrayList<>();
-        for (String predicate : plan.unsupported()) {
-            items.add(new Item(entry.getId(), null, entry.getEntityIRI(), entry.getEntityLabel(), predicate,
-                    "This kind of change can't be undone automatically"));
-        }
-        return items;
+    private boolean deltaHolds(Request req, HistoryChange entry, boolean undo) {
+        return !entry.carriesExactDelta() || facts.deltaHolds(req.projectId(), entry, undo);
     }
 
     private boolean exists(Request req, HistoryChange entry) {
         return facts.entityExists(req.projectId(), entry.getEntityIRI(), entry.isDraft(), entry.getUserId());
-    }
-
-    private static boolean isRollbackEntry(HistoryChange entry) {
-        String op = entry.getOperationType();
-        return ChangeOrigin.ROLLBACK.equals(entry.getSource())
-                || (op != null && (op.startsWith("ROLLBACK_") || op.startsWith("REDO_")));
-    }
-
-    private static HistoryChange.SubChange findSubChange(HistoryChange entry, String subChangeId) {
-        if (entry.getSubChanges() == null || subChangeId == null) {
-            return null;
-        }
-        return entry.getSubChanges().stream().filter(sc -> subChangeId.equals(sc.getId())).findFirst().orElse(null);
-    }
-
-    private static Work skip(HistoryChange entry, String reason) {
-        return new Work(entry, emptyPlan(), List.of(),
-                new ArrayList<>(List.of(new Item(entry.getId(), null, entry.getEntityIRI(), entry.getEntityLabel(), null, reason))),
-                false, false);
-    }
-
-    private static Work skipSub(HistoryChange entry, HistoryChange.SubChange sub, String reason) {
-        return new Work(entry, emptyPlan(), List.of(), new ArrayList<>(List.of(item(entry, sub, reason))), false, true);
-    }
-
-    private static Item item(HistoryChange entry, HistoryChange.SubChange sub, String reason) {
-        return new Item(entry.getId(), sub.getId(), entry.getEntityIRI(), entry.getEntityLabel(), sub.getPredicate(), reason);
-    }
-
-    private static Plan emptyPlan() {
-        return new Plan(List.of(), List.of(), Set.of(), List.of());
     }
 
     private static String scopeId(Request req) {

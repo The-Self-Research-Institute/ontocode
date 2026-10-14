@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.Limit;
 import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
@@ -308,11 +309,11 @@ public class ReasonerController {
             // but ELK returns empty for the same node on expand.
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
             int axiomCount = ontology.getAxiomCount();
-            if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
+            if (axiomCount > Limit.REASONER_ELK_ABOVE_AXIOMS.value() && axiomCount <= Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value()
                     && !effectiveType.equalsIgnoreCase("ELK") && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 effectiveType = "ELK";
             }
-            if (axiomCount > LARGE_ONTOLOGY_AXIOM_THRESHOLD && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+            if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 effectiveType = "STRUCTURAL";
             }
             ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
@@ -353,8 +354,6 @@ public class ReasonerController {
      * Get inferred class hierarchy
      * GET /api/ontology/{projectId}/reasoner/inferred-class-hierarchy
      */
-    private static final int MEDIUM_ONTOLOGY_THRESHOLD = 10_000;   // ELK kicks in above this
-    private static final int LARGE_ONTOLOGY_AXIOM_THRESHOLD = 100_000; // STRUCTURAL fallback above this
     // Desktop is single-user/single-request, so it can afford a much longer timeout than a
     // shared cloud deployment (see application-desktop.properties overrides).
     @Value("${ontocode.reasoner.hierarchy-timeout-seconds:5}")
@@ -382,15 +381,15 @@ public class ReasonerController {
 
             int axiomCount = ontology.getAxiomCount();
             // Medium ontologies (10k-100k): switch to ELK (fast EL reasoner, 10-100x faster than HermiT)
-            if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD
-                    && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
+            if (axiomCount > Limit.REASONER_ELK_ABOVE_AXIOMS.value()
+                    && axiomCount <= Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value()
                     && !effectiveType.equalsIgnoreCase("ELK")
                     && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 log.info("Medium ontology ({} axioms) — switching to ELK for project {}", axiomCount, projectId);
                 effectiveType = "ELK";
             }
             // Very large ontologies (>100k): STRUCTURAL is safest (no reasoning, just asserted)
-            if (axiomCount > LARGE_ONTOLOGY_AXIOM_THRESHOLD && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+            if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 log.warn("Very large ontology ({} axioms) — switching to STRUCTURAL for project {}", axiomCount, projectId);
                 effectiveType = "STRUCTURAL";
             }

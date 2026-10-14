@@ -40,6 +40,24 @@ public class HistorySyncService {
                                 String partnerValue, LocalDateTime partnerTimestamp) {
     }
 
+    public java.util.Set<String> draftEntityIris(String projectId, String userId) {
+        java.util.Set<String> iris = new java.util.LinkedHashSet<>();
+        if (projectId == null || userId == null) {
+            return iris;
+        }
+        List<HistoryChange> drafts = mongoTemplate.find(
+                org.springframework.data.mongodb.core.query.Query.query(
+                        org.springframework.data.mongodb.core.query.Criteria.where("projectId").is(projectId)
+                                .and("userId").is(userId).and("draft").is(true)),
+                HistoryChange.class);
+        for (HistoryChange draft : drafts) {
+            if (draft.getEntityIRI() != null) {
+                iris.add(draft.getEntityIRI());
+            }
+        }
+        return iris;
+    }
+
     public long markDraftsPublished(String projectId, String userId) {
         if (projectId == null || userId == null) {
             return 0;
@@ -121,6 +139,8 @@ public class HistorySyncService {
                                     "true".equals(m.get("addition")));
                             subChange.setId(UUID.randomUUID().toString());
                             subChange.setCategory((String) m.get("category"));
+                            subChange.setLanguage((String) m.get("language"));
+                            subChange.setDatatype((String) m.get("datatype"));
                             subChanges.add(subChange);
                         }
                     }
@@ -140,6 +160,7 @@ public class HistorySyncService {
             }
 
             HistoryChange historyChange = builder.build();
+            applyExactFields(historyChange, changeData);
             historyChangeRepository.save(historyChange);
 
             log.info("Synced change {} to MongoDB for project {}", editId, projectId);
@@ -173,6 +194,24 @@ public class HistorySyncService {
 
     public List<HistoryChange> getHistoryChangesByStatus(String projectId, String status) {
         return historyChangeRepository.findByProjectIdAndStatusOrderByTimestampDesc(projectId, status);
+    }
+
+    private static void applyExactFields(HistoryChange change, Map<String, Object> changeData) {
+        if (changeData.get("exactDeleted") instanceof String deleted) {
+            change.setExactDeleted(deleted);
+        }
+        if (changeData.get("exactInserted") instanceof String inserted) {
+            change.setExactInserted(inserted);
+        }
+        if (changeData.get("coveredBy") instanceof String coveredBy) {
+            change.setCoveredBy(coveredBy);
+        }
+        if (changeData.get("documentStore") instanceof String store && changeData.get("documentId") instanceof String id) {
+            change.setDocumentStore(store);
+            change.setDocumentId(id);
+            change.setDocumentBefore(changeData.get("documentBefore") instanceof String before ? before : null);
+            change.setDocumentAfter(changeData.get("documentAfter") instanceof String after ? after : null);
+        }
     }
 
     private static void applyChangeSetFields(HistoryChange.Builder builder, Map<String, Object> changeData) {

@@ -283,8 +283,8 @@ function handleBrowserMessage(message: any) {
                     await exportOntologyAsBlob(
                         getGatewayUrl(),
                         message.projectId,
-                        message.format,
-                        message.filename,
+                        message.format, message.filename,
+                        { draft: message.draft, userId: message.userId },
                     );
                     window.dispatchEvent(new MessageEvent('message', {
                         data: { type: 'downloadOntologyComplete', requestId: message.requestId },

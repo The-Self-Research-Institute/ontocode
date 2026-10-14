@@ -17,6 +17,7 @@ import { ICollaborationManager } from './collaboration/types';
 import { EditCapture } from './collaboration/EditCapture';
 import { RemoteEditApplier } from './collaboration/RemoteEditApplier';
 import { shouldCompressFile, splitIntoChunks } from './utils/uploadOptimizer';
+import { handleFocusContext, registerUndoRouting } from './services/undoRouting';
 
 // This file is bundled for two different runtimes: the desktop extension host
 // (real Node.js, full zlib support) and the web extension (browser web worker,
@@ -272,7 +273,7 @@ type ExtensionMessage =
     | { type: 'apiDelete'; requestId: string; url: string; params?: Record<string, unknown> }
     | { type: 'proxyRequest'; reqId: string; config: any }
     | { type: 'webviewReady' }
-    | { type: 'downloadOntology'; url: string; filename: string; projectId: string; format: string; requestId?: number }
+    | { type: 'downloadOntology'; url: string; filename: string; projectId: string; format: string; requestId?: number; draft?: boolean; userId?: string }
     | { type: 'downloadCurrentOntology' }
     | { type: 'downloadFile'; content: string; filename: string; format: string }
     | { type: 'openExternalUrl'; url: string } // Open a URL in the OS default browser (webview navigation is sandboxed)
@@ -527,6 +528,7 @@ export async function activate(context: vscode.ExtensionContext) {
             console.log('  User ID:', userId);
             console.log('  Connected:', isConnected);
         }),
+        ...registerUndoRouting((message) => OntoCodePanel.currentPanel?.postMessage(message as WebviewMessage)),
         vscode.commands.registerCommand('ontocode.insertCitation', () => insertCitationCommand(context, GATEWAY_URL)),
         // Fix: Use context.extensionUri to get the extension's URI.
         vscode.commands.registerCommand('ontocode.openCitationPicker', () => CitationPickerPanel.createOrShow(context.extensionUri)),
@@ -802,6 +804,7 @@ class OntoCodePanel {
         // Handle messages from the webview
         this._panel.webview.onDidReceiveMessage(
             async (message: ExtensionMessage) => {
+                if (handleFocusContext(message)) { return; }
                 switch (message.type) {
                     // FIX: Add a case to handle the webview's "ready" message
                     case 'webviewReady':
@@ -886,7 +889,7 @@ class OntoCodePanel {
                         this.handleProxyRequest(message);
                         break;
                     case 'downloadOntology':
-                        this.handleDownload(message.projectId, message.format, message.filename, message.requestId);
+                        this.handleDownload(message.projectId, message.format, message.filename, message.requestId, message.draft, message.userId);
                         break;
                     case 'downloadCurrentOntology':
                         this.handleDownloadCurrent();
@@ -3395,7 +3398,7 @@ class OntoCodePanel {
      * hours — for a large ontology the server was often still working when this client
      * gave up. See OntologyExportJobService.java for the job lifecycle this polls against.
      */
-    private async handleDownload(projectId: string, format: string, filename: string, requestId?: number) {
+    private async handleDownload(projectId: string, format: string, filename: string, requestId?: number, draft?: boolean, userId?: string) {
         try {
             console.log(`[OntoCode] Downloading export for project: ${projectId}, format: ${format}`);
 
@@ -3424,7 +3427,7 @@ class OntoCodePanel {
                 };
 
                 const submitRes = await axios.post(
-                    `${GATEWAY_URL}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}`,
+                    `${GATEWAY_URL}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}${draft ? `&draft=true&userId=${encodeURIComponent(userId || '')}` : ''}`,
                     undefined,
                     { headers: authHeaders, timeout: 30000, signal: abortController.signal }
                 );

@@ -1,3 +1,5 @@
+import { authorKey } from './changeKinds';
+import { countableChanges } from './changeParsing';
 import { OntologyChange } from './types';
 
 type Tally = { additions: number; deletions: number; modifications: number };
@@ -8,7 +10,7 @@ export function weekdayActivity(changes: OntologyChange[], draftChanges: Ontolog
   dayNames.forEach(day => {
     dayStats[day] = { additions: 0, deletions: 0, modifications: 0 };
   });
-  [...changes, ...draftChanges].forEach(change => {
+  [...countableChanges(changes), ...draftChanges].forEach(change => {
     const dayOfWeek = dayNames[change.timestamp.getDay()];
     if (change.action === 'added') dayStats[dayOfWeek].additions++;
     else if (change.action === 'deleted') dayStats[dayOfWeek].deletions++;
@@ -24,23 +26,24 @@ export function weekdayActivity(changes: OntologyChange[], draftChanges: Ontolog
 }
 
 export function authorActivity(changes: OntologyChange[]) {
-  const authorMap = new Map<string, Tally>();
-  changes.forEach(change => {
-    const existing = authorMap.get(change.author) || { additions: 0, deletions: 0, modifications: 0 };
-    if (change.action === 'added') existing.additions++;
-    else if (change.action === 'deleted') existing.deletions++;
-    else if (change.action === 'modified') existing.modifications++;
-    authorMap.set(change.author, existing);
+  const authorMap = new Map<string, { name: string; tally: Tally }>();
+  countableChanges(changes).forEach(change => {
+    const key = authorKey(change.author, change.authorEmail);
+    const existing = authorMap.get(key) || { name: change.author, tally: { additions: 0, deletions: 0, modifications: 0 } };
+    if (change.action === 'added') existing.tally.additions++;
+    else if (change.action === 'deleted') existing.tally.deletions++;
+    else if (change.action === 'modified') existing.tally.modifications++;
+    authorMap.set(key, existing);
   });
-  return Array.from(authorMap.entries()).map(([author, stats]) => ({
-    author,
-    ...stats,
-    total: stats.additions + stats.deletions + stats.modifications
+  return Array.from(authorMap.values()).map(({ name, tally }) => ({
+    author: name,
+    ...tally,
+    total: tally.additions + tally.deletions + tally.modifications
   })).sort((a, b) => b.total - a.total);
 }
 
 export function timelineItems(changes: OntologyChange[]) {
-  return changes.map(c => ({
+  return countableChanges(changes).map(c => ({
     id: c.id,
     timestamp: c.timestamp,
     author: c.author,

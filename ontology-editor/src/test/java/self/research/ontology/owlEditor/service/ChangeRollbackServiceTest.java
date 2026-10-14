@@ -105,6 +105,56 @@ class ChangeRollbackServiceTest {
     }
 
     @Test
+    void aDeletionWithoutAnExactRecordIsNotRestoredFromPartialData() {
+        HistoryChange deleted = entry("c9", "deleteClass");
+        when(historySync.getHistoryChange("c9")).thenReturn(deleted);
+        when(facts.entityExists(anyString(), anyString(), anyBoolean(), any())).thenReturn(false);
+        when(facts.storeRecordsExact(P, false)).thenReturn(true);
+
+        Result result = service.undoEntry(P, "c9", ACTOR, false);
+
+        assertTrue(result.skipped().stream().anyMatch(item -> item.reason().startsWith("This deletion was too large")));
+        verify(mutations, never()).applyForRollback(eq(P), any());
+    }
+
+    @Test
+    void aDeletionInAStoreThatNeverRecordsExactChangesStillUsesTheStoredData() {
+        HistoryChange deleted = entry("c9", "deleteClass");
+        when(historySync.getHistoryChange("c9")).thenReturn(deleted);
+        when(facts.entityExists(anyString(), anyString(), anyBoolean(), any())).thenReturn(false);
+        when(facts.storeRecordsExact(P, false)).thenReturn(false);
+
+        Result result = service.undoEntry(P, "c9", ACTOR, false);
+
+        assertTrue(result.skipped().stream().noneMatch(item -> item.reason().startsWith("This deletion was too large")));
+    }
+
+    @Test
+    void undoingASingleCreationThatOtherItemsReferToIsRefused() {
+        HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
+        when(historySync.getHistoryChange("c1")).thenReturn(created);
+        presentUnlessChanged(Set.of());
+        when(facts.referencedByOthers(P, E, false, "u@x.com")).thenReturn(true);
+
+        Result result = service.undoEntry(P, "c1", ACTOR, false);
+
+        assertTrue(result.skipped().stream().anyMatch(item -> "Other items still refer to it".equals(item.reason())));
+        verify(mutations, never()).applyForRollback(eq(P), any());
+    }
+
+    @Test
+    void undoingAWholeSetIgnoresReferencesFromItsOwnMembers() {
+        HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
+        when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(created));
+        presentUnlessChanged(Set.of());
+        when(facts.referencedByOthers(P, E, false, "u@x.com")).thenReturn(true);
+
+        Result result = service.undoChangeSet(P, "set-1", ACTOR, false);
+
+        assertTrue(result.skipped().isEmpty());
+    }
+
+    @Test
     void aFailureMidSetKeepsWhatWasUndoneRecordedAndReportsTheError() {
         HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
         HistoryChange modified = entry("c2", "addStatement", sub("s2", DISJOINT, "http://example.org/Other", true));

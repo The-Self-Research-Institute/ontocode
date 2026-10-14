@@ -5,9 +5,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
+import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
+import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
+import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 
 import java.util.List;
@@ -15,7 +19,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 class EntityRelationControllerTest {
@@ -32,7 +36,10 @@ class EntityRelationControllerTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        controller = new EntityRelationController(mutationService, draftTrackingService, historyService);
+        ExactChangeRecorder recorder = new ExactChangeRecorder(mock(SparqlDatasetService.class),
+                mock(HistoryChangeRepository.class), historyService);
+        controller = new EntityRelationController(mutationService, draftTrackingService, new ProjectWriteLockRegistry(),
+                recorder);
     }
 
     @Test
@@ -52,14 +59,14 @@ class EntityRelationControllerTest {
     }
 
     @Test
-    void editRelationRecordsPublicHistoryAsynchronously() {
+    void editRelationRecordsPublicHistoryBeforeAnswering() {
         var req = new EntityRelationController.RelationRequest(
                 "add", "http://ex.org/Pizza", "domain", "http://ex.org/Topping", null,
                 "u1", "User One", null, null, null, null);
 
         controller.editRelation("proj-1", req, false);
 
-        verify(historyService, timeout(2000)).recordGroupedMutations(
+        verify(historyService).recordGroupedMutations(
                 anyString(), anyString(), anyString(), anyList(), org.mockito.ArgumentMatchers.eq(false));
     }
 }

@@ -3,6 +3,7 @@ package self.research.ontology.owlEditor.service;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
+import self.research.ontology.owlEditor.service.delta.ExactReversal;
 import self.research.ontology.owlEditor.util.SparqlSafety;
 
 import java.util.ArrayList;
@@ -24,12 +25,17 @@ public class RollbackMutationPlanner {
     static final String RDFS_COMMENT = "http://www.w3.org/2000/01/rdf-schema#comment";
     static final String OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 
-    public enum Kind { CREATE, DELETE, GROUPED_MODIFY, SINGLE }
+    public enum Kind { CREATE, DELETE, GROUPED_MODIFY, SINGLE, RENAME, EXACT, PREFIX, DOCUMENT }
 
     public record Plan(List<MutationOp> mutations, List<String> rawUpdates, Set<String> handledSubChangeIds,
-                       List<String> unsupported) {
+                       List<String> unsupported, List<RollbackAction> actions) {
+        public Plan(List<MutationOp> mutations, List<String> rawUpdates, Set<String> handledSubChangeIds,
+                    List<String> unsupported) {
+            this(mutations, rawUpdates, handledSubChangeIds, unsupported, List.of());
+        }
+
         public boolean isEmpty() {
-            return mutations.isEmpty() && rawUpdates.isEmpty();
+            return mutations.isEmpty() && rawUpdates.isEmpty() && actions.isEmpty();
         }
     }
 
@@ -38,19 +44,35 @@ public class RollbackMutationPlanner {
         final List<String> rawUpdates = new ArrayList<>();
         final Set<String> handled = new LinkedHashSet<>();
         final List<String> unsupported = new ArrayList<>();
+        final List<RollbackAction> actions = new ArrayList<>();
 
         Plan build() {
-            return new Plan(List.copyOf(mutations), List.copyOf(rawUpdates), Set.copyOf(handled), List.copyOf(unsupported));
+            Set<String> handledIds = new LinkedHashSet<>(handled);
+            handledIds.remove(null);
+            return new Plan(List.copyOf(mutations), List.copyOf(rawUpdates), Set.copyOf(handledIds),
+                    unsupported.stream().filter(java.util.Objects::nonNull).toList(), List.copyOf(actions));
         }
     }
 
     public static Kind kindOf(HistoryChange change) {
+        if (ExactReversal.isExact(change)) {
+            return Kind.EXACT;
+        }
+        if (change.carriesDocument()) {
+            return Kind.DOCUMENT;
+        }
         String op = lower(change.getOperationType());
         if (entityType(op) != null && op.startsWith("create")) {
             return Kind.CREATE;
         }
         if (entityType(op) != null && op.startsWith("delete")) {
             return Kind.DELETE;
+        }
+        if ("renameentity".equals(op)) {
+            return Kind.RENAME;
+        }
+        if (PrefixReversal.isPrefixOp(change.getOperationType())) {
+            return Kind.PREFIX;
         }
         return change.getSubChanges() != null && !change.getSubChanges().isEmpty() ? Kind.GROUPED_MODIFY : Kind.SINGLE;
     }
@@ -93,7 +115,12 @@ public class RollbackMutationPlanner {
                 remaining.forEach(sc -> addSubChange(plan, entity, sc, true));
             }
             case GROUPED_MODIFY -> subChanges.forEach(sc -> addSubChange(plan, entity, sc, true));
-            case SINGLE -> planSingle(plan, change, true);
+            case SINGLE, RENAME -> planSingle(plan, change, true);
+            case PREFIX -> planPrefix(plan, change, true);
+            case DOCUMENT -> plan.actions.addAll(DocumentReversal.actions(change, true));
+            case EXACT -> {
+                return ExactReversal.plan(change, subChanges, true);
+            }
         }
         return plan.build();
     }
@@ -119,7 +146,12 @@ public class RollbackMutationPlanner {
                 subChanges.forEach(sc -> plan.handled.add(sc.getId()));
             }
             case GROUPED_MODIFY -> subChanges.forEach(sc -> addSubChange(plan, entity, sc, false));
-            case SINGLE -> planSingle(plan, change, false);
+            case SINGLE, RENAME -> planSingle(plan, change, false);
+            case PREFIX -> planPrefix(plan, change, false);
+            case DOCUMENT -> plan.actions.addAll(DocumentReversal.actions(change, false));
+            case EXACT -> {
+                return ExactReversal.plan(change, subChanges, false);
+            }
         }
         return plan.build();
     }
@@ -160,7 +192,7 @@ public class RollbackMutationPlanner {
             return null;
         }
         return new MutationOp(add ? "addAnnotation" : "deleteAnnotation", entity, null, null, property, value,
-                null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, sc.getLanguage(), sc.getDatatype(), null);
     }
 
     private void addSubChange(Builder plan, String entity, HistoryChange.SubChange sc, boolean undo) {
@@ -272,11 +304,32 @@ public class RollbackMutationPlanner {
             } else {
                 plan.unsupported.add(change.getAnnotationProperty());
             }
+        } else if (op.equals("renameentity")) {
+            planRename(plan, change, undo);
         } else if (op.contains("annotation") || op.contains("label") || op.contains("comment")) {
             planSingleAnnotation(plan, change, op, undo);
         } else {
             plan.unsupported.add(change.getOperationType());
         }
+    }
+
+    private void planPrefix(Builder plan, HistoryChange change, boolean undo) {
+        List<RollbackAction> actions = PrefixReversal.actions(change, undo);
+        if (actions.isEmpty()) {
+            plan.unsupported.add(change.getOperationType());
+            return;
+        }
+        plan.actions.addAll(actions);
+    }
+
+    private void planRename(Builder plan, HistoryChange change, boolean undo) {
+        String from = undo ? change.getNewValue() : change.getOldValue();
+        String to = undo ? change.getOldValue() : change.getNewValue();
+        if (from == null || from.isBlank() || to == null || to.isBlank()) {
+            plan.unsupported.add(change.getOperationType());
+            return;
+        }
+        plan.rawUpdates.add(EntityRenameSparql.build(from, to));
     }
 
     private void addRawParent(Builder plan, String predicateQName, String entity, boolean wasAdded, boolean undo,

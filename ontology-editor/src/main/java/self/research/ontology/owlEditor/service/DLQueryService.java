@@ -41,7 +41,6 @@ public class DLQueryService {
 
     private static final Logger log = LoggerFactory.getLogger(DLQueryService.class);
 
-    private static final long REASONER_QUERY_TIMEOUT_MS = 10_000;
     private final ExecutorService dlQueryExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "dl-query-get-instances-worker");
         t.setDaemon(true);
@@ -261,7 +260,7 @@ public class DLQueryService {
             OWLClassExpression expr, OWLOntology ontology) {
         CompletableFuture<Set<T>> future = CompletableFuture.supplyAsync(work, dlQueryExecutor);
         try {
-            return future.get(REASONER_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            return future.get((Limit.DL_QUERY_TIMEOUT_SECONDS.value() * 1000L), TimeUnit.MILLISECONDS);
         } catch (TimeoutException te) {
             log.warn("Timed out computing {} for '{}' ({} classes in signature) — returning empty result",
                     description, expr, ontology.getClassesInSignature().size());

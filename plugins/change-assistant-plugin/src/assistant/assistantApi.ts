@@ -33,8 +33,11 @@ export async function fetchDraftSessionActive(projectId: string, userId: string)
   return data.status === 'READY' || data.status === 'COPYING';
 }
 
-export async function fetchRecentChanges(projectId: string): Promise<any> {
-  const response = await authFetch(`${apiBase()}/api/ontology/${projectId}/changes/recent?count=100`);
+export const FEED_PAGE_SIZE = 100;
+
+export async function fetchRecentChanges(projectId: string, offset = 0, userId = '', query = ''): Promise<any> {
+  const params = `count=${FEED_PAGE_SIZE}&offset=${offset}${userId ? `&userId=${encodeURIComponent(userId)}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
+  const response = await authFetch(`${apiBase()}/api/ontology/${projectId}/changes/recent?${params}`);
   return response.json();
 }
 

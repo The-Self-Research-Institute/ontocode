@@ -108,6 +108,10 @@ public class ProjectLoadController {
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.lang.Nullable
+    private self.research.ontology.owlEditor.service.ProjectHistoryCleaner projectHistoryCleaner;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
     private self.research.ontology.owlEditor.service.DesktopHierarchyService desktopHierarchyService;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -824,11 +828,31 @@ public class ProjectLoadController {
                         .body(Map.of("success", false, "error", "Project not found")));
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private self.research.ontology.owlEditor.service.ExportScopeResolver exportScopeResolver;
+
     @GetMapping("/export/{projectId:.+}")
     public ResponseEntity<?> export(@PathVariable String projectId,
-                                           @RequestParam(defaultValue = "rdfxml") String format) {
+                                           @RequestParam(defaultValue = "rdfxml") String format,
+                                           @RequestParam(defaultValue = "false") boolean draft,
+                                           @RequestParam(required = false) String userId,
+                                           jakarta.servlet.http.HttpServletRequest request) {
         try {
             Path exportPath;
+
+            var scope = exportScopeResolver.resolve(request, draft, userId);
+            if (!scope.allowed()) {
+                return ResponseEntity.status(scope.status()).body(Map.of("error", scope.error()));
+            }
+            if (scope.draft()) {
+                exportPath = storageManager.resolveCodeViewFile(projectId, format, scope.contentScope());
+                return ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                        .contentLength(Files.size(exportPath))
+                        .header(HttpHeaders.CONTENT_DISPOSITION,
+                                "attachment; filename=ontology-draft." + storageManager.extensionFor(format))
+                        .body(new InputStreamResource(Files.newInputStream(exportPath)));
+            }
 
             importService.syncProjectToFuseki(projectId);
 
@@ -860,9 +884,16 @@ public class ProjectLoadController {
 
     @PostMapping("/export-async/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> submitExportJob(@PathVariable String projectId,
-                                                                @RequestParam(defaultValue = "rdfxml") String format) {
+                                                                @RequestParam(defaultValue = "rdfxml") String format,
+                                                                @RequestParam(defaultValue = "false") boolean draft,
+                                                                @RequestParam(required = false) String userId,
+                                                                jakarta.servlet.http.HttpServletRequest request) {
         try {
-            self.research.ontology.owlEditor.model.ExportJob job = exportJobService.submit(projectId, format);
+            var scope = exportScopeResolver.resolve(request, draft, userId);
+            if (!scope.allowed()) {
+                return ResponseEntity.status(scope.status()).body(Map.of("success", false, "error", scope.error()));
+            }
+            self.research.ontology.owlEditor.model.ExportJob job = exportJobService.submit(projectId, format, scope.contentScope());
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "jobId", job.getJobId(),
@@ -913,7 +944,8 @@ public class ProjectLoadController {
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(Files.size(exportPath))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + exportPath.getFileName())
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename="
+                            + (job.isDraft() ? "ontology-draft." + storageManager.extensionFor(job.getFormat()) : exportPath.getFileName()))
                     .body(resource);
         } catch (IOException e) {
             log.error("Failed to stream completed export job {}", jobId, e);
@@ -1818,6 +1850,10 @@ public class ProjectLoadController {
                 draftTrackingService.clearAppliedDrafts(projectId);
             } catch (Exception e) {
                 log.warn("[ProjectLoadController] Failed to clear drafts for {}: {}", projectId, e.getMessage());
+            }
+
+            if (projectHistoryCleaner != null) {
+                projectHistoryCleaner.purge(projectId);
             }
 
             try {

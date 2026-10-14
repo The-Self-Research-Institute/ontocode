@@ -1308,10 +1308,6 @@ public class SparqlDatasetService {
      */
     public void execDraftUpdateCopyOnSwitch(String projectId, String userId, String sparqlUpdate) {
         String draftGraph = getDraftGraphUri(projectId, userId);
-        if (sparqlUpdate.toUpperCase().contains("WHERE")
-                && !sparqlUpdate.toUpperCase().contains("USING ")) {
-            sparqlUpdate = sparqlUpdate.replaceAll("(?i)\\bWHERE\\b", "USING <" + draftGraph + "> WHERE");
-        }
         execUpdate(projectId, draftGraph, sparqlUpdate);
     }
 
@@ -1662,6 +1658,10 @@ public class SparqlDatasetService {
                     stmt = "WITH <" + graphUri + "> " + stmt;
                     log.info("[GRAPH-INJECT] Matched DELETE WHERE, added WITH clause");
                 }
+            } else if (stmt.matches("(?is)DELETE\\s+WHERE\\s*\\{.*\\}\\s*")) {
+                stmt = "WITH <" + graphUri + "> " + stmt.replaceFirst("(?is)DELETE\\s+WHERE\\s*\\{(.*)\\}\\s*$", "DELETE {$1} WHERE {$1}");
+            } else if (stmt.matches("(?is)INSERT\\s*\\{.*")) {
+                stmt = "WITH <" + graphUri + "> " + stmt;
             } else {
                 log.info("[GRAPH-INJECT] No pattern matched for statement");
             }

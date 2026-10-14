@@ -1,4 +1,5 @@
 // src/Dashboard.tsx
+import { formatSkippedImports, formatUpdatedImports, type SkippedImport, type UpdatedImport } from "../utils/importWarnings";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   ChevronRight,
@@ -61,7 +62,7 @@ import {
 import apiClient, { ApiError, getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
 import expressionService, { isManchesterClassExpression, isSimpleOntologyIri } from "../services/expressionService";
-import undoRedoService from "../services/undoRedoService";
+import { useOntologyUndoRedo } from "../hooks/useOntologyUndoRedo";
 import { draftTrackingService } from "../services/draftTrackingService";
 import { userPreferencesService } from "../services/userPreferencesService";
 import { notificationService } from "../services/notificationService";
@@ -282,7 +283,10 @@ const TopMenuBar = ({
   onHierarchyAnnotationPropChange,
   hierarchyCustomTemplate,
   onHierarchyCustomTemplateChange,
-
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -343,6 +347,10 @@ const TopMenuBar = ({
   onHierarchyAnnotationPropChange?: (iri: string) => void;
   hierarchyCustomTemplate?: string;
   onHierarchyCustomTemplateChange?: (tpl: string) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -495,6 +503,31 @@ const TopMenuBar = ({
                           title="Updates available"
                         />
                       )}
+                    </button>
+                  </div>
+                ) : item === "Edit" ? (
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        onUndo?.();
+                      }}
+                      disabled={!canUndo}
+                      className="ontocode-top-menu-item w-full text-left px-4 py-2 text-xs flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <span>Undo my last change</span>
+                      <span className="text-gray-400">Ctrl+Z</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenMenu(null);
+                        onRedo?.();
+                      }}
+                      disabled={!canRedo}
+                      className="ontocode-top-menu-item w-full text-left px-4 py-2 text-xs flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <span>Redo</span>
+                      <span className="text-gray-400">Ctrl+Y</span>
                     </button>
                   </div>
                 ) : item === "View" ? (
@@ -949,7 +982,7 @@ const TopMenuBar = ({
                                 currentProjectId
                               ).replace(/\.[^./]+$/, "");
                               const filename = `${baseName}.${ext}`;
-                              const url = `${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`;
+                              const url = withDraftAndUser(`${getBaseUrl()}/api/ontology/export/${encodeURIComponent(currentProjectId)}?format=${format}`);
                               setShowExportFormats(false);
                               setOpenMenu(null);
                               try {
@@ -963,7 +996,7 @@ const TopMenuBar = ({
                                   exportRequestIdRef.current += 1;
                                   const requestId = exportRequestIdRef.current;
                                   pendingExportRef.current = { requestId, format, filename };
-                                  window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId: currentProjectId, format, requestId });
+                                  window.vscode.postMessage({ type: "downloadOntology", url, filename, projectId: currentProjectId, format, requestId, draft: isDraftScopeActive(), userId: resolveMutationActor().userId });
                                   notificationService.info("Exporting…", `${filename} — this can take a few minutes for large ontologies`);
                                   if (exportSafetyTimeoutRef.current) clearTimeout(exportSafetyTimeoutRef.current);
                                   exportSafetyTimeoutRef.current = setTimeout(() => {
@@ -8393,14 +8426,6 @@ const updateItemInState = useCallback(
           fetchData(projectId, false);
           break;
 
-        // Handle change reverts - need full refresh
-        case "CHANGE_REVERTED":
-          console.log("[Dashboard] ⏪ Change reverted, refreshing all data");
-          showNotification(`${(edit as any).username || "Someone"} reverted a change. Refreshing...`, "info");
-          // Full refresh to get the reverted state
-          fetchData(projectId, false);
-          break;
-
         // Handle project saved by another user
         case "PROJECT_SAVED":
           console.log("[Dashboard] 💾 Project saved by another user");
@@ -10000,7 +10025,7 @@ const updateItemInState = useCallback(
       }
 
       try {
-        const response = await apiClient.put<{ success?: boolean; error?: string }>(
+        const response = await apiClient.put<{ success?: boolean; error?: string; updatedImports?: UpdatedImport[]; skippedImports?: SkippedImport[] }>(
           `/api/ontology/metadata/${projectId}/iri`,
           { ontologyIri: normalizedOntologyIri, versionIri: normalizedVersionIri, ...draftBodyFields() },
         );
@@ -10021,6 +10046,10 @@ const updateItemInState = useCallback(
         }
 
         showNotification("Ontology IRIs updated successfully!", "info");
+        const updatedNote = formatUpdatedImports(response?.updatedImports);
+        if (updatedNote) showNotification(updatedNote, "info");
+        const skippedWarning = formatSkippedImports(response?.skippedImports);
+        if (skippedWarning) showNotification(skippedWarning, "warning");
       } catch (error) {
         console.error("Failed to update ontology IRIs:", error);
         showNotification("Failed to update ontology IRIs.", "error");
@@ -12247,43 +12276,7 @@ const updateItemInState = useCallback(
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
 
-  // Undo / Redo — rolls back via Change Assistant history API
-  useEffect(() => {
-    if (!projectId) return;
-
-    const handleUndoRedo = async (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
-        return;
-      }
-      if (!(e.ctrlKey || e.metaKey)) return;
-
-      const userId = user?.email || "anonymous";
-      const username = user?.username || "Anonymous";
-      const isRedo = e.key === "y" || (e.key === "z" && e.shiftKey);
-
-      if (e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        const result = await undoRedoService.undo(projectId, userId, username);
-        if (result.success) {
-          notificationService.success("Undo", "Undid last change");
-        } else if (result.error) {
-          notificationService.info("Undo", result.error);
-        }
-      } else if (isRedo) {
-        e.preventDefault();
-        const result = await undoRedoService.redo(projectId, userId, username);
-        if (result.success) {
-          notificationService.success("Redo", "Redid change");
-        } else if (result.error) {
-          notificationService.info("Redo", result.error);
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleUndoRedo);
-    return () => window.removeEventListener("keydown", handleUndoRedo);
-  }, [projectId, user]);
+  const ontologyUndoRedo = useOntologyUndoRedo({ projectId });
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);
@@ -18431,6 +18424,10 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onHierarchyAnnotationPropChange={setHierarchyAnnotationPropIri}
           hierarchyCustomTemplate={hierarchyCustomTemplate}
           onHierarchyCustomTemplateChange={setHierarchyCustomTemplate}
+          onUndo={ontologyUndoRedo.undo}
+          onRedo={ontologyUndoRedo.redo}
+          canUndo={ontologyUndoRedo.canUndo}
+          canRedo={ontologyUndoRedo.canRedo}
           onOpenMergeWizard={async () => {
             setMergeWizardOpen(true);
             // Fetch files from the current project to show in merge wizard

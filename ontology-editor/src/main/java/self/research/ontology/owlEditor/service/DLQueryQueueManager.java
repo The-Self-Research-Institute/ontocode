@@ -38,7 +38,6 @@ public class DLQueryQueueManager {
             .build();
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
-    private static final long MAX_WAIT_TIME_MS = 30 * 60 * 1000;
 
     public DLQueryQueueManager(SimpMessagingTemplate messagingTemplate,
                                  SparqlDatasetService datasetService,
@@ -228,7 +227,7 @@ public class DLQueryQueueManager {
             }
             waitMs += estimateDurationForJob(job);
         }
-        return Math.min(waitMs, MAX_WAIT_TIME_MS);
+        return Math.min(waitMs, (Limit.DL_QUERY_MAX_WAIT_MINUTES.value() * 60_000L));
     }
 
     private long estimateDurationForJob(DLQueryJob job) {

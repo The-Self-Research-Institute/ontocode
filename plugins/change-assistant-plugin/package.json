@@ -32,7 +32,8 @@
   "main": "./dist/index.js",
   "scripts": {
     "build": "webpack --mode production",
-    "watch": "webpack --mode development --watch"
+    "watch": "webpack --mode development --watch",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -40,6 +41,7 @@
     "@types/react-dom": "^18.2.0",
     "ts-loader": "^9.4.0",
     "typescript": "^5.3.0",
+    "vitest": "^3.2.7",
     "webpack": "^5.88.0",
     "webpack-cli": "^5.1.0"
   },

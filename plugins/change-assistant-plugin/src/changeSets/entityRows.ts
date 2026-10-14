@@ -78,7 +78,10 @@ function latestUndo(rows: PropertyRow[]): PropertyRow | undefined {
 }
 
 export function canUndoEntry(entry: ChangeEntry): boolean {
-  return !!entry.entityUri && !/structural/i.test(entry.operationType || '');
+  if (typeof entry.undoable === 'boolean') return entry.undoable || !!entry.reverted;
+  const operation = entry.operationType || '';
+  return !!entry.entityUri && !!entry.id && !/structural/i.test(operation) && !/^(ROLLBACK_|REDO_)/i.test(operation)
+    && operation !== 'projectImported';
 }
 
 function otherChangesLabel(entry: ChangeEntry): string {
@@ -100,7 +103,7 @@ export function buildEntityRow(entry: ChangeEntry): EntityRow {
     entry,
     undoable,
     label: entry.entityLabel || (undoable ? 'Unnamed entity' : otherChangesLabel(entry)),
-    badge: undoable ? entityBadge(entry) : "Can't undo",
+    badge: undoable ? entityBadge(entry) : entry.undoReason ? `Can't undo: ${entry.undoReason}` : "Can't undo",
     properties,
     undone,
     undoneBy: entry.revertedBy || last?.undoneBy,

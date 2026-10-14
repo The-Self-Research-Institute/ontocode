@@ -65,7 +65,17 @@ public class DesktopOwlApiMutationService {
         if (!patched) {
             return false;
         }
+        return afterApplied(projectId);
+    }
 
+    public boolean tryApplyRaw(String projectId, String sparqlUpdate) {
+        if (!owlApiFirst || sparqlUpdate == null || sparqlUpdate.isBlank() || !ontologyCache.has(projectId)) {
+            return false;
+        }
+        return sparqlMutator.tryApply(projectId, sparqlUpdate) && afterApplied(projectId);
+    }
+
+    private boolean afterApplied(String projectId) {
         try {
             if (desktopOntologyLoader != null) {
                 desktopOntologyLoader.persistToDisk(projectId);

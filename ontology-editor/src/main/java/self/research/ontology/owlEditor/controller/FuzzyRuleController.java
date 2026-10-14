@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -13,7 +14,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.model.FuzzyRuleEntity;
 import self.research.ontology.owlEditor.repository.FuzzyRuleRepository;
-import self.research.ontology.owlEditor.service.OntologyHistoryService;
+import self.research.ontology.owlEditor.service.DocumentHistory;
+import self.research.ontology.owlEditor.service.DocumentSnapshots;
+import self.research.ontology.owlEditor.service.DocumentStore;
+import self.research.ontology.owlEditor.service.RequestActor;
 
 import java.util.Date;
 import java.util.List;
@@ -25,15 +29,24 @@ import java.util.Map;
 public class FuzzyRuleController {
 
     private final FuzzyRuleRepository ruleRepository;
-    private final OntologyHistoryService historyService;
+    private final DocumentHistory documentHistory;
+    private final DocumentSnapshots snapshots;
 
-    public FuzzyRuleController(FuzzyRuleRepository ruleRepository, OntologyHistoryService historyService) {
+    public FuzzyRuleController(FuzzyRuleRepository ruleRepository, DocumentHistory documentHistory,
+                               DocumentSnapshots snapshots) {
         this.ruleRepository = ruleRepository;
-        this.historyService = historyService;
+        this.documentHistory = documentHistory;
+        this.snapshots = snapshots;
     }
 
     private static String describe(FuzzyRuleEntity entity) {
         return "IF " + entity.getCondition() + " THEN " + entity.getAction();
+    }
+
+    private void record(String projectId, RequestActor actor, String operation, FuzzyRuleEntity subject, String before,
+                        String after, String oldText, String newText, String description) {
+        documentHistory.record(projectId, actor, DocumentStore.FUZZY_RULE, before, after, operation,
+                "urn:fuzzyrule:" + subject.getId(), subject.getName(), oldText, newText, description);
     }
 
     @GetMapping("/{projectId}/rules")
@@ -46,7 +59,8 @@ public class FuzzyRuleController {
             @PathVariable String projectId,
             @RequestBody FuzzyRuleRequest request,
             @RequestParam(required = false) String userId,
-            @RequestParam(required = false) String username) {
+            @RequestParam(required = false) String username,
+            HttpServletRequest httpRequest) {
         FuzzyRuleEntity entity = new FuzzyRuleEntity();
         entity.setProjectId(projectId);
         entity.setName(request.name());
@@ -56,9 +70,8 @@ public class FuzzyRuleController {
         entity.setCreatedAt(new Date());
         entity.setUpdatedAt(new Date());
         FuzzyRuleEntity saved = ruleRepository.save(entity);
-        historyService.recordEdit(projectId, userId, username, "createFuzzyRule",
-                "urn:fuzzyrule:" + saved.getId(), saved.getName(), null, describe(saved),
-                "Created fuzzy rule: " + saved.getName());
+        record(projectId, RequestActor.of(httpRequest, userId, username), "createFuzzyRule", saved, null,
+                snapshots.snapshot(saved), null, describe(saved), "Created fuzzy rule: " + saved.getName());
         return ResponseEntity.ok(saved);
     }
 
@@ -68,19 +81,20 @@ public class FuzzyRuleController {
             @PathVariable String ruleId,
             @RequestBody FuzzyRuleRequest request,
             @RequestParam(required = false) String userId,
-            @RequestParam(required = false) String username) {
+            @RequestParam(required = false) String username,
+            HttpServletRequest httpRequest) {
         return ruleRepository.findById(ruleId)
                 .map(entity -> {
                     String oldDesc = describe(entity);
+                    String before = snapshots.snapshot(entity);
                     if (request.name() != null) entity.setName(request.name());
                     if (request.condition() != null) entity.setCondition(request.condition());
                     if (request.action() != null) entity.setAction(request.action());
                     if (request.enabled() != null) entity.setEnabled(request.enabled());
                     entity.setUpdatedAt(new Date());
                     FuzzyRuleEntity saved = ruleRepository.save(entity);
-                    historyService.recordEdit(projectId, userId, username, "updateFuzzyRule",
-                            "urn:fuzzyrule:" + saved.getId(), saved.getName(), oldDesc, describe(saved),
-                            "Updated fuzzy rule: " + saved.getName());
+                    record(projectId, RequestActor.of(httpRequest, userId, username), "updateFuzzyRule", saved, before,
+                            snapshots.snapshot(saved), oldDesc, describe(saved), "Updated fuzzy rule: " + saved.getName());
                     return ResponseEntity.ok(saved);
                 })
                 .orElse(ResponseEntity.notFound().build());
@@ -91,14 +105,15 @@ public class FuzzyRuleController {
             @PathVariable String projectId,
             @PathVariable String ruleId,
             @RequestParam(required = false) String userId,
-            @RequestParam(required = false) String username) {
+            @RequestParam(required = false) String username,
+            HttpServletRequest httpRequest) {
         return ruleRepository.findById(ruleId)
                 .map(entity -> {
                     String oldDesc = describe(entity);
+                    String before = snapshots.snapshot(entity);
                     ruleRepository.deleteById(ruleId);
-                    historyService.recordEdit(projectId, userId, username, "deleteFuzzyRule",
-                            "urn:fuzzyrule:" + entity.getId(), entity.getName(), oldDesc, null,
-                            "Deleted fuzzy rule: " + entity.getName());
+                    record(projectId, RequestActor.of(httpRequest, userId, username), "deleteFuzzyRule", entity, before,
+                            null, oldDesc, null, "Deleted fuzzy rule: " + entity.getName());
                     return ResponseEntity.ok(Map.of("success", true));
                 })
                 .orElse(ResponseEntity.notFound().build());
