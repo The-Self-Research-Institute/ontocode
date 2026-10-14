@@ -309,6 +309,7 @@ const ClassEditor: React.FC<{
   const [descriptionTimedOut, setDescriptionTimedOut] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
   const [conflictIris, setConflictIris] = useState<Set<string> | undefined>(undefined);
+  const [lastEditAt, setLastEditAt] = useState(0);
 
   useEffect(() => {
     if (!projectId || !item.id) {
@@ -367,12 +368,8 @@ const ClassEditor: React.FC<{
 
     void loadConflictIris();
     return () => { cancelled = true; };
-    // classDetails is included so fixing (or introducing) the conflict on THIS same
-    // class re-checks the highlight immediately — loadClassDetails() gets a fresh
-    // object after every axiom mutation (add/delete/disjoint/etc.), and without this
-    // dependency the highlight only ever updated when navigating to a different class.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, item.isUnsatisfiable, projectId, classDetails]);
+  }, [item.id, item.isUnsatisfiable, projectId, lastEditAt]);
 
   // Manchester Syntax Editor State
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -881,6 +878,9 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
       setClassDetails(details);
       setAxiomsLoaded(true);
+      if (afterMutation) {
+        setLastEditAt(Date.now());
+      }
 
       const updatedItem: TreeNode = {
         ...item,

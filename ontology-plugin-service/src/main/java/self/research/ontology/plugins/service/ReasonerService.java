@@ -11,7 +11,7 @@ import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.semanticweb.owl.explanation.api.Explanation;
 import org.semanticweb.owl.explanation.api.ExplanationGenerator;
 import org.semanticweb.owl.explanation.api.ExplanationGeneratorFactory;
-import org.semanticweb.owl.explanation.api.NullExplanationProgressMonitor;
+import org.semanticweb.owl.explanation.api.ExplanationProgressMonitor;
 import org.semanticweb.owl.explanation.impl.blackbox.Configuration;
 import org.semanticweb.owl.explanation.impl.blackbox.ContractionStrategy;
 import org.semanticweb.owl.explanation.impl.blackbox.DivideAndConquerContractionStrategy;
@@ -666,8 +666,30 @@ public class ReasonerService {
     }
 
 
+    private static final class CancellableExplanationProgressMonitor<E> implements ExplanationProgressMonitor<E> {
+        private volatile boolean cancelled = false;
+
+        void cancel() {
+            cancelled = true;
+        }
+
+        @Override
+        public void foundExplanation(ExplanationGenerator<E> generator, Explanation<E> explanation, Set<Explanation<E>> allFoundExplanations) {
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled;
+        }
+    }
+
     public List<Map<String, Object>> findEntailmentJustifications(
             OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode) {
+        return findEntailmentJustifications(ontology, entailment, type, limit, mode, JUSTIFICATION_TIMEOUT_MS);
+    }
+
+    private List<Map<String, Object>> findEntailmentJustifications(
+            OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode, long timeoutMs) {
         OWLOntology reasoningOntology = stripSwrlRules(ontology);
         OWLReasonerFactory reasonerFactory = getReasonerFactory(type);
         Supplier<OWLOntologyManager> ontologyManagerSupplier = OWLManager::createOWLOntologyManager;
@@ -688,8 +710,10 @@ public class ReasonerService {
             ? new LaconicExplanationGeneratorFactory<>(baseFactory, ontologyManagerSupplier)
             : baseFactory;
 
-        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology);
-        Set<Explanation<OWLAxiom>> explanations = runWithTimeout(() -> generator.getExplanations(entailment, limit));
+        CancellableExplanationProgressMonitor<OWLAxiom> monitor = new CancellableExplanationProgressMonitor<>();
+        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology, monitor);
+        Set<Explanation<OWLAxiom>> explanations =
+            runWithTimeout(() -> generator.getExplanations(entailment, limit), monitor, timeoutMs);
         return buildJustificationsResult(explanations, ontology);
     }
 
@@ -701,10 +725,14 @@ public class ReasonerService {
         String subjectLabel = getLabel(subject, ontology);
         String targetLabel = getLabel(target, ontology);
 
-        List<Map<String, Object>> forward = findEntailmentJustifications(
-            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, target), type, limit, mode);
-        List<Map<String, Object>> backward = findEntailmentJustifications(
-            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(target, subject), type, limit, mode);
+        int forwardLimit = (limit + 1) / 2;
+        int backwardLimit = limit - forwardLimit;
+        long deadline = System.currentTimeMillis() + JUSTIFICATION_TIMEOUT_MS;
+
+        List<Map<String, Object>> forward = safeFindEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, target), type, forwardLimit, mode, deadline);
+        List<Map<String, Object>> backward = safeFindEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(target, subject), type, backwardLimit, mode, deadline);
 
         List<Map<String, Object>> combined = new ArrayList<>();
         combined.addAll(prefixLabels(forward, subjectLabel + " ⊑ " + targetLabel));
@@ -712,11 +740,53 @@ public class ReasonerService {
         return combined;
     }
 
+    private List<Map<String, Object>> safeFindEntailmentJustifications(
+            OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode, long deadline) {
+        long remaining = deadline - System.currentTimeMillis();
+        if (remaining <= 0) {
+            return Collections.emptyList();
+        }
+        try {
+            return findEntailmentJustifications(ontology, entailment, type, limit, mode, remaining);
+        } catch (RuntimeException e) {
+            log.warn("EquivalentClasses: one direction's justification search failed: {}", e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
     private List<Map<String, Object>> prefixLabels(List<Map<String, Object>> justifications, String prefix) {
         for (Map<String, Object> justification : justifications) {
             justification.put("label", prefix + " — " + justification.get("label"));
         }
         return justifications;
+    }
+
+    public List<Map<String, Object>> findEquivalentRestrictionJustifications(
+            OWLOntology ontology, String subjectIri, String propertyIri, String fillerIri,
+            boolean isDataProperty, String restrictionType, ReasonerType type, int limit, String mode) {
+        OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+        OWLClassExpression restriction = isDataProperty
+            ? ("only".equals(restrictionType)
+                ? DATA_FACTORY.getOWLDataAllValuesFrom(DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri)), DATA_FACTORY.getOWLDatatype(IRI.create(fillerIri)))
+                : DATA_FACTORY.getOWLDataSomeValuesFrom(DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri)), DATA_FACTORY.getOWLDatatype(IRI.create(fillerIri))))
+            : ("only".equals(restrictionType)
+                ? DATA_FACTORY.getOWLObjectAllValuesFrom(DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri)), DATA_FACTORY.getOWLClass(IRI.create(fillerIri)))
+                : DATA_FACTORY.getOWLObjectSomeValuesFrom(DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri)), DATA_FACTORY.getOWLClass(IRI.create(fillerIri))));
+
+        String subjectLabel = getLabel(subject, ontology);
+        int forwardLimit = (limit + 1) / 2;
+        int backwardLimit = limit - forwardLimit;
+        long deadline = System.currentTimeMillis() + JUSTIFICATION_TIMEOUT_MS;
+
+        List<Map<String, Object>> forward = safeFindEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction), type, forwardLimit, mode, deadline);
+        List<Map<String, Object>> backward = safeFindEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(restriction, subject), type, backwardLimit, mode, deadline);
+
+        List<Map<String, Object>> combined = new ArrayList<>();
+        combined.addAll(prefixLabels(forward, subjectLabel + " ⊑ restriction"));
+        combined.addAll(prefixLabels(backward, "restriction ⊑ " + subjectLabel));
+        return combined;
     }
 
     public List<Map<String, Object>> findInconsistencyJustifications(
@@ -733,28 +803,34 @@ public class ReasonerService {
             ? new LaconicExplanationGeneratorFactory<>(baseFactory, ontologyManagerSupplier)
             : baseFactory;
 
-        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology);
+        CancellableExplanationProgressMonitor<OWLAxiom> monitor = new CancellableExplanationProgressMonitor<>();
+        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology, monitor);
         Set<Explanation<OWLAxiom>> explanations =
-            runWithTimeout(() -> generator.getExplanations(inconsistencyEntailment, limit));
+            runWithTimeout(() -> generator.getExplanations(inconsistencyEntailment, limit), monitor, JUSTIFICATION_TIMEOUT_MS);
         return buildJustificationsResult(explanations, ontology);
     }
 
-    private Set<Explanation<OWLAxiom>> runWithTimeout(Supplier<Set<Explanation<OWLAxiom>>> search) {
-      
+    private Set<Explanation<OWLAxiom>> runWithTimeout(
+            Supplier<Set<Explanation<OWLAxiom>>> search,
+            CancellableExplanationProgressMonitor<OWLAxiom> monitor,
+            long timeoutMs) {
         java.util.concurrent.Future<Set<Explanation<OWLAxiom>>> future =
             justificationExecutor.submit(search::get);
         try {
-            return future.get(JUSTIFICATION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException te) {
+            monitor.cancel();
             future.cancel(true);
             throw new RuntimeException(
-                "Justification search timed out after " + JUSTIFICATION_TIMEOUT_MS
+                "Justification search timed out after " + timeoutMs
                     + "ms — the reasoner may still be warming up on its first request; try again.",
                 te);
         } catch (RuntimeException | java.util.concurrent.ExecutionException e) {
+            monitor.cancel();
             throw new RuntimeException("Justification search failed: "
                 + (e.getMessage() != null ? e.getMessage() : e.toString()), e);
         } catch (InterruptedException ie) {
+            monitor.cancel();
             future.cancel(true);
             Thread.currentThread().interrupt();
             throw new RuntimeException("Justification search was interrupted", ie);
@@ -960,6 +1036,36 @@ public class ReasonerService {
                 OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
                 OWLDatatype range = DATA_FACTORY.getOWLDatatype(IRI.create(targetIri));
                 return DATA_FACTORY.getOWLDataPropertyRangeAxiom(property, range);
+            }
+            case "SAME_INDIVIDUAL": {
+                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLNamedIndividual target = DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLSameIndividualAxiom(subject, target);
+            }
+            case "DIFFERENT_INDIVIDUALS": {
+                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLNamedIndividual target = DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDifferentIndividualsAxiom(subject, target);
+            }
+            case "EQUIVALENT_OBJECT_PROPERTIES": {
+                OWLObjectProperty subject = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty target = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLEquivalentObjectPropertiesAxiom(subject, target);
+            }
+            case "EQUIVALENT_DATA_PROPERTIES": {
+                OWLDataProperty subject = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDataProperty target = DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLEquivalentDataPropertiesAxiom(subject, target);
+            }
+            case "DISJOINT_OBJECT_PROPERTIES": {
+                OWLObjectProperty subject = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty target = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDisjointObjectPropertiesAxiom(subject, target);
+            }
+            case "DISJOINT_DATA_PROPERTIES": {
+                OWLDataProperty subject = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDataProperty target = DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDisjointDataPropertiesAxiom(subject, target);
             }
             default:
                 throw new IllegalArgumentException("Unsupported entailment type: " + entailmentType);

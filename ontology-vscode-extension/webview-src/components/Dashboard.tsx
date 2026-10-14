@@ -3348,6 +3348,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const encodedProjectId = encodeURIComponent(projectId);
       const resp = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/consistency`, {
         reasonerType,
+        ...draftBodyFields(),
       });
       const data = extractResponseData(resp);
       setConsistencyResult(data);

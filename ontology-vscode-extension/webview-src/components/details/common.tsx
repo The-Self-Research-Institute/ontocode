@@ -391,6 +391,8 @@ export const ExplanationModal: React.FC<{
   const [limitInput, setLimitInput] = useState(String(limitValue));
   useEffect(() => { setLimitInput(String(limitValue)); }, [limitValue]);
 
+  const committedByEnterRef = useRef(false);
+
   const commitLimitInput = (raw: string) => {
     const parsed = Math.max(1, Math.min(99, parseInt(raw, 10) || 1));
     setLimitInput(String(parsed));
@@ -425,8 +427,20 @@ export const ExplanationModal: React.FC<{
             <input
               type="number" min={1} max={99} value={limitInput}
               onChange={(e) => setLimitInput(e.target.value)}
-              onBlur={(e) => commitLimitInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { commitLimitInput(e.currentTarget.value); e.currentTarget.blur(); } }}
+              onBlur={(e) => {
+                if (committedByEnterRef.current) {
+                  committedByEnterRef.current = false;
+                  return;
+                }
+                commitLimitInput(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  committedByEnterRef.current = true;
+                  commitLimitInput(e.currentTarget.value);
+                  e.currentTarget.blur();
+                }
+              }}
               className="w-12 px-1 py-0 border border-gray-300 rounded text-[11px]"
             />
           </label>
@@ -550,8 +564,11 @@ export const AxiomRow: React.FC<{
       && !!axiom.propertyIri && axiom.fillerIri?.startsWith('http');
     const isObjectRestrictionCandidate = isRestrictionCandidate && !isDataPropertyRestriction;
     if (isRestrictionCandidate && (axiom.restrictionType === 'some' || axiom.restrictionType === 'only')) {
+      const isEquivalentRow = axiom.type === 'EquivalentTo';
       return {
-        entailmentType: isDataPropertyRestriction ? 'SUBCLASS_OF_DATA_RESTRICTION' : 'SUBCLASS_OF_OBJECT_RESTRICTION',
+        entailmentType: isEquivalentRow
+          ? (isDataPropertyRestriction ? 'EQUIVALENT_DATA_RESTRICTION' : 'EQUIVALENT_OBJECT_RESTRICTION')
+          : (isDataPropertyRestriction ? 'SUBCLASS_OF_DATA_RESTRICTION' : 'SUBCLASS_OF_OBJECT_RESTRICTION'),
         subjectIri: parentEntityIri,
         targetIri: axiom.fillerIri,
         propertyIri: axiom.propertyIri,
@@ -1484,6 +1501,7 @@ export const MultiSelectItem: React.FC<{
 
     const explainPayload: EntailmentPayload | null = (() => {
         if (!parentEntityIri || !propertyIri || !propertyIri.startsWith('http')) return null;
+        if (entityType === 'annotationProperty') return null;
         const isDataPropertyContext = themeColor === 'green';
         switch (sectionName) {
             case 'SubProperty Of':
@@ -1506,6 +1524,22 @@ export const MultiSelectItem: React.FC<{
                     subjectIri: parentEntityIri,
                     targetIri: propertyIri,
                 };
+            case 'Equivalent To':
+                return {
+                    entailmentType: isDataPropertyContext ? 'EQUIVALENT_DATA_PROPERTIES' : 'EQUIVALENT_OBJECT_PROPERTIES',
+                    subjectIri: parentEntityIri,
+                    targetIri: propertyIri,
+                };
+            case 'Disjoint With':
+                return {
+                    entailmentType: isDataPropertyContext ? 'DISJOINT_DATA_PROPERTIES' : 'DISJOINT_OBJECT_PROPERTIES',
+                    subjectIri: parentEntityIri,
+                    targetIri: propertyIri,
+                };
+            case 'Same Individual As':
+                return { entailmentType: 'SAME_INDIVIDUAL', subjectIri: parentEntityIri, targetIri: propertyIri };
+            case 'Different Individual From':
+                return { entailmentType: 'DIFFERENT_INDIVIDUALS', subjectIri: parentEntityIri, targetIri: propertyIri };
             default:
                 return null;
         }

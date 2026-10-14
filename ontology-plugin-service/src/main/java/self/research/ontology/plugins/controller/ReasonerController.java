@@ -116,6 +116,28 @@ public class ReasonerController {
     private final ConcurrentHashMap<String, Object> loadLocks = new ConcurrentHashMap<>();
 
     private final Map<String, OWLOntology> lastDraftOntology = new ConcurrentHashMap<>();
+    private final Map<OWLOntology, java.util.concurrent.atomic.AtomicInteger> draftOntologyUseCount = new ConcurrentHashMap<>();
+    private final Set<OWLOntology> draftOntologyPendingDisposal = java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+
+    private void beginDraftUse(OWLOntology ontology) {
+        draftOntologyUseCount.computeIfAbsent(ontology, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+    }
+
+    private void endDraftUse(OWLOntology ontology) {
+        if (ontology == null) {
+            return;
+        }
+        java.util.concurrent.atomic.AtomicInteger count = draftOntologyUseCount.get(ontology);
+        if (count == null) {
+            return;
+        }
+        if (count.decrementAndGet() <= 0) {
+            draftOntologyUseCount.remove(ontology, count);
+            if (draftOntologyPendingDisposal.remove(ontology)) {
+                reasonerService.disposeReasoners(ontology);
+            }
+        }
+    }
 
     // Async classification task tracking
     private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
@@ -347,9 +369,16 @@ public class ReasonerController {
             synchronized (lock) {
                 OWLOntology fresh = loadOntologyFromEditorService(lookupId, userId);
                 if (fresh != null) {
+                    beginDraftUse(fresh);
                     OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
                     if (previous != null && previous != fresh) {
-                        reasonerService.disposeReasoners(previous);
+                        java.util.concurrent.atomic.AtomicInteger previousCount = draftOntologyUseCount.get(previous);
+                        if (previousCount == null || previousCount.get() <= 0) {
+                            draftOntologyUseCount.remove(previous);
+                            reasonerService.disposeReasoners(previous);
+                        } else {
+                            draftOntologyPendingDisposal.add(previous);
+                        }
                     }
                 }
                 return fresh;
@@ -554,31 +583,34 @@ public class ReasonerController {
             log.info("Checking consistency for project: {} with {}", projectId, reasonerType);
 
             OWLOntology ontology = loadOntology(projectId, userId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            long startTime = System.currentTimeMillis();
-            boolean isConsistent = reasonerService.isConsistent(ontology, type);
-            long duration = System.currentTimeMillis() - startTime;
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("consistent", isConsistent);
-            result.put("reasonerType", type.getDisplayName());
-            result.put("durationMs", duration);
-            result.put("projectId", projectId);
-            
-            // If inconsistent, get unsatisfiable classes
-            if (!isConsistent) {
-                Set<OWLClass> unsatisfiable = reasonerService.getUnsatisfiableClasses(ontology, type);
-                List<Map<String, String>> unsatisfiableList = unsatisfiable.stream()
-                    .map(cls -> Map.of(
-                        "iri", cls.getIRI().toString(),
-                        "label", getLabel(cls, ontology)
-                    ))
-                    .collect(Collectors.toList());
-                result.put("unsatisfiableClasses", unsatisfiableList);
+            try {
+                ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+
+                long startTime = System.currentTimeMillis();
+                boolean isConsistent = reasonerService.isConsistent(ontology, type);
+                long duration = System.currentTimeMillis() - startTime;
+
+                Map<String, Object> result = new HashMap<>();
+                result.put("consistent", isConsistent);
+                result.put("reasonerType", type.getDisplayName());
+                result.put("durationMs", duration);
+                result.put("projectId", projectId);
+
+                if (!isConsistent) {
+                    Set<OWLClass> unsatisfiable = reasonerService.getUnsatisfiableClasses(ontology, type);
+                    List<Map<String, String>> unsatisfiableList = unsatisfiable.stream()
+                        .map(cls -> Map.of(
+                            "iri", cls.getIRI().toString(),
+                            "label", getLabel(cls, ontology)
+                        ))
+                        .collect(Collectors.toList());
+                    result.put("unsatisfiableClasses", unsatisfiableList);
+                }
+
+                return ResponseEntity.ok(result);
+            } finally {
+                endDraftUse(ontology);
             }
-            
-            return ResponseEntity.ok(result);
 
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "checking consistency");
@@ -662,6 +694,13 @@ public class ReasonerController {
     private org.springframework.http.HttpEntity<Void> editorInternalAuthEntity() {
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.set("X-Ontocode-Internal-Token", internalToken);
+        org.springframework.web.context.request.RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+        if (attrs instanceof ServletRequestAttributes servletAttrs) {
+            String auth = servletAttrs.getRequest().getHeader("Authorization");
+            if (auth != null && auth.startsWith("Bearer ")) {
+                headers.set("Authorization", auth);
+            }
+        }
         return new org.springframework.http.HttpEntity<>(headers);
     }
 
@@ -721,6 +760,8 @@ public class ReasonerController {
                     taskInfo.put("status", "FAILED");
                     taskInfo.put("success", false);
                     taskInfo.put("error", e.getMessage());
+                } finally {
+                    endDraftUse(ontology);
                 }
             });
 
@@ -794,25 +835,28 @@ public class ReasonerController {
             log.info("Realizing ontology for project: {} with {}", projectId, reasonerType);
 
             OWLOntology ontology = loadOntology(projectId, userId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            long startTime = System.currentTimeMillis();
-            reasonerService.realize(ontology, type);
-            long duration = System.currentTimeMillis() - startTime;
-            
-            // Get realization results
-            Map<String, Object> realizationData = reasonerService.getRealizationResults(ontology, type);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("reasonerType", type.getDisplayName());
-            result.put("durationMs", duration);
-            result.put("message", "Realization completed successfully");
-            result.put("instances", realizationData.get("instances"));
-            result.put("totalInstances", realizationData.get("totalInstances"));
-            
-            return ResponseEntity.ok(result);
-            
+            try {
+                ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+
+                long startTime = System.currentTimeMillis();
+                reasonerService.realize(ontology, type);
+                long duration = System.currentTimeMillis() - startTime;
+
+                Map<String, Object> realizationData = reasonerService.getRealizationResults(ontology, type);
+
+                Map<String, Object> result = new HashMap<>();
+                result.put("success", true);
+                result.put("reasonerType", type.getDisplayName());
+                result.put("durationMs", duration);
+                result.put("message", "Realization completed successfully");
+                result.put("instances", realizationData.get("instances"));
+                result.put("totalInstances", realizationData.get("totalInstances"));
+
+                return ResponseEntity.ok(result);
+            } finally {
+                endDraftUse(ontology);
+            }
+
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "during realization");
         }
@@ -859,18 +903,21 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
         log.info("Explaining inconsistency for project: {} with {} (mode={})", projectId, type, mode);
 
         OWLOntology ontology = loadOntology(projectId, userId);
+        try {
+            Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type, maxJustifications, mode);
 
-        Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type, maxJustifications, mode);
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("usedReasoner", type.getDisplayName());
+            if (type != requestedType) {
+                result.put("reasonerUpgraded", true);
+            }
+            result.putAll(explanation);
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("usedReasoner", type.getDisplayName());
-        if (type != requestedType) {
-            result.put("reasonerUpgraded", true);
+            return ResponseEntity.ok(result);
+        } finally {
+            endDraftUse(ontology);
         }
-        result.putAll(explanation);
-
-        return ResponseEntity.ok(result);
 
     } catch (Exception e) {
         return reasoningFailure(e, projectId, "explaining inconsistency");
@@ -910,31 +957,43 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
                 entailmentType, subjectIri, targetIri, projectId, type, mode);
 
             OWLOntology ontology = loadOntology(projectId, request.get("userId"));
-
-            List<Map<String, Object>> justifications;
-            if ("EQUIVALENT_CLASSES".equals(entailmentType)) {
-                if (targetIri == null) {
-                    return ResponseEntity.badRequest().body(Map.of(
-                        "success", false,
-                        "error", "targetIri is required for EQUIVALENT_CLASSES"));
+            try {
+                List<Map<String, Object>> justifications;
+                if ("EQUIVALENT_CLASSES".equals(entailmentType)) {
+                    if (targetIri == null) {
+                        return ResponseEntity.badRequest().body(Map.of(
+                            "success", false,
+                            "error", "targetIri is required for EQUIVALENT_CLASSES"));
+                    }
+                    justifications = reasonerService.findEquivalentClassesJustifications(
+                        ontology, subjectIri, targetIri, type, maxJustifications, mode);
+                } else if ("EQUIVALENT_OBJECT_RESTRICTION".equals(entailmentType) || "EQUIVALENT_DATA_RESTRICTION".equals(entailmentType)) {
+                    if (targetIri == null || propertyIri == null) {
+                        return ResponseEntity.badRequest().body(Map.of(
+                            "success", false,
+                            "error", "targetIri and propertyIri are required for EQUIVALENT_OBJECT_RESTRICTION/EQUIVALENT_DATA_RESTRICTION"));
+                    }
+                    justifications = reasonerService.findEquivalentRestrictionJustifications(
+                        ontology, subjectIri, propertyIri, targetIri,
+                        "EQUIVALENT_DATA_RESTRICTION".equals(entailmentType), literalValue, type, maxJustifications, mode);
+                } else {
+                    OWLAxiom entailment = reasonerService.buildEntailmentAxiom(
+                        entailmentType, subjectIri, targetIri, propertyIri, literalValue);
+                    justifications =
+                        reasonerService.findEntailmentJustifications(ontology, entailment, type, maxJustifications, mode);
                 }
-                justifications = reasonerService.findEquivalentClassesJustifications(
-                    ontology, subjectIri, targetIri, type, maxJustifications, mode);
-            } else {
-                OWLAxiom entailment = reasonerService.buildEntailmentAxiom(
-                    entailmentType, subjectIri, targetIri, propertyIri, literalValue);
-                justifications =
-                    reasonerService.findEntailmentJustifications(ontology, entailment, type, maxJustifications, mode);
-            }
 
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("usedReasoner", type.getDisplayName());
-            if (type != requestedType) {
-                result.put("reasonerUpgraded", true);
+                Map<String, Object> result = new HashMap<>();
+                result.put("success", true);
+                result.put("usedReasoner", type.getDisplayName());
+                if (type != requestedType) {
+                    result.put("reasonerUpgraded", true);
+                }
+                result.put("justifications", justifications);
+                return ResponseEntity.ok(result);
+            } finally {
+                endDraftUse(ontology);
             }
-            result.put("justifications", justifications);
-            return ResponseEntity.ok(result);
 
         } catch (IllegalArgumentException iae) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -967,37 +1026,38 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             log.info("Getting inferred axioms for project: {} with {}", projectId, reasonerType);
 
             OWLOntology ontology = loadOntology(projectId, userId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            try {
+                ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
-            long startTime = System.currentTimeMillis();
-            Set<OWLAxiom> inferredAxioms = reasonerService.getInferredAxioms(ontology, type);
-            long duration = System.currentTimeMillis() - startTime;
+                long startTime = System.currentTimeMillis();
+                Set<OWLAxiom> inferredAxioms = reasonerService.getInferredAxioms(ontology, type);
+                long duration = System.currentTimeMillis() - startTime;
 
-            List<Map<String, Object>> axiomsList = inferredAxioms.stream()
-                .limit(100) // Limit to first 100 to avoid huge responses
-                .map(axiom -> {
-                    Map<String, Object> entry = new HashMap<>();
-                    entry.put("axiomType", axiom.getAxiomType().getName());
-                    entry.put("readable", formatAxiom(axiom, ontology));
-                    entry.put("axiom", axiom.toString());
-                    // Structured description of this axiom, attached now while the real
-                    // OWLAxiom object is still in hand, so the frontend's "?" can request
-                    // an explanation without parsing axiom text back into a query.
-                    Map<String, Object> entailment = reasonerService.describeEntailment(axiom);
-                    if (entailment != null) {
-                        entry.put("entailment", entailment);
-                    }
-                    return entry;
-                })
-                .collect(Collectors.toList());
+                List<Map<String, Object>> axiomsList = inferredAxioms.stream()
+                    .limit(100)
+                    .map(axiom -> {
+                        Map<String, Object> entry = new HashMap<>();
+                        entry.put("axiomType", axiom.getAxiomType().getName());
+                        entry.put("readable", formatAxiom(axiom, ontology));
+                        entry.put("axiom", axiom.toString());
+                        Map<String, Object> entailment = reasonerService.describeEntailment(axiom);
+                        if (entailment != null) {
+                            entry.put("entailment", entailment);
+                        }
+                        return entry;
+                    })
+                    .collect(Collectors.toList());
 
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", true);
-            result.put("axioms", axiomsList);
-            result.put("totalInferredAxioms", inferredAxioms.size());
-            result.put("durationMs", duration);
+                Map<String, Object> result = new HashMap<>();
+                result.put("success", true);
+                result.put("axioms", axiomsList);
+                result.put("totalInferredAxioms", inferredAxioms.size());
+                result.put("durationMs", duration);
 
-            return ResponseEntity.ok(result);
+                return ResponseEntity.ok(result);
+            } finally {
+                endDraftUse(ontology);
+            }
 
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "getting inferred axioms");
@@ -1016,14 +1076,18 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     ) {
         try {
             OWLOntology ontology = loadOntology(projectId, userId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
-            Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
-            stats.put("success", true);
-            stats.put("projectId", projectId);
-            
-            return ResponseEntity.ok(stats);
-            
+            try {
+                ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+
+                Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
+                stats.put("success", true);
+                stats.put("projectId", projectId);
+
+                return ResponseEntity.ok(stats);
+            } finally {
+                endDraftUse(ontology);
+            }
+
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "getting reasoner stats");
         }

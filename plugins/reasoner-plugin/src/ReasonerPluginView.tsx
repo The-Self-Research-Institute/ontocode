@@ -173,7 +173,7 @@ interface HierarchyNodeProps {
   isDark: boolean;
   expandedSet: Set<string>;
   onToggle: (id: string) => void;
-  onNavigate: (id: string) => void;
+  onNavigate: (id: string, kind?: string) => void;
 }
 
 const HierarchyNode: React.FC<HierarchyNodeProps> = ({
@@ -229,7 +229,7 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
         }`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        onClick={() => id && onNavigate(id)}
+        onClick={() => id && onNavigate(id, type)}
       >
         {hasChildren ? (
           <button
@@ -372,6 +372,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const [entailmentJustifications, setEntailmentJustifications] = useState<any[] | null>(null);
   const [entailmentLoading, setEntailmentLoading] = useState(false);
   const [entailmentError, setEntailmentError] = useState<string | null>(null);
+  const entailmentRequestIdRef = useRef(0);
   const [autoSync, setAutoSync] = useState(true);
 
   const [topPanelHeight, setTopPanelHeight] = useState<number | null>(() => {
@@ -711,7 +712,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob]);
+  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob, draftUserId]);
 
   // Generate explanations for reasoning results
   const generateExplanations = (classificationResult: any) => {
@@ -837,6 +838,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     modeOverride?: 'regular' | 'laconic',
     limitOverride?: { mode: 'all' | 'limit'; value: number | '' }
   ) => {
+    const requestId = ++entailmentRequestIdRef.current;
     setEntailmentJustifications(null);
     setEntailmentError(null);
     setEntailmentLoading(true);
@@ -874,15 +876,18 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       if (response.ok) {
         const result = await response.json();
+        if (requestId !== entailmentRequestIdRef.current) return;
         setEntailmentJustifications(result?.justifications ?? []);
       } else {
         const errBody = await response.json().catch(() => null);
+        if (requestId !== entailmentRequestIdRef.current) return;
         setEntailmentError(errBody?.error || 'Failed to load explanation');
       }
     } catch (error) {
+      if (requestId !== entailmentRequestIdRef.current) return;
       setEntailmentError(error instanceof Error ? error.message : 'Failed to load explanation');
     } finally {
-      setEntailmentLoading(false);
+      if (requestId === entailmentRequestIdRef.current) setEntailmentLoading(false);
     }
   }, [projectId, selectedReasoner, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, draftUserId]);
 
@@ -909,6 +914,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
   // Navigate to entity in hierarchy
   const navigateToEntity = (iri: string, kind?: string) => {
+    entailmentRequestIdRef.current++;
     setShowExplainDialog(false);
     setExplainTarget(null);
     setEntailmentJustifications(null);
@@ -971,6 +977,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   };
 
   const navigateToEntityPanel = (iri: string, kind: string, label: string) => {
+    entailmentRequestIdRef.current++;
     setShowExplainDialog(false);
     setExplainTarget(null);
     setEntailmentJustifications(null);
@@ -1961,7 +1968,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 {explainTarget ? `Explanation for '${explainTarget.label}'` : 'Reasoner Explanation'}
               </h3>
               <button
-                onClick={() => { setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
+                onClick={() => { entailmentRequestIdRef.current++; setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
                 className="text-gray-500 hover:text-gray-700"
               >
                 <XCircle size={24} />
@@ -2380,7 +2387,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
             </div>
             <div className={`px-6 py-4 border-t flex justify-end ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
               <button
-                onClick={() => { setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
+                onClick={() => { entailmentRequestIdRef.current++; setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
                 className={`px-4 py-2 text-sm font-medium rounded ${
                   isDark ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'
                 }`}

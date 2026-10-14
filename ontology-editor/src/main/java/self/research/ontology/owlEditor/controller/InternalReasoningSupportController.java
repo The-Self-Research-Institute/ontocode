@@ -1,5 +1,10 @@
 package self.research.ontology.owlEditor.controller;
 
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.rdf4j.rio.RDFFormat;
@@ -8,6 +13,7 @@ import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.lang.Nullable;
@@ -15,11 +21,13 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import self.research.ontology.owlEditor.service.ImportQueueManager;
 import self.research.ontology.owlEditor.service.MainGraphRevisionService;
+import self.research.ontology.owlEditor.service.ProjectAccessService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.SparqlQueryContext;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
 
+import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Optional;
@@ -34,9 +42,35 @@ public class InternalReasoningSupportController {
     private final ImportQueueManager importQueueManager;
     private final MainGraphRevisionService mainGraphRevisionService;
     private final ProjectImportService importService;
+    private final ProjectAccessService projectAccessService;
 
     @Autowired(required = false) @Nullable
     private OwlApiOntologyContext owlApiContext;
+
+    @Value("${jwt.secret:}")
+    private String jwtSecret;
+
+    private boolean draftAccessDenied(String projectId, HttpServletRequest request) {
+        if (jwtSecret == null || jwtSecret.isBlank()) {
+            return false;
+        }
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return true;
+        }
+        try {
+            SecretKey key = Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
+            Claims claims = Jwts.parser().verifyWith(key).build()
+                    .parseSignedClaims(authHeader.substring(7).trim()).getPayload();
+            String email = claims.get("email", String.class);
+            if (email == null || email.isBlank()) {
+                return true;
+            }
+            return !projectAccessService.hasProjectAccess(projectId, email);
+        } catch (Exception e) {
+            return true;
+        }
+    }
 
     @GetMapping("/reasoning/{projectId}/triple-count")
     public ResponseEntity<Map<String, Object>> tripleCount(@PathVariable String projectId) {
@@ -56,7 +90,12 @@ public class InternalReasoningSupportController {
     public ResponseEntity<StreamingResponseBody> exportTurtle(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId,
-            @RequestParam(defaultValue = "false") boolean draft) {
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request) {
+
+        if (userId != null && !userId.isBlank() && draftAccessDenied(projectId, request)) {
+            return ResponseEntity.status(403).build();
+        }
 
         if ((userId == null || userId.isBlank()) && owlApiContext != null && owlApiContext.hasOntology(projectId)) {
             Optional<OWLOntology> snapshot = snapshotOntology(projectId);
@@ -85,7 +124,12 @@ public class InternalReasoningSupportController {
     public ResponseEntity<StreamingResponseBody> exportNTriples(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId,
-            @RequestParam(defaultValue = "false") boolean draft) {
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request) {
+
+        if (userId != null && !userId.isBlank() && draftAccessDenied(projectId, request)) {
+            return ResponseEntity.status(403).build();
+        }
 
         if ((userId == null || userId.isBlank()) && owlApiContext != null && owlApiContext.hasOntology(projectId)) {
             Optional<OWLOntology> snapshot = snapshotOntology(projectId);

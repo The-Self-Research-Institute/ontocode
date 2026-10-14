@@ -585,7 +585,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                                 onAddClick={onAddEquivalentClick}
                                 onDelete={prop => handleDeleteRelation('equivalent', prop)}
                                 themeColor={isObjectProperty ? 'blue' : 'green'}
-                                itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                                itemEntityType={isObjectProperty ? 'objectProperty' : isAnnotationProperty ? 'annotationProperty' : 'dataProperty'}
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
                                 onNavigate={handleNavigate}
@@ -600,7 +600,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                             onAddClick={onAddSubPropertyClick}
                             onDelete={prop => handleDeleteRelation('subProperty', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
-                            itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                            itemEntityType={isObjectProperty ? 'objectProperty' : isAnnotationProperty ? 'annotationProperty' : 'dataProperty'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
                             onNavigate={handleNavigate}
@@ -664,7 +664,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                             onAddClick={onAddDisjointClick}
                             onDelete={prop => handleDeleteRelation('disjoint', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
-                            itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                            itemEntityType={isObjectProperty ? 'objectProperty' : isAnnotationProperty ? 'annotationProperty' : 'dataProperty'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
                             onNavigate={handleNavigate}
