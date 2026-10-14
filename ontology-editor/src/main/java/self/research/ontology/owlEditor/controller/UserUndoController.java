@@ -11,12 +11,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.config.JwtClaimUtils;
-import self.research.ontology.owlEditor.document.UndoIntentDocument;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.HistorySyncService;
 import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
-import self.research.ontology.owlEditor.service.UndoIntentService;
 import self.research.ontology.owlEditor.service.UndoPreconditions;
 import self.research.ontology.owlEditor.service.UserUndoService;
 import self.research.ontology.owlEditor.service.UserUndoService.Identity;
@@ -39,19 +37,16 @@ public class UserUndoController {
     private final RollbackRequestSupport support;
     private final UndoPreconditions preconditions;
     private final ProjectWriteLockRegistry locks;
-    private final UndoIntentService intents;
 
     public UserUndoController(UserUndoService undoService, ChangeRollbackService rollbackService,
                               HistorySyncService historySync, RollbackRequestSupport support,
-                              UndoPreconditions preconditions, ProjectWriteLockRegistry locks,
-                              UndoIntentService intents) {
+                              UndoPreconditions preconditions, ProjectWriteLockRegistry locks) {
         this.undoService = undoService;
         this.rollbackService = rollbackService;
         this.historySync = historySync;
         this.support = support;
         this.preconditions = preconditions;
         this.locks = locks;
-        this.intents = intents;
     }
 
     @GetMapping("/{projectId}/undo/next")
@@ -93,22 +88,16 @@ public class UserUndoController {
         if (denied != null) {
             return denied;
         }
-        ChangeRollbackService.Actor actor = new ChangeRollbackService.Actor(who.primary(), who.primary());
+        ChangeRollbackService.Actor actor = new ChangeRollbackService.Actor(who.primary(), who.primary(), opId);
         try {
             return locks.runExclusive(projectId, () -> {
                 Optional<String> violation = preconditions.violation(projectId, scope);
                 if (violation.isPresent()) {
                     return changedUnderneath(projectId, draft, who, violation.get());
                 }
-                Optional<UndoIntentDocument> intent = intents.begin(projectId, opId, ChangeRollbackService.UNDO,
-                        who.primary(), draft, scope.stream().map(HistoryChange::getId).toList());
-                if (intent.isEmpty()) {
-                    return replay(projectId, draft, who, opId);
-                }
                 ChangeRollbackService.Result result = next.changeSetId() != null
                         ? rollbackService.undoChangeSet(projectId, next.changeSetId(), actor, false)
                         : rollbackService.undoEntry(projectId, next.changeId(), actor, false);
-                settle(intent.get(), result);
                 return finish(projectId, draft, who, result);
             });
         } catch (Exception e) {
@@ -139,16 +128,10 @@ public class UserUndoController {
         if (denied != null) {
             return denied;
         }
-        ChangeRollbackService.Actor actor = new ChangeRollbackService.Actor(who.primary(), who.primary());
+        ChangeRollbackService.Actor actor = new ChangeRollbackService.Actor(who.primary(), who.primary(), opId);
         try {
             return locks.runExclusive(projectId, () -> {
-                Optional<UndoIntentDocument> intent = intents.begin(projectId, opId, ChangeRollbackService.REDO,
-                        who.primary(), draft, List.of(next.changeId()));
-                if (intent.isEmpty()) {
-                    return replay(projectId, draft, who, opId);
-                }
                 ChangeRollbackService.Result result = rollbackService.redoUndo(projectId, next.auditId(), actor, false);
-                settle(intent.get(), result);
                 return finish(projectId, draft, who, result);
             });
         } catch (Exception e) {
@@ -166,26 +149,6 @@ public class UserUndoController {
             return null;
         }
         return Identity.of(support.actor(request, body).userId());
-    }
-
-    private void settle(UndoIntentDocument intent, ChangeRollbackService.Result result) {
-        if (result.ok()) {
-            intents.commit(intent, result.auditId());
-        } else {
-            intents.fail(intent, result.message());
-        }
-    }
-
-    private ResponseEntity<Map<String, Object>> replay(String projectId, boolean draft, Identity who, String opId) {
-        boolean committed = intents.existing(projectId, opId)
-                .map(intent -> intent.getStatus() == UndoIntentDocument.Status.COMMITTED).orElse(false);
-        Map<String, Object> body = new HashMap<>(state(projectId, draft, who));
-        body.put("success", committed);
-        body.put("duplicate", true);
-        if (!committed) {
-            body.put("error", "This request was already received");
-        }
-        return ResponseEntity.status(committed ? 200 : 409).body(body);
     }
 
     private ResponseEntity<Map<String, Object>> finish(String projectId, boolean draft, Identity who,

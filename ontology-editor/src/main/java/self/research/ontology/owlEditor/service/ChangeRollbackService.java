@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.document.UndoIntentDocument;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.RollbackAudit;
 import self.research.ontology.owlEditor.service.delta.ExactReversal;
@@ -35,7 +36,11 @@ public class ChangeRollbackService {
     public static final String UNDO = "UNDO";
     public static final String REDO = "REDO";
 
-    public record Actor(String userId, String username) {}
+    public record Actor(String userId, String username, String opId) {
+        public Actor(String userId, String username) {
+            this(userId, username, null);
+        }
+    }
 
     public record Item(String changeId, String subChangeId, String entityIRI, String entityLabel,
                        String predicate, String reason) {}
@@ -67,6 +72,9 @@ public class ChangeRollbackService {
 
     @Autowired(required = false)
     private RollbackActionRunner actionRunner;
+
+    @Autowired(required = false)
+    private UndoOperations operations;
 
     @Autowired
     public ChangeRollbackService(HistorySyncService historySync, RollbackMutationPlanner planner,
@@ -145,7 +153,7 @@ public class ChangeRollbackService {
 
     private Result run(Request req) {
         try {
-            return locks.runExclusive(req.projectId(), () -> runLocked(req));
+            return locks.runExclusive(req.projectId(), () -> operations == null ? runLocked(req) : operations.around(req, () -> runLocked(req)));
         } catch (Exception e) {
             log.error("[ROLLBACK] {} failed for project {}: {}", req.direction(), req.projectId(), e.getMessage(), e);
             return new Result(500, false, req.dryRun(), req.direction(), scopeId(req), List.of(), List.of(), null,
@@ -158,13 +166,14 @@ public class ChangeRollbackService {
         List<HistoryChange> changeSet = null;
         if (REDO.equals(original.direction()) && original.changeSetId() != null && original.undoAuditId() == null) {
             changeSet = historySync.getChangeSet(original.projectId(), original.changeSetId());
-            req = original.withUndoAudit(pendingUndoAudit(changeSet, original.changeSetId()));
+            req = original.withUndoAudit(recorder.pendingUndoAudit(changeSet, original.changeSetId()));
         }
         List<HistoryChange> entries = load(req, changeSet);
         if (entries.isEmpty()) {
             return new Result(404, false, req.dryRun(), req.direction(), scopeId(req), List.of(), List.of(), null,
                     "Change not found");
         }
+        UndoOperationContext.entries(entries, req.undoAuditId());
         return req.dryRun() ? preview(req, entries) : applyInOrder(req, entries);
     }
 
@@ -198,6 +207,7 @@ public class ChangeRollbackService {
                 }
                 if (audit == null) {
                     audit = recorder.saveAudit(req, entries, 0);
+                    UndoOperationContext.audit(audit.getId());
                 }
                 applyWork(req, work, audit.getId());
                 done.add(work);
@@ -220,22 +230,6 @@ public class ChangeRollbackService {
         String description = recorder.recordHistory(req, entries, applied, audit.getId());
         recorder.broadcast(req, audit.getId(), entries, description);
         return new Result(200, true, false, req.direction(), scopeId(req), applied, skipped, audit.getId(), null);
-    }
-
-    private String pendingUndoAudit(List<HistoryChange> entries, String changeSetId) {
-        List<RollbackAudit> undos = audits.findByChangeSetIdAndDirectionOrderByRevertedAtDesc(changeSetId, UNDO);
-        if (undos.isEmpty()) {
-            return null;
-        }
-        for (RollbackAudit undo : undos) {
-            boolean pending = entries.stream().anyMatch(entry ->
-                    (entry.isReverted() && undo.getId().equals(entry.getRevertedAuditId()))
-                            || !RollbackMutationPlanner.revertedBy(entry, undo.getId()).isEmpty());
-            if (pending) {
-                return undo.getId();
-            }
-        }
-        return undos.get(0).getId();
     }
 
     private Result failedMidway(Request req, String auditId, List<Work> done, List<Item> skipped, RuntimeException cause) {
@@ -275,6 +269,7 @@ public class ChangeRollbackService {
 
     private Work evaluate(Request req, HistoryChange entry) {
         if (isRollbackEntry(entry)) { return skip(entry, "This is itself an undo or redo; use Undo or Redo on the original change"); }
+        if (UndoOperationContext.blocked(entry.getId())) { return skip(entry, "An earlier undo or redo of this change was interrupted and needs repair"); }
         boolean entityless = entry.getEntityIRI() == null || entry.getEntityIRI().isBlank();
         Kind entryKind = RollbackMutationPlanner.kindOf(entry);
         if (entityless && entryKind != Kind.PREFIX && entryKind != Kind.EXACT) { return skip(entry, "This kind of change can't be undone automatically"); }
@@ -406,16 +401,19 @@ public class ChangeRollbackService {
         for (String raw : work.plan().rawUpdates()) {
             mutations.applyRawUpdate(req.projectId(), raw, draft, entry.getUserId());
         }
+        UndoOperationContext.stage(UndoIntentDocument.Stage.GRAPH_APPLIED);
         for (RollbackAction action : work.plan().actions()) {
             if (actionRunner == null) { throw new IllegalStateException("This kind of change can't be undone on this server"); }
             actionRunner.run(req.projectId(), action, entry.isDraft(), entry.getUserId());
         }
+        UndoOperationContext.stage(UndoIntentDocument.Stage.DOCUMENTS_APPLIED);
         boolean undo = UNDO.equals(req.direction());
         Set<String> handled = work.plan().handledSubChangeIds();
         historySync.setSubChangesReverted(entry.getId(), handled, undo, undo ? auditId : null);
         if (work.completesEntry() && req.subChangeId() == null) {
             historySync.setEntryReverted(entry.getId(), undo, undo ? auditId : null);
         }
+        UndoOperationContext.stage(UndoIntentDocument.Stage.HISTORY_MARKED);
     }
 
     private boolean actionsHold(Request req, HistoryChange entry, Plan plan) {

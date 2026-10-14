@@ -1,28 +1,48 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.UndoIntentDocument;
+import self.research.ontology.owlEditor.document.UndoIntentDocument.Stage;
 import self.research.ontology.owlEditor.document.UndoIntentDocument.Status;
+import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.UndoIntentRepository;
 
-import java.time.Duration;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.EnumSet;
+import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
 public class UndoIntentService {
 
+    static final Set<Status> UNRESOLVED = EnumSet.of(Status.PENDING, Status.INTERRUPTED, Status.NEEDS_ATTENTION);
 
     private final UndoIntentRepository repository;
 
     public UndoIntentService(UndoIntentRepository repository) {
         this.repository = repository;
+    }
+
+    public static String scopeKey(String... parts) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            for (String part : parts) {
+                digest.update((part == null ? "" : part).getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 0);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     public Optional<UndoIntentDocument> existing(String projectId, String opId) {
@@ -33,16 +53,16 @@ public class UndoIntentService {
     }
 
     public Optional<UndoIntentDocument> begin(String projectId, String opId, String direction, String actor,
-                                              boolean draft, List<String> changeIds) {
+                                              String scopeKey) {
         Instant now = Instant.now();
         UndoIntentDocument intent = UndoIntentDocument.builder()
                 .projectId(projectId)
                 .opId(opId == null || opId.isBlank() ? null : opId)
                 .direction(direction)
                 .actor(actor)
-                .draft(draft)
-                .changeIds(changeIds)
+                .scopeKey(scopeKey)
                 .status(Status.PENDING)
+                .stage(Stage.STARTED)
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -53,44 +73,69 @@ public class UndoIntentService {
         }
     }
 
-    public void commit(UndoIntentDocument intent, String auditId) {
-        settle(intent, Status.COMMITTED, auditId, null);
+    public void advance(UndoIntentDocument intent, Stage stage) {
+        if (intent.getStage() == null || stage.ordinal() > intent.getStage().ordinal()) {
+            intent.setStage(stage);
+            save(intent);
+        }
+    }
+
+    public void attach(UndoIntentDocument intent, List<HistoryChange> entries, String undoAuditId) {
+        intent.setChangeIds(entries.stream().map(HistoryChange::getId).toList());
+        intent.setDraft(entries.stream().anyMatch(HistoryChange::isDraft));
+        intent.setUndoAuditId(undoAuditId);
+        save(intent);
+    }
+
+    public void attachAudit(UndoIntentDocument intent, String auditId) {
+        intent.setAuditId(auditId);
+        save(intent);
+    }
+
+    public void commit(UndoIntentDocument intent, String auditId, int appliedCount) {
+        intent.setAppliedCount(appliedCount);
+        settle(intent, Status.COMMITTED, auditId != null ? auditId : intent.getAuditId(), null);
     }
 
     public void fail(UndoIntentDocument intent, String reason) {
         settle(intent, Status.FAILED, null, reason);
     }
 
+    public void needsAttention(UndoIntentDocument intent, String reason) {
+        settle(intent, Status.NEEDS_ATTENTION, intent.getAuditId(), reason);
+    }
+
+    public List<UndoIntentDocument> unresolved(String projectId) {
+        return repository.findByProjectIdAndStatusIn(projectId, UNRESOLVED);
+    }
+
+    public List<UndoIntentDocument> unresolvedEverywhere() {
+        return repository.findByStatusIn(UNRESOLVED);
+    }
+
+    public Set<String> entriesNeedingAttention(String projectId) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (UndoIntentDocument intent : repository.findByProjectIdAndStatusIn(projectId, EnumSet.of(Status.NEEDS_ATTENTION))) {
+            if (intent.getChangeIds() != null) {
+                ids.addAll(intent.getChangeIds());
+            }
+        }
+        return ids;
+    }
+
     private void settle(UndoIntentDocument intent, Status status, String auditId, String reason) {
+        intent.setStatus(status);
+        intent.setAuditId(auditId);
+        intent.setFailureReason(reason);
+        save(intent);
+    }
+
+    private void save(UndoIntentDocument intent) {
         try {
-            intent.setStatus(status);
-            intent.setAuditId(auditId);
-            intent.setFailureReason(reason);
             intent.setUpdatedAt(Instant.now());
             repository.save(intent);
         } catch (RuntimeException e) {
-            log.error("[UNDO] Could not record intent {} as {}: {}", intent.getId(), status, e.getMessage(), e);
+            log.error("[UNDO] Could not update undo operation {}: {}", intent.getId(), e.getMessage(), e);
         }
-    }
-
-    @EventListener(ApplicationReadyEvent.class)
-    public void reconcileOnStartup() {
-        try {
-            int interrupted = markInterrupted(Instant.now().minus(Duration.ofMinutes(Limit.INTENT_STALE_MINUTES.value())));
-            if (interrupted > 0) {
-                log.warn("[UNDO] {} undo/redo request(s) were interrupted by a restart; the ontology may hold a "
-                        + "partly applied undo. Check the Change Assistant history for those changes.", interrupted);
-            }
-        } catch (RuntimeException e) {
-            log.error("[UNDO] Startup reconciliation of undo intents failed: {}", e.getMessage(), e);
-        }
-    }
-
-    public int markInterrupted(Instant olderThan) {
-        List<UndoIntentDocument> stale = repository.findByStatusAndCreatedAtBefore(Status.PENDING, olderThan);
-        for (UndoIntentDocument intent : stale) {
-            settle(intent, Status.INTERRUPTED, null, "The server stopped before this finished");
-        }
-        return stale.size();
     }
 }

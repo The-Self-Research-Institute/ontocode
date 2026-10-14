@@ -122,6 +122,13 @@ class DesktopExactUndoTest {
     }
 
     @Test
+    void aDeletionWithoutAnExactRecordIsNotRestoredFromPartialDataOnDesktopEither() {
+        RollbackGraphFacts facts = new RollbackGraphFacts(mock(SparqlDatasetService.class), cache, desktop);
+
+        assertTrue(facts.storeRecordsExact("p", false));
+    }
+
+    @Test
     void theSnapshotIsEmptyWithoutACache() {
         assertTrue(OwlApiModelSnapshot.of(null, "p").isEmpty());
         when(cache.get("none")).thenReturn(Optional.empty());

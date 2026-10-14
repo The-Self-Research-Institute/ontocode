@@ -112,7 +112,7 @@ public class RollbackGraphFacts {
     }
 
     public boolean storeRecordsExact(String projectId, boolean draft) {
-        return draft || !inMemoryIsAuthoritative(projectId);
+        return true;
     }
 
     private boolean inMemoryIsAuthoritative(String projectId) {

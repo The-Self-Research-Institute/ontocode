@@ -16,7 +16,7 @@ final class RollbackWorkSupport {
     record Work(HistoryChange entry, Plan plan, List<HistoryChange.SubChange> targets, List<Item> skipped,
                 boolean completesEntry, boolean subLevel) {}
 
-    static final String INEXACT_DELETE = "This deletion was too large to record exactly, so it can't be restored automatically";
+    static final String INEXACT_DELETE = "This deletion has no exact record (it was made before exact undo existed, or it was too large to record), so it can't be restored automatically";
 
     enum Presence { REQUIRED, FORBIDDEN, IGNORED }
 

@@ -19,7 +19,9 @@ import java.util.List;
 @CompoundIndex(name = "project_op", def = "{'projectId': 1, 'opId': 1}", unique = true, sparse = true)
 public class UndoIntentDocument {
 
-    public enum Status { PENDING, COMMITTED, FAILED, INTERRUPTED }
+    public enum Status { PENDING, COMMITTED, FAILED, INTERRUPTED, NEEDS_ATTENTION }
+
+    public enum Stage { STARTED, GRAPH_APPLIED, DOCUMENTS_APPLIED, HISTORY_MARKED }
 
     @Id
     private String id;
@@ -31,6 +33,10 @@ public class UndoIntentDocument {
     private boolean draft;
     private List<String> changeIds;
     private String auditId;
+    private String undoAuditId;
+    private String scopeKey;
+    private Stage stage;
+    private int appliedCount;
     private Status status;
     private String failureReason;
     private Instant createdAt;

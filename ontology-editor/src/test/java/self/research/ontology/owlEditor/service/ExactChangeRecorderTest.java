@@ -150,6 +150,34 @@ class ExactChangeRecorderTest {
     }
 
     @Test
+    void anOperationThatChangesNothingIsNotRecordedInHistoryAtAll() {
+        boolean[] recorded = new boolean[1];
+
+        String id = recorder.recordAround("p", false, "u", List.of(op("createClass", "http://ex/A", null, null, null)),
+                () -> update("INSERT DATA { <http://ex/A> a <http://www.w3.org/2002/07/owl#Class> . }"), () -> {
+                    recorded[0] = true;
+                    return "cs-1";
+                });
+
+        assertNull(id);
+        assertFalse(recorded[0]);
+    }
+
+    @Test
+    void aRealChangeIsStillRecordedInHistory() {
+        boolean[] recorded = new boolean[1];
+
+        String id = recorder.recordAround("p", false, "u", List.of(op("createClass", "http://ex/New", null, null, null)),
+                () -> update("INSERT DATA { <http://ex/New> a <http://www.w3.org/2002/07/owl#Class> . }"), () -> {
+                    recorded[0] = true;
+                    return "cs-1";
+                });
+
+        assertEquals("cs-1", id);
+        assertTrue(recorded[0]);
+    }
+
+    @Test
     void aFailingMutationPropagatesAndStoresNothing() {
         HistoryChange entry = entry("e1", "http://ex/A", 0);
         when(history.findByProjectIdAndChangeSetIdOrderByTimestampDesc("p", "cs-1")).thenReturn(List.of(entry));

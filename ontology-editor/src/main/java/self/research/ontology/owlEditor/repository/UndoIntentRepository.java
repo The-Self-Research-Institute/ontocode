@@ -13,6 +13,10 @@ public interface UndoIntentRepository extends MongoRepository<UndoIntentDocument
 
     void deleteByProjectId(String projectId);
 
+    List<UndoIntentDocument> findByProjectIdAndStatusIn(String projectId, java.util.Collection<UndoIntentDocument.Status> statuses);
+
+    List<UndoIntentDocument> findByStatusIn(java.util.Collection<UndoIntentDocument.Status> statuses);
+
     Optional<UndoIntentDocument> findByProjectIdAndOpId(String projectId, String opId);
 
     List<UndoIntentDocument> findByStatusAndCreatedAtBefore(UndoIntentDocument.Status status, Instant before);

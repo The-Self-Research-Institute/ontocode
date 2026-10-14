@@ -113,20 +113,8 @@ class ChangeRollbackServiceTest {
 
         Result result = service.undoEntry(P, "c9", ACTOR, false);
 
-        assertTrue(result.skipped().stream().anyMatch(item -> item.reason().startsWith("This deletion was too large")));
+        assertTrue(result.skipped().stream().anyMatch(item -> item.reason().startsWith("This deletion has no exact record")));
         verify(mutations, never()).applyForRollback(eq(P), any());
-    }
-
-    @Test
-    void aDeletionInAStoreThatNeverRecordsExactChangesStillUsesTheStoredData() {
-        HistoryChange deleted = entry("c9", "deleteClass");
-        when(historySync.getHistoryChange("c9")).thenReturn(deleted);
-        when(facts.entityExists(anyString(), anyString(), anyBoolean(), any())).thenReturn(false);
-        when(facts.storeRecordsExact(P, false)).thenReturn(false);
-
-        Result result = service.undoEntry(P, "c9", ACTOR, false);
-
-        assertTrue(result.skipped().stream().noneMatch(item -> item.reason().startsWith("This deletion was too large")));
     }
 
     @Test

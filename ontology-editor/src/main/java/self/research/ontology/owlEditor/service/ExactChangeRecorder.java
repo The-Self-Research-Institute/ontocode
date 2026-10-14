@@ -71,7 +71,12 @@ public class ExactChangeRecorder {
         Optional<Model> memoryBefore = inMemory ? OwlApiModelSnapshot.of(ontologyCache, projectId) : Optional.empty();
         Optional<DeltaCapture> capture = inMemory ? Optional.empty() : begin(projectId, draft, userId, eligible);
         apply.run();
-        Optional<ExactDelta> delta = inMemory ? memoryDelta(projectId, memoryBefore) : capture.flatMap(this::finish);
+        DeltaCapture.Finish finished = inMemory ? new DeltaCapture.Finish(memoryDelta(projectId, memoryBefore), false)
+                : capture.map(this::finish).orElse(new DeltaCapture.Finish(Optional.empty(), false));
+        Optional<ExactDelta> delta = finished.delta();
+        if (finished.unchanged()) {
+            return null;
+        }
         String changeSetId = record.get();
         if (changeSetId != null && delta.isPresent()) {
             attach(projectId, changeSetId, ExactSeeds.groupIris(eligible), delta.get());
@@ -113,12 +118,12 @@ public class ExactChangeRecorder {
         }
     }
 
-    private Optional<ExactDelta> finish(DeltaCapture capture) {
+    private DeltaCapture.Finish finish(DeltaCapture capture) {
         try {
-            return capture.finish();
+            return capture.finishDetailed();
         } catch (RuntimeException e) {
             log.warn("[UNDO] Could not read the graph after the change: {}", e.getMessage());
-            return Optional.empty();
+            return new DeltaCapture.Finish(Optional.empty(), false);
         }
     }
 

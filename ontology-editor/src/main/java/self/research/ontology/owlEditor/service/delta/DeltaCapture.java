@@ -64,17 +64,23 @@ public final class DeltaCapture {
                 CanonicalGraph.canonicalise(before)));
     }
 
+    public record Finish(Optional<ExactDelta> delta, boolean unchanged) {}
+
     public Optional<ExactDelta> finish() {
+        return finishDetailed().delta();
+    }
+
+    public Finish finishDetailed() {
         Model afterRaw = read(repository, graphUri, seeds, incoming, whole);
         if (!acceptable(afterRaw, whole)) {
-            return Optional.empty();
+            return new Finish(Optional.empty(), false);
         }
         Model after = CanonicalGraph.canonicalise(afterRaw);
         ExactDelta delta = ExactDelta.between(before, after);
-        if (delta.isEmpty() || delta.isTooLarge()) {
-            return Optional.empty();
+        if (delta.isEmpty()) {
+            return new Finish(Optional.empty(), true);
         }
-        return Optional.of(delta);
+        return new Finish(delta.isTooLarge() ? Optional.empty() : Optional.of(delta), false);
     }
 
     private static boolean acceptable(Model model, boolean whole) {
