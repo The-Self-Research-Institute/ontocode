@@ -541,12 +541,6 @@ public class ReasonerController {
             }
         } else {
             NodeSet<OWLClass> subClassesNodeSet = reasoner.getSubClasses(owlClass, true);
-            // owl:Nothing is vacuously a subclass of every class, so its merged bottom-equivalence
-            // node (Nothing + all unsatisfiable classes) shows up as a "direct subclass" of
-            // anything. The old check (representative.isOWLNothing()) missed this whenever the
-            // reasoner picked a named unsatisfiable class, not Nothing, as that node's
-            // representative — isBottomNode() identifies the node itself, not whichever member
-            // got picked to represent it.
             hasAnyChildren = subClassesNodeSet.getNodes().stream()
                     .anyMatch(n -> !n.isBottomNode() && !n.contains(owlClass));
 

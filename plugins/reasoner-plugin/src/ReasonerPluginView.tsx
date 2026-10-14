@@ -123,8 +123,7 @@ function renderLinkedAxiomText(
 interface ReasonerPluginProps {
   projectId: string;
   apiBaseUrl?: string;
-  /** Current user's id when Private (Draft) mode is active, so reasoning runs against
-   * their draft overlay instead of only the published ontology; undefined in Public mode. */
+
   draftUserId?: string;
   // Dashboard integration props
   selectedReasoner?: string;

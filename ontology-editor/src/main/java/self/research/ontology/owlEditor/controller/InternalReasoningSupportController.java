@@ -69,9 +69,6 @@ public class InternalReasoningSupportController {
             return ResponseEntity.status(503).build();
         }
         StreamingResponseBody body = out -> {
-            // StreamingResponseBody.writeTo runs on Spring's async dispatch thread, not the
-            // request thread this param was read on — SparqlQueryContext must be set here,
-            // inside the callback, not before building it.
             SparqlQueryContext.setWantsDraft(draft);
             try {
                 datasetService.exportDatasetToStream(projectId, userId, RDFFormat.TURTLE, out);

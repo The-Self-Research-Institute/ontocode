@@ -420,11 +420,6 @@ public class ReasonerController {
         return base + "/api/ontology-file/" + encoded + "?forceExport=true";
     }
 
-    /**
-     * The editor's own draft-aware export (already built for its "what-if" consistency
-     * preview) — overlays the user's private draft graph onto the published one instead
-     * of serving the published-only snapshot {@link #editorOntologyFileUrl} always returns.
-     */
     private String editorDraftExportUrl(String projectId, String userId) {
         String encodedProject = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
         String encodedUser = java.net.URLEncoder.encode(userId, StandardCharsets.UTF_8).replace("+", "%20");
@@ -847,9 +842,6 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
         // this endpoint used to be the one gap that always fell through to this
         // controller's own long-lived ontologyCache, so it could keep answering from a
         // stale pre-edit (or, right after upload, pre-import) snapshot even once the
-        // sidebar's worker-backed consistency check had already moved on. The worker
-        // also has no concept of draft scope, so a draft-mode request must stay on
-        // this inline path rather than being offloaded to it.
         if (workerAvailable() && (userId == null || userId.isBlank())) {
             return submitExplainInconsistencyToWorker(projectId, requestedReasonerType, mode, maxJustifications);
         }

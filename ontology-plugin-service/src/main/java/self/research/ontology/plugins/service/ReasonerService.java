@@ -504,9 +504,7 @@ public class ReasonerService {
         }
         processedClasses.add(parentClass);
 
-        // Get direct subclasses. owl:Nothing is vacuously a subclass of every class, so its
-        // merged bottom-equivalence node (Nothing + every unsatisfiable class) would otherwise
-        // show up as "direct subclasses" of any parentClass.
+
         for (Node<OWLClass> node : reasoner.getSubClasses(parentClass, true)) {
             if (node.isBottomNode()) {
                 continue;

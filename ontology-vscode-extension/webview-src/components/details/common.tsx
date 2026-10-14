@@ -383,7 +383,7 @@ export const ExplanationModal: React.FC<{
   limitAll: boolean;
   onLimitAllChange: (all: boolean) => void;
   limitValue: number;
-  /** Fires once, on blur/Enter, with the parsed+clamped value — not per keystroke. */
+
   onLimitCommit: (value: number) => void;
   onNavigate?: (iri: string, type: string) => void;
 }> = ({ isOpen, onClose, label, loading, error, justifications, mode, onModeChange, limitAll, onLimitAllChange, limitValue, onLimitCommit, onNavigate }) => {

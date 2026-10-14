@@ -318,16 +318,13 @@ const ClassEditor: React.FC<{
     let cancelled = false;
 
     const loadConflictIris = async () => {
-      // item.isUnsatisfiable is only populated while viewing the Inferred hierarchy —
-      // the Asserted tree never carries it — so confirm unsatisfiability against the
-      // live reasoner list first rather than trusting that flag.
+
       let unsatisfiable = item.isUnsatisfiable === true;
       if (!unsatisfiable) {
         try {
           const quick: any = await apiClient.get(withDraftAndUser(`/api/ontology/${projectId}/unsatisfiable-classes-quick`));
           const list: string[] = Array.isArray(quick?.unsatisfiableClasses) ? quick.unsatisfiableClasses : [];
-          // The quick-check endpoint returns bare local names (e.g. "MeatTopping"), not
-          // full IRIs, so compare against item.id's fragment/last path segment too.
+        
           const localName = item.id.includes('#') ? item.id.split('#').pop() : item.id.split('/').pop();
           unsatisfiable = list.includes(item.id) || (!!localName && list.includes(localName));
         } catch (e) {
