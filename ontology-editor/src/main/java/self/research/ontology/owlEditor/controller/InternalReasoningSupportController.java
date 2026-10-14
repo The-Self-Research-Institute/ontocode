@@ -17,6 +17,7 @@ import self.research.ontology.owlEditor.service.ImportQueueManager;
 import self.research.ontology.owlEditor.service.MainGraphRevisionService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.SparqlQueryContext;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
 
 import java.io.IOException;
@@ -54,7 +55,8 @@ public class InternalReasoningSupportController {
     @GetMapping(value = "/reasoning/{projectId}/export.ttl", produces = "text/turtle")
     public ResponseEntity<StreamingResponseBody> exportTurtle(
             @PathVariable String projectId,
-            @RequestParam(required = false) String userId) {
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft) {
 
         if ((userId == null || userId.isBlank()) && owlApiContext != null && owlApiContext.hasOntology(projectId)) {
             Optional<OWLOntology> snapshot = snapshotOntology(projectId);
@@ -66,7 +68,17 @@ public class InternalReasoningSupportController {
         if (!ensureFusekiReady(projectId)) {
             return ResponseEntity.status(503).build();
         }
-        StreamingResponseBody body = out -> datasetService.exportDatasetToStream(projectId, userId, RDFFormat.TURTLE, out);
+        StreamingResponseBody body = out -> {
+            // StreamingResponseBody.writeTo runs on Spring's async dispatch thread, not the
+            // request thread this param was read on — SparqlQueryContext must be set here,
+            // inside the callback, not before building it.
+            SparqlQueryContext.setWantsDraft(draft);
+            try {
+                datasetService.exportDatasetToStream(projectId, userId, RDFFormat.TURTLE, out);
+            } finally {
+                SparqlQueryContext.clear();
+            }
+        };
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("text/turtle"))
                 .body(body);
@@ -75,7 +87,8 @@ public class InternalReasoningSupportController {
     @GetMapping(value = "/reasoning/{projectId}/export.nt", produces = "application/n-triples")
     public ResponseEntity<StreamingResponseBody> exportNTriples(
             @PathVariable String projectId,
-            @RequestParam(required = false) String userId) {
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft) {
 
         if ((userId == null || userId.isBlank()) && owlApiContext != null && owlApiContext.hasOntology(projectId)) {
             Optional<OWLOntology> snapshot = snapshotOntology(projectId);
@@ -87,7 +100,14 @@ public class InternalReasoningSupportController {
         if (!ensureFusekiReady(projectId)) {
             return ResponseEntity.status(503).build();
         }
-        StreamingResponseBody body = out -> datasetService.exportDatasetToStream(projectId, userId, RDFFormat.NTRIPLES, out);
+        StreamingResponseBody body = out -> {
+            SparqlQueryContext.setWantsDraft(draft);
+            try {
+                datasetService.exportDatasetToStream(projectId, userId, RDFFormat.NTRIPLES, out);
+            } finally {
+                SparqlQueryContext.clear();
+            }
+        };
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/n-triples"))
                 .body(body);

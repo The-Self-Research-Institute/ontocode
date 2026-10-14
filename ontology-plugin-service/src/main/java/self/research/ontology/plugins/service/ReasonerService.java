@@ -497,23 +497,26 @@ public class ReasonerService {
             return;
         }
         processedClasses.add(parentClass);
-        
-        // Get direct subclasses
+
+        // Get direct subclasses. owl:Nothing is vacuously a subclass of every class, so its
+        // merged bottom-equivalence node (Nothing + every unsatisfiable class) would otherwise
+        // show up as "direct subclasses" of any parentClass.
         for (Node<OWLClass> node : reasoner.getSubClasses(parentClass, true)) {
+            if (node.isBottomNode()) {
+                continue;
+            }
             for (OWLClass subClass : node.getEntities()) {
-                if (subClass.isOWLNothing()) {
-                    continue;
-                }
-                
                 Map<String, Object> classNode = new HashMap<>();
                 classNode.put("iri", subClass.getIRI().toString());
                 classNode.put("label", getLabel(subClass, ontology));
                 classNode.put("depth", depth);
-                
+
                 // Get children count
                 int childrenCount = (int) reasoner.getSubClasses(subClass, true)
-                    .entities()
-                    .filter(c -> !c.isOWLNothing())
+                    .getNodes()
+                    .stream()
+                    .filter(n -> !n.isBottomNode())
+                    .flatMap(n -> n.getEntities().stream())
                     .count();
                 classNode.put("childrenCount", childrenCount);
                 

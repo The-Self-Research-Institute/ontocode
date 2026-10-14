@@ -2685,10 +2685,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       const encodedProjectId = encodeURIComponent(projectId);
+      const draftUserId = isDraftScopeActive() ? resolveMutationActor().userId : undefined;
 
       // Start classification (async — returns a taskId)
       const startResponse: any = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/classify`, {
         reasonerType,
+        ...(draftUserId ? { userId: draftUserId } : {}),
       });
 
       const startData = startResponse?.data ?? startResponse;
@@ -3174,10 +3176,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
       }
 
+      const startReasonerDraftUserId = isDraftScopeActive() ? resolveMutationActor().userId : undefined;
+
       // Realize individuals (inferred types) after classification
       try {
         await apiClient.post(`/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/realize`, {
           reasonerType,
+          ...(startReasonerDraftUserId ? { userId: startReasonerDraftUserId } : {}),
         });
       } catch (realizeError) {
         console.warn("[Dashboard] Realization step failed (non-fatal):", realizeError);
@@ -3189,7 +3194,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         const axiomsResponse = await apiClient.get<any>(
           `/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/inferred-axioms`,
-          { reasonerType },
+          { reasonerType, ...(startReasonerDraftUserId ? { userId: startReasonerDraftUserId } : {}) },
         );
         const rawAxiomsPayload = axiomsResponse?.data || axiomsResponse;
         // When the reasoner-worker is enabled, this endpoint replies {async:true, jobId}
@@ -15690,6 +15695,7 @@ const updateItemInState = useCallback(
                 <PluginComponent
                   projectId={projectId || ""}
                   apiBaseUrl={getBaseUrl()}
+                  draftUserId={isDraftScopeActive() ? (resolveMutationActor().userId || undefined) : undefined}
                   selectedReasoner={selectedReasoner}
                   isReasonerRunning={isReasonerRunning}
                   isReasonerLoading={isReasonerLoading}

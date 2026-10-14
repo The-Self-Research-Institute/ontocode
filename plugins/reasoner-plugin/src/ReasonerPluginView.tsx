@@ -59,6 +59,8 @@ async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   return fetch(input, { ...init, headers });
 }
 
+const TOP_PANEL_HEIGHT_KEY = 'ontocode-reasoner-top-panel-height';
+
 const OWL_AXIOM_KEYWORDS = [
   'SubClassOf', 'EquivalentClasses', 'EquivalentTo', 'DisjointClasses', 'DisjointWith',
   'DisjointUnionOf', 'SubPropertyOf', 'SubObjectPropertyOf', 'SubDataPropertyOf',
@@ -121,6 +123,9 @@ function renderLinkedAxiomText(
 interface ReasonerPluginProps {
   projectId: string;
   apiBaseUrl?: string;
+  /** Current user's id when Private (Draft) mode is active, so reasoning runs against
+   * their draft overlay instead of only the published ontology; undefined in Public mode. */
+  draftUserId?: string;
   // Dashboard integration props
   selectedReasoner?: string;
   isReasonerRunning?: boolean;
@@ -298,6 +303,7 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
 export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   projectId,
   apiBaseUrl = '',
+  draftUserId,
   selectedReasoner: dashboardSelectedReasoner,
   isReasonerRunning: dashboardIsRunning,
   isReasonerLoading: dashboardIsLoading,
@@ -368,6 +374,45 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const [entailmentLoading, setEntailmentLoading] = useState(false);
   const [entailmentError, setEntailmentError] = useState<string | null>(null);
   const [autoSync, setAutoSync] = useState(true);
+
+  const [topPanelHeight, setTopPanelHeight] = useState<number | null>(() => {
+    try {
+      const saved = localStorage.getItem(TOP_PANEL_HEIGHT_KEY);
+      return saved ? Number(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const topPanelRef = useRef<HTMLDivElement>(null);
+
+  const handleTopPanelResizeStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    const getY = (ev: MouseEvent | TouchEvent | React.MouseEvent | React.TouchEvent) =>
+      'touches' in ev ? ev.touches[0].clientY : (ev as MouseEvent).clientY;
+    const startY = getY(e);
+    const startHeight = topPanelRef.current?.getBoundingClientRect().height ?? 0;
+    const sidebarEl = topPanelRef.current?.parentElement;
+
+    const onMove = (ev: MouseEvent | TouchEvent) => {
+      const delta = getY(ev) - startY;
+      const sidebarHeight = sidebarEl?.getBoundingClientRect().height ?? 0;
+      // Leave room for the handle, a sliver of the list below it, and the Actions footer.
+      const maxTop = Math.max(120, sidebarHeight - 160);
+      const next = Math.min(maxTop, Math.max(100, startHeight + delta));
+      setTopPanelHeight(next);
+      try { localStorage.setItem(TOP_PANEL_HEIGHT_KEY, String(next)); } catch { /* non-blocking */ }
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchend', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchend', onUp);
+  }, []);
   const [reasonerStatus, setReasonerStatus] = useState<string>('Not initialized');
   const [stats, setStats] = useState<any>(null);
   const [selectedClassIri, setSelectedClassIri] = useState<string | null>(null);
@@ -477,8 +522,9 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
     try {
       const encodedProjectId = encodeURIComponent(projectId);
+      const userIdParam = draftUserId ? `&userId=${encodeURIComponent(draftUserId)}` : '';
       const response = await authFetch(
-        `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/inferred-axioms?reasonerType=${reasonerType}`,
+        `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/inferred-axioms?reasonerType=${reasonerType}${userIdParam}`,
       );
       if (!response.ok) {
         console.warn(`[ReasonerPluginView] inferred-axioms request failed: ${response.status} ${response.statusText}`);
@@ -497,7 +543,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } catch (err) {
       console.warn('[ReasonerPluginView] Failed to fetch inferred axioms:', err);
     }
-  }, [projectId, normalizedApiBaseUrl, pollWorkerJob]);
+  }, [projectId, normalizedApiBaseUrl, pollWorkerJob, draftUserId]);
 
   // Start reasoning
   const startReasoner = useCallback(async (task: 'consistency' | 'classification' | 'realization') => {
@@ -541,7 +587,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       const response = await authFetch(`${normalizedApiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reasonerType })
+        body: JSON.stringify(draftUserId ? { reasonerType, userId: draftUserId } : { reasonerType })
       });
 
       console.log('[ReasonerPluginView] Response status:', response.status);
@@ -631,7 +677,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       }
 
       // Get stats
-      const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`);
+      const statsUserIdParam = draftUserId ? `&userId=${encodeURIComponent(draftUserId)}` : '';
+      const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}${statsUserIdParam}`);
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
@@ -738,7 +785,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
             maxJustifications: (limitOverride?.mode ?? justificationLimitMode) === 'all'
               ? 50
-              : (Number(limitOverride?.value ?? justificationLimitValue) || 10)
+              : (Number(limitOverride?.value ?? justificationLimitValue) || 10),
+            ...(draftUserId ? { userId: draftUserId } : {})
           })
         }
       );
@@ -762,7 +810,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, pollWorkerJob]);
+  }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, pollWorkerJob, draftUserId]);
 
   const fetchEntailmentExplanation = useCallback(async (
     target: { entailmentType: string; subjectIri: string; targetIri?: string; propertyIri?: string; literalValue?: string },
@@ -798,7 +846,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
             mode: modeOverride ?? justificationMode,
             maxJustifications: (limitOverride?.mode ?? justificationLimitMode) === 'all'
               ? 50
-              : (Number(limitOverride?.value ?? justificationLimitValue) || 10)
+              : (Number(limitOverride?.value ?? justificationLimitValue) || 10),
+            ...(draftUserId ? { userId: draftUserId } : {})
           })
         }
       );
@@ -815,7 +864,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     } finally {
       setEntailmentLoading(false);
     }
-  }, [projectId, selectedReasoner, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue]);
+  }, [projectId, selectedReasoner, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, draftUserId]);
 
   const openExplainEntailment = (
     target: { entailmentType: string; subjectIri: string; targetIri?: string; propertyIri?: string; literalValue?: string },
@@ -1501,6 +1550,11 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
             <div className={`w-80 border-r flex flex-col overflow-hidden ${
               isDark ? 'border-gray-700 bg-gray-900' : 'border-gray-300 bg-white'
             }`}>
+              <div
+                ref={topPanelRef}
+                className="flex flex-col overflow-y-auto shrink-0"
+                style={topPanelHeight != null ? { height: `${topPanelHeight}px` } : undefined}
+              >
               {/* Consistency Status */}
               <div className={`px-4 py-3 border-b ${
                 isOntologyInconsistent 
@@ -1582,6 +1636,24 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     </div>
                   ))}
                 </div>
+              </div>
+              </div>
+
+              {/* Drag handle — lets the Entity Counts block above be shrunk so the
+                  Unsatisfiable/Equivalent Classes region below gets more of the panel's
+                  height instead of being stuck with whatever's left over. Height is
+                  persisted to localStorage so it survives reopening the panel. */}
+              <div
+                className={`shrink-0 h-3.5 flex items-center justify-center cursor-row-resize group ${
+                  isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
+                }`}
+                onMouseDown={handleTopPanelResizeStart}
+                onTouchStart={handleTopPanelResizeStart}
+                title="Drag to resize"
+              >
+                <div className={`w-10 h-1 rounded-full transition-colors ${
+                  isDark ? 'bg-gray-700 group-hover:bg-purple-500' : 'bg-gray-300 group-hover:bg-purple-400'
+                }`} />
               </div>
 
               {/* Scrollable middle region — the only part of the panel allowed to grow/scroll.

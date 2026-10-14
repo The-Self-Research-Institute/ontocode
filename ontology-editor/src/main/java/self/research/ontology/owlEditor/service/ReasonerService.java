@@ -287,7 +287,10 @@ public class ReasonerService {
         
         try {
             NodeSet<OWLClass> subClasses = reasoner.getSubClasses(owlClass, direct);
-            return subClasses.getFlattened();
+            return subClasses.getNodes().stream()
+                .filter(n -> !n.isBottomNode())
+                .flatMap(n -> n.getEntities().stream())
+                .collect(Collectors.toSet());
         } catch (Exception e) {
             log.error("Error getting inferred subclasses", e);
             return Collections.emptySet();

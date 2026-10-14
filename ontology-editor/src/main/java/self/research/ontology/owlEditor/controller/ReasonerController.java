@@ -321,8 +321,8 @@ public class ReasonerController {
 
             List<Map<String, Object>> subClassesList = subClasses.stream()
                 .map(cls -> {
-                    boolean hasChildren = reasoner.getSubClasses(cls, true).getFlattened().stream()
-                            .anyMatch(c -> !c.isOWLNothing() && !c.equals(cls));
+                    boolean hasChildren = reasoner.getSubClasses(cls, true).getNodes().stream()
+                            .anyMatch(n -> !n.isBottomNode() && !n.contains(cls));
                     Map<String, Object> entry = new HashMap<>();
                     entry.put("iri", cls.getIRI().toString());
                     entry.put("label", getLabel(cls, ontology));
@@ -537,13 +537,19 @@ public class ReasonerController {
             }
         } else {
             NodeSet<OWLClass> subClassesNodeSet = reasoner.getSubClasses(owlClass, true);
-            hasAnyChildren = subClassesNodeSet.getFlattened().stream()
-                    .anyMatch(c -> !c.isOWLNothing() && !c.equals(owlClass));
+            // owl:Nothing is vacuously a subclass of every class, so its merged bottom-equivalence
+            // node (Nothing + all unsatisfiable classes) shows up as a "direct subclass" of
+            // anything. The old check (representative.isOWLNothing()) missed this whenever the
+            // reasoner picked a named unsatisfiable class, not Nothing, as that node's
+            // representative — isBottomNode() identifies the node itself, not whichever member
+            // got picked to represent it.
+            hasAnyChildren = subClassesNodeSet.getNodes().stream()
+                    .anyMatch(n -> !n.isBottomNode() && !n.contains(owlClass));
 
             if (maxDepth > 0) {
                 for (Node<OWLClass> subClassNode : subClassesNodeSet) {
+                    if (subClassNode.isBottomNode()) continue;
                     OWLClass representative = subClassNode.getRepresentativeElement();
-                    if (representative.isOWLNothing() && !owlClass.isOWLThing()) continue;
                     if (representative.equals(owlClass)) continue;
                     children.add(buildClassNode(ontology, reasoner, representative, visited, maxDepth - 1));
                 }

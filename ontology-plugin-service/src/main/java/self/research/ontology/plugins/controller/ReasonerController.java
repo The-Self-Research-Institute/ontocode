@@ -165,10 +165,10 @@ public class ReasonerController {
      * Tries the full {@code projectId} first (e.g. {@code proj-abc--uuid}), then the parent
      * prefix before the first {@code --} for legacy partition/file-scoped IDs.
      */
-    private OWLOntology loadOntology(String projectId) throws Exception {
-        log.info("Loading ontology for project: {}", projectId);
+    private OWLOntology loadOntology(String projectId, String userId) throws Exception {
+        log.info("Loading ontology for project: {} (userId={})", projectId, userId);
 
-        OWLOntology ontology = tryLoadOntologyForId(projectId);
+        OWLOntology ontology = tryLoadOntologyForId(projectId, userId);
         if (ontology != null) {
             return ontology;
         }
@@ -177,7 +177,7 @@ public class ReasonerController {
             String baseProjectId = extractBaseProjectId(projectId);
             if (!baseProjectId.equals(projectId)) {
                 log.info("Ontology not found for full id {}; trying parent prefix {}", projectId, baseProjectId);
-                ontology = tryLoadOntologyForId(baseProjectId);
+                ontology = tryLoadOntologyForId(baseProjectId, userId);
                 if (ontology != null) {
                     return ontology;
                 }
@@ -303,10 +303,24 @@ public class ReasonerController {
         return sb.toString();
     }
 
-    private OWLOntology tryLoadOntologyForId(String lookupId) throws Exception {
+    /** Draft and published loads must never share a cache slot — see {@link #loadOntology(String, String)}. */
+    private String cacheKeyFor(String lookupId, String userId) {
+        return (userId == null || userId.isBlank()) ? lookupId : lookupId + "::draft::" + userId;
+    }
+
+    private OWLOntology tryLoadOntologyForId(String lookupId, String userId) throws Exception {
         if (lookupId == null || lookupId.isBlank()) {
             return null;
         }
+        // Draft mode is an active editing session — the whole point of Start/Re-classify
+        // there is to see the latest edits, so a cached snapshot from an earlier call
+        // (even one keyed to this same user/project) would silently keep showing
+        // whatever the ontology looked like the first time it was loaded. Always fetch
+        // fresh and never cache; only the published snapshot below is worth caching.
+        if (userId != null && !userId.isBlank()) {
+            return loadOntologyFromEditorService(lookupId, userId);
+        }
+
         // Fast path: return cached without acquiring a lock.
         OWLOntology cached = ontologyCache.get(lookupId);
         if (cached != null) {
@@ -331,7 +345,7 @@ public class ReasonerController {
                 return cached;
             }
 
-            OWLOntology editorOntology = loadOntologyFromEditorService(lookupId);
+            OWLOntology editorOntology = loadOntologyFromEditorService(lookupId, null);
             if (editorOntology != null) {
                 ontologyCache.put(lookupId, editorOntology);
                 return editorOntology;
@@ -372,6 +386,18 @@ public class ReasonerController {
     }
 
     /**
+     * The editor's own draft-aware export (already built for its "what-if" consistency
+     * preview) — overlays the user's private draft graph onto the published one instead
+     * of serving the published-only snapshot {@link #editorOntologyFileUrl} always returns.
+     */
+    private String editorDraftExportUrl(String projectId, String userId) {
+        String encodedProject = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
+        String encodedUser = java.net.URLEncoder.encode(userId, StandardCharsets.UTF_8).replace("+", "%20");
+        String base = editorServiceUrl.endsWith("/") ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
+        return base + "/internal/reasoning/" + encodedProject + "/export.ttl?userId=" + encodedUser + "&draft=true";
+    }
+
+    /**
      * Forward the caller's Bearer token to editor-service requests. The editor
      * enforces JWT on /api/** in cloud (require-jwt=true), so an unauthenticated
      * fetch 401s and silently hides ontologies that exist only in the editor.
@@ -396,18 +422,20 @@ public class ReasonerController {
      * Fetch ontology from the editor service API
      * Uses configured editor URL: ${ontology.editor.url}
      */
-    private OWLOntology loadOntologyFromEditorService(String projectId) {
+    private OWLOntology loadOntologyFromEditorService(String projectId, String userId) {
         log.debug("Attempting to fetch from editor service at: {}", editorServiceUrl);
+        boolean draft = userId != null && !userId.isBlank();
         try {
-            String url = editorOntologyFileUrl(projectId);
+            String url = draft ? editorDraftExportUrl(projectId, userId) : editorOntologyFileUrl(projectId);
             log.info("Fetching ontology from editor service: {}", url);
 
             ResponseEntity<byte[]> response = restTemplate.exchange(
-                url, org.springframework.http.HttpMethod.GET, editorAuthEntity(), byte[].class);
+                url, org.springframework.http.HttpMethod.GET,
+                draft ? editorInternalAuthEntity() : editorAuthEntity(), byte[].class);
 
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
                 try (InputStream inputStream = new java.io.ByteArrayInputStream(response.getBody())) {
-                    OWLOntology ontology = loadOntologyFromStream(projectId, inputStream, "editor service");
+                    OWLOntology ontology = loadOntologyFromStream(cacheKeyFor(projectId, userId), inputStream, "editor service");
                     if (ontology != null) {
                         log.info("Successfully loaded ontology from editor service");
                         return ontology;
@@ -488,13 +516,14 @@ public class ReasonerController {
             if (whatIfKey != null && !whatIfKey.isBlank()) {
                 return checkWhatIfConsistency(projectId, whatIfKey, reasonerType, request.get("ontologyContent"));
             }
-            if (workerAvailable()) {
+            String userId = request.get("userId");
+            if (workerAvailable() && (userId == null || userId.isBlank())) {
                 return submitToWorker("REASONER_CONSISTENCY", projectId, reasonerType);
             }
 
             log.info("Checking consistency for project: {} with {}", projectId, reasonerType);
-            
-            OWLOntology ontology = loadOntology(projectId);
+
+            OWLOntology ontology = loadOntology(projectId, userId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
             
             long startTime = System.currentTimeMillis();
@@ -618,7 +647,8 @@ public class ReasonerController {
     ) {
         try {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            if (workerAvailable()) {
+            String userId = request.get("userId");
+            if (workerAvailable() && (userId == null || userId.isBlank())) {
                 return submitToWorker("REASONER_CLASSIFY", projectId, reasonerType);
             }
 
@@ -628,7 +658,7 @@ public class ReasonerController {
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
             // Pre-load ontology on the request thread so errors surface immediately
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntology(projectId, userId);
 
             String taskId = UUID.randomUUID().toString();
 
@@ -726,13 +756,14 @@ public class ReasonerController {
     ) {
         try {
             String reasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            if (workerAvailable()) {
+            String userId = request.get("userId");
+            if (workerAvailable() && (userId == null || userId.isBlank())) {
                 return submitToWorker("REASONER_REALIZE", projectId, reasonerType);
             }
 
             log.info("Realizing ontology for project: {} with {}", projectId, reasonerType);
 
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntology(projectId, userId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
             
             long startTime = System.currentTimeMillis();
@@ -775,13 +806,16 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
         }
 
         String mode = request.getOrDefault("mode", "regular");
+        String userId = request.get("userId");
 
         // Same worker-offload pattern as consistency/classify/realize/inferred-axioms —
         // this endpoint used to be the one gap that always fell through to this
         // controller's own long-lived ontologyCache, so it could keep answering from a
         // stale pre-edit (or, right after upload, pre-import) snapshot even once the
-        // sidebar's worker-backed consistency check had already moved on.
-        if (workerAvailable()) {
+        // sidebar's worker-backed consistency check had already moved on. The worker
+        // also has no concept of draft scope, so a draft-mode request must stay on
+        // this inline path rather than being offloaded to it.
+        if (workerAvailable() && (userId == null || userId.isBlank())) {
             return submitExplainInconsistencyToWorker(projectId, requestedReasonerType, mode, maxJustifications);
         }
 
@@ -797,7 +831,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
 
         log.info("Explaining inconsistency for project: {} with {} (mode={})", projectId, type, mode);
 
-        OWLOntology ontology = loadOntology(projectId);
+        OWLOntology ontology = loadOntology(projectId, userId);
 
         Map<String, Object> explanation = reasonerService.explainInconsistency(ontology, type, maxJustifications, mode);
 
@@ -848,7 +882,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             log.info("Explaining entailment {} ({} -> {}) for project: {} with {} (mode={})",
                 entailmentType, subjectIri, targetIri, projectId, type, mode);
 
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntology(projectId, request.get("userId"));
             OWLAxiom entailment = reasonerService.buildEntailmentAxiom(
                 entailmentType, subjectIri, targetIri, propertyIri, literalValue);
 
@@ -884,16 +918,17 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     @GetMapping("/{projectId}/inferred-axioms")
     public ResponseEntity<Map<String, Object>> getInferredAxioms(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(required = false) String userId
     ) {
         try {
-            if (workerAvailable()) {
+            if (workerAvailable() && (userId == null || userId.isBlank())) {
                 return submitToWorker("REASONER_INFERRED_AXIOMS", projectId, reasonerType);
             }
 
             log.info("Getting inferred axioms for project: {} with {}", projectId, reasonerType);
 
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntology(projectId, userId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
             long startTime = System.currentTimeMillis();
@@ -938,10 +973,11 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     @GetMapping("/{projectId}/stats")
     public ResponseEntity<Map<String, Object>> getReasonerStats(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(required = false) String userId
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntology(projectId, userId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
             
             Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
