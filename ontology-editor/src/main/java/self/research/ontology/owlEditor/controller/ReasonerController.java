@@ -300,10 +300,13 @@ public class ReasonerController {
             @PathVariable String projectId,
             @RequestParam String classIri,
             @RequestParam(defaultValue = "STRUCTURAL") String reasonerType,
-            @RequestParam(defaultValue = "false") boolean direct
+            @RequestParam(defaultValue = "false") boolean direct,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
            
             if (effectiveType.equalsIgnoreCase("ELK")) {
@@ -369,17 +372,24 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/inferred-class-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredClassHierarchy(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "OPENLLET") String reasonerType
+            @RequestParam(defaultValue = "OPENLLET") String reasonerType,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            String jobId = submitHierarchyJob("REASONER_HIERARCHY", projectId, reasonerType);
+            String resolvedUserId = resolveUserId(projectId, userId, request);
+            boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_HIERARCHY", projectId, reasonerType);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
                         "async", true, "jobId", jobId, "lazy", true
                 ));
             }
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = isDraft
+                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId)
+                    : loadOntology(projectId);
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
             if (effectiveType.equalsIgnoreCase("ELK")) {
                 effectiveType = "OPENLLET";
@@ -623,17 +633,24 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/inferred-object-property-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredObjectPropertyHierarchy(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "OPENLLET") String reasonerType
+            @RequestParam(defaultValue = "OPENLLET") String reasonerType,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            String jobId = submitHierarchyJob("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType);
+            String resolvedUserId = resolveUserId(projectId, userId, request);
+            boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
                         "async", true, "jobId", jobId
                 ));
             }
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = isDraft
+                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId)
+                    : loadOntology(projectId);
             // ELK has no property hierarchy support — everything else (including HERMIT) is
             // used as requested so this reuses whatever reasoner is already classified for
             // this ontology instead of paying for a second, independent classification.
@@ -736,17 +753,24 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/inferred-data-property-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredDataPropertyHierarchy(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "OPENLLET") String reasonerType
+            @RequestParam(defaultValue = "OPENLLET") String reasonerType,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            String jobId = submitHierarchyJob("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType);
+            String resolvedUserId = resolveUserId(projectId, userId, request);
+            boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
                         "async", true, "jobId", jobId
                 ));
             }
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = isDraft
+                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId)
+                    : loadOntology(projectId);
             // HERMIT → OPENLLET (binary compat); ELK → OPENLLET (ELK has no property hierarchy support)
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") || reasonerType.equalsIgnoreCase("ELK")
                     ? "OPENLLET" : reasonerType;
@@ -949,10 +973,13 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/inferred-individuals")
     public ResponseEntity<Map<String, Object>> getAllInferredIndividuals(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
             // Each getInferredTypes() call costs O(classCount) against HermiT's
@@ -1004,10 +1031,13 @@ public class ReasonerController {
     public ResponseEntity<Map<String, Object>> getInferredTypesForIndividual(
             @PathVariable String projectId,
             @RequestParam String individualIri,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLNamedIndividual individual = df.getOWLNamedIndividual(IRI.create(individualIri));
@@ -1048,10 +1078,13 @@ public class ReasonerController {
      */
     @GetMapping("/{projectId}/reasoner/inferred-annotation-property-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredAnnotationPropertyHierarchy(
-            @PathVariable String projectId
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
             
             List<Map<String, Object>> hierarchy = buildAnnotationPropertyHierarchy(ontology);
 
@@ -1072,10 +1105,13 @@ public class ReasonerController {
      */
     @GetMapping("/{projectId}/reasoner/inferred-datatypes")
     public ResponseEntity<Map<String, Object>> getInferredDatatypes(
-            @PathVariable String projectId
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
             
             List<Map<String, Object>> datatypes = ontology.getDatatypesInSignature().stream()
                     .map(dt -> {
@@ -1106,9 +1142,12 @@ public class ReasonerController {
     public ResponseEntity<?> getInferredClassDetails(
             @PathVariable String projectId,
             @RequestParam String classIri,
-            @RequestParam(defaultValue = "OPENLLET") ReasonerType type) {
+            @RequestParam(name = "reasonerType", defaultValue = "OPENLLET") ReasonerType type,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
             OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
             
             OWLClass owlClass = ontology.getOWLOntologyManager().getOWLDataFactory().getOWLClass(IRI.create(classIri));
@@ -1158,9 +1197,12 @@ public class ReasonerController {
     public ResponseEntity<?> getInferredPropertyDetails(
             @PathVariable String projectId,
             @RequestParam String propertyIri,
-            @RequestParam(defaultValue = "OPENLLET") ReasonerType type) {
+            @RequestParam(defaultValue = "OPENLLET") ReasonerType type,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
             OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
             
             IRI iri = IRI.create(propertyIri);
@@ -1279,6 +1321,14 @@ public class ReasonerController {
             return verified.get();
         }
         return clientSuppliedUserId;
+    }
+
+    private OWLOntology loadOntologyForRequest(String projectId, String userId, boolean draft, HttpServletRequest request) throws Exception {
+        String resolvedUserId = resolveUserId(projectId, userId, request);
+        if (draft && resolvedUserId != null && !resolvedUserId.isBlank()) {
+            return datasetService.loadDraftAsOntology(projectId, resolvedUserId);
+        }
+        return loadOntology(projectId);
     }
 
     // Helper methods

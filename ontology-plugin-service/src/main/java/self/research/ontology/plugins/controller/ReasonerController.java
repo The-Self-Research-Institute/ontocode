@@ -115,8 +115,31 @@ public class ReasonerController {
     // and each entry is a bare Object (negligible memory).
     private final ConcurrentHashMap<String, Object> loadLocks = new ConcurrentHashMap<>();
 
-    private final Map<String, OWLOntology> lastDraftOntology = new ConcurrentHashMap<>();
-  
+    @Value("${ontocode.reasoner.draft-cache-max:10}")
+    private int maxDraftOntologies;
+
+    private final Map<String, OWLOntology> lastDraftOntology = java.util.Collections.synchronizedMap(
+        new java.util.LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, OWLOntology> eldest) {
+                if (size() > maxDraftOntologies) {
+                    OWLOntology evicted = eldest.getValue();
+                    synchronized (draftDisposalLock) {
+                        java.util.concurrent.atomic.AtomicInteger count = draftOntologyUseCount.get(evicted);
+                        if (count == null || count.get() <= 0) {
+                            draftOntologyUseCount.remove(evicted);
+                            reasonerService.disposeReasoners(evicted);
+                        } else {
+                            draftOntologyPendingDisposal.add(evicted);
+                        }
+                    }
+                    return true;
+                }
+                return false;
+            }
+        }
+    );
+
     private final Map<OWLOntology, java.util.concurrent.atomic.AtomicInteger> draftOntologyUseCount =
         new java.util.IdentityHashMap<>();
     private final Set<OWLOntology> draftOntologyPendingDisposal =
@@ -766,6 +789,7 @@ public class ReasonerController {
                     taskInfo.put("equivalentClasses", classificationData.get("equivalentClasses"));
                     taskInfo.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
                     taskInfo.put("totalClasses", classificationData.get("totalClasses"));
+                    taskInfo.put("stats", classificationData.get("stats"));
                 } catch (Exception e) {
                     log.error("Async classification failed for project: {}", projectId, e);
                     taskInfo.put("status", "FAILED");

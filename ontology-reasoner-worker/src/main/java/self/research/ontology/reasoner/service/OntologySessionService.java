@@ -22,13 +22,19 @@ public class OntologySessionService {
     private final EditorClient editorClient;
     private final OntologyCache ontologyCache;
     private final long hermitMaxTriples;
+    private final long reasonerTimeoutMs;
+    private final long maxTriples;
 
     public OntologySessionService(EditorClient editorClient,
                                   OntologyCache ontologyCache,
-                                  @Value("${ontocode.reasoning.large-triple-threshold:500000}") long hermitMaxTriples) {
+                                  @Value("${ontocode.reasoning.large-triple-threshold:500000}") long hermitMaxTriples,
+                                  @Value("${ontocode.reasoning.job-timeout-ms:1800000}") long reasonerTimeoutMs,
+                                  @Value("${ontocode.reasoner.max-triples:5000000}") long maxTriples) {
         this.editorClient = editorClient;
         this.ontologyCache = ontologyCache;
         this.hermitMaxTriples = hermitMaxTriples;
+        this.reasonerTimeoutMs = reasonerTimeoutMs;
+        this.maxTriples = maxTriples;
     }
 
     public ReasoningSession openSession(String projectId, ReasonerType reasonerType) throws Exception {
@@ -42,6 +48,9 @@ public class OntologySessionService {
         boolean tripleCountUnknown = tripleCount < 0;
         if (tripleCountUnknown) {
             log.warn("[Reasoner] Could not read triple count for {} — assuming large ontology, forcing ELK", projectId);
+        } else if (tripleCount > maxTriples) {
+            throw new IllegalStateException("Ontology has " + tripleCount + " triples, exceeding the configured "
+                    + "limit of " + maxTriples + " triples for in-process reasoning.");
         }
 
         ReasonerType effectiveType = reasonerType;
@@ -72,8 +81,9 @@ public class OntologySessionService {
             if (cached.isPresent()) {
                 OWLOntology ontology = cached.get();
                 log.info("[Reasoner] Skipping OWL load — reusing cached ontology for {} (revision={})", projectId, revision);
-                OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, effectiveType);
-                return new ReasoningSession(null, ontology, reasoner, effectiveType, downgradedWarning, true);
+                ontologyCache.beginUse(ontology);
+                OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
+                return new ReasoningSession(null, ontology, reasoner, effectiveType, downgradedWarning, true, ontologyCache);
             }
         }
 
@@ -92,11 +102,13 @@ public class OntologySessionService {
             boolean storedInCache = cacheEligible && revision >= 0;
             if (storedInCache) {
                 ontologyCache.put(projectId, revision, manager, ontology);
+                ontologyCache.beginUse(ontology);
             }
 
-            OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, effectiveType);
+            OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
 
-            return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType, downgradedWarning, storedInCache);
+            return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType,
+                    downgradedWarning, storedInCache, storedInCache ? ontologyCache : null);
         }
     }
 
@@ -126,15 +138,18 @@ public class OntologySessionService {
         private final ReasonerType actualReasonerType;
         private final String downgradedWarning;
         private final boolean fromCache;
+        private final OntologyCache cache;
 
         ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
-                         ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache) {
+                         ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
+                         OntologyCache cache) {
             this.manager = manager;
             this.ontology = ontology;
             this.reasoner = reasoner;
             this.actualReasonerType = actualReasonerType;
             this.downgradedWarning = downgradedWarning;
             this.fromCache = fromCache;
+            this.cache = cache;
         }
 
         public OWLOntology ontology() { return ontology; }
@@ -149,7 +164,14 @@ public class OntologySessionService {
             } catch (Exception ignored) {
             }
 
-            if (!fromCache && manager != null) {
+            if (fromCache) {
+                if (cache != null) {
+                    cache.endUse(ontology);
+                }
+                return;
+            }
+
+            if (manager != null) {
                 try {
                     manager.removeOntology(ontology);
                 } catch (Exception ignored) {

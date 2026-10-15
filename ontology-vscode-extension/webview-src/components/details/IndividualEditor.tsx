@@ -6,7 +6,7 @@ import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDial
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
-import { withDraftScope } from '../../utils/draftScope';
+import { withDraftScope, withDraftAndUser } from '../../utils/draftScope';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 
 interface UsageItem {
@@ -207,7 +207,7 @@ const IndividualEditor: React.FC<{
     (async () => {
       try {
         const response = await apiClient.get<any>(
-          `/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-individual-types?individualIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(selectedReasoner)}`,
+          withDraftAndUser(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-individual-types?individualIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(selectedReasoner)}`),
         );
         const payload = response?.data ?? response;
         const types = payload?.inferredTypes ?? payload?.data?.inferredTypes ?? [];

@@ -37,7 +37,9 @@ public class DLQueryJobController {
     public ResponseEntity<Map<String, Object>> getJob(@PathVariable String jobId) {
         if (reasonerWorkerEnabled && reasoningJobRelayService != null) {
             DLQueryJob relayed = reasoningJobRelayService.getJob(jobId);
-            if (relayed != null) {
+            boolean relayedIsTerminal = relayed != null
+                    && (relayed.getStatus() == DLQueryJob.Status.COMPLETED || relayed.getStatus() == DLQueryJob.Status.FAILED);
+            if (relayedIsTerminal) {
                 return ResponseEntity.ok(toResponse(relayed));
             }
             if (reasonerWorkerClient != null) {
@@ -45,6 +47,9 @@ public class DLQueryJobController {
                 if (remote != null && remote.get("jobId") != null) {
                     return ResponseEntity.ok(remote);
                 }
+            }
+            if (relayed != null) {
+                return ResponseEntity.ok(toResponse(relayed));
             }
             return ResponseEntity.notFound().build();
         }

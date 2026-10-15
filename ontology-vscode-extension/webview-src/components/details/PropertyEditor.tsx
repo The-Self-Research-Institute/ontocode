@@ -5,7 +5,7 @@ import { ManchesterSyntaxEditor, PropertyChainDialog, IRIEditorDialog } from '..
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
-import { withDraftScope } from '../../utils/draftScope';
+import { withDraftScope, withDraftAndUser } from '../../utils/draftScope';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { Property } from '../../types';
 import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
@@ -254,7 +254,7 @@ const PropertyEditor: React.FC<{
 
         (async () => {
             try {
-                const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(currentId)}`);
+                const res = await apiClient.get<any>(withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(currentId)}`));
                 if (!alive || currentId !== item.id) return;
                 const data = res?.data?.data || res?.data || {};
                 setInferredDetails(data);
@@ -270,7 +270,7 @@ const PropertyEditor: React.FC<{
 
     const loadInferredDetails = async () => {
         try {
-            const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(item.id)}`);
+            const res = await apiClient.get<any>(withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(item.id)}`));
             const data = res?.data?.data || res?.data || {};
             setInferredDetails(data);
         } catch (error) {

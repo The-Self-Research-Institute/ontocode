@@ -15,6 +15,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -29,6 +31,11 @@ public class ReasoningQueueManager {
     private final AtomicLong totalDurationMs = new AtomicLong(0);
     private final AtomicLong completedCount = new AtomicLong(0);
     private volatile Instant lastActivityAt = Instant.now();
+    private final ExecutorService notificationExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "reasoning-job-notifier");
+        t.setDaemon(true);
+        return t;
+    });
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
     private static final long MAX_WAIT_TIME_MS = 30 * 60 * 1000;
@@ -41,50 +48,53 @@ public class ReasoningQueueManager {
         this.resultRetention = resultRetention;
     }
 
-    public synchronized ReasoningJob enqueue(ReasoningJob.JobType jobType,
-                                             String projectId,
-                                             String expression,
-                                             List<String> queryTypes,
-                                             String reasonerType,
-                                             String ownerEmail) {
+    public ReasoningJob enqueue(ReasoningJob.JobType jobType,
+                                String projectId,
+                                String expression,
+                                List<String> queryTypes,
+                                String reasonerType,
+                                String ownerEmail) {
         return enqueue(jobType, projectId, expression, queryTypes, reasonerType, ownerEmail, null, null);
     }
 
-    public synchronized ReasoningJob enqueue(ReasoningJob.JobType jobType,
-                                             String projectId,
-                                             String expression,
-                                             List<String> queryTypes,
-                                             String reasonerType,
-                                             String ownerEmail,
-                                             Integer maxJustifications,
-                                             String explanationMode) {
+    public ReasoningJob enqueue(ReasoningJob.JobType jobType,
+                                String projectId,
+                                String expression,
+                                List<String> queryTypes,
+                                String reasonerType,
+                                String ownerEmail,
+                                Integer maxJustifications,
+                                String explanationMode) {
         long tripleCount = editorClient.getTripleCount(projectId);
         int slotWeight = concurrencyPolicy.slotWeight(tripleCount);
 
-        resultRetention.makeRoomForIncomingJob();
+        ReasoningJob job;
+        synchronized (this) {
+            resultRetention.makeRoomForIncomingJob();
 
-        ReasoningJob job = ReasoningJob.builder()
-                .jobId(UUID.randomUUID().toString())
-                .jobType(jobType)
-                .projectId(projectId)
-                .expression(expression)
-                .queryTypes(queryTypes)
-                .reasonerType(reasonerType)
-                .maxJustifications(maxJustifications)
-                .explanationMode(explanationMode)
-                .status(ReasoningJob.Status.QUEUED)
-                .queuePosition(queue.size() + 1)
-                .estimatedWaitTimeMs(0)
-                .queuedAt(Instant.now())
-                .ownerEmail(ownerEmail)
-                .tripleCount(tripleCount)
-                .slotWeight(slotWeight)
-                .build();
+            job = ReasoningJob.builder()
+                    .jobId(UUID.randomUUID().toString())
+                    .jobType(jobType)
+                    .projectId(projectId)
+                    .expression(expression)
+                    .queryTypes(queryTypes)
+                    .reasonerType(reasonerType)
+                    .maxJustifications(maxJustifications)
+                    .explanationMode(explanationMode)
+                    .status(ReasoningJob.Status.QUEUED)
+                    .queuePosition(queue.size() + 1)
+                    .estimatedWaitTimeMs(0)
+                    .queuedAt(Instant.now())
+                    .ownerEmail(ownerEmail)
+                    .tripleCount(tripleCount)
+                    .slotWeight(slotWeight)
+                    .build();
 
-        queue.addLast(job);
-        updateQueuePositions();
-        notifyJob(job);
-        touchActivity();
+            queue.addLast(job);
+            updateQueuePositions();
+            notifyJob(job);
+            touchActivity();
+        }
         log.info("[Reasoning] Enqueued {} job {} for project {} (position {})",
                 jobType, job.getJobId(), projectId, job.getQueuePosition());
 
@@ -144,6 +154,20 @@ public class ReasoningQueueManager {
         notifyJob(job);
         touchActivity();
         log.error("[Reasoning] Failed job {}: {}", job.getJobId(), error);
+    }
+
+    public synchronized void reportTimedOut(ReasoningJob job, String error) {
+        job.setStatus(ReasoningJob.Status.FAILED);
+        job.setCompletedAt(Instant.now());
+        job.setError(error);
+        resultRetention.retain(job);
+        notifyJob(job);
+        touchActivity();
+        log.error("[Reasoning] Timed out job {}: {}", job.getJobId(), error);
+    }
+
+    public synchronized void releaseAbandonedSlot(String jobId) {
+        activeJobs.remove(jobId);
     }
 
     public ReasoningJob getJob(String jobId) {
@@ -269,7 +293,8 @@ public class ReasoningQueueManager {
                 .timestamp(System.currentTimeMillis())
                 .queueStats(getQueueStats())
                 .build();
-        editorClient.publishJobEvent(ReasoningJobNotifier.fromEvent(event));
+        ReasoningJobNotifier.JobSnapshot snapshot = ReasoningJobNotifier.fromEvent(event);
+        notificationExecutor.execute(() -> editorClient.publishJobEvent(snapshot));
     }
 
     private String buildMessage(ReasoningJob job) {

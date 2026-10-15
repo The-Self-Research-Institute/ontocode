@@ -84,6 +84,9 @@ public class OntologyMutationService {
     @Value("${ontology.plugin-service.url:http://localhost:8087}")
     private String pluginServiceUrl;
 
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
     private final RestTemplate reasonerCacheInvalidationRestTemplate = buildShortTimeoutRestTemplate();
 
     private static RestTemplate buildShortTimeoutRestTemplate() {
@@ -138,7 +141,10 @@ public class OntologyMutationService {
             try {
                 String url = pluginServiceUrl + "/api/reasoner/clear-cache/"
                     + URLEncoder.encode(projectId, StandardCharsets.UTF_8);
-                reasonerCacheInvalidationRestTemplate.postForEntity(url, null, Map.class);
+                org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+                headers.set("X-Ontocode-Internal-Token", internalToken);
+                reasonerCacheInvalidationRestTemplate.postForEntity(
+                        url, new org.springframework.http.HttpEntity<>(headers), Map.class);
             } catch (Exception e) {
                 log.warn("[MUTATION] Failed busting plugin-service reasoner cache for project {} (non-fatal)",
                     projectId, e);

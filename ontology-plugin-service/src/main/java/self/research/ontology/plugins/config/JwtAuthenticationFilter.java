@@ -21,6 +21,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.crypto.SecretKey;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 
 @Slf4j
@@ -35,6 +37,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
+
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
+    public static final String INTERNAL_SERVICE_PRINCIPAL = "internal-service";
 
     @PostConstruct
     public void validateSecrets() {
@@ -63,6 +70,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         if (desktopMode) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        String presentedInternalToken = request.getHeader("X-Ontocode-Internal-Token");
+        if (presentedInternalToken != null && internalToken != null
+                && MessageDigest.isEqual(
+                        internalToken.getBytes(StandardCharsets.UTF_8),
+                        presentedInternalToken.getBytes(StandardCharsets.UTF_8))) {
+            UserDetails internalUser = User.builder()
+                    .username(INTERNAL_SERVICE_PRINCIPAL)
+                    .password("")
+                    .authorities(new ArrayList<>())
+                    .build();
+            SecurityContextHolder.getContext().setAuthentication(
+                    new UsernamePasswordAuthenticationToken(internalUser, null, internalUser.getAuthorities()));
             filterChain.doFilter(request, response);
             return;
         }

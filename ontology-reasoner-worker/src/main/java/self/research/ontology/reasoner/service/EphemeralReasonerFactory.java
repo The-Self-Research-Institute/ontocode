@@ -18,8 +18,8 @@ final class EphemeralReasonerFactory {
 
     private EphemeralReasonerFactory() {}
 
-    static OWLReasoner create(OWLOntology ontology, ReasonerType type) {
-        OWLReasonerConfiguration config = new SimpleConfiguration();
+    static OWLReasoner create(OWLOntology ontology, ReasonerType type, long timeoutMs) {
+        OWLReasonerConfiguration config = new SimpleConfiguration(timeoutMs);
         ReasonerType effective = type != null ? type : ReasonerType.OPENLLET;
         try {
             return switch (effective) {
@@ -37,16 +37,16 @@ final class EphemeralReasonerFactory {
 
                     try {
                         yield new ElkReasonerFactory().createReasoner(ontology, config);
-                    } catch (Throwable e) {
+                    } catch (Exception e) {
                         log.warn("ELK failed, using Structural: {}", e.getMessage());
                         yield new StructuralReasonerFactory().createReasoner(ontology, config);
                     }
                 }
                 case STRUCTURAL -> new StructuralReasonerFactory().createReasoner(ontology, config);
             };
-        } catch (Throwable e) {
-            log.warn("Reasoner {} failed, using Structural: {}", effective, e.getMessage());
-            return new StructuralReasonerFactory().createReasoner(ontology, config);
+        } catch (Exception e) {
+            log.error("Reasoner {} could not be started", effective, e);
+            throw new RuntimeException(effective.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
         }
     }
 }

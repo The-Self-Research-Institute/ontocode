@@ -166,7 +166,7 @@ public class ReasoningJobExecutor {
                     ? job.getExplanationMode() : "regular";
 
             OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
-            OWLReasoner explainReasoner = EphemeralReasonerFactory.create(reasoningOntology, effective);
+            OWLReasoner explainReasoner = EphemeralReasonerFactory.create(reasoningOntology, effective, justificationTimeoutMs);
             boolean isConsistent;
             try {
                 isConsistent = explainReasoner.isConsistent();
@@ -765,7 +765,19 @@ public class ReasoningJobExecutor {
             result.put("unsatisfiableClasses", unsatisfiableList);
             result.put("objectPropertyHierarchy", objectPropertyHierarchy);
             result.put("dataPropertyHierarchy", dataPropertyHierarchy);
-            result.put("totalClasses", ontology.getClassesInSignature().size());
+            int totalClasses = ontology.getClassesInSignature().size();
+            result.put("totalClasses", totalClasses);
+
+            Map<String, Object> stats = new HashMap<>();
+            stats.put("classHierarchyNodes", totalClasses);
+            stats.put("objectPropertyNodes", ontology.getObjectPropertiesInSignature().size());
+            stats.put("dataPropertyNodes", ontology.getDataPropertiesInSignature().size());
+            stats.put("individuals", ontology.getIndividualsInSignature().size());
+            stats.put("satisfiableClasses", Math.max(0, totalClasses - unsatisfiableList.size()));
+            stats.put("unsatisfiableClasses", unsatisfiableList.size());
+            stats.put("isConsistent", true);
+            result.put("stats", stats);
+
             if (session.downgradedWarning() != null) {
                 result.put("downgradedWarning", session.downgradedWarning());
             }

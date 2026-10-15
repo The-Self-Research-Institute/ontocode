@@ -55,11 +55,11 @@ public class EditorClient {
                 url += "?userId=" + java.net.URLEncoder.encode(userId, java.nio.charset.StandardCharsets.UTF_8);
             } catch (Exception ignored) {}
         }
-        ResponseEntity<org.springframework.core.io.Resource> response = restTemplate.exchange(
+        ResponseEntity<org.springframework.core.io.InputStreamResource> response = restTemplate.exchange(
                 url,
                 HttpMethod.GET,
                 internalEntity(),
-                org.springframework.core.io.Resource.class);
+                org.springframework.core.io.InputStreamResource.class);
         try {
             return response.getBody().getInputStream();
         } catch (Exception e) {
@@ -100,13 +100,27 @@ public class EditorClient {
     }
 
     public void publishJobEvent(ReasoningJobNotifier.JobSnapshot snapshot) {
-        try {
-            restTemplate.postForEntity(
-                    editorUrl + "/internal/reasoning/job-events",
-                    new HttpEntity<>(snapshot, internalHeaders()),
-                    Void.class);
-        } catch (Exception e) {
-            log.warn("Failed to notify editor for job {}: {}", snapshot.jobId(), e.getMessage());
+        int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                restTemplate.postForEntity(
+                        editorUrl + "/internal/reasoning/job-events",
+                        new HttpEntity<>(snapshot, internalHeaders()),
+                        Void.class);
+                return;
+            } catch (Exception e) {
+                if (attempt == maxAttempts) {
+                    log.warn("Failed to notify editor for job {} after {} attempts: {}",
+                            snapshot.jobId(), maxAttempts, e.getMessage());
+                    return;
+                }
+                try {
+                    Thread.sleep(500L * attempt);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
         }
     }
 

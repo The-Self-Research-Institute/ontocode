@@ -59,10 +59,11 @@ public class ReasoningQueueProcessor {
                     long minutes = jobTimeoutMs / 60_000;
                     log.error("[Reasoning] Job {} ({}) timed out after {} min — cancelled",
                             job.getJobId(), job.getJobType(), minutes);
-                    queueManager.markFailed(job,
+                    queueManager.reportTimedOut(job,
                             "Reasoning timed out after " + minutes + " minutes. "
                             + "The ontology may be too complex for the selected reasoner. "
                             + "Try ELK or reduce the ontology scope.");
+                    awaitRunawayThreadThenReleaseSlot(job, jobThread);
                     return;
                 } catch (ExecutionException e) {
                     Throwable cause = e.getCause() != null ? e.getCause() : e;
@@ -89,6 +90,22 @@ public class ReasoningQueueProcessor {
                 processNext();
             }
         });
+    }
+
+    private void awaitRunawayThreadThenReleaseSlot(ReasoningJob job, ExecutorService jobThread) {
+        Thread watcher = new Thread(() -> {
+            jobThread.shutdownNow();
+            try {
+                jobThread.awaitTermination(Long.MAX_VALUE, TimeUnit.DAYS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            log.info("[Reasoning] Runaway thread for timed-out job {} has stopped, releasing its slot", job.getJobId());
+            queueManager.releaseAbandonedSlot(job.getJobId());
+            processNext();
+        }, "reasoning-reaper-" + job.getJobId());
+        watcher.setDaemon(true);
+        watcher.start();
     }
 
     @Scheduled(fixedDelayString = "${ontocode.reasoning.retry-delay-ms:15000}")

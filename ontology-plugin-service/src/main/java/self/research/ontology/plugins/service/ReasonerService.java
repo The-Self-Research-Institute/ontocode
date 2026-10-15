@@ -100,22 +100,39 @@ public class ReasonerService {
     private long JUSTIFICATION_TIMEOUT_MS;
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int MAX_JUSTIFICATIONS;
+    @Value("${ontocode.reasoner.operation-timeout-ms:45000}")
+    private long reasonerOperationTimeoutMs;
+    private final ExecutorService reasonerBuildExecutor = new java.util.concurrent.ThreadPoolExecutor(
+            4, 4, 60, TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(20), r -> {
+                Thread t = new Thread(r, "reasoner-build-worker");
+                t.setDaemon(true);
+                return t;
+            }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+
     /**
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
         String cacheKey = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
+        return reasonerCache.computeIfAbsent(cacheKey, k -> buildReasonerWithTimeout(ontology, type));
+    }
 
-        if (reasonerCache.containsKey(cacheKey)) {
-            OWLReasoner cached = reasonerCache.get(cacheKey);
-            if (cached != null) {
-                return cached;
-            }
+    private OWLReasoner buildReasonerWithTimeout(OWLOntology ontology, ReasonerType type) {
+        java.util.concurrent.Future<OWLReasoner> future =
+                reasonerBuildExecutor.submit(() -> createReasoner(ontology, type));
+        try {
+            return future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw new RuntimeException(type.getDisplayName() + " reasoning timed out after "
+                    + (reasonerOperationTimeoutMs / 1000) + "s — the ontology may be too large or complex "
+                    + "for this reasoner. Try a different reasoner or a smaller scope.");
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            throw new RuntimeException("Too many reasoning requests in progress — please try again shortly.");
+        } catch (Exception e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
         }
-
-        OWLReasoner reasoner = createReasoner(ontology, type);
-        reasonerCache.put(cacheKey, reasoner);
-        return reasoner;
     }
 
     /**
@@ -126,13 +143,13 @@ public class ReasonerService {
             type.getDisplayName(),
             ontology.getOntologyID().getOntologyIRI().orElse(null));
 
-        OWLReasonerConfiguration config = new SimpleConfiguration();
+        OWLReasonerConfiguration config = new SimpleConfiguration(reasonerOperationTimeoutMs);
 
         try {
             return getReasonerFactory(type).createReasoner(ontology, config);
         } catch (Exception e) {
-            log.error("Failed to create {} reasoner, falling back to Structural", type, e);
-            return new StructuralReasonerFactory().createReasoner(ontology, config);
+            log.error("Failed to create {} reasoner", type, e);
+            throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
         }
     }
 
@@ -464,8 +481,19 @@ public class ReasonerService {
             results.put("dataPropertyHierarchy", dataPropertyHierarchy);
             
             // Total counts
-            results.put("totalClasses", ontology.getClassesInSignature().size());
-            
+            int totalClasses = ontology.getClassesInSignature().size();
+            results.put("totalClasses", totalClasses);
+
+            Map<String, Object> stats = new HashMap<>();
+            stats.put("classHierarchyNodes", totalClasses);
+            stats.put("objectPropertyNodes", ontology.getObjectPropertiesInSignature().size());
+            stats.put("dataPropertyNodes", ontology.getDataPropertiesInSignature().size());
+            stats.put("individuals", ontology.getIndividualsInSignature().size());
+            stats.put("satisfiableClasses", Math.max(0, totalClasses - unsatisfiableList.size()));
+            stats.put("unsatisfiableClasses", unsatisfiableList.size());
+            stats.put("isConsistent", isConsistent);
+            results.put("stats", stats);
+
             // Add ELK profile warning if ELK reasoner is used
             if (type == ReasonerType.ELK) {
                 String elkWarning = "ELK reasoner uses EL profile - complex OWL 2 DL constructs may not be classified correctly. " +

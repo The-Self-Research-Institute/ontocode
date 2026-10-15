@@ -10,7 +10,6 @@ import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
 import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '../../utils/desktop';
 import { withDraftScope, withDraftAndUser, draftBodyFields } from '../../utils/draftScope';
-import { extractLocalName } from '../../utils/draftChangeHelpers';
 import { useAuth } from '../../custom-hook/useAuth';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
@@ -325,9 +324,7 @@ const ClassEditor: React.FC<{
         try {
           const quick: any = await apiClient.get(withDraftAndUser(`/api/ontology/${projectId}/unsatisfiable-classes-quick`));
           const list: string[] = Array.isArray(quick?.unsatisfiableClasses) ? quick.unsatisfiableClasses : [];
-        
-          const localName = extractLocalName(item.id);
-          unsatisfiable = list.includes(item.id) || (!!localName && list.includes(localName));
+          unsatisfiable = list.includes(item.id);
         } catch (e) {
           console.warn('[ClassEditor] conflictIris: unsatisfiable-classes-quick failed', e);
           unsatisfiable = false;
@@ -366,8 +363,8 @@ const ClassEditor: React.FC<{
       }
     };
 
-    void loadConflictIris();
-    return () => { cancelled = true; };
+    const debounceTimer = setTimeout(() => { void loadConflictIris(); }, 300);
+    return () => { cancelled = true; clearTimeout(debounceTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, item.isUnsatisfiable, projectId, lastEditAt]);
 
@@ -851,7 +848,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       if (viewMode === "inferred" && !hasOwlApiInferred) {
         try {
           const inferredResponse = await apiClient.get<any>(
-            `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=STRUCTURAL`,
+            withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=STRUCTURAL`),
             undefined,
             { signal, timeout: isDesktop() ? 15_000 : 45_000 },
           );
