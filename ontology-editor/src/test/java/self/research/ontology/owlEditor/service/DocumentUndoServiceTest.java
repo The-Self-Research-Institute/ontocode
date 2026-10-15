@@ -30,13 +30,14 @@ class DocumentUndoServiceTest {
     private HistorySyncService historySync;
     private RollbackActionRunner runner;
     private ChangeRollbackService service;
+    private RollbackAuditRepository audits;
 
     @BeforeEach
     void setUp() {
         historySync = mock(HistorySyncService.class);
         runner = mock(RollbackActionRunner.class);
         when(runner.holds(anyString(), any(), anyBoolean(), any())).thenReturn(true);
-        RollbackAuditRepository audits = mock(RollbackAuditRepository.class);
+        audits = mock(RollbackAuditRepository.class);
         when(audits.save(any())).thenAnswer(inv -> {
             RollbackAudit audit = inv.getArgument(0);
             audit.setId("audit-1");
@@ -110,14 +111,12 @@ class DocumentUndoServiceTest {
         undone.setProjectId(P);
         undone.setDirection(ChangeRollbackService.UNDO);
         undone.setHistoryChangeId("c1");
-        ReflectionTestUtils.setField(service, "audits", mock(RollbackAuditRepository.class));
-        RollbackAuditRepository audits = (RollbackAuditRepository) ReflectionTestUtils.getField(service, "audits");
         when(audits.findById("audit-0")).thenReturn(java.util.Optional.of(undone));
-        when(audits.save(any())).thenAnswer(inv -> {
+        org.mockito.Mockito.doAnswer(inv -> {
             RollbackAudit audit = inv.getArgument(0);
             audit.setId("audit-2");
             return audit;
-        });
+        }).when(audits).save(any());
 
         Result result = service.redoUndo(P, "audit-0", ACTOR, false);
 

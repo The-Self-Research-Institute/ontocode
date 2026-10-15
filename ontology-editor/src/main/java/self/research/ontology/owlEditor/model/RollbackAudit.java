@@ -58,7 +58,7 @@ public class RollbackAudit {
     public void setSkippedCount(int skippedCount) { this.skippedCount = skippedCount; }
 
     public RollbackAudit() {
-        this.revertedAt = LocalDateTime.now();
+        this.revertedAt = LocalDateTime.now(java.time.ZoneOffset.UTC);
     }
 
     public String getId() {

@@ -96,11 +96,11 @@ public class ChangeRollbackService {
         this.recorder = new RollbackRecorder(audits, history, messaging);
     }
 
-    private SpreadsheetImportService spreadsheetImports;
+    private SpreadsheetImportUndo spreadsheetImports;
 
     @Autowired(required = false)
-    void setSpreadsheetImports(SpreadsheetImportService spreadsheetImports) {
-        this.spreadsheetImports = spreadsheetImports;
+    void setSpreadsheetImports(SpreadsheetImportService imports) {
+        this.spreadsheetImports = imports == null ? null : new SpreadsheetImportUndo(imports);
     }
 
     public Result undoChangeSet(String projectId, String changeSetId, Actor actor, boolean dryRun) {
@@ -120,46 +120,22 @@ public class ChangeRollbackService {
     }
 
     public List<HistoryChange> entriesForUndo(String projectId, String auditId) {
-        RollbackAudit audit = findUndo(projectId, auditId);
-        return audit == null ? List.of() : loadByIds(projectId, undoChangeIds(audit));
+        RollbackAudit audit = recorder.findUndo(projectId, auditId);
+        return audit == null ? List.of() : loadByIds(projectId, RollbackRecorder.undoChangeIds(audit));
     }
 
     public Result redoUndo(String projectId, String auditId, Actor actor, boolean dryRun) {
-        RollbackAudit audit = findUndo(projectId, auditId);
+        RollbackAudit audit = recorder.findUndo(projectId, auditId);
         if (audit == null) {
             return new Result(404, false, dryRun, REDO, auditId, List.of(), List.of(), null, "Undo not found");
         }
         String level = audit.getChangeSetId() != null ? CHANGESET : audit.getSubChangeId() != null ? SUBCHANGE : ENTRY;
         return run(new Request(projectId, REDO, level, audit.getChangeSetId(), audit.getHistoryChangeId(),
-                audit.getSubChangeId(), actor, dryRun, audit.getId(), undoChangeIds(audit)));
-    }
-
-    private RollbackAudit findUndo(String projectId, String auditId) {
-        if (auditId == null) {
-            return null;
-        }
-        return audits.findById(auditId)
-                .filter(a -> projectId.equals(a.getProjectId()))
-                .filter(a -> a.getDirection() == null || UNDO.equals(a.getDirection()))
-                .orElse(null);
-    }
-
-    private static List<String> undoChangeIds(RollbackAudit audit) {
-        if (audit.getChangeIds() != null && !audit.getChangeIds().isEmpty()) {
-            return audit.getChangeIds();
-        }
-        return audit.getHistoryChangeId() == null ? List.of() : List.of(audit.getHistoryChangeId());
+                audit.getSubChangeId(), actor, dryRun, audit.getId(), RollbackRecorder.undoChangeIds(audit)));
     }
 
     private List<HistoryChange> loadByIds(String projectId, List<String> ids) {
-        List<HistoryChange> entries = new ArrayList<>();
-        for (String id : ids) {
-            HistoryChange entry = historySync.getHistoryChange(id);
-            if (entry != null && projectId.equals(entry.getProjectId())) {
-                entries.add(entry);
-            }
-        }
-        return entries;
+        return RollbackWorkSupport.loadByIds(projectId, ids, historySync::getHistoryChange);
     }
 
     private Result run(Request req) {
@@ -213,6 +189,7 @@ public class ChangeRollbackService {
                 if (work.plan().isEmpty()) {
                     if (work.completesEntry()) {
                         completions.add(work);
+                        applied.addAll(appliedItems(work));
                     }
                     continue;
                 }
@@ -289,6 +266,7 @@ public class ChangeRollbackService {
         if (ExactReversal.needsWholeChangeSet(entry) && !CHANGESET.equals(req.level()) && req.subChangeId() == null) {
             return skip(entry, "These edits were saved together; undo them together");
         }
+        if (req.subChangeId() != null && PrefixReversal.isAggregate(entry)) { return skip(entry, "Prefix changes saved together are undone together"); }
         if (req.subChangeId() != null && UNDO.equals(req.direction())) {
             return evaluateSubChange(req, entry);
         }
@@ -296,28 +274,12 @@ public class ChangeRollbackService {
     }
 
     private boolean isSpreadsheetImport(HistoryChange entry) {
-        return spreadsheetImports != null && SpreadsheetImportService.isImportEntry(entry.getOperationType());
+        return spreadsheetImports != null && spreadsheetImports.handles(entry);
     }
 
     private Work evaluateImport(Request req, HistoryChange entry) {
-        boolean undo = UNDO.equals(req.direction());
-        if (req.subChangeId() != null) {
-            return skip(entry, "A spreadsheet import is undone as a whole");
-        }
-        if (undo && entry.isReverted()) {
-            return skip(entry, "Already undone");
-        }
-        boolean undone = entry.isReverted()
-                && (req.undoAuditId() == null || req.undoAuditId().equals(entry.getRevertedAuditId()));
-        if (!undo && !undone) {
-            return skip(entry, "It hasn't been undone");
-        }
-        List<String> updates = spreadsheetImports.rollbackUpdates(req.projectId(), entry.getEntityIRI(), undo);
-        if (updates == null) {
-            return skip(entry, "The record of this import was not found");
-        }
-        Plan plan = new Plan(List.of(), updates, Set.of(), List.of());
-        return new Work(entry, plan, List.of(), new ArrayList<>(), true, false);
+        return spreadsheetImports.evaluate(req.projectId(), UNDO.equals(req.direction()), req.subChangeId(),
+                req.undoAuditId(), entry);
     }
 
     private Work evaluateUndo(Request req, HistoryChange entry) {
@@ -451,7 +413,7 @@ public class ChangeRollbackService {
         UndoOperationContext.stage(UndoIntentDocument.Stage.DOCUMENTS_APPLIED);
         boolean undo = UNDO.equals(req.direction());
         if (isSpreadsheetImport(entry)) {
-            spreadsheetImports.markUndone(req.projectId(), entry.getEntityIRI(), undo, req.actor().username());
+            spreadsheetImports.markUndone(req.projectId(), entry, undo, req.actor().username());
         }
         Set<String> handled = work.plan().handledSubChangeIds();
         historySync.setSubChangesReverted(entry.getId(), handled, undo, undo ? auditId : null);

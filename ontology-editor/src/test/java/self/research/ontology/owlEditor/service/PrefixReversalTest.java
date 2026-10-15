@@ -70,6 +70,46 @@ class PrefixReversalTest {
         return service.undoEntry(P, "c1", ACTOR, false);
     }
 
+    private static HistoryChange aggregate() {
+        HistoryChange change = prefix("prefixesChanged", "3 prefixes", null, null, null);
+        change.setSubChanges(new ArrayList<>(List.of(
+                part("prefixAdded", "a", null, "http://a/"),
+                part("prefixModified", "b", "http://old-b/", "http://new-b/"),
+                part("prefixDeleted", "c", "http://c/", null))));
+        return change;
+    }
+
+    private static HistoryChange.SubChange part(String type, String prefix, String oldNs, String newNs) {
+        HistoryChange.SubChange part = new HistoryChange.SubChange(prefix, oldNs, newNs, type, newNs != null);
+        part.setId("sc-" + prefix);
+        return part;
+    }
+
+    @Test
+    void undoingSeveralPrefixesSavedTogetherReversesEachOneNewestFirst() {
+        Result result = undo(aggregate());
+
+        assertTrue(result.ok(), String.valueOf(result.skipped()));
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(runner);
+        order.verify(runner).run(eq(P), eq(RollbackAction.setPrefix("c", "http://c/", null, null, true)), eq(false), any());
+        order.verify(runner).run(eq(P), eq(RollbackAction.setPrefix("b", "http://old-b/", null, "http://new-b/", false)),
+                eq(false), any());
+        order.verify(runner).run(eq(P), eq(RollbackAction.deletePrefix("a", "http://a/")), eq(false), any());
+        verify(historySync).setSubChangesReverted(eq("c1"), org.mockito.ArgumentMatchers.argThat(
+                ids -> ids.size() == 3 && ids.containsAll(List.of("sc-a", "sc-b", "sc-c"))), eq(true), eq("audit-1"));
+        assertEquals(3, result.applied().size());
+    }
+
+    @Test
+    void onePrefixOfAGroupSavedTogetherCannotBeUndoneOnItsOwn() {
+        when(historySync.getHistoryChange("c1")).thenReturn(aggregate());
+
+        Result result = service.undoSubChange(P, "c1", "sc-a", ACTOR, false);
+
+        assertFalse(result.ok());
+        verify(runner, never()).run(anyString(), any(), anyBoolean(), any());
+    }
+
     @Test
     void undoingAnAddedPrefixDeletesIt() {
         Result result = undo(prefix("prefixAdded", "ex", null, null, "http://ex/"));

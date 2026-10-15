@@ -144,10 +144,24 @@ final class CodeViewHistoryRecorder {
         }
 
         String summary = changes.stream().map(this::describePrefixChange).collect(Collectors.joining("; "));
-        historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), "prefixesChanged",
+        List<Map<String, String>> parts = new ArrayList<>();
+        for (PrefixChange c : changes) {
+            Map<String, String> part = new LinkedHashMap<>();
+            part.put("predicate", c.prefix());
+            part.put("annotationProperty", c.opType());
+            if (c.oldNamespace() != null) {
+                part.put("oldValue", c.oldNamespace());
+            }
+            if (c.newNamespace() != null) {
+                part.put("newValue", c.newNamespace());
+            }
+            part.put("addition", String.valueOf(c.newNamespace() != null));
+            parts.add(part);
+        }
+        historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), PrefixReversal.AGGREGATE,
                 null, changes.size() + " prefixes", null, null,
                 "Code View save changed " + changes.size() + " prefixes (" + summary + ")",
-                null, null, actor.draft(), actor.origin());
+                null, parts, actor.draft(), actor.origin());
     }
 
     private String describePrefixChange(PrefixChange c) {

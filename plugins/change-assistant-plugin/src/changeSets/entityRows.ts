@@ -57,7 +57,22 @@ function prefixRow(entry: ChangeEntry, raw: string, addition: boolean): Property
   };
 }
 
+const PREFIX_GROUP = 'prefixesChanged';
+
+function prefixGroupRows(entry: ChangeEntry): PropertyRow[] {
+  return (entry.subChanges || []).map(sc => {
+    const raw = (sc.addition ? sc.newValue ?? sc.oldValue : sc.oldValue ?? sc.newValue) ?? '';
+    return {
+      ...valueRow(entry, raw, !!sc.addition),
+      key: `${entry.id}:${sc.id}`,
+      label: `Prefix ${sc.predicate || ''}`.trim(),
+      value: raw
+    };
+  });
+}
+
 export function propertyRows(entry: ChangeEntry): PropertyRow[] {
+  if (entry.operationType === PREFIX_GROUP && (entry.subChanges || []).length > 0) return prefixGroupRows(entry);
   if (PREFIX_VERBS[entry.operationType || '']) {
     const prefixRows: PropertyRow[] = [];
     if (entry.oldValue) prefixRows.push(prefixRow(entry, entry.oldValue, false));
@@ -131,6 +146,9 @@ export function manualHeading(entry: ChangeEntry): SetHeading {
       name: entry.entityLabel || 'spreadsheet',
       ...(counts ? { detail: `${counts[1]} from ${counts[2]}` } : {})
     };
+  }
+  if (entry.operationType === PREFIX_GROUP) {
+    return { verb: 'Changed', name: entry.entityLabel || 'prefixes', ...(entry.description ? { detail: entry.description } : {}) };
   }
   const prefixVerb = PREFIX_VERBS[entry.operationType || ''];
   if (prefixVerb) {

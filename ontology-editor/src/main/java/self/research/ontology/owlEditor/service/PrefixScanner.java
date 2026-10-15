@@ -20,7 +20,19 @@ final class PrefixScanner {
     private static final Pattern FUNCTIONAL = Pattern.compile("^\\s*Prefix\\(\\s*([^:=\\s]*):?\\s*=\\s*<([^>]*)>\\s*\\)");
     private static final Pattern MANCHESTER = Pattern.compile("^\\s*Prefix:\\s*([^:\\s]*):\\s*<([^>]*)>");
 
+    private static final Pattern DECLARATION_MARKER = Pattern.compile(
+            "@prefix|\\bPREFIX\\b|\\bPrefix\\s*\\(|\\bPrefix:|xmlns|<!ENTITY", Pattern.CASE_INSENSITIVE);
+
     private PrefixScanner() {
+    }
+
+    static boolean mentionsDeclaration(Iterable<String> texts) {
+        for (String text : texts) {
+            if (text != null && DECLARATION_MARKER.matcher(text).find()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static Map<String, String> scan(Path file, String format) throws IOException {
