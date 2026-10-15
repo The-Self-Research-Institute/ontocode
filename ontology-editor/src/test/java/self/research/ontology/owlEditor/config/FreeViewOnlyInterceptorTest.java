@@ -69,6 +69,42 @@ class FreeViewOnlyInterceptorTest {
         return request;
     }
 
+    private static final String IMPORT = "/api/ontology/spreadsheet-import/proj-9";
+
+    private void inProject(boolean viewer, boolean draftEditor) {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(org.mockito.ArgumentMatchers.startsWith(IMPORT)))
+                .thenReturn(Optional.of("proj-9"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-9")).thenReturn(viewer);
+        when(workspaceOwnershipService.isDraftEditorInProject("u1", "proj-9")).thenReturn(draftEditor);
+    }
+
+    @Test
+    void draftEditorCanUploadAndPreviewASpreadsheet() throws Exception {
+        inProject(false, true);
+        assertTrue(interceptor.preHandle(postRequest(IMPORT + "/parse", "PRO"), new MockHttpServletResponse(), new Object()));
+        assertTrue(interceptor.preHandle(postRequest(IMPORT + "/preview", "PRO"), new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void draftEditorCanOnlyCommitAnImportToTheirDraft() throws Exception {
+        inProject(false, true);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(postRequest(IMPORT + "/commit", "PRO"), response, new Object()));
+        assertEquals(403, response.getStatus());
+
+        MockHttpServletRequest draft = postRequest(IMPORT + "/commit", "PRO");
+        draft.setParameter("draft", "true");
+        assertTrue(interceptor.preHandle(draft, new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void viewerCannotUseSpreadsheetImport() throws Exception {
+        inProject(true, false);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(postRequest(IMPORT + "/parse", "PRO"), response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
+
     private AssistantSessionDocument sessionFor(String projectId) {
         return AssistantSessionDocument.builder().id("s1").projectId(projectId).build();
     }

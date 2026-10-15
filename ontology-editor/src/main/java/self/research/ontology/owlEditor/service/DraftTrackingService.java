@@ -11,6 +11,7 @@ import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.delta.DeltaCapture;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
+import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportDraftSupport;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -302,6 +303,7 @@ public class DraftTrackingService {
             }
             reconcileCommit(projectId, userId, committed);
             draftChangeHistory.markPublished(projectId, userId);
+            promoteSpreadsheetImports(projectId, userId);
 
             try {
                 mainGraphRevisionService.incrementRevision(projectId);
@@ -332,6 +334,25 @@ public class DraftTrackingService {
     private void reconcileCommit(String projectId, String userId, Optional<DeltaCapture> committed) {
         if (publishedHistory != null) {
             publishedHistory.reconcile(projectId, userId, committed);
+        }
+    }
+
+    private SpreadsheetImportDraftSupport spreadsheetImportDrafts;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSpreadsheetImportDrafts(SpreadsheetImportDraftSupport spreadsheetImportDrafts) {
+        this.spreadsheetImportDrafts = spreadsheetImportDrafts;
+    }
+
+    private void promoteSpreadsheetImports(String projectId, String userId) {
+        if (spreadsheetImportDrafts == null) {
+            return;
+        }
+        try {
+            spreadsheetImportDrafts.promoteDraftImports(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark spreadsheet imports as published for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
         }
     }
 
@@ -388,6 +409,7 @@ public class DraftTrackingService {
         }
         reconcileCommit(projectId, userId, committed);
         draftChangeHistory.markPublished(projectId, userId);
+        promoteSpreadsheetImports(projectId, userId);
 
         try {
             mainGraphRevisionService.incrementRevision(projectId);

@@ -9,6 +9,7 @@ const ENTITY_NOUNS: Record<string, string> = {
 };
 
 export function entityBadge(entry: ChangeEntry): string {
+  if (entry.operationType === 'SPREADSHEET_IMPORT') return 'Imported';
   const noun = ENTITY_NOUNS[entry.type];
   if (entry.action === 'added') return noun ? `Created ${noun}` : 'Added';
   if (entry.action === 'deleted') return noun ? `Deleted ${noun}` : 'Removed';
@@ -122,6 +123,14 @@ const PREFIX_VERBS: Record<string, string> = {
 export function manualHeading(entry: ChangeEntry): SetHeading {
   if (entry.operationType === 'projectImported') {
     return { verb: 'Imported', name: entry.entityLabel || (entry.description || '').replace(/^Imported\s+/, '') || 'file' };
+  }
+  if (entry.operationType === 'SPREADSHEET_IMPORT') {
+    const counts = (entry.description || '').match(/Imported ([\d,]+ axioms?) from .* \(([\d,]+ rows?)\)$/);
+    return {
+      verb: 'Imported',
+      name: entry.entityLabel || 'spreadsheet',
+      ...(counts ? { detail: `${counts[1]} from ${counts[2]}` } : {})
+    };
   }
   const prefixVerb = PREFIX_VERBS[entry.operationType || ''];
   if (prefixVerb) {

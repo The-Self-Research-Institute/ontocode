@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.OntologyChange;
+import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportDraftSupport;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -47,8 +48,11 @@ public class DraftChangeHistoryRecorder {
     }
 
     public int record(String projectId, List<DraftChange> drafts) {
+        List<DraftChange> tracked = drafts.stream()
+                .filter(draft -> !SpreadsheetImportDraftSupport.isImportSession(draft.getSessionId()))
+                .toList();
         int failures = 0;
-        for (DraftChange draft : drafts) {
+        for (DraftChange draft : tracked) {
             try {
                 recordTrackedChange(projectId, draft);
             } catch (Exception e) {
@@ -57,9 +61,9 @@ public class DraftChangeHistoryRecorder {
                         draft.getId(), projectId, e.getMessage());
             }
         }
-        Map<String, List<DraftChange>> byEntity = groupByEntity(drafts);
-        Set<String> alreadyRecorded = drafts.isEmpty() ? Set.of()
-                : publishedEntities.getOrDefault(publishKey(projectId, drafts.get(0).getUserId()), Set.of());
+        Map<String, List<DraftChange>> byEntity = groupByEntity(tracked);
+        Set<String> alreadyRecorded = tracked.isEmpty() ? Set.of()
+                : publishedEntities.getOrDefault(publishKey(projectId, tracked.get(0).getUserId()), Set.of());
         for (Map.Entry<String, List<DraftChange>> entry : byEntity.entrySet()) {
             if (alreadyRecorded.contains(entry.getKey())) {
                 continue;
@@ -72,11 +76,11 @@ public class DraftChangeHistoryRecorder {
                 log.error("[DRAFT] Failed to record bundled history on project {}: {}", projectId, e.getMessage());
             }
         }
-        if (!drafts.isEmpty()) {
-            publishedEntities.remove(publishKey(projectId, drafts.get(0).getUserId()));
+        if (!tracked.isEmpty()) {
+            publishedEntities.remove(publishKey(projectId, tracked.get(0).getUserId()));
         }
         log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries, {} failed)",
-                drafts.size(), byEntity.size(), failures);
+                tracked.size(), byEntity.size(), failures);
         return failures;
     }
 
