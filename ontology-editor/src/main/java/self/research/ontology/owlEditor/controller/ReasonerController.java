@@ -1240,10 +1240,14 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/stats")
     public ResponseEntity<Map<String, Object>> getReasonerStats(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId);
+            OWLOntology ontology = (draft && userId != null && !userId.isBlank())
+                    ? loadDraftOntologyForStats(projectId, userId)
+                    : loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
             
             Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
@@ -1255,6 +1259,15 @@ public class ReasonerController {
         } catch (Exception e) {
             log.error("Error getting reasoner stats", e);
             return ResponseEntity.ok(friendlyError(e));
+        }
+    }
+
+    private OWLOntology loadDraftOntologyForStats(String projectId, String userId) throws Exception {
+        String draftContent = datasetService.exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        try (InputStream is = new java.io.ByteArrayInputStream(
+                draftContent.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+            return manager.loadOntologyFromOntologyDocument(is);
         }
     }
 

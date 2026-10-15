@@ -83,13 +83,20 @@ public class ReasonerService {
         return t;
     });
 
-  
-    private final ExecutorService justificationExecutor = Executors.newFixedThreadPool(2, r -> {
-        Thread t = new Thread(r, "reasoner-justification-worker");
-        t.setDaemon(true);
-        return t;
-    });
- @Value("${ontocode.reasoner.justification-timeout-ms:55000}")
+    @Value("${ontocode.reasoner.justification-pool-size:2}")
+    private int justificationPoolSize;
+    private ExecutorService justificationExecutor;
+
+    @jakarta.annotation.PostConstruct
+    private void initJustificationExecutor() {
+        justificationExecutor = Executors.newFixedThreadPool(justificationPoolSize, r -> {
+            Thread t = new Thread(r, "reasoner-justification-worker");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @Value("${ontocode.reasoner.justification-timeout-ms:55000}")
     private long JUSTIFICATION_TIMEOUT_MS;
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int MAX_JUSTIFICATIONS;
@@ -719,7 +726,9 @@ public class ReasonerService {
     }
 
 
-    public List<Map<String, Object>> findEquivalentClassesJustifications(
+    public record EquivalentJustificationsResult(List<Map<String, Object>> justifications, List<String> warnings) {}
+
+    public EquivalentJustificationsResult findEquivalentClassesJustifications(
             OWLOntology ontology, String subjectIri, String targetIri, ReasonerType type, int limit, String mode) {
         OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
         OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
@@ -729,28 +738,33 @@ public class ReasonerService {
         int forwardLimit = (limit + 1) / 2;
         int backwardLimit = limit - forwardLimit;
         long deadline = System.currentTimeMillis() + JUSTIFICATION_TIMEOUT_MS;
+        List<String> warnings = new ArrayList<>();
 
         List<Map<String, Object>> forward = safeFindEntailmentJustifications(
-            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, target), type, forwardLimit, mode, deadline);
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, target), type, forwardLimit, mode, deadline,
+            warnings, subjectLabel + " ⊑ " + targetLabel);
         List<Map<String, Object>> backward = safeFindEntailmentJustifications(
-            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(target, subject), type, backwardLimit, mode, deadline);
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(target, subject), type, backwardLimit, mode, deadline,
+            warnings, targetLabel + " ⊑ " + subjectLabel);
 
         List<Map<String, Object>> combined = new ArrayList<>();
         combined.addAll(prefixLabels(forward, subjectLabel + " ⊑ " + targetLabel));
         combined.addAll(prefixLabels(backward, targetLabel + " ⊑ " + subjectLabel));
-        return combined;
+        return new EquivalentJustificationsResult(combined, warnings);
     }
 
     private List<Map<String, Object>> safeFindEntailmentJustifications(
-            OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode, long deadline) {
+            OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode, long deadline,
+            List<String> warnings, String directionLabel) {
         long remaining = deadline - System.currentTimeMillis();
         if (remaining <= 0) {
+            warnings.add(directionLabel + " could not be checked — the shared time budget ran out before this direction started.");
             return Collections.emptyList();
         }
         try {
             return findEntailmentJustifications(ontology, entailment, type, limit, mode, remaining);
         } catch (RuntimeException e) {
-            log.warn("EquivalentClasses: one direction's justification search failed: {}", e.getMessage());
+            warnings.add(directionLabel + " failed: " + (e.getMessage() != null ? e.getMessage() : "unknown error"));
             return Collections.emptyList();
         }
     }
@@ -762,32 +776,48 @@ public class ReasonerService {
         return justifications;
     }
 
-    public List<Map<String, Object>> findEquivalentRestrictionJustifications(
+    public EquivalentJustificationsResult findEquivalentRestrictionJustifications(
             OWLOntology ontology, String subjectIri, String propertyIri, String fillerIri,
-            boolean isDataProperty, String restrictionType, ReasonerType type, int limit, String mode) {
+            boolean isDataProperty, String literalValue, ReasonerType type, int limit, String mode) {
         OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
-        OWLClassExpression restriction = isDataProperty
-            ? ("only".equals(restrictionType)
-                ? DATA_FACTORY.getOWLDataAllValuesFrom(DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri)), DATA_FACTORY.getOWLDatatype(IRI.create(fillerIri)))
-                : DATA_FACTORY.getOWLDataSomeValuesFrom(DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri)), DATA_FACTORY.getOWLDatatype(IRI.create(fillerIri))))
-            : ("only".equals(restrictionType)
-                ? DATA_FACTORY.getOWLObjectAllValuesFrom(DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri)), DATA_FACTORY.getOWLClass(IRI.create(fillerIri)))
-                : DATA_FACTORY.getOWLObjectSomeValuesFrom(DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri)), DATA_FACTORY.getOWLClass(IRI.create(fillerIri))));
+        OWLClassExpression restriction = buildEquivalentRestrictionExpression(propertyIri, fillerIri, isDataProperty, literalValue);
 
         String subjectLabel = getLabel(subject, ontology);
         int forwardLimit = (limit + 1) / 2;
         int backwardLimit = limit - forwardLimit;
         long deadline = System.currentTimeMillis() + JUSTIFICATION_TIMEOUT_MS;
+        List<String> warnings = new ArrayList<>();
 
         List<Map<String, Object>> forward = safeFindEntailmentJustifications(
-            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction), type, forwardLimit, mode, deadline);
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction), type, forwardLimit, mode, deadline,
+            warnings, subjectLabel + " ⊑ restriction");
         List<Map<String, Object>> backward = safeFindEntailmentJustifications(
-            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(restriction, subject), type, backwardLimit, mode, deadline);
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(restriction, subject), type, backwardLimit, mode, deadline,
+            warnings, "restriction ⊑ " + subjectLabel);
 
         List<Map<String, Object>> combined = new ArrayList<>();
         combined.addAll(prefixLabels(forward, subjectLabel + " ⊑ restriction"));
         combined.addAll(prefixLabels(backward, "restriction ⊑ " + subjectLabel));
-        return combined;
+        return new EquivalentJustificationsResult(combined, warnings);
+    }
+
+    private OWLClassExpression buildEquivalentRestrictionExpression(
+            String propertyIri, String fillerIri, boolean isDataProperty, String literalValue) {
+        if (isDataProperty) {
+            OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri));
+            OWLDatatype filler = DATA_FACTORY.getOWLDatatype(IRI.create(fillerIri));
+            return "only".equals(literalValue)
+                ? DATA_FACTORY.getOWLDataAllValuesFrom(property, filler)
+                : DATA_FACTORY.getOWLDataSomeValuesFrom(property, filler);
+        }
+        OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
+        OWLClass filler = DATA_FACTORY.getOWLClass(IRI.create(fillerIri));
+        if ("some".equals(literalValue) || "only".equals(literalValue)) {
+            return "only".equals(literalValue)
+                ? DATA_FACTORY.getOWLObjectAllValuesFrom(property, filler)
+                : DATA_FACTORY.getOWLObjectSomeValuesFrom(property, filler);
+        }
+        return buildObjectCardinalityRestriction(property, filler, literalValue);
     }
 
     public List<Map<String, Object>> findInconsistencyJustifications(
@@ -876,6 +906,22 @@ public class ReasonerService {
         return justifications;
     }
 
+    private OWLClassExpression buildObjectCardinalityRestriction(
+            OWLObjectProperty property, OWLClass filler, String literalValue) {
+        String[] parts = literalValue != null ? literalValue.split(":", 2) : new String[0];
+        String kind = parts.length > 0 ? parts[0] : "min";
+        int cardinality = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+        switch (kind) {
+            case "max":
+                return DATA_FACTORY.getOWLObjectMaxCardinality(cardinality, property, filler);
+            case "exactly":
+                return DATA_FACTORY.getOWLObjectExactCardinality(cardinality, property, filler);
+            case "min":
+            default:
+                return DATA_FACTORY.getOWLObjectMinCardinality(cardinality, property, filler);
+        }
+    }
+
     public OWLAxiom buildEntailmentAxiom(String entailmentType, String subjectIri, String targetIri,
             String propertyIri, String literalValue) {
         switch (entailmentType) {
@@ -904,23 +950,7 @@ public class ReasonerService {
                 OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
                 OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
                 OWLClass filler = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                String[] parts = literalValue != null ? literalValue.split(":", 2) : new String[0];
-                String kind = parts.length > 0 ? parts[0] : "min";
-                int cardinality = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
-                OWLClassExpression cardinalityRestriction;
-                switch (kind) {
-                    case "max":
-                        cardinalityRestriction = DATA_FACTORY.getOWLObjectMaxCardinality(cardinality, property, filler);
-                        break;
-                    case "exactly":
-                        cardinalityRestriction = DATA_FACTORY.getOWLObjectExactCardinality(cardinality, property, filler);
-                        break;
-                    case "min":
-                    default:
-                        cardinalityRestriction = DATA_FACTORY.getOWLObjectMinCardinality(cardinality, property, filler);
-                        break;
-                }
-                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, cardinalityRestriction);
+                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, buildObjectCardinalityRestriction(property, filler, literalValue));
             }
             case "SUBCLASS_OF_DATA_RESTRICTION": {
                 OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));

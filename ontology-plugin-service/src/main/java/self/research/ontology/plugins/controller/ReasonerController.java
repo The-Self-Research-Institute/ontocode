@@ -116,25 +116,33 @@ public class ReasonerController {
     private final ConcurrentHashMap<String, Object> loadLocks = new ConcurrentHashMap<>();
 
     private final Map<String, OWLOntology> lastDraftOntology = new ConcurrentHashMap<>();
-    private final Map<OWLOntology, java.util.concurrent.atomic.AtomicInteger> draftOntologyUseCount = new ConcurrentHashMap<>();
-    private final Set<OWLOntology> draftOntologyPendingDisposal = java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+  
+    private final Map<OWLOntology, java.util.concurrent.atomic.AtomicInteger> draftOntologyUseCount =
+        new java.util.IdentityHashMap<>();
+    private final Set<OWLOntology> draftOntologyPendingDisposal =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final Object draftDisposalLock = new Object();
 
     private void beginDraftUse(OWLOntology ontology) {
-        draftOntologyUseCount.computeIfAbsent(ontology, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+        synchronized (draftDisposalLock) {
+            draftOntologyUseCount.computeIfAbsent(ontology, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+        }
     }
 
     private void endDraftUse(OWLOntology ontology) {
         if (ontology == null) {
             return;
         }
-        java.util.concurrent.atomic.AtomicInteger count = draftOntologyUseCount.get(ontology);
-        if (count == null) {
-            return;
-        }
-        if (count.decrementAndGet() <= 0) {
-            draftOntologyUseCount.remove(ontology, count);
-            if (draftOntologyPendingDisposal.remove(ontology)) {
-                reasonerService.disposeReasoners(ontology);
+        synchronized (draftDisposalLock) {
+            java.util.concurrent.atomic.AtomicInteger count = draftOntologyUseCount.get(ontology);
+            if (count == null) {
+                return;
+            }
+            if (count.decrementAndGet() <= 0) {
+                draftOntologyUseCount.remove(ontology);
+                if (draftOntologyPendingDisposal.remove(ontology)) {
+                    reasonerService.disposeReasoners(ontology);
+                }
             }
         }
     }
@@ -189,7 +197,8 @@ public class ReasonerController {
         }
         org.springframework.web.context.request.RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
         if (attrs instanceof ServletRequestAttributes servletAttrs) {
-            Object verified = servletAttrs.getRequest().getAttribute("authenticatedUserId");
+            Object verified = servletAttrs.getRequest().getAttribute(
+                self.research.ontology.plugins.config.JwtAuthenticationFilter.AUTHENTICATED_USER_ID_ATTRIBUTE);
             if (verified instanceof String verifiedUserId && !verifiedUserId.isBlank()) {
                 if (!verifiedUserId.equals(clientSuppliedUserId)) {
                     log.warn("Ignoring client-supplied userId '{}' for draft load — using authenticated userId '{}' instead",
@@ -369,15 +378,17 @@ public class ReasonerController {
             synchronized (lock) {
                 OWLOntology fresh = loadOntologyFromEditorService(lookupId, userId);
                 if (fresh != null) {
-                    beginDraftUse(fresh);
-                    OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
-                    if (previous != null && previous != fresh) {
-                        java.util.concurrent.atomic.AtomicInteger previousCount = draftOntologyUseCount.get(previous);
-                        if (previousCount == null || previousCount.get() <= 0) {
-                            draftOntologyUseCount.remove(previous);
-                            reasonerService.disposeReasoners(previous);
-                        } else {
-                            draftOntologyPendingDisposal.add(previous);
+                    synchronized (draftDisposalLock) {
+                        beginDraftUse(fresh);
+                        OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
+                        if (previous != null && previous != fresh) {
+                            java.util.concurrent.atomic.AtomicInteger previousCount = draftOntologyUseCount.get(previous);
+                            if (previousCount == null || previousCount.get() <= 0) {
+                                draftOntologyUseCount.remove(previous);
+                                reasonerService.disposeReasoners(previous);
+                            } else {
+                                draftOntologyPendingDisposal.add(previous);
+                            }
                         }
                     }
                 }
@@ -959,23 +970,28 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             OWLOntology ontology = loadOntology(projectId, request.get("userId"));
             try {
                 List<Map<String, Object>> justifications;
+                List<String> warnings = null;
                 if ("EQUIVALENT_CLASSES".equals(entailmentType)) {
                     if (targetIri == null) {
                         return ResponseEntity.badRequest().body(Map.of(
                             "success", false,
                             "error", "targetIri is required for EQUIVALENT_CLASSES"));
                     }
-                    justifications = reasonerService.findEquivalentClassesJustifications(
+                    ReasonerService.EquivalentJustificationsResult equivalentResult = reasonerService.findEquivalentClassesJustifications(
                         ontology, subjectIri, targetIri, type, maxJustifications, mode);
+                    justifications = equivalentResult.justifications();
+                    warnings = equivalentResult.warnings();
                 } else if ("EQUIVALENT_OBJECT_RESTRICTION".equals(entailmentType) || "EQUIVALENT_DATA_RESTRICTION".equals(entailmentType)) {
                     if (targetIri == null || propertyIri == null) {
                         return ResponseEntity.badRequest().body(Map.of(
                             "success", false,
                             "error", "targetIri and propertyIri are required for EQUIVALENT_OBJECT_RESTRICTION/EQUIVALENT_DATA_RESTRICTION"));
                     }
-                    justifications = reasonerService.findEquivalentRestrictionJustifications(
+                    ReasonerService.EquivalentJustificationsResult equivalentResult = reasonerService.findEquivalentRestrictionJustifications(
                         ontology, subjectIri, propertyIri, targetIri,
                         "EQUIVALENT_DATA_RESTRICTION".equals(entailmentType), literalValue, type, maxJustifications, mode);
+                    justifications = equivalentResult.justifications();
+                    warnings = equivalentResult.warnings();
                 } else {
                     OWLAxiom entailment = reasonerService.buildEntailmentAxiom(
                         entailmentType, subjectIri, targetIri, propertyIri, literalValue);
@@ -990,6 +1006,9 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
                     result.put("reasonerUpgraded", true);
                 }
                 result.put("justifications", justifications);
+                if (warnings != null && !warnings.isEmpty()) {
+                    result.put("warnings", warnings);
+                }
                 return ResponseEntity.ok(result);
             } finally {
                 endDraftUse(ontology);
@@ -1071,11 +1090,10 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     @GetMapping("/{projectId}/stats")
     public ResponseEntity<Map<String, Object>> getReasonerStats(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType,
-            @RequestParam(required = false) String userId
+            @RequestParam(defaultValue = "HERMIT") String reasonerType
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId, userId);
+            OWLOntology ontology = loadOntology(projectId, null);
             try {
                 ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 

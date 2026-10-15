@@ -9,8 +9,8 @@ import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
 import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '../../utils/desktop';
-import { withDraftScope, withDraftAndUser, isDraftScopeActive } from '../../utils/draftScope';
-import { resolveMutationActor } from '../../utils/mutationActor';
+import { withDraftScope, withDraftAndUser, draftBodyFields } from '../../utils/draftScope';
+import { extractLocalName } from '../../utils/draftChangeHelpers';
 import { useAuth } from '../../custom-hook/useAuth';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
@@ -326,7 +326,7 @@ const ClassEditor: React.FC<{
           const quick: any = await apiClient.get(withDraftAndUser(`/api/ontology/${projectId}/unsatisfiable-classes-quick`));
           const list: string[] = Array.isArray(quick?.unsatisfiableClasses) ? quick.unsatisfiableClasses : [];
         
-          const localName = item.id.includes('#') ? item.id.split('#').pop() : item.id.split('/').pop();
+          const localName = extractLocalName(item.id);
           unsatisfiable = list.includes(item.id) || (!!localName && list.includes(localName));
         } catch (e) {
           console.warn('[ClassEditor] conflictIris: unsatisfiable-classes-quick failed', e);
@@ -345,7 +345,7 @@ const ClassEditor: React.FC<{
           subjectIri: item.id,
           mode: 'regular',
           maxJustifications: 10,
-          ...(isDraftScopeActive() ? { userId: resolveMutationActor().userId } : {}),
+          ...draftBodyFields(),
         });
         if (cancelled) return;
         const data = (res as any)?.data ?? res;

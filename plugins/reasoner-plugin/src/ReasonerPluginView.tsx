@@ -370,6 +370,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     entailmentType: string; subjectIri: string; targetIri?: string; propertyIri?: string; literalValue?: string; label: string;
   } | null>(null);
   const [entailmentJustifications, setEntailmentJustifications] = useState<any[] | null>(null);
+  const [entailmentWarnings, setEntailmentWarnings] = useState<string[] | undefined>(undefined);
   const [entailmentLoading, setEntailmentLoading] = useState(false);
   const [entailmentError, setEntailmentError] = useState<string | null>(null);
   const entailmentRequestIdRef = useRef(0);
@@ -698,8 +699,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       }
 
       // Get stats
-      const statsUserIdParam = draftUserId ? `&userId=${encodeURIComponent(draftUserId)}` : '';
-      const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}${statsUserIdParam}`);
+      const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`);
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
@@ -840,6 +840,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   ) => {
     const requestId = ++entailmentRequestIdRef.current;
     setEntailmentJustifications(null);
+    setEntailmentWarnings(undefined);
     setEntailmentError(null);
     setEntailmentLoading(true);
     try {
@@ -878,6 +879,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         const result = await response.json();
         if (requestId !== entailmentRequestIdRef.current) return;
         setEntailmentJustifications(result?.justifications ?? []);
+        setEntailmentWarnings(result?.warnings);
       } else {
         const errBody = await response.json().catch(() => null);
         if (requestId !== entailmentRequestIdRef.current) return;
@@ -918,6 +920,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     setShowExplainDialog(false);
     setExplainTarget(null);
     setEntailmentJustifications(null);
+    setEntailmentWarnings(undefined);
 
     setSelectedClassIri(iri);
 
@@ -981,6 +984,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     setShowExplainDialog(false);
     setExplainTarget(null);
     setEntailmentJustifications(null);
+    setEntailmentWarnings(undefined);
     window.dispatchEvent(new CustomEvent('collaboration:navigate-to-entity', {
       detail: { projectId, entityIRI: iri, entityType: kind, entityLabel: label },
     }));
@@ -1968,7 +1972,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 {explainTarget ? `Explanation for '${explainTarget.label}'` : 'Reasoner Explanation'}
               </h3>
               <button
-                onClick={() => { entailmentRequestIdRef.current++; setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
+                onClick={() => { entailmentRequestIdRef.current++; setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); setEntailmentWarnings(undefined); }}
                 className="text-gray-500 hover:text-gray-700"
               >
                 <XCircle size={24} />
@@ -2064,6 +2068,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     </div>
                   </div>
 
+                  {entailmentWarnings && entailmentWarnings.length > 0 && (
+                    <div className={`mb-3 px-3 py-2 rounded text-sm space-y-1 ${
+                      isDark ? 'bg-amber-900/30 border border-amber-700 text-amber-300' : 'bg-amber-50 border border-amber-200 text-amber-800'
+                    }`}>
+                      {entailmentWarnings.map((w, wi) => <div key={wi}>{w}</div>)}
+                    </div>
+                  )}
                   {entailmentLoading && entailmentJustifications === null ? (
                     <div className="text-sm opacity-80 flex items-center gap-2">
                       <RefreshCw size={14} className="animate-spin" />
@@ -2387,7 +2398,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
             </div>
             <div className={`px-6 py-4 border-t flex justify-end ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
               <button
-                onClick={() => { entailmentRequestIdRef.current++; setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
+                onClick={() => { entailmentRequestIdRef.current++; setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); setEntailmentWarnings(undefined); }}
                 className={`px-4 py-2 text-sm font-medium rounded ${
                   isDark ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'
                 }`}

@@ -28,6 +28,8 @@ import java.util.ArrayList;
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    public static final String AUTHENTICATED_USER_ID_ATTRIBUTE = "authenticatedUserId";
+
     @Value("${jwt.secret}")
     private String jwtSecret;
 
@@ -97,7 +99,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     log.debug("JWT authentication successful for user: {}", email);
                     String userId = claims.get("userId", String.class);
                     if (userId != null && !userId.isBlank()) {
-                        request.setAttribute("authenticatedUserId", userId);
+                        request.setAttribute(AUTHENTICATED_USER_ID_ATTRIBUTE, userId);
                     }
                 }
             } catch (Exception e) {

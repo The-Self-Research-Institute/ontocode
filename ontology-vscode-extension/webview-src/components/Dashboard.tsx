@@ -79,7 +79,7 @@ import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { cancelOntologyExport } from "../services/exportService";
 import { resolveMutationActor } from "../utils/mutationActor";
-import { isDraftScopeActive, withDraftScope, withDraftAndUser } from "../utils/draftScope";
+import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
@@ -1168,11 +1168,6 @@ function isLiveWriteMode(): boolean {
  * Body fields to merge into POST/PUT metadata writes so they route to the draft graph
  * in private mode. Empty object in public mode (no draft, normal public write).
  */
-function draftBodyFields(): Record<string, string> {
-  if (!isDraftScopeActive()) return {};
-  return { draft: "true", userId: resolveMutationActor().userId || "" };
-}
-
 interface DashboardProps {
   onBackToProjects?: () => void;
   onGoToProjectDashboard?: () => void;
@@ -2723,7 +2718,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         const [classificationResponse, statsResponse] = await Promise.all([
           pollForResult(),
           apiClient
-            .get(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`)
+            .get(withDraftAndUser(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`))
             .catch((error) => {
               console.warn("[Dashboard] Reasoner stats request failed:", error);
               return null;
@@ -2736,7 +2731,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Fallback: backend returned a synchronous result (older API)
       const [statsResponse] = await Promise.all([
         apiClient
-          .get(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`)
+          .get(withDraftAndUser(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`))
           .catch((error) => {
             console.warn("[Dashboard] Reasoner stats request failed:", error);
             return null;
