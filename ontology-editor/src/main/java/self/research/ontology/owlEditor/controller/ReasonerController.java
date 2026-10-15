@@ -22,8 +22,10 @@ import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.common.ReasoningFriendlyErrors;
+import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.springframework.beans.factory.annotation.Value;
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -1242,33 +1244,41 @@ public class ReasonerController {
             @PathVariable String projectId,
             @RequestParam(defaultValue = "HERMIT") String reasonerType,
             @RequestParam(required = false) String userId,
-            @RequestParam(defaultValue = "false") boolean draft
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
     ) {
         try {
-            OWLOntology ontology = (draft && userId != null && !userId.isBlank())
-                    ? loadDraftOntologyForStats(projectId, userId)
+            String resolvedUserId = resolveUserId(projectId, userId, request);
+            OWLOntology ontology = (draft && resolvedUserId != null && !resolvedUserId.isBlank())
+                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId)
                     : loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
-            
+
             Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
             stats.put("success", true);
             stats.put("projectId", projectId);
-            
+
             return ResponseEntity.ok(stats);
-            
+
         } catch (Exception e) {
             log.error("Error getting reasoner stats", e);
             return ResponseEntity.ok(friendlyError(e));
         }
     }
 
-    private OWLOntology loadDraftOntologyForStats(String projectId, String userId) throws Exception {
-        String draftContent = datasetService.exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        try (InputStream is = new java.io.ByteArrayInputStream(
-                draftContent.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
-            return manager.loadOntologyFromOntologyDocument(is);
+    private String resolveUserId(String projectId, String clientSuppliedUserId, HttpServletRequest request) {
+        if (clientSuppliedUserId == null || clientSuppliedUserId.isBlank()) {
+            return clientSuppliedUserId;
         }
+        Optional<String> verified = JwtIdentityExtractor.extractUserId(request);
+        if (verified.isPresent() && !verified.get().isBlank()) {
+            if (!verified.get().equals(clientSuppliedUserId)) {
+                log.warn("Client-supplied userId {} did not match verified identity {} for project {} — using verified identity",
+                        clientSuppliedUserId, verified.get(), projectId);
+            }
+            return verified.get();
+        }
+        return clientSuppliedUserId;
     }
 
     // Helper methods

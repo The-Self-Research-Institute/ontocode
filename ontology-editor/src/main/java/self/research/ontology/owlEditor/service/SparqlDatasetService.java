@@ -1366,6 +1366,15 @@ public class SparqlDatasetService {
         }
     }
 
+    public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId) throws Exception {
+        String draftContent = exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
+        org.semanticweb.owlapi.model.OWLOntologyManager manager =
+                org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
+            return manager.loadOntologyFromOntologyDocument(is);
+        }
+    }
+
     public long countDraftTriples(String projectId, String userId) {
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);

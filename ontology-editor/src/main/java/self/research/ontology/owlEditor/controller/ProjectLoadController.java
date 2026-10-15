@@ -55,7 +55,6 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.io.PushbackInputStream;
@@ -1416,14 +1415,11 @@ public class ProjectLoadController {
                 return ResponseEntity.ok(body);
             }
 
-            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             OWLOntology ontology;
             if (isDraft) {
-                String draftContent = datasetService.exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
-                try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
-                    ontology = manager.loadOntologyFromOntologyDocument(is);
-                }
+                ontology = datasetService.loadDraftAsOntology(projectId, userId);
             } else {
+                OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
                 Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
                 try (InputStream is = Files.newInputStream(exportPath)) {
                     ontology = manager.loadOntologyFromOntologyDocument(is);
