@@ -20,6 +20,9 @@ public final class UndoAbility {
         if (RollbackWorkSupport.isRollbackEntry(change)) {
             return new Result(false, "This is an undo or redo, so it can't be undone itself");
         }
+        if (change.getUndoBlockedReason() != null) {
+            return new Result(false, change.getUndoBlockedReason());
+        }
         Kind kind = RollbackMutationPlanner.kindOf(change);
         if (kind == Kind.EXACT || kind == Kind.DOCUMENT) {
             return new Result(true, null);

@@ -71,7 +71,7 @@ public class ExactChangeRecorder {
         Optional<Model> memoryBefore = inMemory ? OwlApiModelSnapshot.of(ontologyCache, projectId) : Optional.empty();
         Optional<DeltaCapture> capture = inMemory ? Optional.empty() : begin(projectId, draft, userId, eligible);
         apply.run();
-        DeltaCapture.Finish finished = inMemory ? new DeltaCapture.Finish(memoryDelta(projectId, memoryBefore), false)
+        DeltaCapture.Finish finished = inMemory ? memoryFinish(projectId, memoryBefore)
                 : capture.map(this::finish).orElse(new DeltaCapture.Finish(Optional.empty(), false));
         Optional<ExactDelta> delta = finished.delta();
         if (finished.unchanged()) {
@@ -88,15 +88,23 @@ public class ExactChangeRecorder {
         return desktopOwlApi != null && ontologyCache != null && desktopOwlApi.isAuthoritative(projectId);
     }
 
-    private Optional<ExactDelta> memoryDelta(String projectId, Optional<Model> before) {
+    private DeltaCapture.Finish memoryFinish(String projectId, Optional<Model> before) {
+        DeltaCapture.Finish unknown = new DeltaCapture.Finish(Optional.empty(), false);
         if (before.isEmpty() || !inMemoryIsAuthoritative(projectId)) {
-            return Optional.empty();
+            return unknown;
         }
         try {
-            return OwlApiModelSnapshot.of(ontologyCache, projectId).flatMap(after -> ExactOrigins.deltaBetween(before.get(), after));
+            Optional<Model> after = OwlApiModelSnapshot.of(ontologyCache, projectId);
+            if (after.isEmpty()) {
+                return unknown;
+            }
+            if (ExactOrigins.isUnchanged(before.get(), after.get())) {
+                return new DeltaCapture.Finish(Optional.empty(), true);
+            }
+            return new DeltaCapture.Finish(ExactOrigins.deltaBetween(before.get(), after.get()), false);
         } catch (RuntimeException e) {
             log.warn("[UNDO] Could not work out the exact change of the in-memory ontology: {}", e.getMessage());
-            return Optional.empty();
+            return unknown;
         }
     }
 

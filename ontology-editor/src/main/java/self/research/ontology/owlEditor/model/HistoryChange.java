@@ -90,6 +90,8 @@ public class HistoryChange {
     private String coveredBy;
     private int exactCovers;
     private String documentStore;
+    private String undoBlockedReason;
+    private String operationGroupId;
     private String documentId;
     private String documentBefore;
     private String documentAfter;
@@ -758,6 +760,22 @@ public class HistoryChange {
     }
 
     @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getOperationGroupId() {
+        return operationGroupId;
+    }
+
+    public void setOperationGroupId(String operationGroupId) {
+        this.operationGroupId = operationGroupId;
+    }
+
+    public String getUndoBlockedReason() {
+        return undoBlockedReason;
+    }
+
+    public void setUndoBlockedReason(String undoBlockedReason) {
+        this.undoBlockedReason = undoBlockedReason;
+    }
+
     public boolean carriesExactDelta() {
         return exactDeleted != null || exactInserted != null;
     }

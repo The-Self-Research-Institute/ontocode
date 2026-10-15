@@ -45,7 +45,7 @@ class CitationHistoryTest {
         SparqlDatasetService datasets = mock(SparqlDatasetService.class);
         when(datasets.graphTarget("p")).thenReturn(new SparqlDatasetService.ProjectGraphTarget(repository, GRAPH.stringValue()));
         history = mock(OntologyHistoryService.class);
-        citationHistory = new CitationHistory(datasets, history);
+        citationHistory = new CitationHistory(datasets, history, new ProjectWriteLockRegistry());
     }
 
     private ChangeOrigin recordedOrigin(String operation) {
@@ -101,7 +101,7 @@ class CitationHistoryTest {
     void aChangeThatTheGraphCannotCaptureIsStillRecordedWithoutADelta() {
         SparqlDatasetService broken = mock(SparqlDatasetService.class);
         when(broken.graphTarget("p")).thenThrow(new IllegalStateException("store offline"));
-        new CitationHistory(broken, history).around("p", actor,
+        new CitationHistory(broken, history, new ProjectWriteLockRegistry()).around("p", actor,
                 new CitationHistory.Entry("INSERT_CITATION", CITATION.stringValue(), "A paper", null, "ttl", "Inserted"),
                 List.of(CITATION.stringValue()), List.of(), () -> { });
 

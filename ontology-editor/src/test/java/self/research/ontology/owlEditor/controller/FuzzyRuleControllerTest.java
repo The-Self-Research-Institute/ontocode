@@ -9,6 +9,7 @@ import self.research.ontology.owlEditor.repository.FuzzyRuleRepository;
 import self.research.ontology.owlEditor.service.DocumentHistory;
 import self.research.ontology.owlEditor.service.DocumentSnapshots;
 import self.research.ontology.owlEditor.service.DocumentStore;
+import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 import self.research.ontology.owlEditor.service.RequestActor;
 
 import java.util.Optional;
@@ -35,7 +36,7 @@ class FuzzyRuleControllerTest {
         ruleRepository = mock(FuzzyRuleRepository.class);
         documentHistory = mock(DocumentHistory.class);
         snapshots = mock(DocumentSnapshots.class);
-        controller = new FuzzyRuleController(ruleRepository, documentHistory, snapshots);
+        controller = new FuzzyRuleController(ruleRepository, documentHistory, snapshots, new ProjectWriteLockRegistry());
         when(ruleRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(snapshots.snapshot(any())).thenAnswer(invocation -> {
             FuzzyRuleEntity rule = invocation.getArgument(0);

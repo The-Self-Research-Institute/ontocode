@@ -14,10 +14,13 @@ public class CitationHistory {
 
     private final SparqlDatasetService datasetService;
     private final OntologyHistoryService historyService;
+    private final ProjectWriteLockRegistry locks;
 
-    public CitationHistory(SparqlDatasetService datasetService, OntologyHistoryService historyService) {
+    public CitationHistory(SparqlDatasetService datasetService, OntologyHistoryService historyService,
+                           ProjectWriteLockRegistry locks) {
         this.datasetService = datasetService;
         this.historyService = historyService;
+        this.locks = locks;
     }
 
     public record Entry(String operationType, String citationIri, String label, String oldText, String newText,
@@ -25,9 +28,21 @@ public class CitationHistory {
 
     public void around(String projectId, RequestActor actor, Entry entry, List<String> seeds, List<String> incoming,
                        Runnable apply) {
+        locks.exclusive(projectId, () -> {
+            recordAround(projectId, actor, entry, seeds, incoming, apply);
+            return null;
+        });
+    }
+
+    private void recordAround(String projectId, RequestActor actor, Entry entry, List<String> seeds, List<String> incoming,
+                              Runnable apply) {
         Optional<DeltaCapture> capture = begin(projectId, seeds, incoming);
         apply.run();
-        Optional<ExactDelta> delta = capture.flatMap(this::finish);
+        DeltaCapture.Finish finished = capture.map(this::finish).orElse(new DeltaCapture.Finish(Optional.empty(), false));
+        if (finished.unchanged()) {
+            return;
+        }
+        Optional<ExactDelta> delta = finished.delta();
         ChangeOrigin origin = ChangeOrigin.manual();
         if (delta.isPresent()) {
             origin = origin.withExact(new ExactCarrier(delta.get()));
@@ -46,12 +61,12 @@ public class CitationHistory {
         }
     }
 
-    private Optional<ExactDelta> finish(DeltaCapture capture) {
+    private DeltaCapture.Finish finish(DeltaCapture capture) {
         try {
-            return capture.finish();
+            return capture.finishDetailed();
         } catch (RuntimeException e) {
             log.warn("[UNDO] Could not read the graph after the citation change: {}", e.getMessage());
-            return Optional.empty();
+            return new DeltaCapture.Finish(Optional.empty(), false);
         }
     }
 }

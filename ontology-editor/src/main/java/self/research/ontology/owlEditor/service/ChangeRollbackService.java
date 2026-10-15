@@ -74,6 +74,9 @@ public class ChangeRollbackService {
     private RollbackActionRunner actionRunner;
 
     @Autowired(required = false)
+    private OperationGroups groups;
+
+    @Autowired(required = false)
     private UndoOperations operations;
 
     @Autowired
@@ -229,7 +232,8 @@ public class ChangeRollbackService {
         audits.save(audit);
         String description = recorder.recordHistory(req, entries, applied, audit.getId());
         recorder.broadcast(req, audit.getId(), entries, description);
-        return new Result(200, true, false, req.direction(), scopeId(req), applied, skipped, audit.getId(), null);
+        String warning = groups == null || !UNDO.equals(req.direction()) ? null : groups.warning(entries);
+        return new Result(200, true, false, req.direction(), scopeId(req), applied, skipped, audit.getId(), warning);
     }
 
     private Result failedMidway(Request req, String auditId, List<Work> done, List<Item> skipped, RuntimeException cause) {
@@ -422,7 +426,8 @@ public class ChangeRollbackService {
     }
 
     private boolean deltaHolds(Request req, HistoryChange entry, boolean undo) {
-        return !entry.carriesExactDelta() || facts.deltaHolds(req.projectId(), entry, undo);
+        return !entry.carriesExactDelta() || facts.deltaHolds(req.projectId(), entry, undo)
+                && (!undo || !facts.laterUsesNewName(req.projectId(), entry));
     }
 
     private boolean exists(Request req, HistoryChange entry) {

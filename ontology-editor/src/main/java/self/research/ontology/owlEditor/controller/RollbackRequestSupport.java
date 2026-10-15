@@ -7,6 +7,7 @@ import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
+import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,7 +47,10 @@ public class RollbackRequestSupport {
         String[] claims = JwtClaimUtils.extractPlanAndUserId(authHeader);
         String requesterId = claims != null ? claims[1] : null;
         if (requesterId == null) {
-            return null;
+            boolean unverified = request == null || JwtIdentityExtractor.extractEmail(request).isEmpty();
+            return JwtIdentityExtractor.signatureRequired() && unverified
+                    ? ResponseEntity.status(401).body(Map.of("success", false, "error", "Sign in to undo or redo"))
+                    : null;
         }
         if (workspaceOwnershipService.isViewerInProject(requesterId, projectId)
                 && !workspaceOwnershipService.isUserOwnerOfProject(requesterId, projectId)) {

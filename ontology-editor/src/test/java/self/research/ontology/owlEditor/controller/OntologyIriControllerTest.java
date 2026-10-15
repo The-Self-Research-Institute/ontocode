@@ -45,7 +45,7 @@ class OntologyIriControllerTest {
     @Test
     void aPublicChangeUpdatesImportersAndReportsThoseItCouldNotUpdate() {
         Skipped skipped = new Skipped("menu", "Menu", "sam@x.org", "You don't have edit rights in this project");
-        when(imports.update(eq("p1"), eq("http://x.org/old"), eq("http://x.org/new"), any()))
+        when(imports.update(eq("p1"), eq("http://x.org/old"), eq("http://x.org/new"), any(), any()))
                 .thenReturn(new Result(List.of(new ImportReferenceUpdater.Updated("restaurant", "Restaurant")), List.of(skipped)));
 
         ResponseEntity<?> response = controller.updateOntologyIRIs("p1", body("false"), new MockHttpServletRequest());
@@ -59,7 +59,7 @@ class OntologyIriControllerTest {
 
     @Test
     void theActorComesFromTheLoginTokenNotFromTheRequestBody() {
-        when(imports.update(anyString(), anyString(), anyString(), any())).thenReturn(Result.none());
+        when(imports.update(anyString(), anyString(), anyString(), any(), any())).thenReturn(Result.none());
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
                 "{\"email\":\"real@x.org\",\"userId\":\"user-7\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -68,7 +68,7 @@ class OntologyIriControllerTest {
         controller.updateOntologyIRIs("p1", body("false"), request);
 
         ArgumentCaptor<ImportReferenceUpdater.Actor> actor = ArgumentCaptor.forClass(ImportReferenceUpdater.Actor.class);
-        verify(imports).update(eq("p1"), anyString(), anyString(), actor.capture());
+        verify(imports).update(eq("p1"), anyString(), anyString(), actor.capture(), any());
         assertEquals("user-7", actor.getValue().userId());
         assertEquals("real@x.org", actor.getValue().email());
     }
@@ -78,7 +78,7 @@ class OntologyIriControllerTest {
         ResponseEntity<?> response = controller.updateOntologyIRIs("p1", body("true"), new MockHttpServletRequest());
 
         assertEquals(200, response.getStatusCode().value());
-        verify(imports, never()).update(anyString(), any(), any(), any());
+        verify(imports, never()).update(anyString(), any(), any(), any(), any());
     }
 
     @SuppressWarnings("unchecked")
@@ -91,6 +91,6 @@ class OntologyIriControllerTest {
                 new MockHttpServletRequest()).getBody();
 
         assertEquals(false, result.get("success"));
-        verify(imports, never()).update(anyString(), any(), any(), any());
+        verify(imports, never()).update(anyString(), any(), any(), any(), any());
     }
 }

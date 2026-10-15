@@ -19,6 +19,7 @@ import self.research.ontology.owlEditor.service.DocumentSnapshots;
 import self.research.ontology.owlEditor.service.DocumentStore;
 import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
+import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
@@ -37,17 +38,20 @@ public class DatatypeDefinitionController {
     private final ExactChangeRecorder exactRecorder;
     private final DocumentHistory documentHistory;
     private final DocumentSnapshots snapshots;
+    private final ProjectWriteLockRegistry locks;
 
     public DatatypeDefinitionController(DatatypeDefinitionService definitionService,
                                         CollaborativeEditService collaborativeEditService,
                                         ExactChangeRecorder exactRecorder,
                                         DocumentHistory documentHistory,
-                                        DocumentSnapshots snapshots) {
+                                        DocumentSnapshots snapshots,
+                                        ProjectWriteLockRegistry locks) {
         this.definitionService = definitionService;
         this.collaborativeEditService = collaborativeEditService;
         this.exactRecorder = exactRecorder;
         this.documentHistory = documentHistory;
         this.snapshots = snapshots;
+        this.locks = locks;
     }
 
     private void broadcastDatatypeChange(String projectId, String datatypeIri, String mutationType, RequestActor actor) {
@@ -89,10 +93,10 @@ public class DatatypeDefinitionController {
         RequestActor actor = RequestActor.of(httpRequest, userId, username);
         String type = isBlank(request.definitionType) ? "expression" : request.definitionType;
         AtomicReference<DatatypeDefinitionEntity> created = new AtomicReference<>();
-        recordAround(projectId, actor, List.of(op("addDatatypeDefinition", request.datatypeIri)),
+        locks.<String>exclusive(projectId, () -> recordAround(projectId, actor, List.of(op("addDatatypeDefinition", request.datatypeIri)),
                 () -> created.set(definitionService.createDefinition(projectId, request.datatypeIri, request.expression, type)),
                 "addDatatypeDefinition", request.datatypeIri, null, () -> snapshots.snapshot(created.get()),
-                null, request.expression, "Added a definition to " + request.datatypeIri);
+                null, request.expression, "Added a definition to " + request.datatypeIri));
         broadcastDatatypeChange(projectId, request.datatypeIri, "addDatatypeDefinition", actor);
         return ResponseEntity.ok(Map.of("success", true, "data", created.get()));
     }
@@ -104,27 +108,29 @@ public class DatatypeDefinitionController {
                                               @RequestParam(required = false) String userId,
                                               @RequestParam(required = false) String username,
                                               HttpServletRequest httpRequest) {
-        Optional<DatatypeDefinitionEntity> current = definitionService.findById(projectId, definitionId);
-        if (current.isEmpty()) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
-        }
         RequestActor actor = RequestActor.of(httpRequest, userId, username);
-        String datatypeIri = current.get().getDatatypeIri();
-        String before = snapshots.snapshot(current.get());
-        String oldExpression = current.get().getExpression();
-        AtomicReference<Optional<DatatypeDefinitionEntity>> updated = new AtomicReference<>(Optional.empty());
-        recordAround(projectId, actor, List.of(op("deleteDatatypeDefinition", datatypeIri), op("addDatatypeDefinition", datatypeIri)),
-                () -> updated.set(definitionService.updateDefinition(projectId, definitionId,
-                        request != null ? request.expression : null, request != null ? request.definitionType : null)),
-                "updateDatatypeDefinition", datatypeIri, before,
-                () -> updated.get().map(snapshots::snapshot).orElse(null),
-                oldExpression, request != null && !isBlank(request.expression) ? request.expression : oldExpression,
-                "Updated a definition of " + datatypeIri);
-        if (updated.get().isEmpty()) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
-        }
-        broadcastDatatypeChange(projectId, datatypeIri, "updateDatatypeDefinition", actor);
-        return ResponseEntity.ok(Map.of("success", true, "data", updated.get().get()));
+        return locks.<ResponseEntity<?>>exclusive(projectId, () -> {
+            Optional<DatatypeDefinitionEntity> current = definitionService.findById(projectId, definitionId);
+            if (current.isEmpty()) {
+                return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
+            }
+            String datatypeIri = current.get().getDatatypeIri();
+            String before = snapshots.snapshot(current.get());
+            String oldExpression = current.get().getExpression();
+            AtomicReference<Optional<DatatypeDefinitionEntity>> updated = new AtomicReference<>(Optional.empty());
+            recordAround(projectId, actor, List.of(op("deleteDatatypeDefinition", datatypeIri), op("addDatatypeDefinition", datatypeIri)),
+                    () -> updated.set(definitionService.updateDefinition(projectId, definitionId,
+                            request != null ? request.expression : null, request != null ? request.definitionType : null)),
+                    "updateDatatypeDefinition", datatypeIri, before,
+                    () -> updated.get().map(snapshots::snapshot).orElse(null),
+                    oldExpression, request != null && !isBlank(request.expression) ? request.expression : oldExpression,
+                    "Updated a definition of " + datatypeIri);
+            if (updated.get().isEmpty()) {
+                return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
+            }
+            broadcastDatatypeChange(projectId, datatypeIri, "updateDatatypeDefinition", actor);
+            return ResponseEntity.ok(Map.of("success", true, "data", updated.get().get()));
+        });
     }
 
     @DeleteMapping("/{projectId}/{definitionId}")
@@ -133,23 +139,25 @@ public class DatatypeDefinitionController {
                                               @RequestParam(required = false) String userId,
                                               @RequestParam(required = false) String username,
                                               HttpServletRequest httpRequest) {
-        Optional<DatatypeDefinitionEntity> toDelete = definitionService.findById(projectId, definitionId);
-        if (toDelete.isEmpty()) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
-        }
         RequestActor actor = RequestActor.of(httpRequest, userId, username);
-        String datatypeIri = toDelete.get().getDatatypeIri();
-        String before = snapshots.snapshot(toDelete.get());
-        AtomicReference<Boolean> deleted = new AtomicReference<>(false);
-        recordAround(projectId, actor, List.of(op("deleteDatatypeDefinition", datatypeIri)),
-                () -> deleted.set(definitionService.deleteDefinition(projectId, definitionId)),
-                "deleteDatatypeDefinition", datatypeIri, before, () -> null, toDelete.get().getExpression(), null,
-                "Deleted a definition of " + datatypeIri);
-        if (!deleted.get()) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
-        }
-        broadcastDatatypeChange(projectId, datatypeIri, "deleteDatatypeDefinition", actor);
-        return ResponseEntity.ok(Map.of("success", true));
+        return locks.<ResponseEntity<?>>exclusive(projectId, () -> {
+            Optional<DatatypeDefinitionEntity> toDelete = definitionService.findById(projectId, definitionId);
+            if (toDelete.isEmpty()) {
+                return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
+            }
+            String datatypeIri = toDelete.get().getDatatypeIri();
+            String before = snapshots.snapshot(toDelete.get());
+            AtomicReference<Boolean> deleted = new AtomicReference<>(false);
+            recordAround(projectId, actor, List.of(op("deleteDatatypeDefinition", datatypeIri)),
+                    () -> deleted.set(definitionService.deleteDefinition(projectId, definitionId)),
+                    "deleteDatatypeDefinition", datatypeIri, before, () -> null, toDelete.get().getExpression(), null,
+                    "Deleted a definition of " + datatypeIri);
+            if (!deleted.get()) {
+                return ResponseEntity.status(404).body(Map.of("success", false, "error", "Definition not found"));
+            }
+            broadcastDatatypeChange(projectId, datatypeIri, "deleteDatatypeDefinition", actor);
+            return ResponseEntity.ok(Map.of("success", true));
+        });
     }
 
     private static boolean isBlank(String value) {

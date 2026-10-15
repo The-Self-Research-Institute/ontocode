@@ -129,6 +129,20 @@ class DesktopExactUndoTest {
     }
 
     @Test
+    void anEditThatLeavesTheInMemoryOntologyUnchangedIsNotRecordedInHistory() {
+        boolean[] recorded = new boolean[1];
+
+        String id = recorder().recordAround("p", false, "u", List.of(op("addSubClassOf", NS + "A", NS + "B")), () -> { },
+                () -> {
+                    recorded[0] = true;
+                    return "cs-1";
+                });
+
+        assertNull(id);
+        assertFalse(recorded[0]);
+    }
+
+    @Test
     void theSnapshotIsEmptyWithoutACache() {
         assertTrue(OwlApiModelSnapshot.of(null, "p").isEmpty());
         when(cache.get("none")).thenReturn(Optional.empty());

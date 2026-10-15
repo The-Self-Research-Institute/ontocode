@@ -38,7 +38,7 @@ public final class ExactSeeds {
 
     public static boolean needsWholeGraph(List<MutationOp> ops) {
         for (MutationOp op : ops) {
-            if (isEntityLevel(op.type()) && op.type().startsWith("delete")) {
+            if (isEntityLevel(op.type()) && op.type().startsWith("delete") || "renameEntity".equals(op.type())) {
                 return true;
             }
         }

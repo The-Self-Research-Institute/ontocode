@@ -111,6 +111,19 @@ class ExactRollbackTest {
     }
 
     @Test
+    void aRenameIsRefusedWhenLaterEditsUseTheNewName() {
+        HistoryChange rename = carrier("c1", A, 0);
+        rename.setOperationType("renameEntity");
+        when(historySync.getHistoryChange("c1")).thenReturn(rename);
+        when(facts.laterUsesNewName(P, rename)).thenReturn(true);
+
+        Result result = service.undoEntry(P, "c1", ACTOR, false);
+
+        assertFalse(result.ok());
+        verify(mutations, never()).applyRawUpdate(anyString(), anyString(), anyBoolean(), any());
+    }
+
+    @Test
     void aSingleEntryDeltaCanBeUndoneOnItsOwn() {
         HistoryChange carrier = carrier("c1", A, 0);
         when(historySync.getHistoryChange("c1")).thenReturn(carrier);

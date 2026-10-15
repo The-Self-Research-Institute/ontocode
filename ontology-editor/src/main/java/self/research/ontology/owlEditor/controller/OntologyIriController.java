@@ -24,6 +24,9 @@ public class OntologyIriController {
     private final OntologyMetadataService metadataService;
     private final ImportReferenceUpdater importReferenceUpdater;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.OperationGroups operationGroups;
+
     public OntologyIriController(OntologyMetadataService metadataService, ImportReferenceUpdater importReferenceUpdater) {
         this.metadataService = metadataService;
         this.importReferenceUpdater = importReferenceUpdater;
@@ -39,9 +42,14 @@ public class OntologyIriController {
             String userId = request.get("userId");
             String username = request.get("username");
             String oldIri = draft ? null : metadataService.currentOntologyIri(projectId, false, userId);
+            java.time.LocalDateTime since = java.time.LocalDateTime.now().minusSeconds(1);
+            String groupId = java.util.UUID.randomUUID().toString();
             metadataService.updateOntologyIRIs(projectId, ontologyIri, versionIri, draft, userId, username);
             ImportReferenceUpdater.Result imports = draft ? ImportReferenceUpdater.Result.none()
-                    : importReferenceUpdater.update(projectId, oldIri, ontologyIri, actor(httpRequest, userId, username));
+                    : importReferenceUpdater.update(projectId, oldIri, ontologyIri, actor(httpRequest, userId, username), groupId);
+            if (!draft && !imports.updated().isEmpty() && operationGroups != null) {
+                operationGroups.tag(projectId, userId, since, groupId);
+            }
             return ResponseEntity.ok(Map.of("success", true, "updatedImports", imports.updated(),
                     "skippedImports", imports.skipped()));
         } catch (Exception e) {

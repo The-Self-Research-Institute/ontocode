@@ -24,6 +24,24 @@ public record ExactDelta(Model deleted, Model inserted) {
         return DeltaSparql.withoutRelabelled(new ExactDelta(deleted, inserted));
     }
 
+    public boolean coveredBy(ExactDelta committed) {
+        return containsAll(committed.deleted, deleted) && containsAll(committed.inserted, inserted);
+    }
+
+    public ExactDelta without(Model accountedDeleted, Model accountedInserted) {
+        Model remainingDeleted = new LinkedHashModel();
+        deleted.stream().filter(st -> !accountedDeleted.contains(st.getSubject(), st.getPredicate(), st.getObject()))
+                .forEach(remainingDeleted::add);
+        Model remainingInserted = new LinkedHashModel();
+        inserted.stream().filter(st -> !accountedInserted.contains(st.getSubject(), st.getPredicate(), st.getObject()))
+                .forEach(remainingInserted::add);
+        return new ExactDelta(remainingDeleted, remainingInserted);
+    }
+
+    private static boolean containsAll(Model outer, Model inner) {
+        return inner.stream().allMatch(st -> outer.contains(st.getSubject(), st.getPredicate(), st.getObject()));
+    }
+
     public boolean isEmpty() {
         return deleted.isEmpty() && inserted.isEmpty();
     }

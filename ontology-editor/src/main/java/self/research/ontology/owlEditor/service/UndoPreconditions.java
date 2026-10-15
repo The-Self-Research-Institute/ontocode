@@ -35,6 +35,9 @@ public class UndoPreconditions {
         if (entry.isReverted()) {
             return Optional.of(label + " was already undone");
         }
+        if (entry.getUndoBlockedReason() != null) {
+            return Optional.of(entry.getUndoBlockedReason());
+        }
         Kind kind = RollbackMutationPlanner.kindOf(entry);
         boolean entityless = entry.getEntityIRI() == null || entry.getEntityIRI().isBlank();
         if (entityless && kind != Kind.EXACT && kind != Kind.PREFIX) {
@@ -62,6 +65,9 @@ public class UndoPreconditions {
         }
         if (entry.carriesExactDelta() && !facts.deltaHolds(projectId, entry, true)) {
             return Optional.of(label + " was changed since this edit");
+        }
+        if (facts.laterUsesNewName(projectId, entry)) {
+            return Optional.of("Others have added items that use the new name of " + label);
         }
         for (HistoryChange.SubChange sub : active) {
             if (kind != Kind.EXACT && plan.handledSubChangeIds().contains(sub.getId()) && changedSince(projectId, entry, sub)) {

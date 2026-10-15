@@ -12,6 +12,7 @@ import self.research.ontology.owlEditor.service.DocumentSnapshots;
 import self.research.ontology.owlEditor.service.DocumentStore;
 import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
+import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
@@ -49,7 +50,7 @@ class DatatypeDefinitionControllerTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         controller = new DatatypeDefinitionController(definitionService, collaborativeEditService, exactRecorder,
-                documentHistory, snapshots);
+                documentHistory, snapshots, new ProjectWriteLockRegistry());
         when(exactRecorder.recordAround(anyString(), anyBoolean(), anyString(), any(), any(), any())).thenAnswer(invocation -> {
             ((Runnable) invocation.getArgument(4)).run();
             return ((Supplier<String>) invocation.getArgument(5)).get();

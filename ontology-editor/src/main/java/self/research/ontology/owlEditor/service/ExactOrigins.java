@@ -25,6 +25,10 @@ final class ExactOrigins {
         }
     }
 
+    static boolean isUnchanged(Model oldModel, Model newModel) {
+        return oldModel.size() == newModel.size() && org.eclipse.rdf4j.model.util.Models.isomorphic(oldModel, newModel);
+    }
+
     static Optional<ExactDelta> deltaBetween(Model oldModel, Model newModel) {
         if (oldModel.size() > Limit.WHOLE_GRAPH_MAX_TRIPLES.value() || newModel.size() > Limit.WHOLE_GRAPH_MAX_TRIPLES.value()) {
             return Optional.empty();

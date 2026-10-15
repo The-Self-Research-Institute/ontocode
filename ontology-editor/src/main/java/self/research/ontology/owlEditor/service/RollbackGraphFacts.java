@@ -111,6 +111,23 @@ public class RollbackGraphFacts {
         }
     }
 
+    public boolean laterUsesNewName(String projectId, HistoryChange entry) {
+        if (!"renameEntity".equals(entry.getOperationType()) || !entry.carriesExactDelta() || entry.getEntityIRI() == null
+                || (!entry.isDraft() && inMemoryIsAuthoritative(projectId))) {
+            return false;
+        }
+        String name = entry.getEntityIRI();
+        long recorded = ExactReversal.deltaOf(entry).stream().flatMap(delta -> delta.inserted().stream())
+                .filter(statement -> name.equals(statement.getSubject().stringValue())
+                        || name.equals(statement.getPredicate().stringValue())
+                        || name.equals(statement.getObject().stringValue()))
+                .count();
+        String safe = SparqlSafety.safeIri(name);
+        String query = "ASK { { SELECT (COUNT(*) AS ?n) WHERE { SELECT DISTINCT ?s ?p ?o WHERE { ?s ?p ?o "
+                + "FILTER(?s = <" + safe + "> || ?p = <" + safe + "> || ?o = <" + safe + ">) } } } FILTER(?n > " + recorded + ") }";
+        return ask(projectId, query, entry.isDraft(), entry.getUserId());
+    }
+
     public boolean storeRecordsExact(String projectId, boolean draft) {
         return true;
     }

@@ -47,6 +47,9 @@ public class ImportReferenceUpdater {
     private final ProjectWriteLockRegistry locks;
     private final boolean desktopMode;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private OperationGroups groups;
+
     public ImportReferenceUpdater(SparqlDatasetService datasetService, ProjectRepository projectRepository,
                                   MongoTemplate mongoTemplate, WorkspaceOwnershipService ownership,
                                   OntologyMutationService mutationService, ProjectWriteLockRegistry locks,
@@ -60,7 +63,7 @@ public class ImportReferenceUpdater {
         this.desktopMode = desktopMode;
     }
 
-    public Result update(String sourceProjectId, String oldIri, String newIri, Actor actor) {
+    public Result update(String sourceProjectId, String oldIri, String newIri, Actor actor, String groupId) {
         if (blank(oldIri) || blank(newIri) || oldIri.equals(newIri)) {
             return Result.none();
         }
@@ -85,8 +88,12 @@ public class ImportReferenceUpdater {
                 String sparql = "PREFIX owl: <http://www.w3.org/2002/07/owl#>\n"
                         + "DELETE { ?o owl:imports <" + safeOld + "> } INSERT { ?o owl:imports <" + safeNew + "> } "
                         + "WHERE { ?o owl:imports <" + safeOld + "> }";
+                java.time.LocalDateTime since = java.time.LocalDateTime.now().minusSeconds(1);
                 locks.runExclusive(projectId, () -> {
                     mutationService.applyRawUpdateWithHistory(projectId, sparql, false, actor.email(), actor.username());
+                    if (groups != null && groupId != null) {
+                        groups.tag(projectId, actor.email(), since, groupId);
+                    }
                     return null;
                 });
                 updated.add(new Updated(projectId, name));

@@ -76,7 +76,7 @@ class ImportReferenceUpdaterTest {
         importer("restaurant", "Restaurant", "sam@x.org");
         when(ownership.canPublishToProject("user-1", "restaurant")).thenReturn(true);
 
-        Result result = updater(false).update("pizza", OLD, NEW, ACTOR);
+        Result result = updater(false).update("pizza", OLD, NEW, ACTOR, null);
 
         assertEquals(List.of(new ImportReferenceUpdater.Updated("restaurant", "Restaurant")), result.updated());
         assertTrue(result.skipped().isEmpty());
@@ -88,7 +88,7 @@ class ImportReferenceUpdaterTest {
         importer("solo", "Solo", "ME@x.org");
         when(ownership.canPublishToProject("user-1", "solo")).thenReturn(false);
 
-        Result result = updater(false).update("pizza", OLD, NEW, ACTOR);
+        Result result = updater(false).update("pizza", OLD, NEW, ACTOR, null);
 
         assertEquals(1, result.updated().size());
     }
@@ -98,7 +98,7 @@ class ImportReferenceUpdaterTest {
         importer("menu", "Menu", "sam@x.org");
         when(ownership.canPublishToProject("user-1", "menu")).thenReturn(false);
 
-        Result result = updater(false).update("pizza", OLD, NEW, ACTOR);
+        Result result = updater(false).update("pizza", OLD, NEW, ACTOR, null);
 
         assertTrue(result.updated().isEmpty());
         assertEquals(1, result.skipped().size());
@@ -112,7 +112,7 @@ class ImportReferenceUpdaterTest {
     void theProjectBeingRenamedIsNeverTouched() {
         importer("pizza", "Pizza", "me@x.org");
 
-        Result result = updater(false).update("pizza", OLD, NEW, ACTOR);
+        Result result = updater(false).update("pizza", OLD, NEW, ACTOR, null);
 
         assertTrue(result.updated().isEmpty());
         assertTrue(result.skipped().isEmpty());
@@ -123,7 +123,7 @@ class ImportReferenceUpdaterTest {
         importer("stale", "Stale", "sam@x.org");
         when(datasets.execAsk(eq("stale"), anyString())).thenReturn(false);
 
-        Result result = updater(false).update("pizza", OLD, NEW, ACTOR);
+        Result result = updater(false).update("pizza", OLD, NEW, ACTOR, null);
 
         assertTrue(result.updated().isEmpty());
         assertTrue(result.skipped().isEmpty());
@@ -137,7 +137,7 @@ class ImportReferenceUpdaterTest {
         doThrow(new IllegalStateException("store offline")).when(mutations)
                 .applyRawUpdateWithHistory(eq("broken"), anyString(), anyBoolean(), anyString(), anyString());
 
-        Result result = updater(false).update("pizza", OLD, NEW, ACTOR);
+        Result result = updater(false).update("pizza", OLD, NEW, ACTOR, null);
 
         assertEquals(1, result.updated().size());
         assertEquals("fine", result.updated().get(0).projectId());
@@ -149,16 +149,16 @@ class ImportReferenceUpdaterTest {
     void anUnverifiedUserCannotUpdateAnyoneElsesProjectButDesktopOwnsEverything() {
         importer("restaurant", "Restaurant", "sam@x.org");
 
-        assertEquals(1, updater(false).update("pizza", OLD, NEW, new Actor(null, null, null)).skipped().size());
-        assertEquals(1, updater(true).update("pizza", OLD, NEW, new Actor(null, "me@x.org", "Me")).updated().size());
+        assertEquals(1, updater(false).update("pizza", OLD, NEW, new Actor(null, null, null), null).skipped().size());
+        assertEquals(1, updater(true).update("pizza", OLD, NEW, new Actor(null, "me@x.org", "Me"), null).updated().size());
     }
 
     @Test
     void nothingHappensWhenTheIriDidNotChangeOrIsUnsafe() {
         importer("restaurant", "Restaurant", "sam@x.org");
 
-        assertTrue(updater(true).update("pizza", OLD, OLD, ACTOR).updated().isEmpty());
-        assertTrue(updater(true).update("pizza", "http://x.org/a>b", NEW, ACTOR).updated().isEmpty());
-        assertTrue(updater(true).update("pizza", null, NEW, ACTOR).updated().isEmpty());
+        assertTrue(updater(true).update("pizza", OLD, OLD, ACTOR, null).updated().isEmpty());
+        assertTrue(updater(true).update("pizza", "http://x.org/a>b", NEW, ACTOR, null).updated().isEmpty());
+        assertTrue(updater(true).update("pizza", null, NEW, ACTOR, null).updated().isEmpty());
     }
 }
