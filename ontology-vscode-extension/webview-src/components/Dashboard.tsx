@@ -7584,6 +7584,65 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
     [projectId, classInstanceCounts, applyInstanceCountsToTree, hierarchyImportsScope, user],
   );
 
+  // The class tree is lazy-loaded, so the client-side search filter can only see nodes that were
+  // already expanded. Ask the backend which ancestors lead to the matches and load those branches
+  // (shallowest first) so the filter finds them.
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!projectId || !query || entitiesTab !== "Classes" || hierarchyViewModes.Classes === "inferred") return;
+    if (searchOptions.useRegex) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const userId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        const draftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
+        const response = await apiClient.get<any>(
+          `/api/ontology/classes/search/${projectId}?q=${encodeURIComponent(query)}&limit=50&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(userId)}${draftScopeParam}`,
+        );
+        const payload = response?.data ?? response;
+        const ancestors: Array<{ id: string; depth: number }> = Array.isArray(payload?.ancestors)
+          ? payload.ancestors
+          : [];
+        if (cancelled || ancestors.length === 0) return;
+
+        const isLoaded = (nodes: TreeNode[], id: string): boolean => {
+          for (const n of nodes) {
+            if (n.id === id) return !!n.children && n.children.length > 0;
+            if (n.children && isLoaded(n.children, id)) return true;
+          }
+          return false;
+        };
+
+        const byDepth = new Map<number, string[]>();
+        for (const a of ancestors) {
+          if (!a?.id || isLoaded(classHierarchyRef.current, a.id)) continue;
+          byDepth.set(a.depth, [...(byDepth.get(a.depth) ?? []), a.id]);
+        }
+        for (const depth of Array.from(byDepth.keys()).sort((a, b) => a - b)) {
+          if (cancelled) return;
+          await Promise.all(byDepth.get(depth)!.map((id) => loadChildren(id)));
+        }
+      } catch (error) {
+        console.warn("[Dashboard] Class search branch loading failed:", error);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    searchQuery,
+    projectId,
+    entitiesTab,
+    hierarchyViewModes.Classes,
+    searchOptions.useRegex,
+    hierarchyImportsScope,
+    user,
+    loadChildren,
+  ]);
+
   const fetchInferredChildren = useCallback(
     async (nodeId: string) => {
       if (!projectId) return [];

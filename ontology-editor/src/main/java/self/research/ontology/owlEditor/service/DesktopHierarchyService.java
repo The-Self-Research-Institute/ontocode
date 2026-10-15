@@ -109,6 +109,12 @@ public class DesktopHierarchyService {
             .orElse(Collections.emptyList());
     }
 
+    public Map<String, Object> searchClasses(String projectId, String query, int limit, Imports importsScope) {
+        return ontologyCache.get(projectId)
+            .map(c -> snapshotBuilder.searchClasses(c.ontology(), query, limit, importsScope))
+            .orElse(Collections.emptyMap());
+    }
+
     /**
      * Batch annotation lookup: returns a map of classIri → annotation value for the given property.
      * Used by the "Render by annotation property" feature.

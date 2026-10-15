@@ -470,6 +470,32 @@ public class OntologyQueryController {
     }
 
     /**
+     * Class search for the lazily-loaded hierarchy: matches (label/IRI substring) plus the
+     * ancestor chain (with depth) the client must expand so the matches are reachable.
+     */
+    @GetMapping("/classes/search/{projectId:.+}")
+    public ResponseEntity<?> searchClasses(@PathVariable String projectId,
+                                           @RequestParam("q") String q,
+                                           @RequestParam(defaultValue = "50") int limit,
+                                           @RequestParam(defaultValue = "active") String scope) {
+        org.semanticweb.owlapi.model.parameters.Imports importsScope =
+                "closure".equalsIgnoreCase(scope)
+                        ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
+                        : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
+        int cap = Math.min(Math.max(1, limit), 200);
+        if (preferOwlApiPath(projectId)
+                && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            return ResponseEntity.ok(desktopHierarchyService.searchClasses(projectId, q, cap, importsScope));
+        }
+        try {
+            return ResponseEntity.ok(queryService.searchClasses(projectId, q, cap));
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("success", false, "error", "Search failed: " + e.getMessage()));
+        }
+    }
+
+    /**
      * Best-effort children fetch shared by {@code children()} and {@code descendants()} below.
      * Empty means "not ready yet" (hierarchy index still building, or SPARQL query still
      * running) — callers must treat that as retry-later, not "no children".
