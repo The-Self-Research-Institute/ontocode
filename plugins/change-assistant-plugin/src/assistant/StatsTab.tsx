@@ -2,7 +2,7 @@ import React from 'react';
 import AuthorActivityChart from '../components/AuthorActivityChart';
 import ChangeGraph from '../components/ChangeGraph';
 import { authorActivity, weekdayActivity } from './activityData';
-import { changeMatchesType, countableChanges } from './changeParsing';
+import { activeChanges, changeMatchesType } from './changeParsing';
 import { ChangeStats, ChangeType, OntologyChange } from './types';
 
 interface StatsTabProps {
@@ -23,7 +23,7 @@ const Distribution: React.FC<{ stats: ChangeStats; changes: OntologyChange[] }> 
     <h3 className="font-medium mb-2">Change Distribution</h3>
     <div className="space-y-2">
       {(['class', 'property', 'individual', 'datatype', 'axiom', 'annotation', 'import', 'prefix', 'rename', 'rule', 'citation'] as ChangeType[]).map(type => {
-        const count = countableChanges(changes).filter(c => changeMatchesType(c, type)).length;
+        const count = activeChanges(changes).filter(c => changeMatchesType(c, type)).length;
         const percentage = stats.totalChanges > 0 ? (count / stats.totalChanges * 100) : 0;
         return (
           <div key={type}>
@@ -48,6 +48,7 @@ const StatsTab: React.FC<StatsTabProps> = ({ stats, changes, draftChanges }) => 
   <div className="space-y-4">
     <div className="grid grid-cols-2 gap-3">
       <StatTile label="Saved Changes" value={stats.totalChanges} color="text-purple-600" />
+      <StatTile label="Undone Changes" value={stats.undoneChanges} color="text-gray-600" />
       <StatTile label="Draft Changes" value={stats.draftChanges} color="text-yellow-600" />
       <StatTile label="Active Authors" value={stats.activeAuthors} color="text-blue-600" />
       <StatTile label="Warnings" value={stats.warnings} color="text-orange-600" />

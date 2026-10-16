@@ -89,6 +89,16 @@ class MergeCheckpointTest {
     }
 
     @Test
+    void allowsRestoreOnceTheLaterEditsHaveBeenUndone() throws Exception {
+        new MergeCheckpointStore(storage).saveBefore(P, ID, Files.writeString(dir.resolve("b.owl"), "B"));
+        HistoryChange later = entry("edit", "createClass");
+        later.setReverted(true);
+        when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(
+                entry("rb", "ROLLBACK_x"), later, merge()));
+        assertTrue(actions.holds(P, RollbackAction.restoreMergeFile(merge(), true), false, null));
+    }
+
+    @Test
     void refusesWhileTheImportAfterTheMergeIsStillRunning() throws Exception {
         new MergeCheckpointStore(storage).saveBefore(P, ID, Files.writeString(dir.resolve("b.owl"), "B"));
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(merge()));

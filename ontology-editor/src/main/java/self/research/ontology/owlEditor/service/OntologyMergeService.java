@@ -336,7 +336,7 @@ public class OntologyMergeService {
         MergeResult result = new MergeResult();
         result.setTargetProjectId(targetProjectId);
         boolean intoExisting = outputFileName == null || outputFileName.isBlank();
-        Optional<org.eclipse.rdf4j.model.Model> triplesBefore = intoExisting ? snapshotForUndo(manager, targetOntology) : Optional.empty();
+        AxiomDelta.Before axiomsBefore = intoExisting ? AxiomDelta.capture(targetOntology) : null;
 
         try {
             switch (options.getStrategy()) {
@@ -390,9 +390,8 @@ public class OntologyMergeService {
             ChangeOrigin mergeOrigin = ChangeOrigin.manual();
             String checkpointId = null;
             if (!isNewFile) {
-                mergeOrigin = triplesBefore
-                        .flatMap(before -> OwlApiModelSnapshot.of(manager, targetOntology)
-                                .map(after -> ExactOrigins.manualWithDelta(before, after)))
+                mergeOrigin = AxiomDelta.between(manager, axiomsBefore, targetOntology, Limit.MERGE_DELTA_MAX_TRIPLES.value())
+                        .map(delta -> ChangeOrigin.manual().withExact(new ExactCarrier(delta)))
                         .orElseGet(ChangeOrigin::manual);
                 if (mergeOrigin.exact() == null) {
                     checkpointId = saveCheckpointBefore(importProjectId, targetFile);
@@ -474,13 +473,6 @@ public class OntologyMergeService {
             log.warn("[MERGE] Could not keep a copy of the merged file for project {}: {}", projectId, e.getMessage());
             return null;
         }
-    }
-
-    private static Optional<org.eclipse.rdf4j.model.Model> snapshotForUndo(OWLOntologyManager manager, OWLOntology ontology) {
-        if (ontology.getAxiomCount() > Limit.WHOLE_GRAPH_MAX_TRIPLES.value()) {
-            return Optional.empty();
-        }
-        return OwlApiModelSnapshot.of(manager, ontology);
     }
 
     private void refreshMergedMetadata(String projectId, OWLOntology ontology) {

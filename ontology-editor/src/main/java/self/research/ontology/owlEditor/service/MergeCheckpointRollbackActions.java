@@ -65,7 +65,8 @@ public class MergeCheckpointRollbackActions implements RollbackActionRunner {
             if (mergeEntryId != null && mergeEntryId.equals(entry.getId())) {
                 return true;
             }
-            if (!RollbackWorkSupport.isRollbackEntry(entry) && !"projectImported".equals(entry.getOperationType())) {
+            if (!RollbackWorkSupport.isRollbackEntry(entry) && !entry.isReverted()
+                    && !"projectImported".equals(entry.getOperationType())) {
                 return false;
             }
         }

@@ -15,6 +15,9 @@ import java.io.StringWriter;
 
 public record ExactDelta(Model deleted, Model inserted) {
 
+    private static final String COMPRESSED = "gz:";
+    private static final int COMPRESS_ABOVE_CHARS = 200_000;
+
     
     public static ExactDelta between(Model before, Model after) {
         Model deleted = new LinkedHashModel(before);
@@ -50,17 +53,44 @@ public record ExactDelta(Model deleted, Model inserted) {
         return deleted.size() + inserted.size() > Limit.MAX_DELTA_TRIPLES.value();
     }
 
+    public boolean isLargerThan(int triples) {
+        return deleted.size() + inserted.size() > triples;
+    }
+
     public static String write(Model model) {
         StringWriter out = new StringWriter();
         Rio.write(model, out, RDFFormat.NTRIPLES);
-        return out.toString();
+        String text = out.toString();
+        return text.length() > COMPRESS_ABOVE_CHARS ? COMPRESSED + compress(text) : text;
     }
 
-    public static Model read(String text) {
+    private static String compress(String text) {
+        try {
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            try (java.util.zip.GZIPOutputStream gzip = new java.util.zip.GZIPOutputStream(bytes)) {
+                gzip.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            return java.util.Base64.getEncoder().encodeToString(bytes.toByteArray());
+        } catch (IOException e) {
+            throw new IllegalStateException("Change data could not be compressed", e);
+        }
+    }
+
+    private static String decompress(String text) {
+        try (java.util.zip.GZIPInputStream gzip = new java.util.zip.GZIPInputStream(
+                new java.io.ByteArrayInputStream(java.util.Base64.getDecoder().decode(text.substring(COMPRESSED.length()))))) {
+            return new String(gzip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Stored change data could not be read", e);
+        }
+    }
+
+    public static Model read(String stored) {
         Model model = new LinkedHashModel();
-        if (text == null || text.isBlank()) {
+        if (stored == null || stored.isBlank()) {
             return model;
         }
+        String text = stored.startsWith(COMPRESSED) ? decompress(stored) : stored;
         try {
             RDFParser parser = Rio.createParser(RDFFormat.NTRIPLES);
             parser.getParserConfig().set(BasicParserSettings.PRESERVE_BNODE_IDS, true);

@@ -80,6 +80,9 @@ public class ChangeRollbackService {
     @Autowired(required = false)
     private UndoOperations operations;
 
+    @Autowired(required = false)
+    private UndoBlockers blockers;
+
     @Autowired
     public ChangeRollbackService(HistorySyncService historySync, RollbackMutationPlanner planner,
                                  RollbackGraphFacts facts, OntologyMutationService mutations,
@@ -273,6 +276,14 @@ public class ChangeRollbackService {
         return UNDO.equals(req.direction()) ? evaluateUndo(req, entry) : evaluateRedo(req, entry);
     }
 
+    private String changedSince(Request req, HistoryChange entry) {
+        String plain = "It was changed since this edit";
+        if (blockers != null && RollbackMutationPlanner.kindOf(entry) == Kind.MERGE && blockers.importRunning(req.projectId())) {
+            return UndoBlockers.STILL_LOADING;
+        }
+        return blockers == null ? plain : blockers.changedSince(req.projectId(), entry, plain);
+    }
+
     private boolean isSpreadsheetImport(HistoryChange entry) {
         return spreadsheetImports != null && spreadsheetImports.handles(entry);
     }
@@ -292,13 +303,13 @@ public class ChangeRollbackService {
         }
         if (kind == Kind.RENAME && facts.entityExists(req.projectId(), entry.getOldValue(), entry.isDraft(), entry.getUserId())) { return skip(entry, "The old name is in use again"); }
         if (ENTRY.equals(req.level()) && RollbackWorkSupport.isCreation(entry, kind) && facts.referencedOutside(req.projectId(), entry.getEntityIRI(), entry.isDraft(), entry.getUserId(), RollbackWorkSupport.insertedTriples(List.of(entry)))) { return skip(entry, "Other items still refer to it"); }
-        if (!deltaHolds(req, entry, true)) { return skip(entry, "It was changed since this edit"); }
+        if (!deltaHolds(req, entry, true)) { return skip(entry, changedSince(req, entry)); }
         List<Item> skipped = new ArrayList<>();
         List<HistoryChange.SubChange> targets = kind == Kind.GROUPED_MODIFY
                 ? currentSubChanges(req, entry, RollbackMutationPlanner.active(entry), true, skipped)
                 : RollbackMutationPlanner.active(entry);
         Plan plan = planner.planUndo(entry, targets);
-        if (!actionsHold(req, entry, plan)) { return skip(entry, "It was changed since this edit"); }
+        if (!actionsHold(req, entry, plan)) { return skip(entry, changedSince(req, entry)); }
         return finish(entry, plan, targets, skipped, kind);
     }
 
@@ -317,7 +328,7 @@ public class ChangeRollbackService {
         if (presence != Presence.IGNORED && (presence == Presence.REQUIRED) != exists(req, entry)) {
             return skip(entry, presence == Presence.REQUIRED ? "It no longer exists" : "It already exists again");
         }
-        if (!deltaHolds(req, entry, false)) { return skip(entry, "It was changed since this edit"); }
+        if (!deltaHolds(req, entry, false)) { return skip(entry, changedSince(req, entry)); }
         List<Item> skipped = new ArrayList<>();
         List<HistoryChange.SubChange> targets = kind == Kind.GROUPED_MODIFY
                 ? currentSubChanges(req, entry, undone, false, skipped)

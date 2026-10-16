@@ -134,12 +134,22 @@ export function countableChanges<T extends { source?: string | null; operationTy
   return changes.filter(change => !isRollbackChange(change));
 }
 
+export function isUndone(change: { reverted?: boolean; subChanges?: Array<{ reverted?: boolean }> }): boolean {
+  const subs = change.subChanges || [];
+  return !!change.reverted || (subs.length > 0 && subs.every(sub => sub.reverted));
+}
+
+export function activeChanges<T extends { source?: string | null; operationType?: string; reverted?: boolean; subChanges?: Array<{ reverted?: boolean }> }>(changes: T[]): T[] {
+  return countableChanges(changes).filter(change => !isUndone(change));
+}
+
 export function computeStats(parsedChanges: any[], draftChanges: OntologyChange[]): ChangeStats {
   const countable = countableChanges(parsedChanges);
   const totalWarnings = [...countable, ...draftChanges]
     .reduce((sum, c) => sum + (c.warnings?.length || 0), 0);
   return {
-    totalChanges: countable.length,
+    totalChanges: activeChanges(parsedChanges).length,
+    undoneChanges: countable.filter(isUndone).length,
     draftChanges: draftChanges.length,
     conflicts: countable.filter((c: any) => c.conflicts?.length > 0).length,
     activeAuthors: new Set(countable.map((c: any) => authorKey(c.author, c.authorEmail))).size,

@@ -130,6 +130,16 @@ describe('statistics ignore undo and redo rows', () => {
     expect(stats.activeAuthors).toBe(1);
   });
 
+  it('counts only changes that are still in effect and reports the undone ones separately', () => {
+    const undone = parseChange({ ...base, id: 'u', operationType: 'createClass', entityLabel: 'U', reverted: true });
+    const partly = parseChange({ ...base, id: 'p', operationType: 'updateClass', entityLabel: 'P', subChanges: [
+      { id: 's1', predicate: 'http://www.w3.org/2000/01/rdf-schema#label', addition: true, newValue: 'x', reverted: true },
+      { id: 's2', predicate: 'http://www.w3.org/2000/01/rdf-schema#comment', addition: true, newValue: 'y' }] });
+    const stats = computeStats([...changes, undone, partly], []);
+    expect(stats.totalChanges).toBe(3);
+    expect(stats.undoneChanges).toBe(1);
+  });
+
   it('keeps them out of the timeline, weekday chart and author chart', () => {
     expect(timelineItems(changes).map(c => c.id)).toEqual(['a', 'c']);
     const weekdayTotal = weekdayActivity(changes, []);
