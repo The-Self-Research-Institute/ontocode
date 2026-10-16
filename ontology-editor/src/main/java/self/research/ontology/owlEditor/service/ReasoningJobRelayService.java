@@ -29,11 +29,22 @@ public class ReasoningJobRelayService {
         return jobRetention.get(jobId).orElse(null);
     }
 
-    public void rememberSubmittedJob(String jobId,
+    public synchronized void rememberSubmittedJob(String jobId,
                                      String projectId,
                                      String expression,
                                      String jobType,
                                      Map<String, Object> workerResponse) {
+        DLQueryJob existing = jobRetention.get(jobId).orElse(null);
+        if (existing != null) {
+            if (existing.getProjectId() == null) {
+                existing.setProjectId(projectId);
+            }
+            if (existing.getExpression() == null) {
+                existing.setExpression(expression);
+            }
+            jobRetention.retain(existing);
+            return;
+        }
         jobRetention.makeRoomForIncomingJob();
 
         DLQueryJob job = DLQueryJob.builder()
@@ -50,16 +61,24 @@ public class ReasoningJobRelayService {
     }
 
     @SuppressWarnings("unchecked")
-    public void applyWorkerEvent(Map<String, Object> payload) {
+    public synchronized void applyWorkerEvent(Map<String, Object> payload) {
         String jobId = stringVal(payload.get("jobId"));
         if (jobId == null) {
             return;
         }
 
         DLQueryJob existing = jobRetention.get(jobId).orElse(null);
+        DLQueryJob.Status incoming = parseStatus(payload.get("status"));
+        if (existing != null && isTerminal(existing.getStatus()) && !isTerminal(incoming)) {
+            log.debug("Ignoring late {} event for job {} that already finished as {}",
+                    incoming, jobId, existing.getStatus());
+            return;
+        }
         DLQueryJob job = existing != null ? existing : DLQueryJob.builder().jobId(jobId).build();
-        job.setProjectId(stringVal(payload.get("projectId")));
-        job.setStatus(parseStatus(payload.get("status")));
+        if (payload.get("projectId") != null) {
+            job.setProjectId(stringVal(payload.get("projectId")));
+        }
+        job.setStatus(incoming);
         job.setQueuePosition(intVal(payload.get("queuePosition"), 0));
         job.setEstimatedWaitTimeMs(longVal(payload.get("estimatedWaitTimeMs")));
         if (payload.get("executionTimeMs") instanceof Number n) {
@@ -76,6 +95,25 @@ public class ReasoningJobRelayService {
         }
         jobRetention.retain(job);
         notify(job, payload);
+    }
+
+    public synchronized DLQueryJob markLost(String jobId, String error) {
+        DLQueryJob job = jobRetention.get(jobId).orElse(null);
+        if (job == null || isTerminal(job.getStatus())) {
+            return job;
+        }
+        job.setStatus(DLQueryJob.Status.FAILED);
+        job.setError(error);
+        job.setQueuePosition(0);
+        job.setEstimatedWaitTimeMs(0);
+        job.setCompletedAt(Instant.now());
+        jobRetention.retain(job);
+        notify(job, Map.of());
+        return job;
+    }
+
+    private static boolean isTerminal(DLQueryJob.Status status) {
+        return status == DLQueryJob.Status.COMPLETED || status == DLQueryJob.Status.FAILED;
     }
 
     private void notify(DLQueryJob job, Map<String, Object> payload) {

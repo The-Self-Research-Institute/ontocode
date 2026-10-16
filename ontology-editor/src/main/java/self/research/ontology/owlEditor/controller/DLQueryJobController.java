@@ -22,6 +22,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class DLQueryJobController {
 
+    static final String WORKER_LOST_JOB_MESSAGE =
+            "Reasoning worker no longer has this job (it may have restarted). Please run it again.";
+
     private final DLQueryQueueManager queueManager;
 
     @Autowired(required = false)
@@ -47,6 +50,10 @@ public class DLQueryJobController {
                 if (remote != null && remote.get("jobId") != null) {
                     return ResponseEntity.ok(remote);
                 }
+                if (relayed != null && workerSaysNotFound(remote)) {
+                    DLQueryJob lost = reasoningJobRelayService.markLost(jobId, WORKER_LOST_JOB_MESSAGE);
+                    return ResponseEntity.ok(toResponse(lost != null ? lost : relayed));
+                }
             }
             if (relayed != null) {
                 return ResponseEntity.ok(toResponse(relayed));
@@ -59,6 +66,14 @@ public class DLQueryJobController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(toResponse(job));
+    }
+
+    private static boolean workerSaysNotFound(Map<String, Object> remote) {
+        if (remote == null || !Boolean.FALSE.equals(remote.get("success"))) {
+            return false;
+        }
+        Object error = remote.get("error");
+        return error != null && error.toString().contains("404");
     }
 
     @GetMapping("/stats")
