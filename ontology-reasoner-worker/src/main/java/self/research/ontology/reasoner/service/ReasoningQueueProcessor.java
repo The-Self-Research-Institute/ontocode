@@ -20,15 +20,18 @@ public class ReasoningQueueProcessor {
     private final ReasoningJobExecutor jobExecutor;
     private final Executor reasoningExecutor;
     private final long jobTimeoutMs;
+    private final long runawayThreadMaxWaitMs;
 
     public ReasoningQueueProcessor(ReasoningQueueManager queueManager,
                                    ReasoningJobExecutor jobExecutor,
                                    @Qualifier("reasoningExecutor") Executor reasoningExecutor,
-                                   @Value("${ontocode.reasoning.job-timeout-ms:1800000}") long jobTimeoutMs) {
+                                   @Value("${ontocode.reasoning.job-timeout-ms:1800000}") long jobTimeoutMs,
+                                   @Value("${ontocode.reasoning.runaway-thread-max-wait-ms:600000}") long runawayThreadMaxWaitMs) {
         this.queueManager = queueManager;
         this.jobExecutor = jobExecutor;
         this.reasoningExecutor = reasoningExecutor;
         this.jobTimeoutMs = jobTimeoutMs;
+        this.runawayThreadMaxWaitMs = runawayThreadMaxWaitMs;
     }
 
     public void processNext() {
@@ -44,9 +47,11 @@ public class ReasoningQueueProcessor {
 
             long start = System.currentTimeMillis();
 
+            Thread[] capturedThread = new Thread[1];
             ExecutorService jobThread = Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "reasoning-job-" + job.getJobId());
                 t.setDaemon(true);
+                capturedThread[0] = t;
                 return t;
             });
             try {
@@ -55,6 +60,9 @@ public class ReasoningQueueProcessor {
                 try {
                     result = future.get(jobTimeoutMs, TimeUnit.MILLISECONDS);
                 } catch (TimeoutException e) {
+                    if (capturedThread[0] != null) {
+                        OntologySessionService.interruptReasonerOnThread(capturedThread[0].threadId());
+                    }
                     future.cancel(true);
                     long minutes = jobTimeoutMs / 60_000;
                     log.error("[Reasoning] Job {} ({}) timed out after {} min — cancelled",
@@ -95,12 +103,18 @@ public class ReasoningQueueProcessor {
     private void awaitRunawayThreadThenReleaseSlot(ReasoningJob job, ExecutorService jobThread) {
         Thread watcher = new Thread(() -> {
             jobThread.shutdownNow();
+            boolean stopped = false;
             try {
-                jobThread.awaitTermination(Long.MAX_VALUE, TimeUnit.DAYS);
+                stopped = jobThread.awaitTermination(runawayThreadMaxWaitMs, TimeUnit.MILLISECONDS);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
             }
-            log.info("[Reasoning] Runaway thread for timed-out job {} has stopped, releasing its slot", job.getJobId());
+            if (stopped) {
+                log.info("[Reasoning] Runaway thread for timed-out job {} has stopped, releasing its slot", job.getJobId());
+            } else {
+                log.warn("[Reasoning] Runaway thread for timed-out job {} did not stop within {} ms — "
+                        + "releasing its slot anyway", job.getJobId(), runawayThreadMaxWaitMs);
+            }
             queueManager.releaseAbandonedSlot(job.getJobId());
             processNext();
         }, "reasoning-reaper-" + job.getJobId());

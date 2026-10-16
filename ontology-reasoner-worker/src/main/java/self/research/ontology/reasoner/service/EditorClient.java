@@ -47,24 +47,18 @@ public class EditorClient {
         return -1;
     }
 
-    public InputStream openOntologyStream(String projectId, String userId) {
-
+    public <T> T loadOntologyStream(String projectId, String userId, java.util.function.Function<InputStream, T> reader) {
         String url = editorUrl + "/internal/reasoning/" + projectId + "/export.nt";
         if (userId != null && !userId.isBlank()) {
             try {
                 url += "?userId=" + java.net.URLEncoder.encode(userId, java.nio.charset.StandardCharsets.UTF_8);
             } catch (Exception ignored) {}
         }
-        ResponseEntity<org.springframework.core.io.InputStreamResource> response = restTemplate.exchange(
+        return restTemplate.execute(
                 url,
                 HttpMethod.GET,
-                internalEntity(),
-                org.springframework.core.io.InputStreamResource.class);
-        try {
-            return response.getBody().getInputStream();
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to read ontology export stream: " + e.getMessage(), e);
-        }
+                request -> request.getHeaders().addAll(internalHeaders()),
+                response -> reader.apply(response.getBody()));
     }
 
     public long getRevision(String projectId) {

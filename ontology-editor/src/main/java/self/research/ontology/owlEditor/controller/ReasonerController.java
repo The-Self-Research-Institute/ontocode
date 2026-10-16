@@ -413,7 +413,9 @@ public class ReasonerController {
             ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
 
             // Return cached hierarchy immediately if still fresh (Caffeine handles TTL)
-            String cacheKey = projectId + "-" + type.name();
+            String cacheKey = isDraft
+                    ? projectId + "-" + type.name() + "-draft-" + resolvedUserId
+                    : projectId + "-" + type.name();
             EditorReasonerCacheService.HierarchyCacheEntry cached =
                     editorReasonerCache.getHierarchy(cacheKey).orElse(null);
             if (cached != null) {

@@ -42,6 +42,9 @@ public class ReasoningJobExecutor {
     @Value("${ontocode.reasoner.justification-timeout-ms:15000}")
     private long justificationTimeoutMs;
 
+    @Value("${ontocode.reasoning.job-timeout-ms:1800000}")
+    private long jobTimeoutMs;
+
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int defaultMaxJustifications;
 
@@ -166,7 +169,7 @@ public class ReasoningJobExecutor {
                     ? job.getExplanationMode() : "regular";
 
             OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
-            OWLReasoner explainReasoner = EphemeralReasonerFactory.create(reasoningOntology, effective, justificationTimeoutMs);
+            OWLReasoner explainReasoner = EphemeralReasonerFactory.create(reasoningOntology, effective, jobTimeoutMs);
             boolean isConsistent;
             try {
                 isConsistent = explainReasoner.isConsistent();

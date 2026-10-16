@@ -14,6 +14,8 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.eclipse.rdf4j.http.client.SharedHttpClientSessionManager;
 import org.eclipse.rdf4j.repository.sparql.SPARQLRepository;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFHandler;
 import org.eclipse.rdf4j.rio.RDFParser;
@@ -79,6 +81,14 @@ public class SparqlDatasetService {
 
     private static final Logger log = LoggerFactory.getLogger(SparqlDatasetService.class);
     private static final Logger sparqlLog = LoggerFactory.getLogger("SPARQL");
+
+    @Value("${ontocode.draft.max-triples:500000}")
+    private long draftMaxTriples;
+
+    private final Cache<String, org.semanticweb.owlapi.model.OWLOntology> draftOntologyCache = Caffeine.newBuilder()
+        .maximumSize(10)
+        .expireAfterWrite(3, java.util.concurrent.TimeUnit.SECONDS)
+        .build();
 
     @Value("${ontocode.fuseki.queryEndpoint:http://localhost:3030/ontocode/query}")
     private String fusekiQueryEndpoint;
@@ -1367,12 +1377,27 @@ public class SparqlDatasetService {
     }
 
     public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId) throws Exception {
+        String cacheKey = projectId + "::" + userId;
+        org.semanticweb.owlapi.model.OWLOntology cached = draftOntologyCache.getIfPresent(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+
+        long tripleCount = countDraftTriples(projectId, userId);
+        if (tripleCount > draftMaxTriples) {
+            throw new RuntimeException("Draft has " + tripleCount + " triples, exceeding the configured limit of "
+                    + draftMaxTriples + " triples for in-process draft reasoning.");
+        }
+
         String draftContent = exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
         org.semanticweb.owlapi.model.OWLOntologyManager manager =
                 org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        org.semanticweb.owlapi.model.OWLOntology ontology;
         try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
-            return manager.loadOntologyFromOntologyDocument(is);
+            ontology = manager.loadOntologyFromOntologyDocument(is);
         }
+        draftOntologyCache.put(cacheKey, ontology);
+        return ontology;
     }
 
     public long countDraftTriples(String projectId, String userId) {

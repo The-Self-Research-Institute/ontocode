@@ -4,12 +4,14 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
@@ -19,7 +21,23 @@ public class OntologyCache {
 
     private record CachedEntry(long revision, OWLOntologyManager manager, OWLOntology ontology) {}
 
-    private final ConcurrentHashMap<String, CachedEntry> cache = new ConcurrentHashMap<>();
+    @Value("${ontocode.reasoner.ontology-cache-max-projects:20}")
+    private int maxProjects;
+
+    private final Map<String, CachedEntry> cache = Collections.synchronizedMap(
+        new LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, CachedEntry> eldest) {
+                if (size() > maxProjects) {
+                    log.info("[OntologyCache] LRU evicted project={} (over {} project limit)",
+                            eldest.getKey(), maxProjects);
+                    evictOrDefer(eldest.getValue());
+                    return true;
+                }
+                return false;
+            }
+        }
+    );
     private final Map<OWLOntology, AtomicInteger> useCount = new IdentityHashMap<>();
     private final Map<OWLOntology, CachedEntry> pendingEviction = new IdentityHashMap<>();
     private final Object useLock = new Object();
@@ -45,17 +63,24 @@ public class OntologyCache {
     }
 
     public Optional<OWLOntology> get(String projectId, long revision) {
-        CachedEntry entry = cache.get(projectId);
-        if (entry != null && entry.revision() == revision) {
-            log.info("[OntologyCache] HIT project={} revision={} axioms={}",
-                    projectId, revision, entry.ontology().getAxiomCount());
-            return Optional.of(entry.ontology());
+        CachedEntry staleEntry = null;
+        CachedEntry entry;
+        synchronized (cache) {
+            entry = cache.get(projectId);
+            if (entry != null && entry.revision() == revision) {
+                log.info("[OntologyCache] HIT project={} revision={} axioms={}",
+                        projectId, revision, entry.ontology().getAxiomCount());
+                return Optional.of(entry.ontology());
+            }
+            if (entry != null) {
+                cache.remove(projectId);
+                staleEntry = entry;
+            }
         }
-        if (entry != null) {
+        if (staleEntry != null) {
             log.info("[OntologyCache] STALE project={} cached={} current={} — evicting",
-                    projectId, entry.revision(), revision);
-            cache.remove(projectId, entry);
-            evictOrDefer(entry);
+                    projectId, staleEntry.revision(), revision);
+            evictOrDefer(staleEntry);
         }
         return Optional.empty();
     }

@@ -37,13 +37,17 @@ public class ReasonerService {
 
     // Caffeine cache: max 5 reasoners, evict after 30 min idle, dispose on removal
     // (each reasoner holds the full ontology + inference state in heap)
-    private final Cache<String, OWLReasoner> reasonerCache = Caffeine.newBuilder()
+    private final Cache<String, CompletableFuture<OWLReasoner>> reasonerCache = Caffeine.newBuilder()
         .maximumSize(5)
         .expireAfterAccess(15, TimeUnit.MINUTES)
         .removalListener((key, value, cause) -> {
-            if (value instanceof OWLReasoner reasoner) {
-                log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
-                try { reasoner.dispose(); } catch (Exception ignored) {}
+            if (value instanceof CompletableFuture<?> future && future.isDone() && !future.isCompletedExceptionally()) {
+                future.thenAccept(v -> {
+                    if (v instanceof OWLReasoner reasoner) {
+                        log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
+                        try { reasoner.dispose(); } catch (Exception ignored) {}
+                    }
+                });
             }
         })
         .build();
@@ -91,7 +95,21 @@ public class ReasonerService {
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
         String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
 
-        OWLReasoner reasoner = reasonerCache.get(cacheKey, k -> buildReasonerWithTimeout(ontology, type));
+        CompletableFuture<OWLReasoner> future = reasonerCache.get(cacheKey, k -> submitReasonerBuild(ontology, type));
+        OWLReasoner reasoner;
+        try {
+            reasoner = future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            reasonerCache.invalidate(cacheKey);
+            throw new RuntimeException(type.getDisplayName() + " reasoning timed out after "
+                    + (reasonerOperationTimeoutMs / 1000) + "s — the ontology may be too large or complex "
+                    + "for this reasoner. Try a different reasoner or a smaller scope.");
+        } catch (Exception e) {
+            reasonerCache.invalidate(cacheKey);
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
+        }
+
         try {
             reasoner.flush();
         } catch (Exception e) {
@@ -100,22 +118,21 @@ public class ReasonerService {
         return reasoner;
     }
 
-    private OWLReasoner buildReasonerWithTimeout(OWLOntology ontology, ReasonerType type) {
-        java.util.concurrent.Future<OWLReasoner> future =
-                reasonerBuildExecutor.submit(() -> buildReasonerWithPrecompute(ontology, type));
+    private CompletableFuture<OWLReasoner> submitReasonerBuild(OWLOntology ontology, ReasonerType type) {
+        CompletableFuture<OWLReasoner> future = new CompletableFuture<>();
         try {
-            return future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            future.cancel(true);
-            throw new RuntimeException(type.getDisplayName() + " reasoning timed out after "
-                    + (reasonerOperationTimeoutMs / 1000) + "s — the ontology may be too large or complex "
-                    + "for this reasoner. Try a different reasoner or a smaller scope.");
+            reasonerBuildExecutor.execute(() -> {
+                try {
+                    future.complete(buildReasonerWithPrecompute(ontology, type));
+                } catch (Throwable t) {
+                    future.completeExceptionally(t);
+                }
+            });
         } catch (RejectedExecutionException e) {
-            throw new RuntimeException("Too many reasoning requests in progress — please try again shortly.");
-        } catch (Exception e) {
-            Throwable cause = e.getCause() != null ? e.getCause() : e;
-            throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
+            future.completeExceptionally(
+                    new RuntimeException("Too many reasoning requests in progress — please try again shortly."));
         }
+        return future;
     }
 
     private OWLReasoner buildReasonerWithPrecompute(OWLOntology ontology, ReasonerType type) {
@@ -503,9 +520,9 @@ public class ReasonerService {
     public Optional<OWLReasoner> findCachedReasoner(OWLOntology ontology) {
         for (ReasonerType type : ReasonerType.values()) {
             String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
-            OWLReasoner reasoner = reasonerCache.getIfPresent(cacheKey);
-            if (reasoner != null) {
-                return Optional.of(reasoner);
+            CompletableFuture<OWLReasoner> future = reasonerCache.getIfPresent(cacheKey);
+            if (future != null && future.isDone() && !future.isCompletedExceptionally()) {
+                return Optional.of(future.join());
             }
         }
         return Optional.empty();

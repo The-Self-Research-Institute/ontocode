@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import jakarta.servlet.http.HttpServletRequest;
+import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.config.EditorApiAuthInterceptor;
@@ -1395,18 +1396,20 @@ public class ProjectLoadController {
     public ResponseEntity<Map<String, Object>> getUnsatisfiableClassesQuick(
             @PathVariable String projectId,
             @RequestParam(required = false) String userId,
-            @RequestParam(required = false, defaultValue = "false") boolean draft) {
+            @RequestParam(required = false, defaultValue = "false") boolean draft,
+            HttpServletRequest request) {
         Map<String, Object> body = new java.util.HashMap<>();
         if (owlEditorReasonerService == null) {
             body.put("success", false);
             body.put("unsatisfiableClasses", java.util.List.of());
             return ResponseEntity.ok(body);
         }
-        boolean isDraft = draft && userId != null && !userId.isBlank();
-        String cacheKey = isDraft ? "draft::" + projectId + "::" + userId : "public::" + projectId;
+        String resolvedUserId = resolveUserId(projectId, userId, request);
+        boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
+        String cacheKey = isDraft ? "draft::" + projectId + "::" + resolvedUserId : "public::" + projectId;
         try {
             long currentVersion = isDraft
-                    ? storageManager.getDraftGraphVersion(projectId, userId)
+                    ? storageManager.getDraftGraphVersion(projectId, resolvedUserId)
                     : storageManager.getPublicGraphVersion(projectId);
 
             QuickUnsatCacheEntry cached = quickUnsatCache.get(cacheKey);
@@ -1415,7 +1418,7 @@ public class ProjectLoadController {
             }
 
             long tripleCount = isDraft
-                    ? datasetService.countDraftTriples(projectId, userId)
+                    ? datasetService.countDraftTriples(projectId, resolvedUserId)
                     : datasetService.getDatasetSize(projectId);
             if (tripleCount > QUICK_UNSAT_MAX_TRIPLES) {
                 body.put("success", true);
@@ -1432,7 +1435,7 @@ public class ProjectLoadController {
                                 try {
                                     OWLOntology ontology;
                                     if (isDraft) {
-                                        ontology = datasetService.loadDraftAsOntology(projectId, userId);
+                                        ontology = datasetService.loadDraftAsOntology(projectId, resolvedUserId);
                                     } else {
                                         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
                                         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
@@ -1458,6 +1461,21 @@ public class ProjectLoadController {
             body.put("unsatisfiableClasses", java.util.List.of());
             return ResponseEntity.ok(body);
         }
+    }
+
+    private String resolveUserId(String projectId, String clientSuppliedUserId, HttpServletRequest request) {
+        if (clientSuppliedUserId == null || clientSuppliedUserId.isBlank()) {
+            return clientSuppliedUserId;
+        }
+        java.util.Optional<String> verified = JwtIdentityExtractor.extractUserId(request);
+        if (verified.isPresent() && !verified.get().isBlank()) {
+            if (!verified.get().equals(clientSuppliedUserId)) {
+                log.warn("Client-supplied userId {} did not match verified identity {} for project {} — using verified identity",
+                        clientSuppliedUserId, verified.get(), projectId);
+            }
+            return verified.get();
+        }
+        return clientSuppliedUserId;
     }
 
     private ResponseEntity<Map<String, Object>> quickUnsatResponse(

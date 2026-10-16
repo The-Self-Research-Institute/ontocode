@@ -59,7 +59,7 @@ public class ReasonerService {
 
     // ConcurrentHashMap: read/written from request threads, the classify
     // executor, and the controller's LRU-eviction path concurrently.
-    private final Map<String, OWLReasoner> reasonerCache = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<OWLReasoner>> reasonerCache = new ConcurrentHashMap<>();
 
     // HermiT's InstanceManager.getTypes() does O(n) LinkedList scans internally,
     // which blows up to O(n^2) against the class count on large ontologies (e.g.
@@ -114,25 +114,36 @@ public class ReasonerService {
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
         String cacheKey = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
-        return reasonerCache.computeIfAbsent(cacheKey, k -> buildReasonerWithTimeout(ontology, type));
-    }
-
-    private OWLReasoner buildReasonerWithTimeout(OWLOntology ontology, ReasonerType type) {
-        java.util.concurrent.Future<OWLReasoner> future =
-                reasonerBuildExecutor.submit(() -> createReasoner(ontology, type));
+        CompletableFuture<OWLReasoner> future = reasonerCache.computeIfAbsent(cacheKey, k -> submitReasonerBuild(ontology, type));
         try {
             return future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            future.cancel(true);
+            reasonerCache.remove(cacheKey, future);
             throw new RuntimeException(type.getDisplayName() + " reasoning timed out after "
                     + (reasonerOperationTimeoutMs / 1000) + "s — the ontology may be too large or complex "
                     + "for this reasoner. Try a different reasoner or a smaller scope.");
-        } catch (java.util.concurrent.RejectedExecutionException e) {
-            throw new RuntimeException("Too many reasoning requests in progress — please try again shortly.");
         } catch (Exception e) {
+            reasonerCache.remove(cacheKey, future);
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
         }
+    }
+
+    private CompletableFuture<OWLReasoner> submitReasonerBuild(OWLOntology ontology, ReasonerType type) {
+        CompletableFuture<OWLReasoner> future = new CompletableFuture<>();
+        try {
+            reasonerBuildExecutor.execute(() -> {
+                try {
+                    future.complete(createReasoner(ontology, type));
+                } catch (Throwable t) {
+                    future.completeExceptionally(t);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            future.completeExceptionally(
+                    new RuntimeException("Too many reasoning requests in progress — please try again shortly."));
+        }
+        return future;
     }
 
     /**
@@ -1149,7 +1160,8 @@ public class ReasonerService {
      */
     private void evictInterruptedReasoner(OWLReasoner reasoner) {
         reasonerCache.entrySet().removeIf(entry -> {
-            if (entry.getValue() != reasoner) {
+            CompletableFuture<OWLReasoner> future = entry.getValue();
+            if (!future.isDone() || future.isCompletedExceptionally() || future.join() != reasoner) {
                 return false;
             }
             try {
@@ -1964,9 +1976,13 @@ public class ReasonerService {
      */
     public void clearCache() {
         log.info("Clearing reasoner cache ({} entries)", reasonerCache.size());
-        
-        reasonerCache.values().forEach(reasoner -> {
+
+        reasonerCache.values().forEach(future -> {
+            if (!future.isDone() || future.isCompletedExceptionally()) {
+                return;
+            }
             try {
+                OWLReasoner reasoner = future.join();
                 if (reasoner != null) {
                     reasoner.dispose();
                 }
@@ -1974,7 +1990,7 @@ public class ReasonerService {
                 log.warn("Error disposing reasoner", e);
             }
         });
-        
+
         reasonerCache.clear();
     }
 
@@ -1985,16 +2001,21 @@ public class ReasonerService {
      */
     public void disposeReasoners(OWLOntology ontology) {
         String keyPrefix = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-";
-        Iterator<Map.Entry<String, OWLReasoner>> it = reasonerCache.entrySet().iterator();
+        Iterator<Map.Entry<String, CompletableFuture<OWLReasoner>>> it = reasonerCache.entrySet().iterator();
         while (it.hasNext()) {
-            Map.Entry<String, OWLReasoner> entry = it.next();
+            Map.Entry<String, CompletableFuture<OWLReasoner>> entry = it.next();
             if (!entry.getKey().startsWith(keyPrefix)) {
                 continue;
             }
             it.remove();
+            CompletableFuture<OWLReasoner> future = entry.getValue();
+            if (!future.isDone() || future.isCompletedExceptionally()) {
+                continue;
+            }
             try {
-                if (entry.getValue() != null) {
-                    entry.getValue().dispose();
+                OWLReasoner reasoner = future.join();
+                if (reasoner != null) {
+                    reasoner.dispose();
                 }
                 log.info("Disposed reasoner {} for evicted ontology", entry.getKey());
             } catch (Exception e) {
@@ -2008,10 +2029,11 @@ public class ReasonerService {
      */
     public void disposeReasoner(String ontologyId, ReasonerType type) {
         String cacheKey = ontologyId + "-" + type.name();
-        OWLReasoner reasoner = reasonerCache.remove(cacheKey);
-        
-        if (reasoner != null) {
+        CompletableFuture<OWLReasoner> future = reasonerCache.remove(cacheKey);
+
+        if (future != null && future.isDone() && !future.isCompletedExceptionally()) {
             try {
+                OWLReasoner reasoner = future.join();
                 reasoner.dispose();
                 log.info("Disposed {} reasoner for ontology {}", type.getDisplayName(), ontologyId);
             } catch (Exception e) {

@@ -12,12 +12,23 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.InputStream;
-
 @Service
 public class OntologySessionService {
 
     private static final Logger log = LoggerFactory.getLogger(OntologySessionService.class);
+
+    private static final java.util.concurrent.ConcurrentHashMap<Long, OWLReasoner> ACTIVE_REASONER_BY_THREAD =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    public static void interruptReasonerOnThread(long threadId) {
+        OWLReasoner reasoner = ACTIVE_REASONER_BY_THREAD.get(threadId);
+        if (reasoner != null) {
+            try {
+                reasoner.interrupt();
+            } catch (Exception ignored) {
+            }
+        }
+    }
 
     private final EditorClient editorClient;
     private final OntologyCache ontologyCache;
@@ -82,34 +93,51 @@ public class OntologySessionService {
                 OWLOntology ontology = cached.get();
                 log.info("[Reasoner] Skipping OWL load — reusing cached ontology for {} (revision={})", projectId, revision);
                 ontologyCache.beginUse(ontology);
-                OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
+                OWLReasoner reasoner;
+                try {
+                    reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
+                } catch (RuntimeException e) {
+                    ontologyCache.endUse(ontology);
+                    throw e;
+                }
                 return new ReasoningSession(null, ontology, reasoner, effectiveType, downgradedWarning, true, ontologyCache);
             }
         }
 
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        try (InputStream in = editorClient.openOntologyStream(projectId, userId)) {
-
-            StreamDocumentSource source = new StreamDocumentSource(
-                    in,
-                    IRI.create("urn:ontocode:load:" + projectId),
-                    new NTriplesDocumentFormat(),
-                    "application/n-triples");
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(source);
-            log.info("Loaded ontology for {} ({} axioms, userId={}, reasoner={})",
-                    projectId, ontology.getAxiomCount(), userId, effectiveType);
-
-            boolean storedInCache = cacheEligible && revision >= 0;
-            if (storedInCache) {
-                ontologyCache.put(projectId, revision, manager, ontology);
-                ontologyCache.beginUse(ontology);
+        OWLOntology ontology = editorClient.loadOntologyStream(projectId, userId, in -> {
+            try {
+                StreamDocumentSource source = new StreamDocumentSource(
+                        in,
+                        IRI.create("urn:ontocode:load:" + projectId),
+                        new NTriplesDocumentFormat(),
+                        "application/n-triples");
+                return manager.loadOntologyFromOntologyDocument(source);
+            } catch (org.semanticweb.owlapi.model.OWLOntologyCreationException e) {
+                throw new RuntimeException("Failed to load ontology for project " + projectId + ": " + e.getMessage(), e);
             }
+        });
+        log.info("Loaded ontology for {} ({} axioms, userId={}, reasoner={})",
+                projectId, ontology.getAxiomCount(), userId, effectiveType);
 
-            OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
-
-            return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType,
-                    downgradedWarning, storedInCache, storedInCache ? ontologyCache : null);
+        boolean storedInCache = cacheEligible && revision >= 0;
+        if (storedInCache) {
+            ontologyCache.put(projectId, revision, manager, ontology);
+            ontologyCache.beginUse(ontology);
         }
+
+        OWLReasoner reasoner;
+        try {
+            reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
+        } catch (RuntimeException e) {
+            if (storedInCache) {
+                ontologyCache.endUse(ontology);
+            }
+            throw e;
+        }
+
+        return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType,
+                downgradedWarning, storedInCache, storedInCache ? ontologyCache : null);
     }
 
     private boolean isHeavyReasoner(ReasonerType type) {
@@ -119,16 +147,20 @@ public class OntologySessionService {
                 || type == ReasonerType.FACTPLUSPLUS;
     }
 
-    public OWLOntology loadForParse(String projectId) throws Exception {
+    public OWLOntology loadForParse(String projectId) {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        try (InputStream in = editorClient.openOntologyStream(projectId, null)) {
-            StreamDocumentSource source = new StreamDocumentSource(
-                    in,
-                    IRI.create("urn:ontocode:load:" + projectId),
-                    new NTriplesDocumentFormat(),
-                    "application/n-triples");
-            return manager.loadOntologyFromOntologyDocument(source);
-        }
+        return editorClient.loadOntologyStream(projectId, null, in -> {
+            try {
+                StreamDocumentSource source = new StreamDocumentSource(
+                        in,
+                        IRI.create("urn:ontocode:load:" + projectId),
+                        new NTriplesDocumentFormat(),
+                        "application/n-triples");
+                return manager.loadOntologyFromOntologyDocument(source);
+            } catch (org.semanticweb.owlapi.model.OWLOntologyCreationException e) {
+                throw new RuntimeException("Failed to load ontology for project " + projectId + ": " + e.getMessage(), e);
+            }
+        });
     }
 
     public static final class ReasoningSession implements AutoCloseable {
@@ -150,6 +182,7 @@ public class OntologySessionService {
             this.downgradedWarning = downgradedWarning;
             this.fromCache = fromCache;
             this.cache = cache;
+            ACTIVE_REASONER_BY_THREAD.put(Thread.currentThread().threadId(), reasoner);
         }
 
         public OWLOntology ontology() { return ontology; }
@@ -159,6 +192,7 @@ public class OntologySessionService {
 
         @Override
         public void close() {
+            ACTIVE_REASONER_BY_THREAD.remove(Thread.currentThread().threadId(), reasoner);
             try {
                 reasoner.dispose();
             } catch (Exception ignored) {

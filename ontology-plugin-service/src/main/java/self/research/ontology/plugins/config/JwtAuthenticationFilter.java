@@ -38,7 +38,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
-    @Value("${ontocode.internal.token:ontocode-internal}")
+    private static final String DEFAULT_INTERNAL_TOKEN = "ontocode-internal";
+    private static final String CACHE_CLEAR_PATH_PREFIX = "/api/reasoner/clear-cache/";
+
+    @Value("${ontocode.internal.token:" + DEFAULT_INTERNAL_TOKEN + "}")
     private String internalToken;
 
     public static final String INTERNAL_SERVICE_PRINCIPAL = "internal-service";
@@ -75,7 +78,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         String presentedInternalToken = request.getHeader("X-Ontocode-Internal-Token");
-        if (presentedInternalToken != null && internalToken != null
+        boolean onCacheClearPath = request.getRequestURI() != null
+                && request.getRequestURI().contains(CACHE_CLEAR_PATH_PREFIX);
+        if (onCacheClearPath && presentedInternalToken != null && internalToken != null
+                && !DEFAULT_INTERNAL_TOKEN.equals(internalToken)
                 && MessageDigest.isEqual(
                         internalToken.getBytes(StandardCharsets.UTF_8),
                         presentedInternalToken.getBytes(StandardCharsets.UTF_8))) {

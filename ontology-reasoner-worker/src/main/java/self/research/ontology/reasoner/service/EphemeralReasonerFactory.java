@@ -24,8 +24,11 @@ final class EphemeralReasonerFactory {
         try {
             return switch (effective) {
                 case HERMIT -> {
+                    org.semanticweb.HermiT.Configuration hermitConfig = new org.semanticweb.HermiT.Configuration();
+                    hermitConfig.ignoreUnsupportedDatatypes = true;
+                    hermitConfig.individualTaskTimeout = timeoutMs;
                     try {
-                        yield new ReasonerFactory().createReasoner(ontology, config);
+                        yield new ReasonerFactory().createReasoner(ontology, hermitConfig);
                     } catch (NoSuchMethodError e) {
                         log.warn("HermiT unavailable, using Openllet");
                         yield OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);

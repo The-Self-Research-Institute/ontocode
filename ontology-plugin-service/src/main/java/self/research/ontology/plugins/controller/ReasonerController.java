@@ -129,6 +129,8 @@ public class ReasonerController {
                         if (count == null || count.get() <= 0) {
                             draftOntologyUseCount.remove(evicted);
                             reasonerService.disposeReasoners(evicted);
+                            draftManagerRefs.remove(evicted);
+                            managerRefs.remove(eldest.getKey());
                         } else {
                             draftOntologyPendingDisposal.add(evicted);
                         }
@@ -146,9 +148,17 @@ public class ReasonerController {
         java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
     private final Object draftDisposalLock = new Object();
 
+    // Identity-keyed, unlike managerRefs (keyed by the draft's string cache key, which gets
+    // overwritten on every reload — including while the previous ontology object is still in
+    // use by a concurrent request, which would let its manager be GC'd mid-use and reproduce
+    // the "Manager on ontology ... is null" bug). Registered when a draft ontology starts being
+    // tracked, removed only once it's actually disposed (immediately or deferred via endDraftUse).
+    private final Map<OWLOntology, OWLOntologyManager> draftManagerRefs = new java.util.IdentityHashMap<>();
+
     private void beginDraftUse(OWLOntology ontology) {
         synchronized (draftDisposalLock) {
             draftOntologyUseCount.computeIfAbsent(ontology, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+            draftManagerRefs.putIfAbsent(ontology, ontology.getOWLOntologyManager());
         }
     }
 
@@ -165,6 +175,7 @@ public class ReasonerController {
                 draftOntologyUseCount.remove(ontology);
                 if (draftOntologyPendingDisposal.remove(ontology)) {
                     reasonerService.disposeReasoners(ontology);
+                    draftManagerRefs.remove(ontology);
                 }
             }
         }
@@ -409,6 +420,7 @@ public class ReasonerController {
                             if (previousCount == null || previousCount.get() <= 0) {
                                 draftOntologyUseCount.remove(previous);
                                 reasonerService.disposeReasoners(previous);
+                                draftManagerRefs.remove(previous);
                             } else {
                                 draftOntologyPendingDisposal.add(previous);
                             }

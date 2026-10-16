@@ -2791,7 +2791,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      const res: any = await apiClient.get(`/plugin-service/api/dl-query/jobs/${jobId}`);
+      const res: any = await apiClient.get(`/api/dl-query/jobs/${jobId}`);
       const job = extractResponseData(res);
       const status = String(job?.status || "").toUpperCase();
       if (status === "COMPLETED") return job;
@@ -3176,6 +3176,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
       }
 
+      if (isStaleRun()) return;
       const startReasonerDraftUserId = isDraftScopeActive() ? resolveMutationActor().userId : undefined;
 
       // Fetch inferred axioms for the Reasoner tab's "Inferred Axioms" view — this
@@ -3202,6 +3203,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // This ensures we have the full depth across the full hierarchy, not just the bundle's view
       console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
 
+      if (isStaleRun()) return;
       // Load hierarchies sequentially to avoid overwhelming GraphDB — skip the
       // ones we already populated directly from the classify bundle above.
       if (!Array.isArray(bundleClassHierarchy) || bundleClassHierarchy.length === 0) {
@@ -3214,10 +3216,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         await loadInferredDataPropertyHierarchy();
       }
       await loadInferredAnnotationPropertyHierarchy();
+      if (isStaleRun()) return;
       await loadInferredDatatypes();
+      if (isStaleRun()) return;
       await loadInferredIndividuals();
       console.log("[Dashboard] ✅ All inferred hierarchies processed");
 
+      if (isStaleRun()) return;
       // Refresh class instances if user is viewing Individuals by Class
       if (selectedClassForIndividuals) {
         await loadClassInstances();
@@ -3315,6 +3320,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (isReasonerRunning) {
         reasonerRunIdRef.current += 1;
         setIsReasonerRunning(false);
+        setIsReasonerLoading(false);
         setReasonerResults(null);
         notificationService.info("Reasoner Stopped", "Previous reasoner stopped due to type change");
       }
@@ -3341,6 +3347,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
+    const checkedProjectId = projectId;
     try {
       setIsConsistencyLoading(true);
       const reasonerType = normalizeReasonerType(selectedReasoner);
@@ -3353,6 +3360,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (data?.async && (data?.jobId || data?.taskId)) {
         data = await pollReasonerWorkerJob(data.jobId || data.taskId);
       }
+      if (currentProjectIdRef.current !== checkedProjectId) return;
       setConsistencyResult(data);
 
       const inconsistent = data?.consistent === false || data?.isConsistent === false;
@@ -3371,8 +3379,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       const friendlyMessage =
         backendData?.error || error?.message || "Consistency check failed for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
-      setConsistencyResult({ error: friendlyMessage });
-      notificationService.error("Consistency Check Failed", `${friendlyMessage}${suggestion}`);
+      if (currentProjectIdRef.current === checkedProjectId) {
+        setConsistencyResult({ error: friendlyMessage });
+        notificationService.error("Consistency Check Failed", `${friendlyMessage}${suggestion}`);
+      }
     } finally {
       setIsConsistencyLoading(false);
     }
@@ -3384,6 +3394,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
+    const checkedProjectId = projectId;
     try {
       setExplanationState({ open: true, loading: true, data: null, error: null });
       const reasonerType = normalizeReasonerType(selectedReasoner);
@@ -3396,6 +3407,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (data?.async && (data?.jobId || data?.taskId)) {
         data = await pollReasonerWorkerJob(data.jobId || data.taskId);
       }
+      if (currentProjectIdRef.current !== checkedProjectId) return;
       setExplanationState({ open: true, loading: false, data, error: null });
       notificationService.info("Explanation Ready", "Review the inconsistency report.");
 
@@ -3418,13 +3430,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       const friendlyMessage =
         backendData?.error || error?.message || "Failed to explain inconsistency for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
-      setExplanationState({
-        open: true,
-        loading: false,
-        data: null,
-        error: friendlyMessage,
-      });
-      notificationService.error("Explain Inconsistency Failed", `${friendlyMessage}${suggestion}`);
+      if (currentProjectIdRef.current === checkedProjectId) {
+        setExplanationState({
+          open: true,
+          loading: false,
+          data: null,
+          error: friendlyMessage,
+        });
+        notificationService.error("Explain Inconsistency Failed", `${friendlyMessage}${suggestion}`);
+      }
     }
   }, [projectId, selectedReasoner, checkConsistency]);
 
@@ -9237,6 +9251,7 @@ const updateItemInState = useCallback(
     // Auto-sync reasoner if enabled
     if (isReasonerSynced && isReasonerRunning && projectId) {
       console.log("[DEBUG] Auto-sync: Re-running reasoner after ontology change");
+      const syncedProjectId = projectId;
       if (autoSyncReasonerTimerRef.current) clearTimeout(autoSyncReasonerTimerRef.current);
       autoSyncReasonerTimerRef.current = setTimeout(async () => {
         if (autoSyncReasonerInFlightRef.current) return;
@@ -9244,6 +9259,7 @@ const updateItemInState = useCallback(
         try {
                const reasonerType = normalizeReasonerType(selectedReasoner);
       const results = await fetchReasonerBundle(reasonerType);
+      if (currentProjectIdRef.current !== syncedProjectId) return;
       setReasonerResults(results);
 
       // The classify response already contains a working hierarchy — this is
