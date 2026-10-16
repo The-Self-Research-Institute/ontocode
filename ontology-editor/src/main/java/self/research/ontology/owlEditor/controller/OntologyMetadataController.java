@@ -288,23 +288,6 @@ public class OntologyMetadataController {
         }
     }
 
-    @PutMapping("/{projectId}/iri")
-    public ResponseEntity<?> updateOntologyIRIs(@PathVariable String projectId,
-                                               @RequestBody Map<String, String> request) {
-        try {
-            String ontologyIri = request.get("ontologyIri");
-            String versionIri = request.get("versionIri");
-            boolean draft = Boolean.parseBoolean(request.get("draft"));
-            String userId = request.get("userId");
-            String username = request.get("username");
-            metadataService.updateOntologyIRIs(projectId, ontologyIri, versionIri, draft, userId, username);
-            return ResponseEntity.ok(Map.of("success", true));
-        } catch (Exception e) {
-            log.error("Error updating ontology IRIs", e);
-            return ResponseEntity.ok(Map.of("success", false, "error", e.getMessage()));
-        }
-    }
-
     @GetMapping("/{projectId}/gci")
     public ResponseEntity<?> getGeneralClassAxioms(@PathVariable String projectId) {
         try {

@@ -9,6 +9,7 @@ import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
+import self.research.ontology.owlEditor.service.delta.DeltaCapture;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportDraftSupport;
 
@@ -31,6 +32,14 @@ public class DraftTrackingService {
     
     // Project-level locks for draft operations to prevent race conditions
     private final Map<String, ReentrantLock> projectLocks = new ConcurrentHashMap<>();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private ProjectWriteLockRegistry lockRegistry;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.lang.Nullable
+    private PublishedHistory publishedHistory;
     
     private final DraftChangeRepository draftRepository;
     private final OntologyMutationService mutationService;
@@ -212,6 +221,14 @@ public class DraftTrackingService {
      */
     public ApplyDraftsResult applyDrafts(String projectId, String userId, boolean force, boolean merge,
                                          Map<String, ConflictResolution> resolutions) {
+        if (lockRegistry == null || userId == null || userId.isBlank()) {
+            return applyDraftsGuarded(projectId, userId, force, merge, resolutions);
+        }
+        return lockRegistry.exclusive(projectId, () -> applyDraftsGuarded(projectId, userId, force, merge, resolutions));
+    }
+
+    private ApplyDraftsResult applyDraftsGuarded(String projectId, String userId, boolean force, boolean merge,
+                                                 Map<String, ConflictResolution> resolutions) {
         log.info("[DRAFT] Applying drafts for project {} user {} (force={}, merge={})",
                 projectId, userId, force, merge);
 
@@ -277,12 +294,14 @@ public class DraftTrackingService {
                 log.warn("[DRAFT] {} for project {} user {}", message, projectId, userId);
                 return new ApplyDraftsResult(false, 0, message, true, analysis);
             }
+            Optional<DeltaCapture> committed = beginCommit(projectId);
             try {
                 draftPublishMergeService.publishWithThreeWayMerge(projectId, userId, analysis, resolutions);
             } catch (Exception e) {
                 log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
                 return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
             }
+            reconcileCommit(projectId, userId, committed);
             draftChangeHistory.markPublished(projectId, userId);
             promoteSpreadsheetImports(projectId, userId);
 
@@ -308,7 +327,16 @@ public class DraftTrackingService {
         return applyDraftsViaMoveGraph(projectId, userId, force, false, unappliedDrafts);
     }
 
-    
+    private Optional<DeltaCapture> beginCommit(String projectId) {
+        return publishedHistory == null ? Optional.empty() : publishedHistory.begin(projectId);
+    }
+
+    private void reconcileCommit(String projectId, String userId, Optional<DeltaCapture> committed) {
+        if (publishedHistory != null) {
+            publishedHistory.reconcile(projectId, userId, committed);
+        }
+    }
+
     private SpreadsheetImportDraftSupport spreadsheetImportDrafts;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -372,12 +400,14 @@ public class DraftTrackingService {
 
         log.info("[DRAFT] Publishing via MOVE GRAPH for project {} user {} (revision {} → {})",
                 projectId, userId, mainRevisionAtCopy, currentRevision);
+        Optional<DeltaCapture> committed = beginCommit(projectId);
         try {
             datasetService.moveDraftToMain(projectId, userId);
         } catch (Exception e) {
             log.error("[DRAFT] MOVE GRAPH publish failed for project {} user {}", projectId, userId, e);
             return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
         }
+        reconcileCommit(projectId, userId, committed);
         draftChangeHistory.markPublished(projectId, userId);
         promoteSpreadsheetImports(projectId, userId);
 

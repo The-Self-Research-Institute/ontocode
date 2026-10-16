@@ -111,6 +111,16 @@
         "command": "ontocode.openWebview",
         "title": "Open OntoCode Editor",
         "category": "OntoCode Studio"
+      },
+      {
+        "command": "ontocode.undo",
+        "title": "Undo my last ontology change",
+        "category": "OntoCode Studio"
+      },
+      {
+        "command": "ontocode.redo",
+        "title": "Redo ontology change",
+        "category": "OntoCode Studio"
       }
     ],
     "viewsWelcome": [
@@ -128,6 +138,14 @@
         {
           "command": "ontocode.editLargeFile",
           "when": "resourceLangId == owl"
+        },
+        {
+          "command": "ontocode.undo",
+          "when": "false"
+        },
+        {
+          "command": "ontocode.redo",
+          "when": "false"
         }
       ],
       "editor/context": [
@@ -163,6 +181,23 @@
         "key": "ctrl+shift+c",
         "mac": "cmd+shift+c",
         "when": "editorTextFocus && resourceExtname =~ /\\.(owl|ttl|rdf|n3|jsonld)$/"
+      },
+      {
+        "command": "ontocode.undo",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "activeWebviewPanelId == 'ontocodeEditor' && ontocode.ontologyFocus"
+      },
+      {
+        "command": "ontocode.redo",
+        "key": "ctrl+y",
+        "when": "activeWebviewPanelId == 'ontocodeEditor' && ontocode.ontologyFocus"
+      },
+      {
+        "command": "ontocode.redo",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z",
+        "when": "activeWebviewPanelId == 'ontocodeEditor' && ontocode.ontologyFocus"
       }
     ],
     "languages": [

@@ -81,6 +81,9 @@ public class OntologyMutationService {
     @Autowired(required = false) @Nullable
     private OntologyHistoryService historyService;
 
+    @Autowired(required = false) @Nullable
+    private RawUpdateHistory rawUpdateHistory;
+
     @Value("${ontology.plugin-service.url:http://localhost:8087}")
     private String pluginServiceUrl;
 
@@ -335,28 +338,31 @@ public class OntologyMutationService {
 
     public void applyRawUpdateWithHistory(String projectId, String sparql, boolean draft,
                                            String userId, String username) {
-        org.eclipse.rdf4j.model.Model oldModel = null;
-        if (!draft && historyService != null) {
-            try (var result = datasetService.execConstructAll(projectId)) {
-                oldModel = org.eclipse.rdf4j.query.QueryResults.asModel(result);
-            }
-        }
-
+        org.eclipse.rdf4j.model.Model before = rawUpdateHistory == null ? null : rawUpdateHistory.snapshot(projectId, draft, userId);
         applyRawUpdate(projectId, sparql, draft, userId);
-
-        if (oldModel != null) {
-            org.eclipse.rdf4j.model.Model newModel;
-            try (var result = datasetService.execConstructAll(projectId)) {
-                newModel = org.eclipse.rdf4j.query.QueryResults.asModel(result);
-            }
-            new CodeViewHistoryRecorder(historyService, null)
-                    .record(projectId, userId, username, oldModel, newModel, false, ChangeOrigin.manual());
+        if (before != null) {
+            rawUpdateHistory.record(projectId, draft, userId, username, before);
         }
     }
 
     public void applyRawUpdate(String projectId, String sparql, boolean draft, String userId) {
         if (sparql == null || sparql.isBlank()) {
             log.warn("[MUTATION] Empty raw SPARQL update for project={}", projectId);
+            return;
+        }
+
+        if (!draft && desktopOwlApiMutationService != null && desktopOwlApiMutationService.tryApplyRaw(projectId, sparql)) {
+            long version = metadataService.incrementMutationVersion(projectId);
+            if (ontologyCache != null) {
+                ontologyCache.updateCachedVersion(projectId, version);
+            }
+            topLevelCacheService.evict(projectId);
+            invalidatePublicCodeViewCache(projectId, false);
+            if (classDetailCacheService != null) {
+                classDetailCacheService.dropAll(projectId);
+            }
+            bumpMainGraphRevision(projectId);
+            invalidateReasonerCaches(projectId);
             return;
         }
 

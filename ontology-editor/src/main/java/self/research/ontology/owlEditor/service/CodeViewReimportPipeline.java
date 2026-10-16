@@ -280,6 +280,7 @@ public class CodeViewReimportPipeline {
         try {
             Model oldModel = parseToModel(req.oldContentFileForDiff(), RdfFiles.snapshotFormat(req.oldContentFileForDiff()));
             Model newModel = parseToModel(files.importSourceFile, files.rdfFormat);
+            origin = req.origin() != null ? origin : ExactOrigins.manualWithDelta(oldModel, newModel);
             historyRecorder.record(req.projectId(), CodeViewHistoryRecorder.effectiveUserId(req.userId(), desktopMode),
                     CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft(), origin,
                     !oldModel.getNamespaces().isEmpty());

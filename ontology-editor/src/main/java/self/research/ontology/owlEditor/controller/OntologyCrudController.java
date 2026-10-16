@@ -12,8 +12,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.OntologyHistoryService;
+import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
+import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
@@ -38,9 +39,10 @@ public class OntologyCrudController {
 
     private final OntologyMutationService mutationService;
     private final DraftTrackingService draftTrackingService;
-    private final OntologyHistoryService historyService;
     private final CollaborativeEditService collaborativeEditService;
     private final ProjectMetadataService metadataService;
+    private final ProjectWriteLockRegistry lockRegistry;
+    private final ExactChangeRecorder exactRecorder;
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
@@ -49,14 +51,16 @@ public class OntologyCrudController {
 
     public OntologyCrudController(OntologyMutationService mutationService,
                                  DraftTrackingService draftTrackingService,
-                                 OntologyHistoryService historyService,
                                  CollaborativeEditService collaborativeEditService,
-                                 ProjectMetadataService metadataService) {
+                                 ProjectMetadataService metadataService,
+                                 ProjectWriteLockRegistry lockRegistry,
+                                 ExactChangeRecorder exactRecorder) {
         this.mutationService = mutationService;
         this.draftTrackingService = draftTrackingService;
-        this.historyService = historyService;
         this.collaborativeEditService = collaborativeEditService;
         this.metadataService = metadataService;
+        this.lockRegistry = lockRegistry;
+        this.exactRecorder = exactRecorder;
     }
 
     @PostMapping("/mutations/{projectId}")
@@ -90,8 +94,16 @@ public class OntologyCrudController {
             String sessionId = request.sessionId() != null ? request.sessionId() :
                 UUID.randomUUID().toString();
 
+            String draftChangeSetId;
             try {
-                mutationService.applyDraft(projectId, userId, request.ops());
+                final String draftUserId = userId;
+                final String draftUsername = username;
+                final String draftSessionId = sessionId;
+                draftChangeSetId = lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, true,
+                        draftUserId, draftUsername, request.ops(), () -> {
+                            mutationService.applyDraft(projectId, draftUserId, request.ops());
+                            draftTrackingService.recordDrafts(projectId, draftUserId, draftUsername, request.ops(), draftSessionId);
+                        }));
             } catch (IllegalArgumentException e) {
                 return ResponseEntity.status(409).body(Map.of(
                     "success", false,
@@ -99,20 +111,17 @@ public class OntologyCrudController {
                     "error", e.getMessage(),
                     "draftCopyNotReady", true
                 ));
-            }
-            draftTrackingService.recordDrafts(projectId, userId, username, request.ops(), sessionId);
-
-            try {
-                historyService.recordGroupedMutations(projectId, userId, username, request.ops(), true);
             } catch (Exception e) {
-                log.warn("[MUTATION] Failed to record draft mutation history for project {}: {}", projectId, e.getMessage());
+                log.error("[MUTATION] Failed to apply draft mutations for project {}: {}", projectId, e.getMessage(), e);
+                return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "draft", true,
+                    "error", "Internal Server Error",
+                    "message", "Failed to apply mutations"
+                ));
             }
 
-            return ResponseEntity.ok(Map.of(
-                "success", true,
-                "draft", true,
-                "message", "Changes saved to your private draft"
-            ));
+            return ResponseEntity.ok(ExactChangeRecorder.appliedBody(true, "Changes saved to your private draft", draftChangeSetId));
         } else {
             try {
                 // Apply directly to GraphDB and record to history
@@ -125,19 +134,13 @@ public class OntologyCrudController {
                 }
                 String username = request.username() != null ? request.username() : "Anonymous";
 
-                mutationService.apply(projectId, request.ops());
-
-                // Record history and broadcast asynchronously — mutation is already applied and
-                // committed; history/broadcast are best-effort and must not block the response.
                 final String finalUserId = userId;
                 final String finalUsername = username;
                 final List<OntologyMutationService.MutationOp> ops = request.ops();
+                String changeSetId = lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, false,
+                        finalUserId, finalUsername, ops, () -> mutationService.apply(projectId, ops)));
+
                 CompletableFuture.runAsync(() -> {
-                    try {
-                        historyService.recordGroupedMutations(projectId, finalUserId, finalUsername, ops, false);
-                    } catch (Exception e) {
-                        log.warn("[MUTATION] Grouped history recording failed for project {}: {}", projectId, e.getMessage());
-                    }
                     for (OntologyMutationService.MutationOp op : ops) {
                         try {
                             collaborativeEditService.broadcastMutation(projectId, op, finalUserId, finalUsername);
@@ -145,14 +148,9 @@ public class OntologyCrudController {
                             log.warn("[MUTATION] Async broadcast failed for op {}: {}", op.type(), e.getMessage());
                         }
                     }
-                    log.info("[MUTATION] Recorded {} changes to GraphDB history (async)", ops.size());
                 }, historyExecutor);
 
-                return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "draft", false,
-                    "message", "Changes applied directly"
-                ));
+                return ResponseEntity.ok(ExactChangeRecorder.appliedBody(false, "Changes applied directly", changeSetId));
             } catch (IllegalArgumentException e) {
                 log.warn("[MUTATION] Rejected mutation request for project {}: {}", projectId, e.getMessage());
                 return ResponseEntity.badRequest().body(Map.of(
@@ -173,13 +171,31 @@ public class OntologyCrudController {
         }
     }
     
+    private static List<OntologyMutationService.MutationOp> pairwiseDisjointOps(List<String> classIds) {
+        List<OntologyMutationService.MutationOp> ops = new java.util.ArrayList<>();
+        for (int i = 0; classIds != null && i < classIds.size(); i++) {
+            for (int j = i + 1; j < classIds.size(); j++) {
+                ops.add(new OntologyMutationService.MutationOp("addDisjointWith", classIds.get(i), null, null, null, null,
+                        classIds.get(j), null, null, null, null, null, null, null, null));
+            }
+        }
+        return ops;
+    }
+
     @PostMapping("/make-siblings-disjoint/{projectId}")
     public ResponseEntity<?> makeSiblingsDisjoint(@PathVariable String projectId,
                                                   @RequestBody MakeSiblingsDisjointRequest request,
                                                   @RequestParam(required = false, defaultValue = "anonymous") String userId,
                                                   @RequestParam(required = false, defaultValue = "Anonymous") String username,
                                                   @RequestParam(required = false, defaultValue = "false") boolean draft) {
-        mutationService.makeSiblingsDisjoint(projectId, request.classIds(), draft, userId);
+        try {
+            lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, draft, userId, username,
+                    pairwiseDisjointOps(request.classIds()),
+                    () -> mutationService.makeSiblingsDisjoint(projectId, request.classIds(), draft, userId)));
+        } catch (Exception e) {
+            log.error("[MUTATION] Failed to make siblings disjoint for project {}: {}", projectId, e.getMessage(), e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "message", "Failed to make siblings disjoint"));
+        }
 
         // Draft edits are private — never broadcast them to other collaborators.
         if (draft) {

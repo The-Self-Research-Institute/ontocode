@@ -1,150 +1,175 @@
 import apiClient from './apiClient';
-import changeTrackingService, { type OntologyChange } from './changeTrackingService';
+import { isDraftScopeActive } from '../utils/draftScope';
+import { emitCommittedChange } from '../utils/committedChange';
 
-export interface RollbackChangePayload {
-  id: string;
-  changeType: string;
-  action: string;
-  entityIRI: string;
-  entityLabel?: string;
-  oldValue?: string;
-  newValue?: string;
+export interface UndoDependent {
+  changeId: string;
+  username?: string;
+  entityIRI?: string;
+  label?: string;
 }
 
-const redoStack: RollbackChangePayload[] = [];
-
-function mapChangeType(change: OntologyChange): string {
-  return change.changeType || change.changeCategory || 'modified';
+export interface UndoStep {
+  available: boolean;
+  direction: 'UNDO' | 'REDO';
+  changeId?: string;
+  changeSetId?: string;
+  auditId?: string;
+  entityIRI?: string;
+  label?: string;
+  reason?: string;
+  dependents: UndoDependent[];
 }
 
-function mapAction(change: OntologyChange): string {
-  const t = (change.changeType || '').toLowerCase();
-  if (t.includes('create') || t.includes('add') || t.includes('insert')) return 'added';
-  if (t.includes('delete') || t.includes('remove')) return 'deleted';
-  if (change.oldValue && change.newValue) return 'modified';
-  return 'modified';
+export interface UndoState {
+  undo: UndoStep;
+  redo: UndoStep;
 }
 
-function toPayload(change: OntologyChange): RollbackChangePayload {
-  return {
-    id: change.id,
-    changeType: mapChangeType(change),
-    action: mapAction(change),
-    entityIRI: change.entityIRI || '',
-    entityLabel: change.entityLabel,
-    oldValue: change.oldValue,
-    newValue: change.newValue,
-  };
+export interface UndoRedoResult {
+  success: boolean;
+  error?: string;
+  label?: string;
+  entityIRI?: string;
+  state?: UndoState;
 }
 
-function invertAction(action: string): string {
-  const lower = action.toLowerCase();
-  if (lower === 'added') return 'deleted';
-  if (lower === 'deleted') return 'added';
-  return 'modified';
+interface ServerBody extends Partial<UndoState> {
+  success?: boolean;
+  auditId?: string;
+  changeSetId?: string;
+  error?: string;
+  message?: string;
+  dependents?: UndoDependent[];
 }
 
-async function rollbackPayload(
-  projectId: string,
-  payload: RollbackChangePayload,
-  userId: string,
-  username: string,
-): Promise<{ success: boolean; error?: string }> {
-  const res = await apiClient.post<{ success: boolean; error?: string; message?: string }>(
-    `/api/ontology/${encodeURIComponent(projectId)}/changes/rollback`,
-    {
-      changeId: payload.id,
-      changeType: payload.changeType,
-      action: payload.action,
-      entityIRI: payload.entityIRI,
-      entityLabel: payload.entityLabel,
-      oldValue: payload.oldValue,
-      newValue: payload.newValue,
-      userId,
-      username,
-    },
+let inFlight = false;
+
+function base(projectId: string): string {
+  return `/api/ontology/${encodeURIComponent(projectId)}`;
+}
+
+function newOpId(): string {
+  const cryptoApi = typeof crypto !== 'undefined' ? crypto : undefined;
+  return cryptoApi?.randomUUID ? cryptoApi.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function scopeQuery(): string {
+  return `draft=${isDraftScopeActive() ? 'true' : 'false'}&opId=${newOpId()}`;
+}
+
+function unwrap(res: unknown): ServerBody {
+  const body = res as { data?: ServerBody } & ServerBody;
+  return body?.data || body || {};
+}
+
+function stateOf(body: ServerBody): UndoState | undefined {
+  return body.undo && body.redo ? { undo: body.undo, redo: body.redo } : undefined;
+}
+
+function failureText(error: unknown): { text: string; body?: ServerBody } {
+  const response = (error as { response?: { data?: ServerBody } })?.response;
+  const body = response?.data;
+  if (body) {
+    const dependents = body.dependents || [];
+    const names = Array.from(new Set(dependents.map((d) => d.username).filter(Boolean)));
+    const suffix = names.length ? ` (changed by ${names.join(', ')})` : '';
+    return { text: `${body.error || body.message || 'The request failed'}${suffix}`, body };
+  }
+  return { text: error instanceof Error && error.message ? error.message : 'The request failed' };
+}
+
+async function guarded(run: () => Promise<UndoRedoResult>): Promise<UndoRedoResult> {
+  if (inFlight) return { success: false, error: 'Another undo or redo is still running' };
+  inFlight = true;
+  try {
+    return await run();
+  } catch (error) {
+    const { text, body } = failureText(error);
+    return { success: false, error: text, state: body ? stateOf(body) : undefined };
+  } finally {
+    inFlight = false;
+  }
+}
+
+function announce(projectId: string, step: UndoStep, isRedo: boolean, auditId?: string): void {
+  emitCommittedChange({
+    projectId,
+    direction: isRedo ? 'REDO' : 'UNDO',
+    opId: auditId,
+    auditId,
+    changeSetId: step.changeSetId,
+    entityIRIs: step.entityIRI ? [step.entityIRI] : [],
+    draft: isDraftScopeActive(),
+  });
+  window.dispatchEvent(
+    new CustomEvent('ontologyRollback', {
+      detail: {
+        projectId,
+        changeId: step.changeId,
+        entityIRI: step.entityIRI || '',
+        entityLabel: step.label,
+        username: '',
+        ...(isRedo ? { isRedo: true } : {}),
+      },
+    }),
   );
-  const data = (res as { data?: { success: boolean; error?: string } }).data || res;
-  return { success: data.success !== false, error: data.error };
+}
+
+async function perform(projectId: string, step: UndoStep, path: string, guard: string): Promise<UndoRedoResult> {
+  const body = unwrap(await apiClient.post<ServerBody>(`${base(projectId)}/${path}?${scopeQuery()}&${guard}`, {}));
+  if (body.success === false) {
+    return { success: false, error: body.error || body.message || 'The request failed', state: stateOf(body) };
+  }
+  announce(projectId, step, path === 'redo', body.auditId);
+  return { success: true, label: step.label, entityIRI: step.entityIRI, state: stateOf(body) };
 }
 
 export const undoRedoService = {
-  canRedo(): boolean {
-    return redoStack.length > 0;
+  isBusy(): boolean {
+    return inFlight;
   },
 
-  clearRedoStack(): void {
-    redoStack.length = 0;
+  async fetchState(projectId: string): Promise<UndoState | undefined> {
+    try {
+      return stateOf(unwrap(await apiClient.get<ServerBody>(`${base(projectId)}/undo/next?${scopeQuery()}`)));
+    } catch {
+      return undefined;
+    }
   },
 
-  async undo(
-    projectId: string,
-    userId: string,
-    username: string,
-  ): Promise<{ success: boolean; error?: string; change?: RollbackChangePayload }> {
-    const changes = await changeTrackingService.getRecentChanges(projectId, 50);
-    const target = changes.find((c) => !c.reverted && c.entityIRI);
-    if (!target) {
-      return { success: false, error: 'No changes to undo' };
-    }
-
-    const payload = toPayload(target);
-    const result = await rollbackPayload(projectId, payload, userId, username);
-    if (result.success) {
-      redoStack.push(payload);
-      window.dispatchEvent(
-        new CustomEvent('ontologyRollback', {
-          detail: {
-            projectId,
-            changeId: payload.id,
-            entityIRI: payload.entityIRI,
-            entityLabel: payload.oldValue || payload.entityLabel,
-            originalAction: payload.action,
-            username,
-          },
-        }),
-      );
-      return { success: true, change: payload };
-    }
-    return result;
+  undo(projectId: string, step: UndoStep | undefined): Promise<UndoRedoResult> {
+    return guarded(async () => {
+      const target = step?.available && step.changeId ? step : undefined;
+      if (!target) return this.requestUndo(projectId);
+      return perform(projectId, target, 'undo', `expectedChangeId=${encodeURIComponent(target.changeId || '')}`);
+    });
   },
 
-  async redo(
-    projectId: string,
-    userId: string,
-    username: string,
-  ): Promise<{ success: boolean; error?: string }> {
-    const payload = redoStack.pop();
-    if (!payload) {
-      return { success: false, error: 'Nothing to redo' };
-    }
+  redo(projectId: string, step: UndoStep | undefined): Promise<UndoRedoResult> {
+    return guarded(async () => {
+      const target = step?.available && step.auditId ? step : undefined;
+      if (!target) return this.requestRedo(projectId);
+      return perform(projectId, target, 'redo', `expectedAuditId=${encodeURIComponent(target.auditId || '')}`);
+    });
+  },
 
-    const redoPayload: RollbackChangePayload = {
-      ...payload,
-      action: invertAction(payload.action),
-      oldValue: payload.newValue,
-      newValue: payload.oldValue,
-    };
+  async requestUndo(projectId: string): Promise<UndoRedoResult> {
+    const body = unwrap(await apiClient.post<ServerBody>(`${base(projectId)}/undo?${scopeQuery()}`, {}));
+    return this.fromBody(projectId, body, 'undo');
+  },
 
-    const result = await rollbackPayload(projectId, redoPayload, userId, username);
-    if (!result.success) {
-      redoStack.push(payload);
-    } else {
-      window.dispatchEvent(
-        new CustomEvent('ontologyRollback', {
-          detail: {
-            projectId,
-            changeId: payload.id,
-            entityIRI: payload.entityIRI,
-            entityLabel: payload.newValue || payload.entityLabel,
-            originalAction: redoPayload.action,
-            username,
-            isRedo: true,
-          },
-        }),
-      );
+  async requestRedo(projectId: string): Promise<UndoRedoResult> {
+    const body = unwrap(await apiClient.post<ServerBody>(`${base(projectId)}/redo?${scopeQuery()}`, {}));
+    return this.fromBody(projectId, body, 'redo');
+  },
+
+  fromBody(projectId: string, body: ServerBody, kind: 'undo' | 'redo'): UndoRedoResult {
+    if (body.success === false) {
+      return { success: false, error: body.error || body.message || 'The request failed', state: stateOf(body) };
     }
-    return result;
+    announce(projectId, { available: true, direction: kind === 'undo' ? 'UNDO' : 'REDO', dependents: [] }, kind === 'redo', body.auditId);
+    return { success: true, state: stateOf(body) };
   },
 };
 

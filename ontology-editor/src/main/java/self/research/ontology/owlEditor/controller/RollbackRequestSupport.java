@@ -7,6 +7,7 @@ import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
+import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -24,16 +25,20 @@ public class RollbackRequestSupport {
 
     public ChangeRollbackService.Actor actor(HttpServletRequest request, Map<String, Object> body) {
         String authHeader = request != null ? request.getHeader("Authorization") : null;
+        String opId = request != null ? request.getHeader("X-Op-Id") : null;
+        if ((opId == null || opId.isBlank()) && body != null && body.get("opId") instanceof String fromBody) {
+            opId = fromBody;
+        }
         String email = JwtClaimUtils.extractEmail(authHeader);
         String[] claims = JwtClaimUtils.extractPlanAndUserId(authHeader);
         String claimUserId = claims != null ? claims[1] : null;
         if (email != null || claimUserId != null) {
             String userId = email != null ? email : claimUserId;
-            return new ChangeRollbackService.Actor(userId, userId);
+            return new ChangeRollbackService.Actor(userId, userId, opId);
         }
         String userId = body != null && body.get("userId") instanceof String s && !s.isBlank() ? s : "system";
         String username = body != null && body.get("username") instanceof String s && !s.isBlank() ? s : "System";
-        return new ChangeRollbackService.Actor(userId, username);
+        return new ChangeRollbackService.Actor(userId, username, opId);
     }
 
     public ResponseEntity<Map<String, Object>> denyIfNotAllowed(List<HistoryChange> changes, String projectId,
@@ -42,7 +47,10 @@ public class RollbackRequestSupport {
         String[] claims = JwtClaimUtils.extractPlanAndUserId(authHeader);
         String requesterId = claims != null ? claims[1] : null;
         if (requesterId == null) {
-            return null;
+            boolean unverified = request == null || JwtIdentityExtractor.extractEmail(request).isEmpty();
+            return JwtIdentityExtractor.signatureRequired() && unverified
+                    ? ResponseEntity.status(401).body(Map.of("success", false, "error", "Sign in to undo or redo"))
+                    : null;
         }
         if (workspaceOwnershipService.isViewerInProject(requesterId, projectId)
                 && !workspaceOwnershipService.isUserOwnerOfProject(requesterId, projectId)) {

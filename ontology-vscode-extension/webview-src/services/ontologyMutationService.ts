@@ -1,5 +1,6 @@
 import apiClient from './apiClient';
 import { resolveMutationActor } from '../utils/mutationActor';
+import { announceMutationApplied } from '../utils/committedChange';
 
 export interface MutationOp {
   type: string;
@@ -86,7 +87,7 @@ export const ontologyMutationService = {
     });
 
     try {
-      await apiClient.post(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, {
+      const response = await apiClient.post<{ changeSetId?: string } | undefined>(`/api/ontology/mutations/${projectId}?draft=${useDraft}`, {
         ops,
         userId: actor.userId,
         username: actor.username,
@@ -94,11 +95,7 @@ export const ontologyMutationService = {
       });
       // Let open views (e.g. Graph View plugin) know the ontology changed so they
       // can drop their caches and refetch.
-      try {
-        window.dispatchEvent(new CustomEvent('ontology:mutated', {
-          detail: { projectId, ops: ops.map(o => o.type) },
-        }));
-      } catch { /* non-fatal */ }
+      announceMutationApplied(projectId, ops, response?.changeSetId, useDraft);
     } catch (err: any) {
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
         const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');

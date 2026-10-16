@@ -23,7 +23,6 @@ import java.util.stream.Collectors;
 final class CodeViewHistoryRecorder {
 
     private static final String DESKTOP_USER_ID = "desktop-user-local";
-    private static final int BULK_DIFF_THRESHOLD = 60;
 
     private final OntologyHistoryService historyService;
     private final DraftTrackingService draftTrackingService;
@@ -72,7 +71,7 @@ final class CodeViewHistoryRecorder {
 
         int namedChangeCount = (int) (added.stream().filter(this::isNamedTriple).count()
                 + removed.stream().filter(this::isNamedTriple).count());
-        if (namedChangeCount > BULK_DIFF_THRESHOLD) {
+        if (namedChangeCount > Limit.CODE_VIEW_BULK_DIFF_THRESHOLD.value()) {
             historyService.recordEdit(projectId, userId, username,
                     "bulkPopulation", null, null, null, null,
                     "Code View save added/changed " + namedChangeCount

@@ -13,7 +13,6 @@ import java.util.regex.Pattern;
 
 final class PrefixScanner {
 
-    private static final int MAX_LINES = 5_000;
 
     private static final Pattern TURTLE = Pattern.compile(
             "^\\s*(?:@prefix|PREFIX)\\s+([^\\s:]*):\\s*<([^>]*)>", Pattern.CASE_INSENSITIVE);
@@ -43,7 +42,7 @@ final class PrefixScanner {
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             String line;
             int count = 0;
-            while ((line = reader.readLine()) != null && count++ < MAX_LINES) {
+            while ((line = reader.readLine()) != null && count++ < Limit.PREFIX_SCAN_MAX_LINES.value()) {
                 Matcher matcher = pattern.matcher(line);
                 if (matcher.find()) {
                     prefixes.putIfAbsent(matcher.group(1), matcher.group(2));
@@ -59,7 +58,7 @@ final class PrefixScanner {
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             String line;
             int count = 0;
-            while ((line = reader.readLine()) != null && count++ < MAX_LINES) {
+            while ((line = reader.readLine()) != null && count++ < Limit.PREFIX_SCAN_MAX_LINES.value()) {
                 if (!inRootTag && (line.contains("<rdf:RDF") || line.contains("<Ontology") || line.contains("<RDF"))) {
                     inRootTag = true;
                 }

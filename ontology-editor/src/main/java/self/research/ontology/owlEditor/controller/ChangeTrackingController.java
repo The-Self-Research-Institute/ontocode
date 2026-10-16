@@ -5,12 +5,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
+import self.research.ontology.owlEditor.service.ChangeFeedService;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
+import self.research.ontology.owlEditor.service.UndoAbility;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.HistorySyncService;
@@ -39,9 +40,6 @@ public class ChangeTrackingController {
     private HistorySyncService historySyncService;
 
     @Autowired
-    private SimpMessagingTemplate messagingTemplate;
-    
-    @Autowired
     private self.research.ontology.owlEditor.service.ChangeRollbackService rollbackService;
 
     @Autowired
@@ -49,6 +47,9 @@ public class ChangeTrackingController {
 
     @Autowired
     private RollbackAuditRepository rollbackAuditRepository;
+
+    @Autowired
+    private ChangeFeedService changeFeedService;
 
     /**
      * Get change history for a project
@@ -181,26 +182,30 @@ public class ChangeTrackingController {
     @GetMapping("/{projectId}/changes/recent")
     public ResponseEntity<Map<String, Object>> getRecentChanges(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "100") int count
+            @RequestParam(defaultValue = "100") int count,
+            @RequestParam(defaultValue = "0") int offset,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String author,
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "true") boolean includeRollbacks,
+            @RequestParam(required = false) String userId,
+            jakarta.servlet.http.HttpServletRequest request
     ) {
         try {
-            // Use MongoDB as the single source for change tracking
-            List<HistoryChange> historyChanges = historySyncService.getHistoryChanges(projectId);
+            ChangeFeedService.Page feed = changeFeedService.page(projectId, new ChangeFeedService.Query(
+                    count, offset, type, author, q, includeRollbacks, viewerIds(request, userId)));
+            List<HistoryChange> historyChanges = feed.changes();
             Map<String, HistorySyncService.ConflictMatch> conflicts = historySyncService.computeConflicts(historyChanges);
 
-            // Limit results
-            if (historyChanges.size() > count) {
-                historyChanges = historyChanges.subList(0, count);
-            }
-
-            // Convert to response format
             List<Map<String, Object>> changes = historyChanges.stream()
                 .map(change -> historyChangeToMap(change, conflicts))
                 .collect(Collectors.toList());
-            
+
             return ResponseEntity.ok(Map.of(
                 "success", true,
-                "changes", changes
+                "changes", changes,
+                "hasMore", feed.hasMore(),
+                "nextOffset", offset + changes.size()
             ));
             
         } catch (Exception e) {
@@ -212,6 +217,23 @@ public class ChangeTrackingController {
         }
     }
     
+    private static Set<String> viewerIds(jakarta.servlet.http.HttpServletRequest request, String requestedUserId) {
+        Set<String> ids = new LinkedHashSet<>();
+        String verified = self.research.ontology.owlEditor.util.JwtIdentityExtractor.extractEmail(request).orElse(null);
+        if (verified != null) {
+            ids.add(verified);
+            String[] claims = self.research.ontology.owlEditor.config.JwtClaimUtils
+                    .extractPlanAndUserId(request.getHeader("Authorization"));
+            if (claims != null && claims[1] != null) {
+                ids.add(claims[1]);
+            }
+        } else if (!self.research.ontology.owlEditor.util.JwtIdentityExtractor.signatureRequired()
+                && requestedUserId != null && !requestedUserId.isBlank()) {
+            ids.add(requestedUserId);
+        }
+        return ids;
+    }
+
     /**
      * Convert HistoryChange to Map for API response
      */
@@ -245,6 +267,9 @@ public class ChangeTrackingController {
         }
         putChangeSetFields(map, change);
         map.put("reverted", change.isReverted());
+        UndoAbility.Result undoAbility = UndoAbility.of(change);
+        map.put("undoable", undoAbility.undoable());
+        map.put("undoReason", undoAbility.reason());
         if (change.isReverted()) {
             Map<String, Object> auditInfo = resolveAuditInfo(change.getRevertedAuditId());
             map.put("revertedBy", auditInfo.get("revertedBy"));
@@ -376,56 +401,6 @@ public class ChangeTrackingController {
             
         } catch (Exception e) {
             log.error("Error getting change statistics", e);
-            return ResponseEntity.status(500).body(Map.of(
-                "success", false,
-                "error", e.getMessage()
-            ));
-        }
-    }
-
-    /**
-     * Revert a change
-     * POST /api/ontology/{projectId}/changes/{changeId}/revert
-     */
-    @PostMapping("/{projectId}/changes/{changeId}/revert")
-    public ResponseEntity<Map<String, Object>> revertChange(
-            @PathVariable String projectId,
-            @PathVariable String changeId,
-            @RequestBody Map<String, String> request
-    ) {
-        try {
-            String userId = request.get("userId");
-            String username = request.get("username");
-            
-            boolean success = changeTrackingService.revertChange(changeId, userId, username);
-            
-            if (success) {
-                // Broadcast revert notification to collaborators
-                Map<String, Object> revertNotification = Map.of(
-                    "type", "CHANGE_REVERTED",
-                    "projectId", projectId,
-                    "changeId", changeId,
-                    "userId", userId,
-                    "username", username,
-                    "timestamp", System.currentTimeMillis(),
-                    "message", "A change was reverted - please refresh"
-                );
-                messagingTemplate.convertAndSend("/topic/ontology/" + projectId, revertNotification);
-                
-                return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Change reverted successfully",
-                    "changeId", changeId
-                ));
-            } else {
-                return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "error", "Failed to revert change"
-                ));
-            }
-            
-        } catch (Exception e) {
-            log.error("Error reverting change", e);
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "error", e.getMessage()

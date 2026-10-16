@@ -18,6 +18,7 @@ import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,6 +42,10 @@ class OntologyMutationServiceTest {
     @Mock
     private DraftCopyService draftCopyService;
 
+    @Mock
+    private DraftTrackingService draftTrackingService;
+
+    private RawUpdateHistory rawUpdateHistory;
     private OntologyMutationService service;
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
@@ -51,6 +56,10 @@ class OntologyMutationServiceTest {
         Executor directExecutor = Runnable::run;
         service = new OntologyMutationService(datasetService, indexService, metadataService,
                 graphGeneratingService, topLevelCacheService, storageManager, directExecutor);
+        rawUpdateHistory = new RawUpdateHistory(datasetService);
+        ReflectionTestUtils.setField(rawUpdateHistory, "historyService", historyService);
+        ReflectionTestUtils.setField(rawUpdateHistory, "draftTrackingService", draftTrackingService);
+        ReflectionTestUtils.setField(service, "rawUpdateHistory", rawUpdateHistory);
         ReflectionTestUtils.setField(service, "historyService", historyService);
         ReflectionTestUtils.setField(service, "draftCopyService", draftCopyService);
         when(draftCopyService.isReady(anyString(), org.mockito.ArgumentMatchers.any())).thenReturn(true);
@@ -91,10 +100,34 @@ class OntologyMutationServiceTest {
     }
 
     @Test
-    void applyRawUpdateWithHistorySkipsRecordingForDraftUpdates() {
-        service.applyRawUpdateWithHistory("proj-1", "INSERT DATA {...}", true, "u1", "User One");
+    void applyRawUpdateWithHistoryRecordsDraftUpdatesFromTheDraftGraph() {
+        var subject = VF.createIRI("http://ex.org/Pizza");
+        var predicate = VF.createIRI("http://www.w3.org/2000/01/rdf-schema#label");
+        var draftGraph = VF.createIRI("urn:draft:u1");
+        org.eclipse.rdf4j.repository.sail.SailRepository repository =
+                new org.eclipse.rdf4j.repository.sail.SailRepository(new org.eclipse.rdf4j.sail.memory.MemoryStore());
+        repository.init();
+        try (var connection = repository.getConnection()) {
+            connection.add(subject, predicate, VF.createLiteral("Pizza"), draftGraph);
+        }
+        when(datasetService.graphTarget("proj-1")).thenReturn(new SparqlDatasetService.ProjectGraphTarget(repository, "urn:main"));
+        when(datasetService.getDraftGraphUri("proj-1", "u1")).thenReturn(draftGraph.stringValue());
+        doAnswer(invocation -> {
+            try (var connection = repository.getConnection()) {
+                connection.clear(draftGraph);
+                connection.add(subject, predicate, VF.createLiteral("Pizza Margherita"), draftGraph);
+            }
+            return null;
+        }).when(datasetService).execDraftUpdateCopyOnSwitch(anyString(), anyString(), anyString());
+
+        service.applyRawUpdateWithHistory("proj-1", "DELETE {...} INSERT {...} WHERE {...}", true, "u1", "User One");
 
         verify(datasetService, org.mockito.Mockito.never()).execConstructAll(anyString());
+        verify(historyService).recordEdit(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), anyString(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.argThat(subChanges -> subChanges != null && !subChanges.isEmpty()),
+                org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -115,6 +148,7 @@ class OntologyMutationServiceTest {
     @Test
     void applyRawUpdateWithoutHistoryStillWorksWhenHistoryServiceIsAbsent() {
         ReflectionTestUtils.setField(service, "historyService", null);
+        ReflectionTestUtils.setField(rawUpdateHistory, "historyService", null);
 
         service.applyRawUpdateWithHistory("proj-1", "INSERT DATA {...}", false, "u1", "User One");
 

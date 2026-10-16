@@ -2,7 +2,7 @@ import React from 'react';
 import AuthorActivityChart from '../components/AuthorActivityChart';
 import ChangeGraph from '../components/ChangeGraph';
 import { authorActivity, weekdayActivity } from './activityData';
-import { changeMatchesType } from './changeParsing';
+import { changeMatchesType, countableChanges } from './changeParsing';
 import { ChangeStats, ChangeType, OntologyChange } from './types';
 
 interface StatsTabProps {
@@ -22,8 +22,8 @@ const Distribution: React.FC<{ stats: ChangeStats; changes: OntologyChange[] }> 
   <div className="border rounded-lg p-3">
     <h3 className="font-medium mb-2">Change Distribution</h3>
     <div className="space-y-2">
-      {(['class', 'property', 'individual', 'axiom', 'annotation', 'import'] as ChangeType[]).map(type => {
-        const count = changes.filter(c => changeMatchesType(c, type)).length;
+      {(['class', 'property', 'individual', 'datatype', 'axiom', 'annotation', 'import', 'prefix', 'rename', 'rule', 'citation'] as ChangeType[]).map(type => {
+        const count = countableChanges(changes).filter(c => changeMatchesType(c, type)).length;
         const percentage = stats.totalChanges > 0 ? (count / stats.totalChanges * 100) : 0;
         return (
           <div key={type}>

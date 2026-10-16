@@ -24,7 +24,6 @@ import java.util.Set;
 @Slf4j
 final class TriplePatchPlanner {
 
-    private static final long MAX_PATCH_LINES = 250_000;
 
     record Edit(long startLine, int lineCount, int newLineCount) {}
 
@@ -47,7 +46,7 @@ final class TriplePatchPlanner {
             return Optional.empty();
         }
         PatchSpans spans = PatchSpans.compute(edits, oldIndex, newIndex, headerOnly);
-        if (spans == null || spans.totalOldLines() > MAX_PATCH_LINES) {
+        if (spans == null || spans.totalOldLines() > Limit.PATCH_MAX_LINES.value()) {
             return Optional.empty();
         }
         Set<IRI> subjects = new LinkedHashSet<>();

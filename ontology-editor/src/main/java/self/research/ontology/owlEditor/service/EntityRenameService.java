@@ -33,6 +33,15 @@ private final ProjectMetadataService metadataService;
 private final HierarchyIndexService hierarchyIndexService;
 private final SparqlDatasetService datasetService;
 private final OntologyHistoryService historyService;
+
+@org.springframework.beans.factory.annotation.Autowired(required = false)
+@org.springframework.lang.Nullable
+private ExactChangeRecorder exactRecorder;
+
+@org.springframework.beans.factory.annotation.Autowired(required = false)
+@org.springframework.lang.Nullable
+private ProjectWriteLockRegistry lockRegistry;
+
 public EntityRenameService(StorageManager storageManager,
                            OntologyMutationService ontologyMutationService,
                            DraftCopyService draftCopyService,
@@ -67,19 +76,33 @@ public void renameEntity(String projectId, String oldIri, String newIri, String 
         throw new IllegalArgumentException("Target IRI already exists in ontology: " + newIri);
     }
 
-    String sparql =
-        "DELETE { ?s ?p <" + oldIri + "> } INSERT { ?s ?p <" + newIri + "> } WHERE { ?s ?p <" + oldIri + "> } ;\n" +
-        "DELETE { <" + oldIri + "> ?p ?o } INSERT { <" + newIri + "> ?p ?o } WHERE { <" + oldIri + "> ?p ?o } ;\n" +
-        "DELETE { ?s <" + oldIri + "> ?o } INSERT { ?s <" + newIri + "> ?o } WHERE { ?s <" + oldIri + "> ?o }";
-
-    ontologyMutationService.applyRawUpdate(projectId, sparql, false, null);
+    String sparql = EntityRenameSparql.build(oldIri, newIri);
+    ChangeOrigin origin = ChangeOrigin.manual();
+    java.util.function.Supplier<String> record = () -> {
+        historyService.recordEdit(projectId, userId, username, "renameEntity", newIri, null, oldIri, newIri,
+                "Renamed " + oldIri + " to " + newIri, null, null, false, origin);
+        return origin.changeSetId();
+    };
+    Runnable apply = () -> ontologyMutationService.applyRawUpdate(projectId, sparql, false, null);
+    OntologyMutationService.MutationOp renameOp = new OntologyMutationService.MutationOp("renameEntity", newIri, null, null,
+            null, null, oldIri, null, null, null, null, null, null, null, null);
+    java.util.function.Supplier<String> recorded = () -> exactRecorder == null
+            ? runAndRecord(apply, record)
+            : exactRecorder.recordAround(projectId, false, userId, List.of(renameOp), apply, record);
+    if (lockRegistry == null) {
+        recorded.get();
+    } else {
+        lockRegistry.exclusive(projectId, recorded);
+    }
 
     hierarchyIndexService.scheduleBuild(projectId);
 
-    historyService.recordEdit(projectId, userId, username, "renameEntity", newIri, null,
-            oldIri, newIri, "Renamed " + oldIri + " to " + newIri);
-
     log.info("Renamed entity {} -> {} in project {}", oldIri, newIri, projectId);
+}
+
+private static String runAndRecord(Runnable apply, java.util.function.Supplier<String> record) {
+    apply.run();
+    return record.get();
 }
 
 private boolean isDeclaredEntity(String projectId, String iri) {

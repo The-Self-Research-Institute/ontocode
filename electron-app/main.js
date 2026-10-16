@@ -748,7 +748,19 @@ function setupMenu(win) {
                 isMac ? { role: 'close' } : { role: 'quit' },
             ],
         },
-        { role: 'editMenu' },
+        {
+            label: 'Edit',
+            submenu: [
+                { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: () => win.webContents.send('menu:undo-redo', 'undo') },
+                { label: 'Redo', accelerator: isMac ? 'Cmd+Shift+Z' : 'Ctrl+Y', click: () => win.webContents.send('menu:undo-redo', 'redo') },
+                ...(isMac ? [] : [{ label: 'Redo (alternate)', accelerator: 'Ctrl+Shift+Z', visible: false, click: () => win.webContents.send('menu:undo-redo', 'redo') }]),
+                { type: 'separator' },
+                { role: 'cut' },
+                { role: 'copy' },
+                { role: 'paste' },
+                { role: 'selectAll' },
+            ],
+        },
         { role: 'viewMenu' },
         {
             label: 'Tools',

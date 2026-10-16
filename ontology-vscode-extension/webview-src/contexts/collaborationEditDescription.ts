@@ -30,7 +30,6 @@ export const getEditActionDescription = (operationType: string, edit?: any): str
     GCI_REMOVED: "removed a general class axiom",
 
     SPARQL_UPDATE: "executed a SPARQL update",
-    CHANGE_REVERTED: "reverted a change",
     PROJECT_SAVED: "saved the project",
 
     SWRL_RULE_ADDED: "added a SWRL rule",

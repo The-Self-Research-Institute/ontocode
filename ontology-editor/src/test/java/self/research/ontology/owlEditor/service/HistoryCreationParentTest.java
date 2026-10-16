@@ -25,7 +25,7 @@ class HistoryCreationParentTest {
     void aNewSubclassRecordsItsParentSoARedoPutsItBackUnderIt() {
         List<Map<String, String>> subChanges = new ArrayList<>();
 
-        OntologyHistoryService.addCreationParent(create("http://ex/Person"), subChanges);
+        HistoryCreationParent.addTo(create("http://ex/Person"), subChanges);
 
         assertEquals(1, subChanges.size());
         assertEquals(SUBCLASS, subChanges.get(0).get("predicate"));
@@ -36,14 +36,14 @@ class HistoryCreationParentTest {
     @Test
     void aTopLevelClassOrAParentAlreadyRecordedAddsNothing() {
         List<Map<String, String>> subChanges = new ArrayList<>();
-        OntologyHistoryService.addCreationParent(create(THING), subChanges);
+        HistoryCreationParent.addTo(create(THING), subChanges);
         assertTrue(subChanges.isEmpty());
 
         Map<String, String> existing = new HashMap<>();
         existing.put("predicate", SUBCLASS);
         existing.put("newValue", "http://ex/Person");
         subChanges.add(existing);
-        OntologyHistoryService.addCreationParent(create("http://ex/Person"), subChanges);
+        HistoryCreationParent.addTo(create("http://ex/Person"), subChanges);
         assertEquals(1, subChanges.size());
     }
 

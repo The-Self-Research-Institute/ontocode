@@ -25,6 +25,22 @@ final class RollbackRecorder {
         this.messaging = messaging;
     }
 
+    String pendingUndoAudit(List<HistoryChange> entries, String changeSetId) {
+        List<RollbackAudit> undos = audits.findByChangeSetIdAndDirectionOrderByRevertedAtDesc(changeSetId, ChangeRollbackService.UNDO);
+        if (undos.isEmpty()) {
+            return null;
+        }
+        for (RollbackAudit undo : undos) {
+            boolean pending = entries.stream().anyMatch(entry ->
+                    (entry.isReverted() && undo.getId().equals(entry.getRevertedAuditId()))
+                            || !RollbackMutationPlanner.revertedBy(entry, undo.getId()).isEmpty());
+            if (pending) {
+                return undo.getId();
+            }
+        }
+        return undos.get(0).getId();
+    }
+
     RollbackAudit saveAudit(Request req, List<HistoryChange> entries, int skippedCount) {
         RollbackAudit audit = new RollbackAudit();
         audit.setProjectId(req.projectId());

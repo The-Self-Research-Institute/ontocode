@@ -20,7 +20,6 @@ final class CodeViewLineIndex {
     static final int STRIDE = 1024;
     private static final ConcurrentHashMap<String, CodeViewLineIndex> CACHE = new ConcurrentHashMap<>();
     private static final int BUFFER_BYTES = 1 << 16;
-    private static final int MAX_CACHED_FILES = 2048;
 
     private final long lastModified;
     private final long size;
@@ -44,7 +43,7 @@ final class CodeViewLineIndex {
         }
         long started = System.nanoTime();
         CodeViewLineIndex built = build(file, lastModified, size);
-        if (CACHE.size() >= MAX_CACHED_FILES) {
+        if (CACHE.size() >= Limit.CODE_VIEW_LINE_INDEX_FILES.value()) {
             CACHE.clear();
         }
         CACHE.put(key, built);

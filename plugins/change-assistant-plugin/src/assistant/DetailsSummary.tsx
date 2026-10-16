@@ -1,5 +1,6 @@
 import React from 'react';
 import { Clock, GitBranch } from 'lucide-react';
+import { fallbackLabel } from './changeKinds';
 import { getChangeIcon } from './display';
 
 function actionClass(details: any): string {
@@ -47,7 +48,12 @@ export const ChangeInfo: React.FC<{ details: any }> = ({ details }) => (
     <div className="flex items-center gap-2">
       <span className="text-2xl">{getChangeIcon(details.entityType?.toLowerCase() || details.type || 'axiom')}</span>
       <div>
-        <p className="font-medium">{details.entityLabel || 'Unknown Entity'}</p>
+        <p className="font-medium">{fallbackLabel({
+          entityLabel: details.entityLabel,
+          entityUri: details.entityIRI,
+          operationType: details.operationType,
+          description: details.description
+        })}</p>
         <p className="text-xs text-gray-500 font-mono truncate max-w-[350px]" title={details.entityIRI}>
           {details.entityIRI}
         </p>

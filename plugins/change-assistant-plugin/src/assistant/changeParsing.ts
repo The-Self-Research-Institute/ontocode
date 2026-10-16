@@ -1,21 +1,15 @@
+import { authorKey, fallbackLabel, isRollbackChange, normaliseAuthor, resolveChangeType } from './changeKinds';
 import { generateWarnings } from './draftWarnings';
 import { ChangeAction, ChangeStats, ChangeStatus, ChangeType, OntologyChange } from './types';
 
 export function extractLabelFromIRI(iri: string): string {
-  if (!iri) return 'Unknown';
+  if (!iri) return '';
   const parts = iri.split(/[#/]/);
-  return parts[parts.length - 1] || 'Unknown';
+  return parts[parts.length - 1] || '';
 }
 
 function mapOperationToType(operationType: string): ChangeType {
-  if (!operationType) return 'axiom';
-  const lower = operationType.toLowerCase();
-  if (lower.includes('class')) return 'class';
-  if (lower.includes('property')) return 'property';
-  if (lower.includes('individual')) return 'individual';
-  if (lower.includes('annotation')) return 'annotation';
-  if (lower.includes('import')) return 'import';
-  return 'axiom';
+  return resolveChangeType(operationType, undefined);
 }
 
 function mapOperationToAction(operationType: string): ChangeAction {
@@ -45,19 +39,7 @@ function formatDraftDescription(draft: any): string {
 }
 
 function mapChangeType(operationType: string, entityType: string): ChangeType {
-  const opLower = operationType?.toLowerCase() || '';
-  const entityLower = entityType?.toLowerCase() || '';
-  if (opLower.includes('class')) return 'class';
-  if (opLower.includes('property')) return 'property';
-  if (opLower.includes('individual')) return 'individual';
-  if (opLower.includes('annotation')) return 'annotation';
-  if (entityLower.includes('class')) return 'class';
-  if (entityLower.includes('property')) return 'property';
-  if (entityLower.includes('individual')) return 'individual';
-  if (entityLower.includes('annotation')) return 'annotation';
-  if (entityLower.includes('axiom')) return 'axiom';
-  if (entityLower.includes('import')) return 'import';
-  return 'axiom';
+  return resolveChangeType(operationType, entityType);
 }
 
 export function changeMatchesType(change: OntologyChange, filterType: ChangeType): boolean {
@@ -77,13 +59,13 @@ export function parseDraft(draft: any): OntologyChange {
   return {
     id: draft.id || `draft-${Date.now()}-${Math.random()}`,
     timestamp: new Date(draft.timestamp),
-    author: draft.username || 'You',
+    author: normaliseAuthor(draft.username, draft.userId) || 'You',
     authorEmail: draft.userId || '',
     type: mapOperationToType(draft.operationType),
     action: mapOperationToAction(draft.operationType),
     status: 'draft' as ChangeStatus,
     entityUri: draft.operationData?.iri || '',
-    entityLabel: draft.operationData?.label || extractLabelFromIRI(draft.operationData?.iri),
+    entityLabel: draft.operationData?.label || extractLabelFromIRI(draft.operationData?.iri) || fallbackLabel({ operationType: draft.operationType }),
     oldValue: draft.operationData?.oldValue,
     newValue: draft.operationData?.value || draft.operationData?.newValue,
     description: formatDraftDescription(draft),
@@ -95,16 +77,21 @@ export function parseDraft(draft: any): OntologyChange {
 
 export function parseChange(change: any) {
   const originalOperationType = change.changeType || change.operationType || '';
+  const parsedLabel = change.entityLabel || extractLabelFromIRI(change.entityIRI);
   return {
     id: change.id,
     timestamp: new Date(change.timestamp),
-    author: change.username || 'System',
+    author: normaliseAuthor(change.username, change.userId),
     authorEmail: change.userId || '',
     type: mapChangeType(originalOperationType, change.changeCategory || change.entityType),
     action: mapAction(originalOperationType),
     status: (change.status?.toLowerCase() || 'saved') as ChangeStatus,
     entityUri: change.entityIRI,
-    entityLabel: change.entityLabel || extractLabelFromIRI(change.entityIRI),
+    entityLabel: fallbackLabel({
+      entityLabel: parsedLabel,
+      operationType: originalOperationType,
+      description: change.description
+    }),
     oldValue: change.oldValue,
     newValue: change.newValue,
     description: change.description || `${originalOperationType}`,
@@ -135,18 +122,26 @@ export function parseChange(change: any) {
     revertsChangeSetId: change.revertsChangeSetId ?? null,
     revertedAuditId: change.revertedAuditId,
     revertedWithSet: !!change.revertedWithSet,
-    rollbackAuditId: change.rollbackAuditId ?? null
+    rollbackAuditId: change.rollbackAuditId ?? null,
+    undoable: typeof change.undoable === 'boolean' ? change.undoable : undefined,
+    undoReason: change.undoReason ?? null,
+    draft: !!change.draft
   };
 }
 
+export function countableChanges<T extends { source?: string | null; operationType?: string }>(changes: T[]): T[] {
+  return changes.filter(change => !isRollbackChange(change));
+}
+
 export function computeStats(parsedChanges: any[], draftChanges: OntologyChange[]): ChangeStats {
-  const totalWarnings = [...parsedChanges, ...draftChanges]
+  const countable = countableChanges(parsedChanges);
+  const totalWarnings = [...countable, ...draftChanges]
     .reduce((sum, c) => sum + (c.warnings?.length || 0), 0);
   return {
-    totalChanges: parsedChanges.length,
+    totalChanges: countable.length,
     draftChanges: draftChanges.length,
-    conflicts: parsedChanges.filter((c: any) => c.conflicts?.length > 0).length,
-    activeAuthors: new Set(parsedChanges.map((c: any) => c.author)).size,
+    conflicts: countable.filter((c: any) => c.conflicts?.length > 0).length,
+    activeAuthors: new Set(countable.map((c: any) => authorKey(c.author, c.authorEmail))).size,
     warnings: totalWarnings
   };
 }
