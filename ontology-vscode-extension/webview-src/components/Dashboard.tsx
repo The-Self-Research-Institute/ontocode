@@ -2038,9 +2038,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
   const [inferredObjectPropertyHierarchy, setInferredObjectPropertyHierarchy] = useState<TreeNode[]>([]);
+  const inferredObjectPropertyLoadKeyRef = useRef<string | null>(null);
   const [dataProperties, setDataProperties] = useState<Property[]>([]);
   const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
   const [inferredDataPropertyHierarchy, setInferredDataPropertyHierarchy] = useState<TreeNode[]>([]);
+  const inferredDataPropertyLoadKeyRef = useRef<string | null>(null);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
   const [annotationPropertyHierarchy, setAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
   const [inferredAnnotationPropertyHierarchy, setInferredAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
@@ -2953,6 +2955,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
     const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
+    const loadKey = `${startedProjectId}::${effectiveReasoner}::${startedRunId}`;
+    if (inferredObjectPropertyLoadKeyRef.current === loadKey) return;
+    inferredObjectPropertyLoadKeyRef.current = loadKey;
     try {
       const fetchPropHierarchy = async (reasoner: string) => {
         const r = await apiClient.get<any>(
@@ -2987,6 +2992,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         setInferredObjectPropertyHierarchy([]);
         notifyReasonerJobRejected(error);
       }
+    } finally {
+      if (inferredObjectPropertyLoadKeyRef.current === loadKey) {
+        inferredObjectPropertyLoadKeyRef.current = null;
+      }
     }
   }, [projectId, metadata, selectedReasoner]);
 
@@ -2999,6 +3008,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
     const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
+    const loadKey = `${startedProjectId}::${effectiveReasoner}::${startedRunId}`;
+    if (inferredDataPropertyLoadKeyRef.current === loadKey) return;
+    inferredDataPropertyLoadKeyRef.current = loadKey;
     try {
       const fetchPropHierarchy = async (reasoner: string) => {
         const r = await apiClient.get<any>(
@@ -3029,6 +3041,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!isStale()) {
         setInferredDataPropertyHierarchy([]);
         notifyReasonerJobRejected(error);
+      }
+    } finally {
+      if (inferredDataPropertyLoadKeyRef.current === loadKey) {
+        inferredDataPropertyLoadKeyRef.current = null;
       }
     }
   }, [projectId, metadata, selectedReasoner]);
