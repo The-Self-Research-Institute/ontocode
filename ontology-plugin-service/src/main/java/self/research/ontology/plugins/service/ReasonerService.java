@@ -118,15 +118,32 @@ public class ReasonerService {
         try {
             return future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            reasonerCache.remove(cacheKey, future);
+            if (reasonerCache.remove(cacheKey, future)) {
+                disposeWhenBuilt(future);
+            }
             throw new RuntimeException(type.getDisplayName() + " reasoning timed out after "
                     + (reasonerOperationTimeoutMs / 1000) + "s — the ontology may be too large or complex "
                     + "for this reasoner. Try a different reasoner or a smaller scope.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(type.getDisplayName() + " reasoning was interrupted", e);
         } catch (Exception e) {
             reasonerCache.remove(cacheKey, future);
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
         }
+    }
+
+    private static void disposeWhenBuilt(CompletableFuture<OWLReasoner> future) {
+        future.thenAccept(reasoner -> {
+            try {
+                if (reasoner != null) {
+                    reasoner.dispose();
+                }
+            } catch (Exception e) {
+                log.warn("Error disposing abandoned reasoner", e);
+            }
+        });
     }
 
     private CompletableFuture<OWLReasoner> submitReasonerBuild(OWLOntology ontology, ReasonerType type) {
@@ -500,8 +517,8 @@ public class ReasonerService {
             stats.put("objectPropertyNodes", ontology.getObjectPropertiesInSignature().size());
             stats.put("dataPropertyNodes", ontology.getDataPropertiesInSignature().size());
             stats.put("individuals", ontology.getIndividualsInSignature().size());
-            stats.put("satisfiableClasses", Math.max(0, totalClasses - unsatisfiableList.size()));
-            stats.put("unsatisfiableClasses", unsatisfiableList.size());
+            stats.put("satisfiableClasses", isConsistent ? Math.max(0, totalClasses - unsatisfiableList.size()) : -1);
+            stats.put("unsatisfiableClasses", isConsistent ? unsatisfiableList.size() : -1);
             stats.put("isConsistent", isConsistent);
             results.put("stats", stats);
 
@@ -536,7 +553,7 @@ public class ReasonerService {
                 "equivalentClasses", new ArrayList<>(),
                 "unsatisfiableClasses", new ArrayList<>(),
                 "totalClasses", ontology.getClassesInSignature().size(),
-                "error", e.getMessage()
+                "error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()
             );
         }
     }
@@ -1273,7 +1290,7 @@ public class ReasonerService {
                 "instances", new ArrayList<>(),
                 "totalInstances", 0,
                 "totalIndividuals", ontology.getIndividualsInSignature().size(),
-                "error", e.getMessage()
+                "error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()
             );
         }
     }
@@ -1977,21 +1994,12 @@ public class ReasonerService {
     public void clearCache() {
         log.info("Clearing reasoner cache ({} entries)", reasonerCache.size());
 
-        reasonerCache.values().forEach(future -> {
-            if (!future.isDone() || future.isCompletedExceptionally()) {
-                return;
-            }
-            try {
-                OWLReasoner reasoner = future.join();
-                if (reasoner != null) {
-                    reasoner.dispose();
-                }
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner", e);
-            }
-        });
-
-        reasonerCache.clear();
+        Iterator<Map.Entry<String, CompletableFuture<OWLReasoner>>> it = reasonerCache.entrySet().iterator();
+        while (it.hasNext()) {
+            CompletableFuture<OWLReasoner> future = it.next().getValue();
+            it.remove();
+            disposeWhenBuilt(future);
+        }
     }
 
     /**
@@ -2008,19 +2016,8 @@ public class ReasonerService {
                 continue;
             }
             it.remove();
-            CompletableFuture<OWLReasoner> future = entry.getValue();
-            if (!future.isDone() || future.isCompletedExceptionally()) {
-                continue;
-            }
-            try {
-                OWLReasoner reasoner = future.join();
-                if (reasoner != null) {
-                    reasoner.dispose();
-                }
-                log.info("Disposed reasoner {} for evicted ontology", entry.getKey());
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner {}", entry.getKey(), e);
-            }
+            disposeWhenBuilt(entry.getValue());
+            log.info("Disposed reasoner {} for evicted ontology", entry.getKey());
         }
     }
 
@@ -2031,14 +2028,9 @@ public class ReasonerService {
         String cacheKey = ontologyId + "-" + type.name();
         CompletableFuture<OWLReasoner> future = reasonerCache.remove(cacheKey);
 
-        if (future != null && future.isDone() && !future.isCompletedExceptionally()) {
-            try {
-                OWLReasoner reasoner = future.join();
-                reasoner.dispose();
-                log.info("Disposed {} reasoner for ontology {}", type.getDisplayName(), ontologyId);
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner", e);
-            }
+        if (future != null) {
+            disposeWhenBuilt(future);
+            log.info("Disposed {} reasoner for ontology {}", type.getDisplayName(), ontologyId);
         }
     }
 }
