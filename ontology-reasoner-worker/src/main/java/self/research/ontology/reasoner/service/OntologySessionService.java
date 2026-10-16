@@ -56,10 +56,12 @@ public class OntologySessionService {
         long tripleCount = editorClient.getTripleCount(projectId);
         log.info("[Reasoner] Triple count for project {}: {}", projectId, tripleCount);
 
-        boolean tripleCountUnknown = tripleCount < 0;
-        if (tripleCountUnknown) {
-            log.warn("[Reasoner] Could not read triple count for {} — assuming large ontology, forcing ELK", projectId);
-        } else if (tripleCount > maxTriples) {
+        if (tripleCount < 0) {
+            log.warn("[Reasoner] Could not read triple count for {} — refusing to reason over it without a size check", projectId);
+            throw new IllegalStateException("Could not determine the triple count for project " + projectId
+                    + " — refusing to load it for in-process reasoning without a size check.");
+        }
+        if (tripleCount > maxTriples) {
             throw new IllegalStateException("Ontology has " + tripleCount + " triples, exceeding the configured "
                     + "limit of " + maxTriples + " triples for in-process reasoning.");
         }
@@ -67,16 +69,15 @@ public class OntologySessionService {
         ReasonerType effectiveType = reasonerType;
         String downgradedWarning = null;
 
-        if ((tripleCountUnknown || tripleCount > hermitMaxTriples) && isHeavyReasoner(reasonerType)) {
+        if (tripleCount > hermitMaxTriples && isHeavyReasoner(reasonerType)) {
             effectiveType = ReasonerType.ELK;
-            String sizeDesc = tripleCountUnknown ? "unknown size" : tripleCount + " triples";
-            downgradedWarning = "Large ontology detected (" + sizeDesc + ") — automatically switched "
+            downgradedWarning = "Large ontology detected (" + tripleCount + " triples) — automatically switched "
                     + "to ELK for memory efficiency. Some OWL DL axioms (cardinality restrictions, "
                     + "allValuesFrom, complement/union) may not be fully inferred. Results are sound "
                     + "for OWL EL ontologies.";
-            log.info("[Reasoner] Auto-downgraded {} → ELK for project {} ({} > {} threshold or size unknown)",
-                    reasonerType, projectId, sizeDesc, hermitMaxTriples);
-        } else if (effectiveType == ReasonerType.ELK && !tripleCountUnknown && tripleCount > hermitMaxTriples) {
+            log.info("[Reasoner] Auto-downgraded {} → ELK for project {} ({} > {} threshold)",
+                    reasonerType, projectId, tripleCount, hermitMaxTriples);
+        } else if (effectiveType == ReasonerType.ELK && tripleCount > hermitMaxTriples) {
 
             downgradedWarning = "ELK is running on a large ontology (" + tripleCount + " triples). "
                     + "Results may take several minutes. "
@@ -88,11 +89,10 @@ public class OntologySessionService {
         long revision = cacheEligible ? editorClient.getRevision(projectId) : -1;
 
         if (cacheEligible && revision >= 0) {
-            var cached = ontologyCache.get(projectId, revision);
+            var cached = ontologyCache.getAndBeginUse(projectId, revision);
             if (cached.isPresent()) {
                 OWLOntology ontology = cached.get();
                 log.info("[Reasoner] Skipping OWL load — reusing cached ontology for {} (revision={})", projectId, revision);
-                ontologyCache.beginUse(ontology);
                 OWLReasoner reasoner;
                 try {
                     reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
@@ -100,7 +100,7 @@ public class OntologySessionService {
                     ontologyCache.endUse(ontology);
                     throw e;
                 }
-                return new ReasoningSession(null, ontology, reasoner, effectiveType, downgradedWarning, true, ontologyCache);
+                return new ReasoningSession(null, ontology, reasoner, effectiveType, downgradedWarning, true, ontologyCache, revision);
             }
         }
 
@@ -137,7 +137,7 @@ public class OntologySessionService {
         }
 
         return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType,
-                downgradedWarning, storedInCache, storedInCache ? ontologyCache : null);
+                downgradedWarning, storedInCache, storedInCache ? ontologyCache : null, revision);
     }
 
     private boolean isHeavyReasoner(ReasonerType type) {
@@ -171,10 +171,11 @@ public class OntologySessionService {
         private final String downgradedWarning;
         private final boolean fromCache;
         private final OntologyCache cache;
+        private final long revision;
 
         ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
                          ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
-                         OntologyCache cache) {
+                         OntologyCache cache, long revision) {
             this.manager = manager;
             this.ontology = ontology;
             this.reasoner = reasoner;
@@ -182,6 +183,7 @@ public class OntologySessionService {
             this.downgradedWarning = downgradedWarning;
             this.fromCache = fromCache;
             this.cache = cache;
+            this.revision = revision;
             ACTIVE_REASONER_BY_THREAD.put(Thread.currentThread().threadId(), reasoner);
         }
 
@@ -189,6 +191,7 @@ public class OntologySessionService {
         public OWLReasoner reasoner() { return reasoner; }
         public ReasonerType actualReasonerType() { return actualReasonerType; }
         public String downgradedWarning() { return downgradedWarning; }
+        public long revision() { return revision; }
 
         @Override
         public void close() {

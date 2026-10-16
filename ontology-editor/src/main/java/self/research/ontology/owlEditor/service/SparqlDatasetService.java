@@ -1383,7 +1383,16 @@ public class SparqlDatasetService {
             return cached;
         }
 
+        if (!isDraftCopySessionReady(projectId, userId)) {
+            throw new IllegalStateException("Draft copy for project " + projectId + " (user " + userId
+                    + ") is not ready yet — the copy-on-switch background job hasn't finished.");
+        }
+
         long tripleCount = countDraftTriples(projectId, userId);
+        if (tripleCount < 0) {
+            throw new RuntimeException("Could not determine the draft's triple count for project " + projectId
+                    + " (user " + userId + ") — refusing to load it for in-process reasoning without a size check.");
+        }
         if (tripleCount > draftMaxTriples) {
             throw new RuntimeException("Draft has " + tripleCount + " triples, exceeding the configured limit of "
                     + draftMaxTriples + " triples for in-process draft reasoning.");
@@ -1409,7 +1418,7 @@ public class SparqlDatasetService {
             }
         } catch (Exception e) {
             log.debug("[DRAFT-GRAPH] count failed for project {} user {}: {}", projectId, userId, e.getMessage());
-            return 0;
+            return -1;
         }
     }
 
@@ -1435,12 +1444,13 @@ public class SparqlDatasetService {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private boolean isDraftCopyReady(String projectId, String userId) {
-        // userId is resolved from the JWT/X-Ontocode-User-Id header on every request
-        // (including ones made while viewing Public), so it alone can't signal "this
-        // request wants draft scope" — that requires the explicit draft=true parameter.
         if (!SparqlQueryContext.wantsDraft()) {
             return false;
         }
+        return isDraftCopySessionReady(projectId, userId);
+    }
+
+    private boolean isDraftCopySessionReady(String projectId, String userId) {
         if (userId == null || userId.isBlank() || draftSessionRepository == null) {
             return false;
         }
@@ -2057,6 +2067,9 @@ public class SparqlDatasetService {
 
                     // Invalidate context caches after new data is committed
                     invalidateContextCaches(projectId);
+                    if (!draft && mainGraphRevisionService != null) {
+                        mainGraphRevisionService.incrementRevision(projectId);
+                    }
 
                     // Register any partition graphs that were created during this import
                     if (partitionBatches != null && !partitionBatches.isEmpty()) {
@@ -2604,6 +2617,9 @@ public class SparqlDatasetService {
 
                     // Restore original auto-commit setting
                     conn.setAutoCommit(originalAutoCommit);
+                    if (mainGraphRevisionService != null) {
+                        mainGraphRevisionService.incrementRevision(projectId);
+                    }
 
                     long totalDuration = elapsedMillis(bulkLoadStart);
                     log.info("═══════════════════════════════════════════════════════════");
@@ -2725,6 +2741,9 @@ public class SparqlDatasetService {
             clearGraphsInRepository(shared.repository(), projectId);
             evictPerFileDataset(projectId);
             invalidateContextCaches(projectId);
+            if (mainGraphRevisionService != null) {
+                mainGraphRevisionService.incrementRevision(projectId);
+            }
 
         } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
             if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {

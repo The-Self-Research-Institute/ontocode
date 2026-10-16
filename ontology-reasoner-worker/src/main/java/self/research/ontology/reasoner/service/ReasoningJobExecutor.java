@@ -120,9 +120,7 @@ public class ReasoningJobExecutor {
             response.put("query", job.getExpression());
             response.put("queryType", types);
             response.put("results", results);
-            if (session.downgradedWarning() != null) {
-                response.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(response, session);
             return response;
         }
     }
@@ -138,9 +136,7 @@ public class ReasoningJobExecutor {
             result.put("consistent", consistent);
             result.put("reasonerType", effective.getDisplayName());
             result.put("projectId", job.getProjectId());
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(result, session);
             if (!consistent) {
                 var unsat = reasoner.getUnsatisfiableClasses().getEntities();
                 OWLDataFactory df = session.ontology().getOWLOntologyManager().getOWLDataFactory();
@@ -168,17 +164,7 @@ public class ReasoningJobExecutor {
             String mode = job.getExplanationMode() != null && !job.getExplanationMode().isBlank()
                     ? job.getExplanationMode() : "regular";
 
-            OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
-            OWLReasoner explainReasoner = EphemeralReasonerFactory.create(reasoningOntology, effective, jobTimeoutMs);
-            boolean isConsistent;
-            try {
-                isConsistent = explainReasoner.isConsistent();
-            } finally {
-                try {
-                    explainReasoner.dispose();
-                } catch (Exception ignored) {
-                }
-            }
+            boolean isConsistent = session.reasoner().isConsistent();
 
             explanation.put("success", true);
             explanation.put("isConsistent", isConsistent);
@@ -186,9 +172,7 @@ public class ReasoningJobExecutor {
             if (requestedType != effective) {
                 explanation.put("reasonerUpgraded", true);
             }
-            if (session.downgradedWarning() != null) {
-                explanation.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(explanation, session);
 
             if (isConsistent) {
                 explanation.put("message", "Ontology is consistent - no explanation needed");
@@ -781,9 +765,7 @@ public class ReasoningJobExecutor {
             stats.put("isConsistent", true);
             result.put("stats", stats);
 
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -961,9 +943,7 @@ public class ReasoningJobExecutor {
             result.put("reasonerType", effective.getDisplayName());
             result.put("durationMs", duration);
             result.put("message", "Realization completed successfully");
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -976,9 +956,7 @@ public class ReasoningJobExecutor {
             Map<String, Object> result = new HashMap<>();
             long totalStart = System.currentTimeMillis();
 
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(result, session);
 
             long t0 = System.currentTimeMillis();
             boolean consistent = reasoner.isConsistent();
@@ -1022,8 +1000,14 @@ public class ReasoningJobExecutor {
             reasoner.precomputeInferences(org.semanticweb.owlapi.reasoner.InferenceType.CLASS_ASSERTIONS);
 
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            final int axiomDisplayLimit = 100;
             Set<OWLAxiom> inferredAxioms = new LinkedHashSet<>();
+            boolean truncated = false;
             for (OWLClass owlClass : ontology.getClassesInSignature()) {
+                if (inferredAxioms.size() >= axiomDisplayLimit) {
+                    truncated = true;
+                    break;
+                }
                 if (owlClass.isOWLThing() || owlClass.isOWLNothing()) {
                     continue;
                 }
@@ -1039,7 +1023,7 @@ public class ReasoningJobExecutor {
             long duration = System.currentTimeMillis() - start;
 
             List<Map<String, Object>> axiomsList = inferredAxioms.stream()
-                    .limit(100)
+                    .limit(axiomDisplayLimit)
                     .map(axiom -> {
                         Map<String, Object> entry = new HashMap<>();
                         entry.put("axiomType", axiom.getAxiomType().getName());
@@ -1059,12 +1043,10 @@ public class ReasoningJobExecutor {
             result.put("durationMs", duration);
             result.put("totalInferredAxioms", inferredAxioms.size());
             result.put("axioms", axiomsList);
-            result.put("message", axiomsList.size() < inferredAxioms.size()
-                    ? "Showing first 100 of " + inferredAxioms.size() + " inferred axioms"
+            result.put("message", truncated
+                    ? "Showing the first " + axiomsList.size() + " inferred axioms (there may be more)"
                     : "Showing all " + inferredAxioms.size() + " inferred axioms");
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -1086,6 +1068,15 @@ public class ReasoningJobExecutor {
                     org.semanticweb.owlapi.reasoner.InferenceType.OBJECT_PROPERTY_HIERARCHY,
                     org.semanticweb.owlapi.reasoner.InferenceType.DATA_PROPERTY_HIERARCHY
             );
+        }
+    }
+
+    private void attachSessionMetadata(Map<String, Object> result, OntologySessionService.ReasoningSession session) {
+        if (session.downgradedWarning() != null) {
+            result.put("downgradedWarning", session.downgradedWarning());
+        }
+        if (session.revision() >= 0) {
+            result.put("ontologyRevision", session.revision());
         }
     }
 
@@ -1208,7 +1199,7 @@ public class ReasoningJobExecutor {
             result.put("hierarchy", hierarchy);
             result.put("reasonerType", effective.getDisplayName());
             result.put("totalClasses", visited.size());
-            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -1253,7 +1244,7 @@ public class ReasoningJobExecutor {
             result.put("success", true);
             result.put("hierarchy", List.of(root));
             result.put("reasonerType", effective.getDisplayName());
-            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -1297,7 +1288,7 @@ public class ReasoningJobExecutor {
             result.put("success", true);
             result.put("hierarchy", List.of(root));
             result.put("reasonerType", effective.getDisplayName());
-            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            attachSessionMetadata(result, session);
             return result;
         }
     }

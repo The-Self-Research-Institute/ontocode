@@ -13,10 +13,13 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -31,11 +34,15 @@ public class ReasoningQueueManager {
     private final AtomicLong totalDurationMs = new AtomicLong(0);
     private final AtomicLong completedCount = new AtomicLong(0);
     private volatile Instant lastActivityAt = Instant.now();
-    private final ExecutorService notificationExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "reasoning-job-notifier");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ExecutorService notificationExecutor = new ThreadPoolExecutor(
+            2, 4, 60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(1000),
+            r -> {
+                Thread t = new Thread(r, "reasoning-job-notifier");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.DiscardOldestPolicy());
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
     private static final long MAX_WAIT_TIME_MS = 30 * 60 * 1000;
@@ -70,6 +77,14 @@ public class ReasoningQueueManager {
 
         ReasoningJob job;
         synchronized (this) {
+            ReasoningJob duplicate = findInFlightDuplicate(jobType, projectId, expression, queryTypes,
+                    reasonerType, maxJustifications, explanationMode);
+            if (duplicate != null) {
+                log.info("[Reasoning] Reusing in-flight {} job {} for project {} instead of enqueueing a duplicate",
+                        jobType, duplicate.getJobId(), projectId);
+                return duplicate;
+            }
+
             resultRetention.makeRoomForIncomingJob();
 
             job = ReasoningJob.builder()
@@ -102,6 +117,36 @@ public class ReasoningQueueManager {
                 job.getJobId(), jobType, projectId, Thread.currentThread().getName(),
                 System.identityHashCode(job), System.currentTimeMillis());
         return job;
+    }
+
+    private ReasoningJob findInFlightDuplicate(ReasoningJob.JobType jobType, String projectId, String expression,
+                                                List<String> queryTypes, String reasonerType,
+                                                Integer maxJustifications, String explanationMode) {
+        for (ReasoningJob candidate : queue) {
+            if (isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
+                    maxJustifications, explanationMode)) {
+                return candidate;
+            }
+        }
+        for (ReasoningJob candidate : activeJobs.values()) {
+            if (isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
+                    maxJustifications, explanationMode)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private boolean isSameRequest(ReasoningJob candidate, ReasoningJob.JobType jobType, String projectId,
+                                   String expression, List<String> queryTypes, String reasonerType,
+                                   Integer maxJustifications, String explanationMode) {
+        return Objects.equals(candidate.getJobType(), jobType)
+                && Objects.equals(candidate.getProjectId(), projectId)
+                && Objects.equals(candidate.getExpression(), expression)
+                && Objects.equals(candidate.getQueryTypes(), queryTypes)
+                && Objects.equals(candidate.getReasonerType(), reasonerType)
+                && Objects.equals(candidate.getMaxJustifications(), maxJustifications)
+                && Objects.equals(candidate.getExplanationMode(), explanationMode);
     }
 
     public synchronized ReasoningJob dequeue() {

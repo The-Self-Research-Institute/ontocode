@@ -150,7 +150,8 @@ const IndividualEditor: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
   isReasonerRunning?: boolean;
   selectedReasoner?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy = [], dataPropertyHierarchy = [], classHierarchy = [], objectProperties = [], dataProperties = [], expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT', existingIris = [] }) => {
+  syncMode?: 'private' | 'public';
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy = [], dataPropertyHierarchy = [], classHierarchy = [], objectProperties = [], dataProperties = [], expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT', syncMode = 'public', existingIris = [] }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -219,7 +220,7 @@ const IndividualEditor: React.FC<{
       }
     })();
     return () => { alive = false; };
-  }, [projectId, item.id, isReasonerRunning, selectedReasoner]);
+  }, [projectId, item.id, isReasonerRunning, selectedReasoner, syncMode]);
 
   // Fetch individual details when component mounts or item changes.
   // Uses an "alive" flag so stale responses from a previously selected
@@ -278,7 +279,7 @@ const IndividualEditor: React.FC<{
 
     return () => { alive = false; clearTimeout(watchdog); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, projectId]);
+  }, [item.id, projectId, syncMode]);
 
   // Auto-reload when a collaborator modifies this individual
   useEffect(() => {

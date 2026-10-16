@@ -287,7 +287,8 @@ const ClassEditor: React.FC<{
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   existingIris?: string[];
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction, existingIris = [] }) => {
+  selectedReasoner?: string;
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction, existingIris = [], selectedReasoner = 'HERMIT' }) => {
   // Get current user for tracking mutations
   const { user } = useAuth();
   const collaboration = useCollaboration();
@@ -624,7 +625,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       clearTimeout(debounceTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, projectId, viewMode]);
+  }, [item.id, projectId, viewMode, selectedReasoner]);
 
   // Pre-load all-classes lookup when editor dialog opens so Manchester expressions can resolve labels
   useEffect(() => {
@@ -848,7 +849,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       if (viewMode === "inferred" && !hasOwlApiInferred) {
         try {
           const inferredResponse = await apiClient.get<any>(
-            withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=STRUCTURAL`),
+            withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(selectedReasoner)}`),
             undefined,
             { signal, timeout: isDesktop() ? 15_000 : 45_000 },
           );

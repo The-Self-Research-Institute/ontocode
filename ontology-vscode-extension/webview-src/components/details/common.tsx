@@ -348,7 +348,8 @@ function useExplainEntailment(projectId: string | undefined, explainPayload: Ent
       if (requestId === explainRequestIdRef.current) setExplainLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri]);
+  }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri,
+      explainPayload?.propertyIri, explainPayload?.literalValue]);
 
   useEffect(() => {
     if (showExplain) {

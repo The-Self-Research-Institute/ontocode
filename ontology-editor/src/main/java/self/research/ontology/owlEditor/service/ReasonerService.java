@@ -35,6 +35,8 @@ public class ReasonerService {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerService.class);
 
+    private static final int INFERRED_AXIOM_COUNT_MAX_CLASSES = 2000;
+
     // Caffeine cache: max 5 reasoners, evict after 30 min idle, dispose on removal
     // (each reasoner holds the full ontology + inference state in heap)
     private final Cache<String, CompletableFuture<OWLReasoner>> reasonerCache = Caffeine.newBuilder()
@@ -163,58 +165,38 @@ public class ReasonerService {
      * Create a new reasoner instance
      */
     private OWLReasoner createReasoner(OWLOntology ontology, ReasonerType type) {
-        log.info("Creating {} reasoner for ontology: {}", 
-            type.getDisplayName(), 
+        log.info("Creating {} reasoner for ontology: {}",
+            type.getDisplayName(),
             ontology.getOntologyID().getOntologyIRI().orElse(null));
 
         OWLReasonerConfiguration config = new SimpleConfiguration(reasonerOperationTimeoutMs);
 
         try {
-            switch (type) {
-                case HERMIT:
-                    // HermiT - Hypertableau-based reasoner, best for complex ontologies
-                    log.info("Using HermiT (Hypertableau) reasoner");
-                    // Note: HermiT 1.4.3.456 has a binary compatibility issue with OWLAPI 5.5.0
-                    // specifically regarding OWLOntologyID.getDefaultDocumentIRI()
-                    // Falling back to Openllet if HermiT fails to initialize
-                    try {
-                        return new ReasonerFactory().createReasoner(ontology, config);
-                    } catch (NoSuchMethodError e) {
-                        log.error("HermiT binary compatibility error with OWLAPI 5.5.0: {}. Falling back to Openllet.", e.getMessage());
-                        return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
-                    }
-                    
-                case PELLET:
-                case OPENLLET:
-                    // Use Openllet (OWLAPI 5.x compatible reasoner)
-                    log.info("Using Pellet/Openllet reasoner");
-                    return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
-                    
-                case FACTPLUSPLUS:
-                    log.info("Using FaCT++ (JFact) reasoner");
-                    return new JFactFactory().createReasoner(ontology, config);
-
-                case ELK:
-                    // ELK: consequence-based OWL EL reasoner — 10-100x faster than HermiT,
-                    // fraction of memory usage. Uses io.github.liveontologies:elk-owlapi:0.6.0
-                    // (OWLAPI 5-compatible). Falls back to Structural if ELK can't handle the
-                    // ontology (non-EL constructs) or hits a library error.
-                    log.info("Using ELK reasoner (OWL EL profile)");
-                    try {
-                        return new ElkReasonerFactory().createReasoner(ontology, config);
-                    } catch (Exception e) {
-                        log.warn("ELK failed (ontology may use non-EL constructs): {}. Falling back to Structural.", e.getMessage());
-                        return new StructuralReasonerFactory().createReasoner(ontology, config);
-                    }
-
-                case STRUCTURAL:
-                default:
-                    log.info("Using Structural reasoner (basic)");
-                    return new StructuralReasonerFactory().createReasoner(ontology, config);
-            }
-        } catch (Exception e) {
+            return getReasonerFactory(type).createReasoner(ontology, config);
+        } catch (Throwable e) {
             log.error("Failed to create {} reasoner", type, e);
             throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
+        }
+    }
+
+    private OWLReasonerFactory getReasonerFactory(ReasonerType type) {
+        switch (type) {
+            case HERMIT:
+                return new ReasonerFactory();
+
+            case PELLET:
+            case OPENLLET:
+                return OpenlletReasonerFactory.getInstance();
+
+            case FACTPLUSPLUS:
+                return new JFactFactory();
+
+            case ELK:
+                return new ElkReasonerFactory();
+
+            case STRUCTURAL:
+            default:
+                return new StructuralReasonerFactory();
         }
     }
 
@@ -596,12 +578,19 @@ public class ReasonerService {
             stats.put("supportsDatatypeReasoning", type != ReasonerType.STRUCTURAL);
             stats.put("supportsOWL2DL", type == ReasonerType.HERMIT || type == ReasonerType.PELLET);
             
-            // Inferred axioms estimate
-            try {
-                Set<OWLAxiom> inferredAxioms = getInferredAxioms(ontology, type);
-                stats.put("inferredAxioms", inferredAxioms.size());
-            } catch (Exception e) {
-                stats.put("inferredAxioms", 0);
+            // Inferred axioms estimate — getInferredAxioms() runs a per-class superclass and
+            // instance query against the reasoner, which is O(classCount) work. Fine for a
+            // handful of classes, but prohibitively slow as part of a "stats overview" call
+            // once the ontology gets large, so skip it past a sane threshold.
+            if (classCount <= INFERRED_AXIOM_COUNT_MAX_CLASSES) {
+                try {
+                    Set<OWLAxiom> inferredAxioms = getInferredAxioms(ontology, type);
+                    stats.put("inferredAxioms", inferredAxioms.size());
+                } catch (Exception e) {
+                    stats.put("inferredAxioms", 0);
+                }
+            } else {
+                stats.put("inferredAxioms", -1);
             }
             
         } catch (Exception e) {
@@ -656,6 +645,13 @@ public class ReasonerService {
         OWLOntology reasoningOntology = stripSwrlRules(ontology);
         OWLReasoner reasoner = createReasoner(reasoningOntology, type);
         long consistencyStart = System.currentTimeMillis();
+        long remainingBudgetMs = SAVE_CONSISTENCY_TIMEOUT_MS - (consistencyStart - setupStart);
+        if (remainingBudgetMs <= 0) {
+            log.warn("Save-time setup (strip+create) alone used the full {} ms budget; allowing save through unchecked",
+                    SAVE_CONSISTENCY_TIMEOUT_MS);
+            try { reasoner.dispose(); } catch (Exception ignored) {}
+            return SaveConsistencyResult.timedOut();
+        }
         CompletableFuture<Boolean> future;
         try {
             future = CompletableFuture.supplyAsync(reasoner::isConsistent, saveConsistencyExecutor);
@@ -667,11 +663,12 @@ public class ReasonerService {
 
         boolean consistent;
         try {
-            consistent = future.get(SAVE_CONSISTENCY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            consistent = future.get(remainingBudgetMs, TimeUnit.MILLISECONDS);
             log.info("[TIMING] Save-time reasoning: strip+create {} ms, isConsistent() {} ms",
                     consistencyStart - setupStart, System.currentTimeMillis() - consistencyStart);
         } catch (TimeoutException te) {
-            log.warn("Save-time consistency check timed out after {} ms; allowing save through unchecked", SAVE_CONSISTENCY_TIMEOUT_MS);
+            log.warn("Save-time consistency check timed out after {} ms (of the {} ms total budget); allowing save through unchecked",
+                    remainingBudgetMs, SAVE_CONSISTENCY_TIMEOUT_MS);
             reasoner.interrupt();
             future.whenComplete((r, ex) -> { try { reasoner.dispose(); } catch (Exception ignored) {} });
             return SaveConsistencyResult.timedOut();

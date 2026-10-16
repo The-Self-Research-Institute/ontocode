@@ -1642,6 +1642,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSyncReasonerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSyncReasonerInFlightRef = useRef(false);
+  const autoSyncReasonerPendingRef = useRef(false);
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
   const [showPullPreview, setShowPullPreview] = useState(false);
   const [openPRCount, setOpenPRCount] = useState(0);
@@ -2028,6 +2029,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isAnnotationPropertiesLoading, setIsAnnotationPropertiesLoading] = useState(false);
   const [isDatatypesLoading, setIsDatatypesLoading] = useState(false);
   const [inferredClassHierarchy, setInferredClassHierarchy] = useState<TreeNode[]>([]);
+  const inferredClassHierarchyAttemptedKeyRef = useRef<string | null>(null);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
   const [inferredObjectPropertyHierarchy, setInferredObjectPropertyHierarchy] = useState<TreeNode[]>([]);
@@ -2202,6 +2204,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     data: any;
     error: string | null;
   }>({ open: false, loading: false, data: null, error: null });
+  const explanationDismissedRef = useRef(false);
   const [isReasonerSettingsOpen, setIsReasonerSettingsOpen] = useState(false);
 
   const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || "asserted";
@@ -2281,7 +2284,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [showSectionLoadingBar, sectionBarLabels.length]);
 
-  const entitiesTabs = [
+  const entitiesTabs = useMemo(() => [
     {
       id: "Classes",
       label: "Classes",
@@ -2368,7 +2371,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         : (metadata as any)?.individualCount ?? undefined,
       theme: "bg-gradient-to-b from-purple-300 to-purple-500 text-white border-purple-600",
     },
-  ];
+  ], [
+    metadata, classHierarchy, hierarchyViewModes,
+    inferredObjectPropertyHierarchy, reasonerResults, isPropertiesLoading, objectPropertyHierarchy,
+    inferredDataPropertyHierarchy, dataPropertyHierarchy,
+    isAnnotationPropertiesLoading, annotationProperties, annotationPropertyHierarchy,
+    isDatatypesLoading, datatypes,
+    isIndividualsLoading, individuals,
+  ]);
   const activeTheme = entitiesTabs.find((t) => t.id === entitiesTab)?.theme;
 
   const sourceData = React.useMemo(() => {
@@ -2703,10 +2713,16 @@ const Dashboard: React.FC<DashboardProps> = ({
           const deadline = Date.now() + MAX_POLL_TIME;
           while (Date.now() < deadline) {
             await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-            const statusResp: any = await apiClient.get(
-              `/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
-            );
-            const statusData = statusResp?.data ?? statusResp;
+            let statusData: any;
+            try {
+              const statusResp: any = await apiClient.get(
+                `/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
+              );
+              statusData = statusResp?.data ?? statusResp;
+            } catch (error) {
+              console.error("[Dashboard] Failed to poll classify status (non-fatal, retrying):", error);
+              continue;
+            }
             if (statusData?.status === "COMPLETED") {
               return statusData;
             }
@@ -2787,29 +2803,48 @@ const Dashboard: React.FC<DashboardProps> = ({
     return payload;
   };
 
-  const pollReasonerWorkerJob = async (jobId: string, timeoutMs = 10 * 60 * 1000): Promise<any> => {
+  const pollReasonerWorkerJob = async (
+    targetProjectId: string,
+    jobId: string,
+    timeoutMs = 10 * 60 * 1000,
+  ): Promise<any> => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      const res: any = await apiClient.get(`/api/dl-query/jobs/${jobId}`);
-      const job = extractResponseData(res);
+      if (currentProjectIdRef.current !== targetProjectId) {
+        return { timeout: true, stale: true };
+      }
+      let job: any;
+      try {
+        const res: any = await apiClient.get(`/api/dl-query/jobs/${jobId}`);
+        job = extractResponseData(res);
+      } catch (error) {
+        console.error("[Dashboard] Failed to poll reasoner worker job:", error);
+        // Transient network hiccup — keep polling until the deadline rather than giving up.
+        continue;
+      }
       const status = String(job?.status || "").toUpperCase();
       if (status === "COMPLETED") return job;
       if (status === "FAILED") {
         throw new Error(job?.error || job?.message || "Reasoning job failed");
       }
+      // PENDING/QUEUED/RUNNING — keep polling
     }
     throw new Error("Reasoning job timed out");
   };
 
   const loadInferredHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const isStaleProjectSwitch = () => currentProjectIdRef.current !== startedProjectId;
+    inferredClassHierarchyAttemptedKeyRef.current = `${projectId}::${selectedReasoner}`;
 
     // HermiT/Pellet cannot handle large ontologies — auto-downgrade to ELK above 500K triples.
     // The editor service also enforces this server-side, but doing it here avoids a wasted round-trip.
     const HEAVY_REASONER_TRIPLE_LIMIT = 500_000;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
-    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > HEAVY_REASONER_TRIPLE_LIMIT)
       ? 'ELK'
       : selectedReasoner;
@@ -2823,6 +2858,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
 
     const applyPayload = (payload: any, timedOut = false) => {
+      if (isStaleProjectSwitch()) return false;
       const hierarchy = payload?.hierarchy || [];
       if (timedOut || !Array.isArray(hierarchy) || hierarchy.length === 0) {
         setInferredClassHierarchy([]);
@@ -2835,6 +2871,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       const payload = await fetchWithReasoner(effectiveReasoner);
+      if (isStaleProjectSwitch()) return;
 
       // Backend signals the ontology is logically inconsistent — reasoning cannot
       // proceed. Tell the user instead of silently showing an empty tree.
@@ -2868,14 +2905,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
-      setInferredClassHierarchy([]);
+      if (!isStaleProjectSwitch()) {
+        setInferredClassHierarchy([]);
+      }
     }
   }, [projectId, metadata, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
 
   const loadInferredObjectPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const isStaleProjectSwitch = () => currentProjectIdRef.current !== startedProjectId;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
-    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
     try {
       const fetchPropHierarchy = async (reasoner: string) => {
@@ -2886,12 +2928,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       };
 
       let payload = await fetchPropHierarchy(effectiveReasoner);
+      if (isStaleProjectSwitch()) return;
       if (payload?.tooLargeForReasoner) { setInferredObjectPropertyHierarchy([]); return; }
       // Same auto-downgrade the class hierarchy loader does — a job that couldn't finish in
       // time (or was discarded as stale) retries once with STRUCTURAL, which needs no real
       // reasoning and is always fast, instead of just giving up empty.
       if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
         payload = await fetchPropHierarchy('STRUCTURAL');
+        if (isStaleProjectSwitch()) return;
       }
       if (payload?.timeout || (payload?.success === false)) {
         console.warn("[Dashboard] Object property hierarchy job did not complete:", payload);
@@ -2902,14 +2946,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred object property hierarchy:", error);
-      setInferredObjectPropertyHierarchy([]);
+      if (!isStaleProjectSwitch()) {
+        setInferredObjectPropertyHierarchy([]);
+      }
     }
   }, [projectId, metadata, selectedReasoner]);
 
   const loadInferredDataPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const isStaleProjectSwitch = () => currentProjectIdRef.current !== startedProjectId;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
-    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
     try {
       const fetchPropHierarchy = async (reasoner: string) => {
@@ -2920,9 +2969,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       };
 
       let payload = await fetchPropHierarchy(effectiveReasoner);
+      if (isStaleProjectSwitch()) return;
       if (payload?.tooLargeForReasoner) { setInferredDataPropertyHierarchy([]); return; }
       if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
         payload = await fetchPropHierarchy('STRUCTURAL');
+        if (isStaleProjectSwitch()) return;
       }
       if (payload?.timeout || (payload?.success === false)) {
         console.warn("[Dashboard] Data property hierarchy job did not complete:", payload);
@@ -2933,7 +2984,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred data property hierarchy:", error);
-      setInferredDataPropertyHierarchy([]);
+      if (!isStaleProjectSwitch()) {
+        setInferredDataPropertyHierarchy([]);
+      }
     }
   }, [projectId, metadata, selectedReasoner]);
 
@@ -3147,6 +3200,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           projectId,
           issues: (results as any).issues,
         });
+        setInferredClassHierarchy([]);
+        setInferredObjectPropertyHierarchy([]);
+        setInferredDataPropertyHierarchy([]);
+        setInferredAxioms([]);
         notificationService.error(
           "Ontology Inconsistent",
           (results as any).message || "Classification found the ontology is inconsistent. Open Explain Inconsistency to inspect the causes.",
@@ -3358,7 +3415,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       let data = extractResponseData(resp);
       if (data?.async && (data?.jobId || data?.taskId)) {
-        data = await pollReasonerWorkerJob(data.jobId || data.taskId);
+        data = await pollReasonerWorkerJob(checkedProjectId, data.jobId || data.taskId);
       }
       if (currentProjectIdRef.current !== checkedProjectId) return;
       setConsistencyResult(data);
@@ -3395,6 +3452,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     const checkedProjectId = projectId;
+    explanationDismissedRef.current = false;
     try {
       setExplanationState({ open: true, loading: true, data: null, error: null });
       const reasonerType = normalizeReasonerType(selectedReasoner);
@@ -3405,9 +3463,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       let data = extractResponseData(resp);
       if (data?.async && (data?.jobId || data?.taskId)) {
-        data = await pollReasonerWorkerJob(data.jobId || data.taskId);
+        data = await pollReasonerWorkerJob(checkedProjectId, data.jobId || data.taskId);
       }
       if (currentProjectIdRef.current !== checkedProjectId) return;
+      if (explanationDismissedRef.current) return;
       setExplanationState({ open: true, loading: false, data, error: null });
       notificationService.info("Explanation Ready", "Review the inconsistency report.");
 
@@ -3430,7 +3489,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const friendlyMessage =
         backendData?.error || error?.message || "Failed to explain inconsistency for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
-      if (currentProjectIdRef.current === checkedProjectId) {
+      if (currentProjectIdRef.current === checkedProjectId && !explanationDismissedRef.current) {
         setExplanationState({
           open: true,
           loading: false,
@@ -3450,7 +3509,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     // toast queue always renders on-screen immediately regardless of that.
     const userId = user?.userId || user?.email || "system";
     try {
-      await apiClient.post(`/plugin-service/api/reasoner/clear-cache`, {});
+      await apiClient.post(`/plugin-service/api/reasoner/clear-cache/${encodeURIComponent(projectId || "")}`, {});
       collaboration.addNotification({
         type: "success",
         message: "Reasoner cache cleared — the next run reloads the ontology fresh.",
@@ -3478,7 +3537,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         timestamp: Date.now(),
       });
     }
-  }, [user, collaboration, checkConsistency]);
+  }, [user, collaboration, checkConsistency, projectId]);
 
   const setCurrentHierarchyViewMode = (mode: "asserted" | "inferred") => {
     setHierarchyViewModes((prev) => ({ ...prev, [entitiesTab]: mode }));
@@ -7928,6 +7987,8 @@ const updateItemInState = useCallback(
         // this separate API, which can disagree with the Reasoner tab's own
         // consistency check and reasoner choice, wiping out good data.
         console.log("[Dashboard] Inferred hierarchy already available, skipping API re-fetch");
+      } else if (inferredClassHierarchyAttemptedKeyRef.current === `${projectId}::${selectedReasoner}`) {
+        console.log("[Dashboard] Inferred hierarchy already attempted for this project/reasoner, skipping repeat fetch");
       } else {
         // Always load full recursive hierarchy from API when in inferred mode
         // to ensure we have the full hierarchy depth
@@ -9253,8 +9314,11 @@ const updateItemInState = useCallback(
       console.log("[DEBUG] Auto-sync: Re-running reasoner after ontology change");
       const syncedProjectId = projectId;
       if (autoSyncReasonerTimerRef.current) clearTimeout(autoSyncReasonerTimerRef.current);
-      autoSyncReasonerTimerRef.current = setTimeout(async () => {
-        if (autoSyncReasonerInFlightRef.current) return;
+      const runAutoSyncReasoner = async () => {
+        if (autoSyncReasonerInFlightRef.current) {
+          autoSyncReasonerPendingRef.current = true;
+          return;
+        }
         autoSyncReasonerInFlightRef.current = true;
         try {
                const reasonerType = normalizeReasonerType(selectedReasoner);
@@ -9295,8 +9359,13 @@ const updateItemInState = useCallback(
           console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
         } finally {
           autoSyncReasonerInFlightRef.current = false;
+          if (autoSyncReasonerPendingRef.current) {
+            autoSyncReasonerPendingRef.current = false;
+            void runAutoSyncReasoner();
+          }
         }
-      }, 2000);
+      };
+      autoSyncReasonerTimerRef.current = setTimeout(() => { void runAutoSyncReasoner(); }, 2000);
     }
   }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle, user]);
 
@@ -18425,7 +18494,10 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
       />
       <ReasonerExplanationModal
         isOpen={explanationState.open}
-        onClose={() => setExplanationState((prev) => ({ ...prev, open: false }))}
+        onClose={() => {
+          explanationDismissedRef.current = true;
+          setExplanationState((prev) => ({ ...prev, open: false }));
+        }}
         data={explanationState.data}
         loading={explanationState.loading}
         error={explanationState.error}
@@ -18926,6 +18998,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                     onViewOnlyAction={handleViewOnlyAction}
                     isReasonerRunning={isReasonerRunning}
                     selectedReasoner={selectedReasoner}
+                    syncMode={syncMode}
                     user={user}
                   />
                 </div>

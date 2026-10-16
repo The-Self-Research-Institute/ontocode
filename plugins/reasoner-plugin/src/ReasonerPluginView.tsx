@@ -820,6 +820,18 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         setInconsistencyExplanation(explanation);
       } else {
         console.error('Failed to fetch inconsistency explanation');
+        let serverMessage: string | undefined;
+        try {
+          const errorBody = await response.json();
+          serverMessage = errorBody?.error || errorBody?.message;
+        } catch (ignored) {
+          // response body wasn't JSON — fall back to the status text below
+        }
+        setInconsistencyExplanation({
+          success: false,
+          causes: [],
+          error: serverMessage || `Failed to fetch inconsistency explanation (HTTP ${response.status})`,
+        });
       }
     } catch (error) {
       console.error('Error fetching inconsistency explanation:', error);
@@ -1172,15 +1184,19 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     return roots.map(normalizeNode).filter(Boolean);
   }
 
-  const getAllIds = (nodes: any[]): string[] => {
-    let ids: string[] = [];
+  const collectIds = (nodes: any[], out: string[]): void => {
     nodes.forEach(node => {
       const id = node.iri || node.id;
-      if (id) ids.push(id);
+      if (id) out.push(id);
       if (node.children) {
-        ids = [...ids, ...getAllIds(node.children)];
+        collectIds(node.children, out);
       }
     });
+  };
+
+  const getAllIds = (nodes: any[]): string[] => {
+    const ids: string[] = [];
+    collectIds(nodes, ids);
     return ids;
   };
 
@@ -1217,9 +1233,9 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   };
 
   // Compute counts from actual hierarchy data
-  const actualClassCount = countNodesInHierarchy(classHierarchyToRender);
-  const actualObjectPropertyCount = countNodesInHierarchy(objectPropertyHierarchyToRender);
-  const actualDataPropertyCount = countNodesInHierarchy(dataPropertyHierarchyToRender);
+  const actualClassCount = useMemo(() => countNodesInHierarchy(classHierarchyToRender), [classHierarchyToRender]);
+  const actualObjectPropertyCount = useMemo(() => countNodesInHierarchy(objectPropertyHierarchyToRender), [objectPropertyHierarchyToRender]);
+  const actualDataPropertyCount = useMemo(() => countNodesInHierarchy(dataPropertyHierarchyToRender), [dataPropertyHierarchyToRender]);
 
   // Compute reasoningTime from stats or reasonerResults if available
   const reasoningTime =

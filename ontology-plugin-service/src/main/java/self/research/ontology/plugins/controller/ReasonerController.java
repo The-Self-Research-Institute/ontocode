@@ -253,33 +253,43 @@ public class ReasonerController {
      * Tries the full {@code projectId} first (e.g. {@code proj-abc--uuid}), then the parent
      * prefix before the first {@code --} for legacy partition/file-scoped IDs.
      */
+    private final ThreadLocal<Throwable> lastLoadFailure = new ThreadLocal<>();
+
     private OWLOntology loadOntology(String projectId, String clientSuppliedUserId) throws Exception {
-        String userId = resolveUserId(clientSuppliedUserId);
-        log.info("Loading ontology for project: {} (userId={})", projectId, userId);
+        lastLoadFailure.remove();
+        try {
+            String userId = resolveUserId(clientSuppliedUserId);
+            log.info("Loading ontology for project: {} (userId={})", projectId, userId);
 
-        OWLOntology ontology = tryLoadOntologyForId(projectId, userId);
-        if (ontology != null) {
-            return ontology;
-        }
+            OWLOntology ontology = tryLoadOntologyForId(projectId, userId);
+            if (ontology != null) {
+                return ontology;
+            }
 
-        if (projectId != null && projectId.contains("--")) {
-            String baseProjectId = extractBaseProjectId(projectId);
-            if (!baseProjectId.equals(projectId)) {
-                log.info("Ontology not found for full id {}; trying parent prefix {}", projectId, baseProjectId);
-                ontology = tryLoadOntologyForId(baseProjectId, userId);
-                if (ontology != null) {
-                    return ontology;
+            if (projectId != null && projectId.contains("--")) {
+                String baseProjectId = extractBaseProjectId(projectId);
+                if (!baseProjectId.equals(projectId)) {
+                    log.info("Ontology not found for full id {}; trying parent prefix {}", projectId, baseProjectId);
+                    ontology = tryLoadOntologyForId(baseProjectId, userId);
+                    if (ontology != null) {
+                        return ontology;
+                    }
                 }
             }
-        }
 
-        String triedIds = projectId;
-        if (projectId != null && projectId.contains("--")) {
-            triedIds = projectId + " and " + extractBaseProjectId(projectId);
+            String triedIds = projectId;
+            if (projectId != null && projectId.contains("--")) {
+                triedIds = projectId + " and " + extractBaseProjectId(projectId);
+            }
+            log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", triedIds);
+            Throwable cause = lastLoadFailure.get();
+            String causeSuffix = cause != null ? " Last load attempt failed with: " + cause.getMessage() : "";
+            throw new OntologyNotFoundException("Ontology file not found for project: " + triedIds +
+                ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system."
+                + causeSuffix);
+        } finally {
+            lastLoadFailure.remove();
         }
-        log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", triedIds);
-        throw new OntologyNotFoundException("Ontology file not found for project: " + triedIds +
-            ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.");
     }
 
     /** No source (editor service, GridFS, filesystem) yielded an ontology for the project. */
@@ -397,21 +407,29 @@ public class ReasonerController {
         return (userId == null || userId.isBlank()) ? lookupId : lookupId + "::draft::" + userId;
     }
 
+    private static final long DRAFT_REUSE_WINDOW_MS = 5000;
+    private final Map<String, Long> lastDraftFetchAtMs = new ConcurrentHashMap<>();
+
     private OWLOntology tryLoadOntologyForId(String lookupId, String userId) throws Exception {
         if (lookupId == null || lookupId.isBlank()) {
             return null;
         }
-        // Draft mode is an active editing session — the whole point of Start/Re-classify
-        // there is to see the latest edits, so a cached snapshot from an earlier call
-        // (even one keyed to this same user/project) would silently keep showing
-        // whatever the ontology looked like the first time it was loaded. Always fetch
-        // fresh and never cache; only the published snapshot below is worth caching.
         if (userId != null && !userId.isBlank()) {
             String draftKey = cacheKeyFor(lookupId, userId);
             Object lock = loadLocks.computeIfAbsent(draftKey, k -> new Object());
             synchronized (lock) {
+                synchronized (draftDisposalLock) {
+                    OWLOntology recentlyFetched = lastDraftOntology.get(draftKey);
+                    Long fetchedAt = lastDraftFetchAtMs.get(draftKey);
+                    if (recentlyFetched != null && fetchedAt != null
+                            && System.currentTimeMillis() - fetchedAt < DRAFT_REUSE_WINDOW_MS) {
+                        beginDraftUse(recentlyFetched);
+                        return recentlyFetched;
+                    }
+                }
                 OWLOntology fresh = loadOntologyFromEditorService(lookupId, userId);
                 if (fresh != null) {
+                    lastDraftFetchAtMs.put(draftKey, System.currentTimeMillis());
                     synchronized (draftDisposalLock) {
                         beginDraftUse(fresh);
                         OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
@@ -557,6 +575,7 @@ public class ReasonerController {
             throw e;
         } catch (Exception e) {
             log.warn("Could not fetch ontology from editor service for project {}: {}", projectId, e.getMessage());
+            lastLoadFailure.set(e);
         }
         return null;
     }
@@ -571,6 +590,7 @@ public class ReasonerController {
             return ontology;
         } catch (Exception e) {
             log.error("Failed to load ontology from {}", sourceDescription, e);
+            lastLoadFailure.set(e);
             return null;
         }
     }
@@ -802,7 +822,7 @@ public class ReasonerController {
                     taskInfo.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
                     taskInfo.put("totalClasses", classificationData.get("totalClasses"));
                     taskInfo.put("stats", classificationData.get("stats"));
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     log.error("Async classification failed for project: {}", projectId, e);
                     taskInfo.put("status", "FAILED");
                     taskInfo.put("success", false);

@@ -62,6 +62,35 @@ public class OntologyCache {
         }
     }
 
+    public Optional<OWLOntology> getAndBeginUse(String projectId, long revision) {
+        CachedEntry staleEntry = null;
+        OWLOntology hit = null;
+        synchronized (useLock) {
+            synchronized (cache) {
+                CachedEntry entry = cache.get(projectId);
+                if (entry != null && entry.revision() == revision) {
+                    hit = entry.ontology();
+                } else if (entry != null) {
+                    cache.remove(projectId);
+                    staleEntry = entry;
+                }
+            }
+            if (hit != null) {
+                useCount.computeIfAbsent(hit, k -> new AtomicInteger()).incrementAndGet();
+            }
+        }
+        if (hit != null) {
+            log.info("[OntologyCache] HIT project={} revision={} axioms={}", projectId, revision, hit.getAxiomCount());
+            return Optional.of(hit);
+        }
+        if (staleEntry != null) {
+            log.info("[OntologyCache] STALE project={} cached={} current={} — evicting",
+                    projectId, staleEntry.revision(), revision);
+            evictOrDefer(staleEntry);
+        }
+        return Optional.empty();
+    }
+
     public Optional<OWLOntology> get(String projectId, long revision) {
         CachedEntry staleEntry = null;
         CachedEntry entry;

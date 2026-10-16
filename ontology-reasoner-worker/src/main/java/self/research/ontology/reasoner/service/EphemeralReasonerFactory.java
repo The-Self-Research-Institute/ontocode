@@ -27,27 +27,14 @@ final class EphemeralReasonerFactory {
                     org.semanticweb.HermiT.Configuration hermitConfig = new org.semanticweb.HermiT.Configuration();
                     hermitConfig.ignoreUnsupportedDatatypes = true;
                     hermitConfig.individualTaskTimeout = timeoutMs;
-                    try {
-                        yield new ReasonerFactory().createReasoner(ontology, hermitConfig);
-                    } catch (NoSuchMethodError e) {
-                        log.warn("HermiT unavailable, using Openllet");
-                        yield OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
-                    }
+                    yield new ReasonerFactory().createReasoner(ontology, hermitConfig);
                 }
                 case PELLET, OPENLLET -> OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
                 case FACTPLUSPLUS -> new JFactFactory().createReasoner(ontology, config);
-                case ELK -> {
-
-                    try {
-                        yield new ElkReasonerFactory().createReasoner(ontology, config);
-                    } catch (Exception e) {
-                        log.warn("ELK failed, using Structural: {}", e.getMessage());
-                        yield new StructuralReasonerFactory().createReasoner(ontology, config);
-                    }
-                }
+                case ELK -> new ElkReasonerFactory().createReasoner(ontology, config);
                 case STRUCTURAL -> new StructuralReasonerFactory().createReasoner(ontology, config);
             };
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.error("Reasoner {} could not be started", effective, e);
             throw new RuntimeException(effective.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
         }

@@ -501,7 +501,7 @@ public class ReasonerController {
                 executor.shutdownNow();
                 log.warn("Hierarchy timed out after {}s for project {} — returning timeout signal", HIERARCHY_TIMEOUT_SECONDS, projectId);
                 return ResponseEntity.ok(Map.of(
-                        "success", true, "projectId", projectId,
+                        "success", false, "projectId", projectId,
                         "reasonerType", type.getDisplayName(),
                         "hierarchy", List.of(),
                         "timeout", true,

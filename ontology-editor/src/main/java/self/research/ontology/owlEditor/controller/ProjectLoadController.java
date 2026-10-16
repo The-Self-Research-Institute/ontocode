@@ -88,6 +88,14 @@ public class ProjectLoadController {
     private final ConcurrentHashMap<String, QuickUnsatCacheEntry> quickUnsatCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult>> quickUnsatInFlight = new ConcurrentHashMap<>();
     private static final long QUICK_UNSAT_MAX_TRIPLES = 500_000L;
+    private static final long QUICK_UNSAT_TIMEOUT_MS = 15_000L;
+    private final java.util.concurrent.ExecutorService quickUnsatExecutor = new java.util.concurrent.ThreadPoolExecutor(
+            2, 2, 60, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(20),
+            r -> {
+                Thread t = new Thread(r, "quick-unsat-worker");
+                t.setDaemon(true);
+                return t;
+            }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
 
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
@@ -1420,7 +1428,7 @@ public class ProjectLoadController {
             long tripleCount = isDraft
                     ? datasetService.countDraftTriples(projectId, resolvedUserId)
                     : datasetService.getDatasetSize(projectId);
-            if (tripleCount > QUICK_UNSAT_MAX_TRIPLES) {
+            if (tripleCount < 0 || tripleCount > QUICK_UNSAT_MAX_TRIPLES) {
                 body.put("success", true);
                 body.put("projectId", projectId);
                 body.put("skipped", true);
@@ -1450,9 +1458,10 @@ public class ProjectLoadController {
                                 } catch (Exception e) {
                                     throw new RuntimeException(e);
                                 }
-                            }).whenComplete((r, t) -> quickUnsatInFlight.remove(versionedKey)));
+                            }, quickUnsatExecutor).whenComplete((r, t) -> quickUnsatInFlight.remove(versionedKey)));
 
-            self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result = future.get();
+            self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result =
+                    future.get(QUICK_UNSAT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
             return quickUnsatResponse(projectId, result);
         } catch (Exception e) {
             log.warn("Unsatisfiable-classes-quick check failed for project {} (non-fatal, caller ignores): {}",

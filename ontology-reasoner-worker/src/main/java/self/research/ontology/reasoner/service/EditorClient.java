@@ -6,6 +6,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -77,7 +78,14 @@ public class EditorClient {
         return -1;
     }
 
+    private volatile int cachedActiveImports = 0;
+
     public int getActiveImportCount() {
+        return cachedActiveImports;
+    }
+
+    @Scheduled(fixedDelayString = "${ontocode.reasoning.active-imports-poll-ms:2000}")
+    public void refreshActiveImportCount() {
         try {
             ResponseEntity<Map> response = restTemplate.exchange(
                     editorUrl + "/internal/import-queue/stats",
@@ -85,12 +93,11 @@ public class EditorClient {
                     internalEntity(),
                     Map.class);
             if (response.getBody() != null && response.getBody().get("activeImports") instanceof Number n) {
-                return n.intValue();
+                cachedActiveImports = n.intValue();
             }
         } catch (Exception e) {
             log.debug("Import stats unavailable: {}", e.getMessage());
         }
-        return 0;
     }
 
     public void publishJobEvent(ReasoningJobNotifier.JobSnapshot snapshot) {

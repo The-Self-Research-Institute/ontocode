@@ -121,6 +121,9 @@ public class ReasoningConcurrencyPolicy {
         if (memoryAware && !activeJobs.isEmpty() && freeHeapRatio() < minFreeHeapRatio) {
             return false;
         }
+        if (activeJobs.size() >= Math.max(1, configuredMax)) {
+            return false;
+        }
         boolean heavy = isHeavy(candidate);
         long activeInLane = activeJobs.stream().filter(j -> isHeavy(j) == heavy).count();
         int laneMax = heavy ? heavyLaneMaxConcurrent : fastLaneMaxConcurrent;

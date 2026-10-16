@@ -156,6 +156,7 @@ const PropertyEditor: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
     user?: { email?: string; username?: string; userId?: string };
     existingIris?: string[];
+    syncMode?: 'private' | 'public';
 }> = ({
         item,
         onUpdate,
@@ -177,6 +178,7 @@ const PropertyEditor: React.FC<{
         onNavigate,
         user,
         existingIris = [],
+        syncMode = 'public',
 }) => {
     const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('description');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -240,7 +242,7 @@ const PropertyEditor: React.FC<{
             }
         })();
         return () => { alive = false; };
-    }, [projectId]);
+    }, [projectId, syncMode]);
 
     useEffect(() => {
         // Always reset previous entity's inferred details immediately so we
@@ -266,7 +268,7 @@ const PropertyEditor: React.FC<{
         })();
 
         return () => { alive = false; clearTimeout(watchdog); };
-    }, [viewMode, item.id, projectId]);
+    }, [viewMode, item.id, projectId, syncMode]);
 
     const loadInferredDetails = async () => {
         try {
