@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { isTextElement } from '../utils/textEditTarget';
 
 interface DesktopApi {
   onMenuUndoRedo?: (callback: (kind: string) => void) => void;
@@ -9,10 +10,6 @@ export function hasDesktopUndoMenu(): boolean {
   return typeof api?.onMenuUndoRedo === 'function';
 }
 
-function textFocused(): boolean {
-  const active = document.activeElement as HTMLElement | null;
-  return !!active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
-}
 
 interface Handlers {
   onUndo: () => void;
@@ -32,7 +29,7 @@ export function useDesktopUndoRouting({ onUndo, onRedo }: Handlers): void {
       if (kind !== 'undo' && kind !== 'redo') {
         return;
       }
-      if (textFocused()) {
+      if (isTextElement(document.activeElement)) {
         document.execCommand(kind);
       } else if (kind === 'undo') {
         handlers.current.onUndo();

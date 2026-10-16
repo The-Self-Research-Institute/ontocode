@@ -122,7 +122,7 @@ class ChangeRollbackServiceTest {
         HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
         when(historySync.getHistoryChange("c1")).thenReturn(created);
         presentUnlessChanged(Set.of());
-        when(facts.referencedByOthers(P, E, false, "u@x.com")).thenReturn(true);
+        when(facts.referencedOutside(eq(P), eq(E), eq(false), eq("u@x.com"), any())).thenReturn(true);
 
         Result result = service.undoEntry(P, "c1", ACTOR, false);
 
@@ -135,7 +135,7 @@ class ChangeRollbackServiceTest {
         HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
         when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(created));
         presentUnlessChanged(Set.of());
-        when(facts.referencedByOthers(P, E, false, "u@x.com")).thenReturn(true);
+        when(facts.referencedOutside(eq(P), eq(E), eq(false), eq("u@x.com"), any())).thenReturn(true);
 
         Result result = service.undoChangeSet(P, "set-1", ACTOR, false);
 

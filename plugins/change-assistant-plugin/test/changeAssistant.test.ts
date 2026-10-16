@@ -3,6 +3,7 @@ import { authorActivity, timelineItems, weekdayActivity } from '../src/assistant
 import {
   ALL_TYPES,
   bucketFromOperation,
+  authorKey,
   fallbackLabel,
   isRollbackChange,
   normaliseAuthor,
@@ -233,5 +234,19 @@ describe('prefixes saved together', () => {
   it('is headed as a prefix change and counts every prefix as remaining', () => {
     expect(manualHeading(group).verb).toBe('Changed');
     expect(buildEntityRow(group).remaining).toBe(3);
+  });
+});
+
+describe('author key', () => {
+  it('groups one person once whether the entry stored their email or their user id', () => {
+    const byEmail = authorKey('sam@x.com', 'sam@x.com');
+    const byId = authorKey('sam@x.com', '6ab0aa07dd61926a63117ae4');
+    expect(byId).toBe(byEmail);
+  });
+
+  it('keeps people with different emails apart and falls back to the name or id', () => {
+    expect(authorKey('a@x.com', 'a@x.com')).not.toBe(authorKey('b@x.com', 'b@x.com'));
+    expect(authorKey('Local user', '')).toBe('local user');
+    expect(authorKey('', '6ab0')).toBe('6ab0');
   });
 });

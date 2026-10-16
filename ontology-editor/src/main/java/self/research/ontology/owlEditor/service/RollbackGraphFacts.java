@@ -63,12 +63,39 @@ public class RollbackGraphFacts {
         return ask(projectId, query, draft, draftOwner);
     }
 
-    public boolean referencedByOthers(String projectId, String iri, boolean draft, String draftOwner) {
+    public boolean referencedOutside(String projectId, String iri, boolean draft, String draftOwner, Model ownInserted) {
         if (iri == null || iri.isBlank() || (!draft && inMemoryIsAuthoritative(projectId))) {
             return false;
         }
         String safe = SparqlSafety.safeIri(iri);
-        return ask(projectId, "ASK { ?s ?p <" + safe + "> FILTER(?s != <" + safe + ">) }", draft, draftOwner);
+        String own = ownReferences(iri, ownInserted);
+        if (own == null) {
+            return ask(projectId, "ASK { ?s ?p <" + safe + "> FILTER(?s != <" + safe + ">) }", draft, draftOwner);
+        }
+        return ask(projectId, "ASK { ?s ?p <" + safe + "> FILTER(?s != <" + safe + ">)" + own + " }", draft, draftOwner);
+    }
+
+    private static String ownReferences(String iri, Model ownInserted) {
+        if (ownInserted == null || ownInserted.isEmpty()) {
+            return "";
+        }
+        StringBuilder clauses = new StringBuilder();
+        int count = 0;
+        boolean blankSubject = false;
+        for (org.eclipse.rdf4j.model.Statement st : ownInserted) {
+            if (!st.getObject().stringValue().equals(iri) || !st.getObject().isIRI()) {
+                continue;
+            }
+            if (st.getSubject().isBNode()) {
+                blankSubject = true;
+            } else if (++count > Limit.WHOLE_GRAPH_MAX_TRIPLES.value() / 10) {
+                return null;
+            } else {
+                clauses.append(" FILTER(!(?s = <").append(SparqlSafety.safeIri(st.getSubject().stringValue()))
+                        .append("> && ?p = <").append(SparqlSafety.safeIri(st.getPredicate().stringValue())).append(">))");
+            }
+        }
+        return blankSubject ? clauses + " FILTER(!isBlank(?s))" : clauses.toString();
     }
 
     public boolean deltaHolds(String projectId, HistoryChange entry, boolean undo) {

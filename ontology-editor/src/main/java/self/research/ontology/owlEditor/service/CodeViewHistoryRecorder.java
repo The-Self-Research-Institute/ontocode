@@ -6,6 +6,7 @@ import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.Namespace;
 import org.eclipse.rdf4j.model.Resource;
 import org.eclipse.rdf4j.model.Statement;
+import org.eclipse.rdf4j.model.vocabulary.OWL;
 import org.eclipse.rdf4j.model.vocabulary.RDF;
 import org.eclipse.rdf4j.model.vocabulary.RDFS;
 
@@ -216,8 +217,10 @@ final class CodeViewHistoryRecorder {
             description = opType + " operation via Code View" + (subChanges.isEmpty() ? "" : " (also removed: " + summary + ")");
         } else if (!subChanges.isEmpty()) {
             opType = modificationOpType(subChanges.get(0));
-            label = findLabel(diff.added().isEmpty() ? oldModel : newModel, subject);
-            description = "Code View save modified " + subChanges.size() + " propert"
+            boolean header = isOntologyHeader(subject, oldModel, newModel);
+            label = header ? headerLabel(subChanges) : findLabel(diff.added().isEmpty() ? oldModel : newModel, subject);
+            description = header ? "Ontology header: " + summary
+                    : "Code View save modified " + subChanges.size() + " propert"
                     + (subChanges.size() == 1 ? "y" : "ies") + " on this entity (" + summary + ")";
         } else {
             return;
@@ -294,6 +297,15 @@ final class CodeViewHistoryRecorder {
                     predicate.stringValue(), value));
         }
         return subChange;
+    }
+
+    private static boolean isOntologyHeader(Resource subject, Model oldModel, Model newModel) {
+        return newModel.contains(subject, RDF.TYPE, OWL.ONTOLOGY) || oldModel.contains(subject, RDF.TYPE, OWL.ONTOLOGY);
+    }
+
+    private String headerLabel(List<Map<String, String>> subChanges) {
+        return subChanges.size() == 1 ? "ontology annotation " + extractLocalName(subChanges.get(0).get("predicate"))
+                : "ontology header";
     }
 
     private String describeSubChange(Map<String, String> subChange) {

@@ -9,10 +9,16 @@ public class CompositeRollbackActions implements RollbackActionRunner {
 
     private final PrefixRollbackActions prefixActions;
     private final DocumentRollbackActions documentActions;
+    private final StoredFileRollbackActions fileActions;
+    private final MergeCheckpointRollbackActions mergeActions;
 
-    public CompositeRollbackActions(PrefixRollbackActions prefixActions, DocumentRollbackActions documentActions) {
+    public CompositeRollbackActions(PrefixRollbackActions prefixActions, DocumentRollbackActions documentActions,
+                                    StoredFileRollbackActions fileActions,
+                                    MergeCheckpointRollbackActions mergeActions) {
         this.prefixActions = prefixActions;
         this.documentActions = documentActions;
+        this.fileActions = fileActions;
+        this.mergeActions = mergeActions;
     }
 
     @Override
@@ -26,6 +32,12 @@ public class CompositeRollbackActions implements RollbackActionRunner {
     }
 
     private RollbackActionRunner runnerFor(RollbackAction action) {
+        if (RollbackAction.RESTORE_MERGE_FILE.equals(action.type())) {
+            return mergeActions;
+        }
+        if (RollbackAction.SYNC_STORED_FILE.equals(action.type())) {
+            return fileActions;
+        }
         return RollbackAction.RESTORE_DOCUMENT.equals(action.type()) ? documentActions : prefixActions;
     }
 }

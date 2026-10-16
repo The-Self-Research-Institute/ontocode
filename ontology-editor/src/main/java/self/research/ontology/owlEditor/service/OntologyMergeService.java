@@ -44,6 +44,10 @@ public class OntologyMergeService {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyMergeService.class);
 
+    public static final String MERGE_OPERATION = "ontologyMerge";
+    public static final String MERGE_CHECKPOINT_OPERATION = "ontologyMergeCheckpoint";
+    public static final String MERGE_IRI_PREFIX = "urn:ontocode:merge:";
+
     private final SparqlDatasetService datasetService;
     private final ProjectImportService importService;
     private final StorageManager storageManager;
@@ -331,7 +335,9 @@ public class OntologyMergeService {
 
         MergeResult result = new MergeResult();
         result.setTargetProjectId(targetProjectId);
-        
+        boolean intoExisting = outputFileName == null || outputFileName.isBlank();
+        Optional<org.eclipse.rdf4j.model.Model> triplesBefore = intoExisting ? snapshotForUndo(manager, targetOntology) : Optional.empty();
+
         try {
             switch (options.getStrategy()) {
                 case SIMPLE_UNION:
@@ -381,9 +387,24 @@ public class OntologyMergeService {
                 outputPath = targetFile;
             }
 
+            ChangeOrigin mergeOrigin = ChangeOrigin.manual();
+            String checkpointId = null;
+            if (!isNewFile) {
+                mergeOrigin = triplesBefore
+                        .flatMap(before -> OwlApiModelSnapshot.of(manager, targetOntology)
+                                .map(after -> ExactOrigins.manualWithDelta(before, after)))
+                        .orElseGet(ChangeOrigin::manual);
+                if (mergeOrigin.exact() == null) {
+                    checkpointId = saveCheckpointBefore(importProjectId, targetFile);
+                }
+            }
+
             File outputFile = outputPath.toFile();
             try (FileOutputStream fos = new FileOutputStream(outputFile)) {
                 manager.saveOntology(targetOntology, fos);
+            }
+            if (checkpointId != null) {
+                checkpointId = saveCheckpointAfter(importProjectId, checkpointId, outputPath);
             }
 
             if (!isNewFile) {
@@ -398,11 +419,20 @@ public class OntologyMergeService {
             result.setMessage("Merge completed successfully");
 
             if (historyService != null) {
-                historyService.recordEdit(importProjectId, userId, username, "ontologyMerge", null, null,
-                        null, null, "Merged ontology: " + result.getAxiomsAdded() + " added, "
-                                + result.getAxiomsReplaced() + " replaced, " + result.getAxiomsRemoved() + " removed, "
-                                + result.getEntitiesRenamed() + " renamed, " + result.getConflictsResolved()
-                                + " conflicts resolved");
+                String summary = "Merged ontology: " + result.getAxiomsAdded() + " added, "
+                        + result.getAxiomsReplaced() + " replaced, " + result.getAxiomsRemoved() + " removed, "
+                        + result.getEntitiesRenamed() + " renamed, " + result.getConflictsResolved()
+                        + " conflicts resolved";
+                if (isNewFile) {
+                    historyService.recordEdit(importProjectId, userId, username, MERGE_OPERATION, null, null,
+                            null, null, summary);
+                } else {
+                    boolean checkpointed = checkpointId != null;
+                    String operation = checkpointed ? MERGE_CHECKPOINT_OPERATION : MERGE_OPERATION;
+                    String entity = MERGE_IRI_PREFIX + (checkpointed ? checkpointId : java.util.UUID.randomUUID());
+                    historyService.recordEdit(importProjectId, userId, username, operation,
+                            entity, "Ontology merge", null, null, summary, null, null, false, mergeOrigin);
+                }
             }
 
             log.info("[MERGE] Merge operation completed successfully");
@@ -425,6 +455,34 @@ public class OntologyMergeService {
         return result;
     }
 
+    private String saveCheckpointBefore(String projectId, Path file) {
+        try {
+            String id = java.util.UUID.randomUUID().toString();
+            new MergeCheckpointStore(storageManager).saveBefore(projectId, id, file);
+            return id;
+        } catch (IOException | RuntimeException e) {
+            log.warn("[MERGE] Could not keep a copy of the file before the merge for project {}: {}", projectId, e.getMessage());
+            return null;
+        }
+    }
+
+    private String saveCheckpointAfter(String projectId, String id, Path file) {
+        try {
+            new MergeCheckpointStore(storageManager).saveAfter(projectId, id, file);
+            return id;
+        } catch (IOException | RuntimeException e) {
+            log.warn("[MERGE] Could not keep a copy of the merged file for project {}: {}", projectId, e.getMessage());
+            return null;
+        }
+    }
+
+    private static Optional<org.eclipse.rdf4j.model.Model> snapshotForUndo(OWLOntologyManager manager, OWLOntology ontology) {
+        if (ontology.getAxiomCount() > Limit.WHOLE_GRAPH_MAX_TRIPLES.value()) {
+            return Optional.empty();
+        }
+        return OwlApiModelSnapshot.of(manager, ontology);
+    }
+
     private void refreshMergedMetadata(String projectId, OWLOntology ontology) {
         try {
             Map<String, Object> meta = metadataService.readMeta(projectId).orElseGet(HashMap::new);
@@ -442,7 +500,7 @@ public class OntologyMergeService {
         }
     }
 
-    private void updateGridFsFile(String projectId, String fileName, Path mergedFilePath) {
+    void updateGridFsFile(String projectId, String fileName, Path mergedFilePath) {
         try {
             log.info("[MERGE] Updating GridFS file for project {} file {}", projectId, fileName);
 

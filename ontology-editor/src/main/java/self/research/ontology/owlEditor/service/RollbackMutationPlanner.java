@@ -25,7 +25,7 @@ public class RollbackMutationPlanner {
     static final String RDFS_COMMENT = "http://www.w3.org/2000/01/rdf-schema#comment";
     static final String OWL_THING = "http://www.w3.org/2002/07/owl#Thing";
 
-    public enum Kind { CREATE, DELETE, GROUPED_MODIFY, SINGLE, RENAME, EXACT, PREFIX, DOCUMENT }
+    public enum Kind { CREATE, DELETE, GROUPED_MODIFY, SINGLE, RENAME, EXACT, PREFIX, DOCUMENT, MERGE }
 
     public record Plan(List<MutationOp> mutations, List<String> rawUpdates, Set<String> handledSubChangeIds,
                        List<String> unsupported, List<RollbackAction> actions) {
@@ -62,6 +62,9 @@ public class RollbackMutationPlanner {
             return Kind.DOCUMENT;
         }
         String op = lower(change.getOperationType());
+        if (OntologyMergeService.MERGE_CHECKPOINT_OPERATION.equalsIgnoreCase(change.getOperationType())) {
+            return Kind.MERGE;
+        }
         if (entityType(op) != null && op.startsWith("create")) {
             return Kind.CREATE;
         }
@@ -118,6 +121,7 @@ public class RollbackMutationPlanner {
             case SINGLE, RENAME -> planSingle(plan, change, true);
             case PREFIX -> planPrefix(plan, change, true);
             case DOCUMENT -> plan.actions.addAll(DocumentReversal.actions(change, true));
+            case MERGE -> plan.actions.add(RollbackAction.restoreMergeFile(change, true));
             case EXACT -> {
                 return ExactReversal.plan(change, subChanges, true);
             }
@@ -149,6 +153,7 @@ public class RollbackMutationPlanner {
             case SINGLE, RENAME -> planSingle(plan, change, false);
             case PREFIX -> planPrefix(plan, change, false);
             case DOCUMENT -> plan.actions.addAll(DocumentReversal.actions(change, false));
+            case MERGE -> plan.actions.add(RollbackAction.restoreMergeFile(change, false));
             case EXACT -> {
                 return ExactReversal.plan(change, subChanges, false);
             }

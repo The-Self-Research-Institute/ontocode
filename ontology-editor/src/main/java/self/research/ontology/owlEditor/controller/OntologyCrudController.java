@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.service.DraftNotReadyException;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
@@ -68,6 +69,16 @@ public class OntologyCrudController {
                                     @RequestBody MutationRequest request,
                                     @RequestParam(required = false, defaultValue = "true") boolean draft) {
 
+        java.util.Optional<String> badIri = self.research.ontology.owlEditor.service.MutationIriGuard.firstProblem(request.ops());
+        if (badIri.isPresent()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "draft", draft,
+                "error", "Bad Request",
+                "message", badIri.get()
+            ));
+        }
+
         // Enforce requireDraftForMembers: silently redirect public mutations to draft if the
         // project owner has turned on draft-only mode and this user is not the owner.
         if (!draft && !desktopMode) {
@@ -105,6 +116,13 @@ public class OntologyCrudController {
                             draftTrackingService.recordDrafts(projectId, draftUserId, draftUsername, request.ops(), draftSessionId);
                         }));
             } catch (IllegalArgumentException e) {
+                return ResponseEntity.status(409).body(Map.of(
+                    "success", false,
+                    "draft", true,
+                    "error", e.getMessage(),
+                    "draftCopyNotReady", true
+                ));
+            } catch (DraftNotReadyException e) {
                 return ResponseEntity.status(409).body(Map.of(
                     "success", false,
                     "draft", true,

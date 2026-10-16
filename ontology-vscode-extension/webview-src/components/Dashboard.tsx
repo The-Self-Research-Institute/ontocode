@@ -63,7 +63,9 @@ import {
 import apiClient, { ApiError, getBaseUrl } from "../services/apiClient";
 import ontologyMutationService from "../services/ontologyMutationService";
 import expressionService, { isManchesterClassExpression, isSimpleOntologyIri } from "../services/expressionService";
-import { useOntologyUndoRedo } from "../hooks/useOntologyUndoRedo";
+import { useOntologyUndoRedo, type UndoMenu } from "../hooks/useOntologyUndoRedo";
+import UndoRunControls from "./UndoRunControls";
+import UndoEditMenuItems from "./UndoEditMenuItems";
 import { draftTrackingService } from "../services/draftTrackingService";
 import { userPreferencesService } from "../services/userPreferencesService";
 import { notificationService } from "../services/notificationService";
@@ -177,6 +179,10 @@ import {
 } from "./dashboard-parts/codeViewPaging";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
 import { buildEntityIri } from "../utils/entityIri";
+import { clearChildrenOf, keepPendingChildren } from "../utils/treeChildren";
+import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
+import { ROLLBACK_REFRESH_DELAY_MS } from "../utils/refreshTiming";
+import { useLastCallTimer } from "../hooks/useLastCallTimer";
 import { PluginMarketplace } from "./PluginMarketplace";
 import { pluginLoader } from "../services/pluginLoader";
 import { checkForPluginUpdates, clearPluginUpdateCache } from "../services/pluginUpdateChecker";
@@ -284,10 +290,7 @@ const TopMenuBar = ({
   onHierarchyAnnotationPropChange,
   hierarchyCustomTemplate,
   onHierarchyCustomTemplateChange,
-  onUndo,
-  onRedo,
-  canUndo,
-  canRedo,
+  undoMenu,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -348,10 +351,7 @@ const TopMenuBar = ({
   onHierarchyAnnotationPropChange?: (iri: string) => void;
   hierarchyCustomTemplate?: string;
   onHierarchyCustomTemplateChange?: (tpl: string) => void;
-  onUndo?: () => void;
-  onRedo?: () => void;
-  canUndo?: boolean;
-  canRedo?: boolean;
+  undoMenu?: UndoMenu;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -507,30 +507,7 @@ const TopMenuBar = ({
                     </button>
                   </div>
                 ) : item === "Edit" ? (
-                  <div className="py-1">
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        onUndo?.();
-                      }}
-                      disabled={!canUndo}
-                      className="ontocode-top-menu-item w-full text-left px-4 py-2 text-xs flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <span>Undo my last change</span>
-                      <span className="text-gray-400">Ctrl+Z</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        onRedo?.();
-                      }}
-                      disabled={!canRedo}
-                      className="ontocode-top-menu-item w-full text-left px-4 py-2 text-xs flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <span>Redo</span>
-                      <span className="text-gray-400">Ctrl+Y</span>
-                    </button>
-                  </div>
+                  <UndoEditMenuItems menu={undoMenu} onClose={() => setOpenMenu(null)} />
                 ) : item === "View" ? (
                   <div className="py-1">
                     <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide opacity-50">Rendering</div>
@@ -1111,6 +1088,7 @@ const TopMenuBar = ({
       </div>
 
       <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
+        <UndoRunControls menu={undoMenu} />
         {isDesktop() ? (
           <span className="hidden sm:inline text-xs font-medium text-gray-500" title="Edits are kept in your private draft until you click Save">
             Private (Draft)
@@ -3771,10 +3749,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (currentProjectId) {
         const earlySyncModeKey = `ontocode_sync_mode_${currentProjectId}`;
         const earlySavedSyncMode = localStorage.getItem(earlySyncModeKey);
-        if (earlySavedSyncMode !== null) {
-          const applyDirectly = earlySavedSyncMode === "public";
+        {
+          const applyDirectly = earlySavedSyncMode === null || earlySavedSyncMode === "public";
           ontologyMutationService.setRealTimeSync(applyDirectly);
+          ontologyMutationService.setDraftRequired(false);
           setSyncMode(applyDirectly ? "public" : "private");
+          if (!applyDirectly && user && isAdminFlow) {
+            startDraftCopySession(currentProjectId, resolveMutationActor(user.userId || user.email, user.username).userId, { showModal: true });
+          }
           console.log("[Dashboard] 🔍 Early syncMode restore (covers admin flow):", {
             currentProjectId,
             isAdminFlow,
@@ -4870,6 +4852,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.error("[Dashboard] Failed to refresh prefixes:", error);
     }
   };
+
+  useCommittedChangeRefresh(projectId, () => {
+    void refreshOntologyAnnotations();
+    void refreshOntologyImports();
+    void refreshPrefixes();
+    void apiClient.get(withDraftScope(`/api/ontology/metadata/${encodeProjectId(projectId || "")}`))
+      .then((res: any) => setMetadata((prev: any) => ({ ...(prev || {}), ...(res?.data || res) })))
+      .catch(() => undefined);
+  });
 
   const handleSaveOntologyId = async () => {
     if (!projectId || !ontologyIriDraft.trim()) return;
@@ -7498,7 +7489,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
   }, [showLoadingChoice, isExpectingFileReady, projectId, pendingImportProjectId]);
 
   const loadChildren = useCallback(
-    async (nodeId: string) => {
+    async (nodeId: string, pendingChildren?: TreeNode[]) => {
       if (!projectId) return;
       try {
         console.log(`[loadChildren] Loading children for node: ${nodeId}`);
@@ -7555,12 +7546,12 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         const updateTree = (nodes: TreeNode[]): TreeNode[] =>
           nodes.map((n: TreeNode) => {
             if (n.id === nodeId) {
-              const mappedChildren = children.map((c: TopLevelClass) => ({
+              const mappedChildren = keepPendingChildren(children.map((c: TopLevelClass) => ({
                 ...c,
                 children: c.hasChildren ? [] : undefined,
                 hasChildren: c.hasChildren,
                 subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: n.label }],
-              }));
+              })) as TreeNode[], pendingChildren);
               return {
                 ...n,
                 children: applyInstanceCountsToTree(mappedChildren, classInstanceCounts),
@@ -8635,6 +8626,8 @@ const updateItemInState = useCallback(
     setDatatypes(datatypes);
   }, [projectId, fetchEntityListWithWarmup]);
 
+  const scheduleRollbackRefresh = useLastCallTimer();
+
   // Handle rollback events from Change Assistant plugin - refresh data
   useEffect(() => {
     const handleRollback = (event: Event) => {
@@ -8716,8 +8709,7 @@ const updateItemInState = useCallback(
         return; // Don't try to fetch the deleted entity
       }
 
-      // Refresh the data after rollback with longer delay to ensure GraphDB has processed
-      setTimeout(() => {
+      scheduleRollbackRefresh(() => {
         // If we have the entity IRI, refresh its details first
         if (detail?.entityIRI) {
           console.log("[Dashboard] 🔄 Refreshing entity details after rollback for:", detail.entityIRI);
@@ -8829,7 +8821,7 @@ const updateItemInState = useCallback(
         } else if (detail?.source !== "AI") {
           refreshAfterBulkWriteRef.current("rollback");
         }
-      }, 1500); // Increased delay to ensure GraphDB fully processes the rollback
+      }, ROLLBACK_REFRESH_DELAY_MS);
     };
 
     window.addEventListener("ontologyRollback", handleRollback as EventListener);
@@ -10778,17 +10770,9 @@ const updateItemInState = useCallback(
         await new Promise((resolve) => setTimeout(resolve, 300));
 
         // Clear the parent's cached children so loadChildren makes a fresh API call
-        setClassHierarchy((prev) => {
-          const clearParentChildren = (nodes: TreeNode[]): TreeNode[] =>
-            nodes.map((n) => {
-              if (n.id === parentIri) return { ...n, children: [] };
-              if (n.children) return { ...n, children: clearParentChildren(n.children) };
-              return n;
-            });
-          return clearParentChildren(prev);
-        });
+        setClassHierarchy((prev) => clearChildrenOf(prev, parentIri));
 
-        await loadChildren(parentIri);
+        await loadChildren(parentIri, [newNode]);
 
         console.log("[handleAddClassInline] Refresh complete");
         showNotification(`Class "${name}" created successfully!`);
@@ -11101,16 +11085,8 @@ const updateItemInState = useCallback(
           // silently fall back to a flat top-level append, with nothing here to self-correct it.
           if (type === "subclass") {
             await new Promise((resolve) => setTimeout(resolve, 300));
-            setClassHierarchy((prev) => {
-              const clearParentChildren = (nodes: TreeNode[]): TreeNode[] =>
-                nodes.map((n) => {
-                  if (n.id === parentIri) return { ...n, children: [] };
-                  if (n.children) return { ...n, children: clearParentChildren(n.children) };
-                  return n;
-                });
-              return clearParentChildren(prev);
-            });
-            await loadChildren(parentIri);
+            setClassHierarchy((prev) => clearChildrenOf(prev, parentIri));
+            await loadChildren(parentIri, [newNode]);
           }
         } else if (entitiesTab === "ObjectProperties") {
           // Handle Object Property Creation
@@ -12285,7 +12261,7 @@ const updateItemInState = useCallback(
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
 
-  const ontologyUndoRedo = useOntologyUndoRedo({ projectId });
+  const ontologyUndoRedo = useOntologyUndoRedo({ projectId, onOpenHistory: () => setMainTab("Changes") });
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);
@@ -15761,7 +15737,7 @@ const updateItemInState = useCallback(
         return (
           <div className="flex flex-col lg:flex-row h-full min-h-0 overflow-hidden">
             <div
-              className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-hidden min-w-0 min-h-0"
+              className="flex-1 flex flex-col border-r m-2 rounded shadow-sm overflow-y-auto overflow-x-hidden min-w-0 min-h-0"
               style={{ backgroundColor: "var(--bg)", borderColor: "var(--border)" }}
             >
               {isMetadataLoading && (
@@ -15775,7 +15751,7 @@ const updateItemInState = useCallback(
               )}
               {/* Ontology Header Section */}
               <div
-                className="p-4 border-b"
+                className="p-4 border-b shrink-0"
                 style={{ borderColor: "var(--border)", backgroundColor: "var(--surface-2)" }}
               >
                 <div className="flex justify-between items-start mb-4">
@@ -15836,7 +15812,7 @@ const updateItemInState = useCallback(
               </div>
 
               {/* Annotations Section */}
-              <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 0 }}>
+              <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: "120px" }}>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-xs font-semibold" style={{ color: "var(--text-primary)" }}>
                     Annotations
@@ -15964,7 +15940,7 @@ const updateItemInState = useCallback(
                   transition: "background-color 0.2s",
                 }}
                 onMouseDown={(e) => {
-                  setIsResizing(true);
+                  setIsResizing(true); e.preventDefault();
                   const startY = e.clientY;
                   const startHeight = bottomTabsHeight;
 
@@ -15997,11 +15973,11 @@ const updateItemInState = useCallback(
                   borderColor: "var(--border)",
                   backgroundColor: "var(--surface-2)",
                   height: `${bottomTabsHeight}px`,
-                  minHeight: "150px",
+                  minHeight: "min(150px, 50%)", maxHeight: "50%", flexShrink: 0,
                 }}
               >
                 <div
-                  className="flex text-[10px] font-bold uppercase tracking-tighter border-b"
+                  className="flex text-[10px] font-bold uppercase tracking-tighter border-b select-none"
                   style={{ backgroundColor: "var(--surface-3)", borderColor: "var(--border)" }}
                 >
                   {[
@@ -18479,10 +18455,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onHierarchyAnnotationPropChange={setHierarchyAnnotationPropIri}
           hierarchyCustomTemplate={hierarchyCustomTemplate}
           onHierarchyCustomTemplateChange={setHierarchyCustomTemplate}
-          onUndo={ontologyUndoRedo.undo}
-          onRedo={ontologyUndoRedo.redo}
-          canUndo={ontologyUndoRedo.canUndo}
-          canRedo={ontologyUndoRedo.canRedo}
+          undoMenu={ontologyUndoRedo.menu}
           onOpenMergeWizard={async () => {
             setMergeWizardOpen(true);
             // Fetch files from the current project to show in merge wizard

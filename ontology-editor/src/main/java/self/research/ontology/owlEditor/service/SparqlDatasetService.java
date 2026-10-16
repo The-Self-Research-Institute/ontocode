@@ -1070,7 +1070,7 @@ public class SparqlDatasetService {
      */
     GraphQueryResult execConstructAll(String projectId) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
-        final RepositoryConnection conn = binding.repository().getConnection();
+        final RepositoryConnection conn = TolerantRdfParsing.apply(binding.repository().getConnection());
         try {
             String fromClause = buildFromClause(conn, projectId);
             String q = "CONSTRUCT { ?s ?p ?o } " + fromClause + " WHERE { ?s ?p ?o }";
@@ -1210,7 +1210,7 @@ public class SparqlDatasetService {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
 
-        try (RepositoryConnection conn = binding.repository().getConnection()) {
+        try (RepositoryConnection conn = TolerantRdfParsing.apply(binding.repository().getConnection())) {
 
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {

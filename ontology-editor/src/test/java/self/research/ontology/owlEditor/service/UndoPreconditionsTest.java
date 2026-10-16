@@ -33,7 +33,7 @@ class UndoPreconditionsTest {
         when(facts.entityExists(eq(P), anyString(), anyBoolean(), any())).thenReturn(true);
         when(facts.statementPresent(eq(P), anyString(), anyString(), anyString(), anyBoolean(), any()))
                 .thenReturn(true);
-        when(facts.referencedByOthers(eq(P), anyString(), anyBoolean(), any())).thenReturn(false);
+        when(facts.referencedOutside(eq(P), anyString(), anyBoolean(), any(), any())).thenReturn(false);
         guard = new UndoPreconditions(new RollbackMutationPlanner(), facts);
     }
 
@@ -60,7 +60,7 @@ class UndoPreconditionsTest {
 
     @Test
     void refusesWhenOtherItemsStillReferToTheCreatedEntity() {
-        when(facts.referencedByOthers(eq(P), eq(A), anyBoolean(), any())).thenReturn(true);
+        when(facts.referencedOutside(eq(P), eq(A), anyBoolean(), any(), any())).thenReturn(true);
         Optional<String> problem = guard.violation(P, List.of(created(A)));
         assertTrue(problem.isPresent());
         assertTrue(problem.get().contains("Other items still refer to"));

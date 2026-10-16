@@ -71,13 +71,12 @@ describe('undoRedoService', () => {
 
   it('reports a refusal with the people who changed it since', async () => {
     post.mockRejectedValue({
-      response: {
-        data: {
-          success: false,
-          error: 'Others have changed A since',
-          dependents: [{ changeId: 'o', username: 'sam@x.com' }],
-          ...state({ available: false }),
-        },
+      status: 409,
+      data: {
+        success: false,
+        error: 'Others have changed A since',
+        dependents: [{ changeId: 'o', username: 'sam@x.com' }],
+        ...state({ available: false }),
       },
     });
     const result = await undoRedoService.undo('p', step());

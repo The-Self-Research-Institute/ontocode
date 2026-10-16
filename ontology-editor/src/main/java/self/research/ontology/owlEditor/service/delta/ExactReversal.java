@@ -4,6 +4,7 @@ import self.research.ontology.owlEditor.model.HistoryChange;
 import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.Statement;
 import self.research.ontology.owlEditor.service.DocumentReversal;
+import self.research.ontology.owlEditor.service.OntologyMergeService;
 import self.research.ontology.owlEditor.service.RollbackAction;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Plan;
 
@@ -62,6 +63,9 @@ public final class ExactReversal {
         List<RollbackAction> actions = new java.util.ArrayList<>();
         if (touchesOntologyHeader(delta.get())) {
             actions.add(RollbackAction.refreshOntology());
+        }
+        if (OntologyMergeService.MERGE_OPERATION.equals(change.getOperationType())) {
+            actions.add(RollbackAction.syncStoredFile());
         }
         actions.addAll(DocumentReversal.actions(change, undo));
         return new Plan(List.of(), List.of(update), handled, List.of(), actions);

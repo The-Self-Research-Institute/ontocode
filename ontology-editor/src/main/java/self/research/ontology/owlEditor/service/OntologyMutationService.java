@@ -307,6 +307,8 @@ public class OntologyMutationService {
                     verifyRestrictionInserted(projectId, verifyGraphUri, op, false);
                 }
             }
+        } catch (DraftNotReadyException e) {
+            throw e;
         } catch (Exception e) {
             log.error("[MUTATION] ❌ Failed to apply mutations: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to apply mutations", e);

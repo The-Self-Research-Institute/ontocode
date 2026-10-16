@@ -5,6 +5,8 @@ import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.Rio;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
+import org.semanticweb.owlapi.model.OWLOntology;
+import org.semanticweb.owlapi.model.OWLOntologyManager;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 
 import java.io.ByteArrayInputStream;
@@ -21,15 +23,17 @@ public final class OwlApiModelSnapshot {
         if (cache == null) {
             return Optional.empty();
         }
-        return cache.get(projectId).flatMap(cached -> {
-            try {
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                cached.manager().saveOntology(cached.ontology(), new RDFXMLDocumentFormat(), out);
-                return Optional.of(Rio.parse(new ByteArrayInputStream(out.toByteArray()), "", RDFFormat.RDFXML));
-            } catch (Exception e) {
-                log.warn("[UNDO] Could not read the in-memory ontology of project {}: {}", projectId, e.getMessage());
-                return Optional.empty();
-            }
-        });
+        return cache.get(projectId).flatMap(cached -> of(cached.manager(), cached.ontology()));
+    }
+
+    public static Optional<Model> of(OWLOntologyManager manager, OWLOntology ontology) {
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            manager.saveOntology(ontology, new RDFXMLDocumentFormat(), out);
+            return Optional.of(Rio.parse(new ByteArrayInputStream(out.toByteArray()), "", RDFFormat.RDFXML));
+        } catch (Exception e) {
+            log.warn("[UNDO] Could not read the ontology as triples: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 }

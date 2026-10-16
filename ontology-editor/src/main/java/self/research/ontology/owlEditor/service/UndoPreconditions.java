@@ -21,8 +21,9 @@ public class UndoPreconditions {
     }
 
     public Optional<String> violation(String projectId, List<HistoryChange> entries) {
+        org.eclipse.rdf4j.model.Model own = RollbackWorkSupport.insertedTriples(entries);
         for (HistoryChange entry : entries) {
-            Optional<String> problem = check(projectId, entry);
+            Optional<String> problem = check(projectId, entry, own);
             if (problem.isPresent()) {
                 return problem;
             }
@@ -30,7 +31,7 @@ public class UndoPreconditions {
         return Optional.empty();
     }
 
-    private Optional<String> check(String projectId, HistoryChange entry) {
+    private Optional<String> check(String projectId, HistoryChange entry, org.eclipse.rdf4j.model.Model own) {
         String label = labelOf(entry);
         if (entry.isReverted()) {
             return Optional.of(label + " was already undone");
@@ -75,7 +76,7 @@ public class UndoPreconditions {
             }
         }
         if (RollbackWorkSupport.isCreation(entry, kind)
-                && facts.referencedByOthers(projectId, entry.getEntityIRI(), entry.isDraft(), entry.getUserId())) {
+                && facts.referencedOutside(projectId, entry.getEntityIRI(), entry.isDraft(), entry.getUserId(), own)) {
             return Optional.of("Other items still refer to " + label);
         }
         return Optional.empty();

@@ -291,7 +291,7 @@ public class ChangeRollbackService {
             return skip(entry, presence == Presence.REQUIRED ? "It no longer exists" : "It was re-created since this change");
         }
         if (kind == Kind.RENAME && facts.entityExists(req.projectId(), entry.getOldValue(), entry.isDraft(), entry.getUserId())) { return skip(entry, "The old name is in use again"); }
-        if (ENTRY.equals(req.level()) && RollbackWorkSupport.isCreation(entry, kind) && facts.referencedByOthers(req.projectId(), entry.getEntityIRI(), entry.isDraft(), entry.getUserId())) { return skip(entry, "Other items still refer to it"); }
+        if (ENTRY.equals(req.level()) && RollbackWorkSupport.isCreation(entry, kind) && facts.referencedOutside(req.projectId(), entry.getEntityIRI(), entry.isDraft(), entry.getUserId(), RollbackWorkSupport.insertedTriples(List.of(entry)))) { return skip(entry, "Other items still refer to it"); }
         if (!deltaHolds(req, entry, true)) { return skip(entry, "It was changed since this edit"); }
         List<Item> skipped = new ArrayList<>();
         List<HistoryChange.SubChange> targets = kind == Kind.GROUPED_MODIFY
