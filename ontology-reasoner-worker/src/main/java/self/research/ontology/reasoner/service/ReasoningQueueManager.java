@@ -1,6 +1,8 @@
 package self.research.ontology.reasoner.service;
 
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.ReasoningFriendlyErrors;
 import self.research.ontology.reasoner.model.ReasoningJob;
@@ -16,10 +18,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -31,28 +29,36 @@ public class ReasoningQueueManager {
     private final ReasoningResultRetention resultRetention;
     private final LinkedList<ReasoningJob> queue = new LinkedList<>();
     private final Map<String, ReasoningJob> activeJobs = new ConcurrentHashMap<>();
+    private final Map<String, ReasoningJob> liveJobs = new ConcurrentHashMap<>();
     private final AtomicLong totalDurationMs = new AtomicLong(0);
     private final AtomicLong completedCount = new AtomicLong(0);
     private volatile Instant lastActivityAt = Instant.now();
-    private final ExecutorService notificationExecutor = new ThreadPoolExecutor(
-            2, 4, 60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(1000),
-            r -> {
-                Thread t = new Thread(r, "reasoning-job-notifier");
-                t.setDaemon(true);
-                return t;
-            },
-            new ThreadPoolExecutor.DiscardOldestPolicy());
+    private final ReasoningJobEventSender eventSender;
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
     private static final long MAX_WAIT_TIME_MS = 30 * 60 * 1000;
 
+    @Autowired
     public ReasoningQueueManager(EditorClient editorClient,
                                  ReasoningConcurrencyPolicy concurrencyPolicy,
                                  ReasoningResultRetention resultRetention) {
+        this(editorClient, concurrencyPolicy, resultRetention,
+                new ReasoningJobEventSender(editorClient::publishJobEvent, 1000));
+    }
+
+    ReasoningQueueManager(EditorClient editorClient,
+                          ReasoningConcurrencyPolicy concurrencyPolicy,
+                          ReasoningResultRetention resultRetention,
+                          ReasoningJobEventSender eventSender) {
         this.editorClient = editorClient;
         this.concurrencyPolicy = concurrencyPolicy;
         this.resultRetention = resultRetention;
+        this.eventSender = eventSender;
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        eventSender.shutdown(2_000);
     }
 
     public ReasoningJob enqueue(ReasoningJob.JobType jobType,
@@ -106,6 +112,7 @@ public class ReasoningQueueManager {
                     .build();
 
             queue.addLast(job);
+            liveJobs.put(job.getJobId(), job);
             updateQueuePositions();
             notifyJob(job);
             touchActivity();
@@ -123,13 +130,8 @@ public class ReasoningQueueManager {
                                                 List<String> queryTypes, String reasonerType,
                                                 Integer maxJustifications, String explanationMode) {
         for (ReasoningJob candidate : queue) {
-            if (isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
-                    maxJustifications, explanationMode)) {
-                return candidate;
-            }
-        }
-        for (ReasoningJob candidate : activeJobs.values()) {
-            if (isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
+            if (candidate.getStatus() == ReasoningJob.Status.QUEUED
+                    && isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
                     maxJustifications, explanationMode)) {
                 return candidate;
             }
@@ -179,23 +181,25 @@ public class ReasoningQueueManager {
     public synchronized void markCompleted(ReasoningJob job, Map<String, Object> result, long durationMs) {
         log.info("[DIAG] markCompleted: jobId={} jobType={} identityHash={} atMs={}",
                 job.getJobId(), job.getJobType(), System.identityHashCode(job), System.currentTimeMillis());
-        activeJobs.remove(job.getJobId());
         job.setStatus(ReasoningJob.Status.COMPLETED);
         job.setCompletedAt(Instant.now());
         job.setExecutionTimeMs(durationMs);
         job.setResult(result);
         resultRetention.retain(job);
+        liveJobs.remove(job.getJobId());
+        activeJobs.remove(job.getJobId());
         recordDuration(durationMs);
         notifyJob(job);
         touchActivity();
     }
 
     public synchronized void markFailed(ReasoningJob job, String error) {
-        activeJobs.remove(job.getJobId());
         job.setStatus(ReasoningJob.Status.FAILED);
         job.setCompletedAt(Instant.now());
         job.setError(error);
         resultRetention.retain(job);
+        liveJobs.remove(job.getJobId());
+        activeJobs.remove(job.getJobId());
         notifyJob(job);
         touchActivity();
         log.error("[Reasoning] Failed job {}: {}", job.getJobId(), error);
@@ -213,20 +217,15 @@ public class ReasoningQueueManager {
 
     public synchronized void releaseAbandonedSlot(String jobId) {
         activeJobs.remove(jobId);
+        liveJobs.remove(jobId);
     }
 
     public ReasoningJob getJob(String jobId) {
-        ReasoningJob active = activeJobs.get(jobId);
-        if (active != null) {
-            log.info("[DIAG] getJob: jobId={} source=active jobType={} identityHash={} atMs={}",
-                    jobId, active.getJobType(), System.identityHashCode(active), System.currentTimeMillis());
-            return active;
-        }
-        ReasoningJob queued = queue.stream().filter(j -> jobId.equals(j.getJobId())).findFirst().orElse(null);
-        if (queued != null) {
-            log.info("[DIAG] getJob: jobId={} source=queue jobType={} identityHash={} atMs={}",
-                    jobId, queued.getJobType(), System.identityHashCode(queued), System.currentTimeMillis());
-            return queued;
+        ReasoningJob live = liveJobs.get(jobId);
+        if (live != null) {
+            log.info("[DIAG] getJob: jobId={} source=live status={} jobType={} identityHash={} atMs={}",
+                    jobId, live.getStatus(), live.getJobType(), System.identityHashCode(live), System.currentTimeMillis());
+            return live;
         }
         ReasoningJob retained = resultRetention.get(jobId).orElse(null);
         log.info("[DIAG] getJob: jobId={} source=retention jobType={} identityHash={} atMs={}",
@@ -248,7 +247,10 @@ public class ReasoningQueueManager {
     }
 
     public synchronized long getEstimatedWaitTimeMs(String jobId) {
-        ReasoningJob job = getJob(jobId);
+        return getEstimatedWaitTimeMs(getJob(jobId));
+    }
+
+    public synchronized long getEstimatedWaitTimeMs(ReasoningJob job) {
         return job == null ? 0 : calculateEstimatedWaitTime(job);
     }
 
@@ -278,14 +280,17 @@ public class ReasoningQueueManager {
     private void updateQueuePositions() {
         int position = 1;
         for (ReasoningJob job : queue) {
-            job.setQueuePosition(position++);
-            job.setEstimatedWaitTimeMs(calculateEstimatedWaitTime(job));
-            notifyJob(job);
+            int current = position++;
+            if (job.getQueuePosition() != current) {
+                job.setQueuePosition(current);
+                job.setEstimatedWaitTimeMs(calculateEstimatedWaitTime(job));
+                notifyJob(job);
+            }
         }
     }
 
     private long calculateEstimatedWaitTime(ReasoningJob target) {
-        if (target.getStatus() == ReasoningJob.Status.PROCESSING) {
+        if (target.getStatus() != ReasoningJob.Status.QUEUED) {
             return 0;
         }
         long waitMs = activeJobs.values().stream().mapToLong(this::estimateRemainingTimeMs).sum();
@@ -338,8 +343,7 @@ public class ReasoningQueueManager {
                 .timestamp(System.currentTimeMillis())
                 .queueStats(getQueueStats())
                 .build();
-        ReasoningJobNotifier.JobSnapshot snapshot = ReasoningJobNotifier.fromEvent(event);
-        notificationExecutor.execute(() -> editorClient.publishJobEvent(snapshot));
+        eventSender.submit(ReasoningJobNotifier.fromEvent(event));
     }
 
     private String buildMessage(ReasoningJob job) {
