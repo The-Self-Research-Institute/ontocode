@@ -3,6 +3,7 @@ package self.research.ontology.reasoner.service;
 import org.semanticweb.owl.explanation.api.Explanation;
 import org.semanticweb.owl.explanation.api.ExplanationGenerator;
 import org.semanticweb.owl.explanation.api.ExplanationGeneratorFactory;
+import org.semanticweb.owl.explanation.api.ExplanationProgressMonitor;
 import org.semanticweb.owl.explanation.impl.blackbox.checker.InconsistentOntologyExplanationGeneratorFactory;
 import org.semanticweb.owl.explanation.impl.laconic.LaconicExplanationGeneratorFactory;
 import org.semanticweb.owlapi.apibinding.OWLManager;
@@ -11,6 +12,8 @@ import org.semanticweb.owlapi.expression.ShortFormEntityChecker;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
+import org.semanticweb.owlapi.reasoner.ReasonerInterruptedException;
+import org.semanticweb.owlapi.reasoner.TimeOutException;
 import org.semanticweb.owlapi.search.EntitySearcher;
 import org.semanticweb.owlapi.util.BidirectionalShortFormProvider;
 import org.semanticweb.owlapi.util.BidirectionalShortFormProviderAdapter;
@@ -204,6 +207,7 @@ public class ReasoningJobExecutor {
                     causes.add(cause);
                 }
             } catch (Exception e) {
+                rethrowIfInterrupted(e);
                 log.error("Error checking disjoint violations", e);
             }
 
@@ -221,6 +225,7 @@ public class ReasoningJobExecutor {
                     causes.add(cause);
                 }
             } catch (Exception e) {
+                rethrowIfInterrupted(e);
                 log.error("Error checking property violations", e);
             }
 
@@ -245,6 +250,7 @@ public class ReasoningJobExecutor {
                     causes.add(cause);
                 }
             } catch (Exception e) {
+                rethrowIfInterrupted(e);
                 log.error("Error running justification search", e);
             }
 
@@ -604,7 +610,8 @@ public class ReasoningJobExecutor {
         InconsistentOntologyExplanationGeneratorFactory factory =
                 new InconsistentOntologyExplanationGeneratorFactory(
                         new LenientHermitReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
-        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology);
+        ExplanationGenerator<OWLAxiom> generator =
+                factory.createExplanationGenerator(reasoningOntology, new StopWhenThreadInterrupted());
         OWLAxiom entailment = EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(
                 EXPLANATION_DATA_FACTORY.getOWLThing(), EXPLANATION_DATA_FACTORY.getOWLNothing());
         Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
@@ -621,7 +628,8 @@ public class ReasoningJobExecutor {
         ExplanationGeneratorFactory<OWLAxiom> laconicFactory =
                 new LaconicExplanationGeneratorFactory<OWLAxiom>(baseFactory, OWLManager::createOWLOntologyManager);
 
-        ExplanationGenerator<OWLAxiom> generator = laconicFactory.createExplanationGenerator(reasoningOntology);
+        ExplanationGenerator<OWLAxiom> generator =
+                laconicFactory.createExplanationGenerator(reasoningOntology, new StopWhenThreadInterrupted());
         OWLAxiom entailment = EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(
                 EXPLANATION_DATA_FACTORY.getOWLThing(), EXPLANATION_DATA_FACTORY.getOWLNothing());
         Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
@@ -689,6 +697,7 @@ public class ReasoningJobExecutor {
 
             List<Map<String, Object>> equivalentClasses = new ArrayList<>();
             for (OWLClass cls : ontology.getClassesInSignature()) {
+                OntologySessionService.throwIfInterrupted();
                 try {
                     Set<OWLClass> equivalents = reasoner.getEquivalentClasses(cls).getEntities();
                     if (equivalents.size() > 1) {
@@ -698,7 +707,8 @@ public class ReasoningJobExecutor {
                                 .collect(Collectors.toList()));
                         equivalentClasses.add(eqGroup);
                     }
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    rethrowIfInterrupted(e);
                     // Some reasoners (ELK) choke on individual classes — skip and keep going.
                 }
             }
@@ -712,6 +722,7 @@ public class ReasoningJobExecutor {
                         .map(cls -> Map.<String, Object>of("iri", cls.getIRI().toString(), "label", label(cls, ontology)))
                         .collect(Collectors.toList());
             } catch (Exception e) {
+                rethrowIfInterrupted(e);
                 unsatisfiableKnown = false;
                 log.warn("Unsatisfiable-class check failed for project {}: {}", job.getProjectId(), e.getMessage());
             }
@@ -1011,6 +1022,7 @@ public class ReasoningJobExecutor {
             Set<OWLAxiom> inferredAxioms = new LinkedHashSet<>();
             boolean stoppedEarly = false;
             for (OWLClass owlClass : ontology.getClassesInSignature()) {
+                OntologySessionService.throwIfInterrupted();
                 if (inferredAxioms.size() > axiomDisplayLimit) {
                     stoppedEarly = true;
                     break;
@@ -1095,6 +1107,27 @@ public class ReasoningJobExecutor {
         }
         if (session.revision() >= 0) {
             result.put("ontologyRevision", session.revision());
+        }
+    }
+
+    private static void rethrowIfInterrupted(Exception e) {
+        if (e instanceof ReasonerInterruptedException || e instanceof TimeOutException) {
+            throw (RuntimeException) e;
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            throw new ReasonerInterruptedException(e);
+        }
+    }
+
+    private static final class StopWhenThreadInterrupted implements ExplanationProgressMonitor<OWLAxiom> {
+        @Override
+        public void foundExplanation(ExplanationGenerator<OWLAxiom> generator, Explanation<OWLAxiom> explanation,
+                                     Set<Explanation<OWLAxiom>> allFoundExplanations) {
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return Thread.currentThread().isInterrupted();
         }
     }
 

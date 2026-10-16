@@ -16,20 +16,28 @@ import java.util.concurrent.*;
 @Service
 public class ReasoningQueueProcessor {
 
+    private static final long RUNAWAY_RECHECK_MS = 30_000;
+
     private final ReasoningQueueManager queueManager;
     private final ReasoningJobExecutor jobExecutor;
     private final Executor reasoningExecutor;
+    private final RunawayReasoningHealthIndicator runawayHealth;
     private final long jobTimeoutMs;
     private final long runawayThreadMaxWaitMs;
+    private final Map<String, RunningJob> runningJobs = new ConcurrentHashMap<>();
+
+    private record RunningJob(Thread thread, Future<?> future) {}
 
     public ReasoningQueueProcessor(ReasoningQueueManager queueManager,
                                    ReasoningJobExecutor jobExecutor,
                                    @Qualifier("reasoningExecutor") Executor reasoningExecutor,
+                                   RunawayReasoningHealthIndicator runawayHealth,
                                    @Value("${ontocode.reasoning.job-timeout-ms:1800000}") long jobTimeoutMs,
                                    @Value("${ontocode.reasoning.runaway-thread-max-wait-ms:600000}") long runawayThreadMaxWaitMs) {
         this.queueManager = queueManager;
         this.jobExecutor = jobExecutor;
         this.reasoningExecutor = reasoningExecutor;
+        this.runawayHealth = runawayHealth;
         this.jobTimeoutMs = jobTimeoutMs;
         this.runawayThreadMaxWaitMs = runawayThreadMaxWaitMs;
     }
@@ -38,86 +46,116 @@ public class ReasoningQueueProcessor {
         if (!queueManager.canProcess()) {
             return;
         }
-
-        reasoningExecutor.execute(() -> {
-            ReasoningJob job = queueManager.dequeue();
-            if (job == null) {
-                return;
-            }
-
-            long start = System.currentTimeMillis();
-
-            Thread[] capturedThread = new Thread[1];
-            ExecutorService jobThread = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "reasoning-job-" + job.getJobId());
-                t.setDaemon(true);
-                capturedThread[0] = t;
-                return t;
-            });
-            try {
-                Future<Map<String, Object>> future = jobThread.submit(() -> jobExecutor.execute(job));
-                Map<String, Object> result;
-                try {
-                    result = future.get(jobTimeoutMs, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException e) {
-                    if (capturedThread[0] != null) {
-                        OntologySessionService.interruptReasonerOnThread(capturedThread[0].threadId());
-                    }
-                    future.cancel(true);
-                    long minutes = jobTimeoutMs / 60_000;
-                    log.error("[Reasoning] Job {} ({}) timed out after {} min — cancelled",
-                            job.getJobId(), job.getJobType(), minutes);
-                    queueManager.reportTimedOut(job,
-                            "Reasoning timed out after " + minutes + " minutes. "
-                            + "The ontology may be too complex for the selected reasoner. "
-                            + "Try ELK or reduce the ontology scope.");
-                    awaitRunawayThreadThenReleaseSlot(job, jobThread);
-                    return;
-                } catch (ExecutionException e) {
-                    Throwable cause = e.getCause() != null ? e.getCause() : e;
-                    if (cause instanceof Error err) throw err;
-                    throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
-                }
-
-                long duration = System.currentTimeMillis() - start;
-                if (Boolean.FALSE.equals(result.get("success"))) {
-                    String error = result.get("error") != null ? result.get("error").toString() : "Task failed";
-                    queueManager.markFailed(job, ReasoningFriendlyErrors.forUser(error));
-                } else {
-                    queueManager.markCompleted(job, result, duration);
-                }
-            } catch (Throwable e) {
-                log.error("[Reasoning] Job {} failed", job.getJobId(), e);
-                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                if (msg.toLowerCase(Locale.ROOT).contains("outofmemory")) {
-                    msg = "OutOfMemoryError during reasoning";
-                }
-                queueManager.markFailed(job, ReasoningFriendlyErrors.forUser(msg));
-            } finally {
-                jobThread.shutdownNow();
-                processNext();
-            }
-        });
+        reasoningExecutor.execute(this::runNextJob);
     }
 
-    private void awaitRunawayThreadThenReleaseSlot(ReasoningJob job, ExecutorService jobThread) {
-        Thread watcher = new Thread(() -> {
-            jobThread.shutdownNow();
-            boolean stopped = false;
+    private void runNextJob() {
+        ReasoningJob job = queueManager.dequeue();
+        if (job == null) {
+            return;
+        }
+
+        long start = System.currentTimeMillis();
+
+        Thread[] capturedThread = new Thread[1];
+        ExecutorService jobThread = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "reasoning-job-" + job.getJobId());
+            t.setDaemon(true);
+            capturedThread[0] = t;
+            return t;
+        });
+        boolean handedToReaper = false;
+        try {
+            Future<Map<String, Object>> future = jobThread.submit(() -> jobExecutor.execute(job));
+            jobThread.shutdown();
+            runningJobs.put(job.getJobId(), new RunningJob(capturedThread[0], future));
+            Map<String, Object> result;
             try {
-                stopped = jobThread.awaitTermination(runawayThreadMaxWaitMs, TimeUnit.MILLISECONDS);
+                result = future.get(jobTimeoutMs, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                future.cancel(true);
+                interruptJobThread(capturedThread[0]);
+                long minutes = jobTimeoutMs / 60_000;
+                log.error("[Reasoning] Job {} ({}) timed out after {} min — cancelled",
+                        job.getJobId(), job.getJobType(), minutes);
+                queueManager.reportTimedOut(job,
+                        "Reasoning timed out after " + minutes + " minutes. "
+                        + "The ontology may be too complex for the selected reasoner. "
+                        + "Try ELK or reduce the ontology scope.");
+                awaitRunawayThreadThenReleaseSlot(job, jobThread, capturedThread[0]);
+                handedToReaper = true;
+                return;
+            } catch (CancellationException e) {
+                log.info("[Reasoning] Job {} ({}) was cancelled while running", job.getJobId(), job.getJobType());
+                awaitRunawayThreadThenReleaseSlot(job, jobThread, capturedThread[0]);
+                handedToReaper = true;
+                return;
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                if (cause instanceof Error err) throw err;
+                throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
+            }
+
+            long duration = System.currentTimeMillis() - start;
+            if (Boolean.FALSE.equals(result.get("success"))) {
+                String error = result.get("error") != null ? result.get("error").toString() : "Task failed";
+                queueManager.markFailed(job, ReasoningFriendlyErrors.forUser(error));
+            } else {
+                queueManager.markCompleted(job, result, duration);
+            }
+        } catch (Throwable e) {
+            log.error("[Reasoning] Job {} failed", job.getJobId(), e);
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            if (msg.toLowerCase(Locale.ROOT).contains("outofmemory")) {
+                msg = "OutOfMemoryError during reasoning";
+            }
+            queueManager.markFailed(job, ReasoningFriendlyErrors.forUser(msg));
+        } finally {
+            if (!handedToReaper) {
+                runningJobs.remove(job.getJobId());
+                jobThread.shutdownNow();
+            }
+            processNext();
+        }
+    }
+
+    private static void interruptJobThread(Thread thread) {
+        if (thread == null) {
+            return;
+        }
+        OntologySessionService.interruptReasonerOnThread(thread.threadId());
+        thread.interrupt();
+    }
+
+    private void awaitRunawayThreadThenReleaseSlot(ReasoningJob job, ExecutorService jobThread, Thread thread) {
+        String jobId = job.getJobId();
+        Thread watcher = new Thread(() -> {
+            boolean flagged = false;
+            try {
+                jobThread.shutdownNow();
+                if (!jobThread.awaitTermination(runawayThreadMaxWaitMs, TimeUnit.MILLISECONDS)) {
+                    flagged = true;
+                    runawayHealth.markStuck(jobId);
+                    log.error("[Reasoning] Thread for job {} is still running {} ms after it was told to stop — "
+                            + "keeping its slot and reporting the worker as unhealthy until it ends",
+                            jobId, runawayThreadMaxWaitMs);
+                    while (!jobThread.awaitTermination(RUNAWAY_RECHECK_MS, TimeUnit.MILLISECONDS)) {
+                        interruptJobThread(thread);
+                    }
+                }
+                log.info("[Reasoning] Thread for stopped job {} has ended, releasing its slot", jobId);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
+                return;
+            } finally {
+                if (flagged) {
+                    runawayHealth.clear(jobId);
+                }
             }
-            if (stopped) {
-                log.info("[Reasoning] Runaway thread for timed-out job {} has stopped, releasing its slot", job.getJobId());
-            } else {
-                log.warn("[Reasoning] Runaway thread for timed-out job {} did not stop within {} ms — "
-                        + "releasing its slot anyway", job.getJobId(), runawayThreadMaxWaitMs);
-            }
-            queueManager.releaseAbandonedSlot(job.getJobId());
+            runningJobs.remove(jobId);
+            queueManager.releaseAbandonedSlot(jobId);
             processNext();
-        }, "reasoning-reaper-" + job.getJobId());
+        }, "reasoning-reaper-" + jobId);
         watcher.setDaemon(true);
         watcher.start();
     }

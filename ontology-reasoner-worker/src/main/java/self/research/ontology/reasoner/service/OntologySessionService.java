@@ -7,6 +7,7 @@ import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
+import org.semanticweb.owlapi.reasoner.ReasonerInterruptedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -95,7 +96,7 @@ public class OntologySessionService {
                 log.info("[Reasoner] Skipping OWL load — reusing cached ontology for {} (revision={})", projectId, revision);
                 OWLReasoner reasoner;
                 try {
-                    reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
+                    reasoner = createRegisteredReasoner(ontology, effectiveType);
                 } catch (RuntimeException e) {
                     ontologyCache.endUse(ontology);
                     throw e;
@@ -127,7 +128,7 @@ public class OntologySessionService {
 
         OWLReasoner reasoner;
         try {
-            reasoner = EphemeralReasonerFactory.create(ontology, effectiveType, reasonerTimeoutMs);
+            reasoner = createRegisteredReasoner(ontology, effectiveType);
         } catch (RuntimeException e) {
             if (storedInCache) {
                 ontologyCache.endUse(ontology);
@@ -137,6 +138,28 @@ public class OntologySessionService {
 
         return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType,
                 downgradedWarning, storedInCache, storedInCache ? ontologyCache : null, revision);
+    }
+
+    private OWLReasoner createRegisteredReasoner(OWLOntology ontology, ReasonerType type) {
+        throwIfInterrupted();
+        OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, type, reasonerTimeoutMs);
+        long threadId = Thread.currentThread().threadId();
+        ACTIVE_REASONER_BY_THREAD.put(threadId, reasoner);
+        if (Thread.currentThread().isInterrupted()) {
+            ACTIVE_REASONER_BY_THREAD.remove(threadId, reasoner);
+            try {
+                reasoner.dispose();
+            } catch (Exception ignored) {
+            }
+            throw new ReasonerInterruptedException("Reasoning was stopped before it started");
+        }
+        return reasoner;
+    }
+
+    static void throwIfInterrupted() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new ReasonerInterruptedException("Reasoning was stopped");
+        }
     }
 
     private boolean isHeavyReasoner(ReasonerType type) {
@@ -183,7 +206,6 @@ public class OntologySessionService {
             this.fromCache = fromCache;
             this.cache = cache;
             this.revision = revision;
-            ACTIVE_REASONER_BY_THREAD.put(Thread.currentThread().threadId(), reasoner);
         }
 
         public OWLOntology ontology() { return ontology; }
