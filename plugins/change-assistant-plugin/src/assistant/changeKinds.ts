@@ -89,5 +89,6 @@ export function normaliseAuthor(username: string | undefined, userId: string | u
 }
 
 export function authorKey(author: string, authorEmail?: string): string {
-  return (authorEmail || author || '').trim().toLowerCase();
+  const candidates = [authorEmail, author].map(value => (value || '').trim().toLowerCase()).filter(Boolean);
+  return candidates.find(value => value.includes('@')) ?? candidates[0] ?? '';
 }

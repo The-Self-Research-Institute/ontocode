@@ -80,6 +80,7 @@ export interface ChangeWarning {
 
 export interface ChangeStats {
   totalChanges: number;
+  undoneChanges: number;
   draftChanges: number;
   conflicts: number;
   activeAuthors: number;
@@ -104,6 +105,7 @@ export interface AssistantNotification {
 
 export const EMPTY_STATS: ChangeStats = {
   totalChanges: 0,
+  undoneChanges: 0,
   draftChanges: 0,
   conflicts: 0,
   activeAuthors: 0,

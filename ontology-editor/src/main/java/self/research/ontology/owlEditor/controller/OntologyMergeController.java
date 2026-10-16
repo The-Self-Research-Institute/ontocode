@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -11,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import self.research.ontology.owlEditor.model.merge.*;
 import self.research.ontology.owlEditor.service.OntologyMergeService;
+import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 
 import java.nio.file.Path;
@@ -42,12 +44,12 @@ public class OntologyMergeController {
         this.metadataService = metadataService;
     }
 
-    private String effectiveUserId(String userId) {
-        return desktopMode ? DESKTOP_USER_ID : (userId != null && !userId.isBlank() ? userId : "anonymous");
+    private String effectiveUserId(HttpServletRequest request, String userId) {
+        return desktopMode ? DESKTOP_USER_ID : RequestActor.of(request, userId, null).userId();
     }
 
-    private String effectiveUsername(String username) {
-        return username != null && !username.isBlank() ? username : "Anonymous";
+    private String effectiveUsername(HttpServletRequest request, String userId, String username) {
+        return RequestActor.of(request, userId, username).username();
     }
 
     /**
@@ -148,7 +150,8 @@ public class OntologyMergeController {
             @RequestParam(value = "outputFileName", required = false) String outputFileName,
             @RequestParam(value = "conflictResolutions", required = false) String conflictResolutionsJson,
             @RequestParam(value = "userId", required = false) String userId,
-            @RequestParam(value = "username", required = false) String username) {
+            @RequestParam(value = "username", required = false) String username,
+            HttpServletRequest httpRequest) {
 
         log.info("[MERGE] Executing merge for project {}", projectId);
         log.info("[MERGE] Strategy: {}, Rename suffix: {}", strategy, renameSuffix);
@@ -182,8 +185,8 @@ public class OntologyMergeController {
                 targetFileName,
                 outputFileName,
                 options,
-                effectiveUserId(userId),
-                effectiveUsername(username)
+                effectiveUserId(httpRequest, userId),
+                effectiveUsername(httpRequest, userId, username)
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);
@@ -229,7 +232,8 @@ public class OntologyMergeController {
             @RequestParam(value = "outputFileName", required = false) String outputFileName,
             @RequestParam(value = "userId", required = false) String userId,
             @RequestParam(value = "username", required = false) String username,
-            @RequestBody MergeOptions options) {
+            @RequestBody MergeOptions options,
+            HttpServletRequest httpRequest) {
 
         log.info("[MERGE] Executing merge with manual resolutions for project {}", projectId);
         log.info("[MERGE] Resolutions provided: {}", options.getConflictResolutions().size());
@@ -248,8 +252,8 @@ public class OntologyMergeController {
                 targetFileName,
                 outputFileName,
                 options,
-                effectiveUserId(userId),
-                effectiveUsername(username)
+                effectiveUserId(httpRequest, userId),
+                effectiveUsername(httpRequest, userId, username)
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);

@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service.delta;
 
 import self.research.ontology.owlEditor.service.Limit;
+import self.research.ontology.owlEditor.service.TolerantRdfParsing;
 import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.query.GraphQuery;
 import org.eclipse.rdf4j.query.QueryResults;
@@ -102,7 +103,7 @@ public final class DeltaCapture {
 
     static Model read(Repository repository, String graphUri, List<String> seeds, List<String> incoming, boolean whole) {
         String text = whole ? wholeGraphQuery(graphUri) : neighbourhoodQuery(graphUri, seeds, incoming);
-        try (RepositoryConnection connection = repository.getConnection()) {
+        try (RepositoryConnection connection = TolerantRdfParsing.apply(repository.getConnection())) {
             GraphQuery query = connection.prepareGraphQuery(text);
             query.setIncludeInferred(false);
             return QueryResults.asModel(query.evaluate());

@@ -14,8 +14,9 @@ export function buildEntityIri(ontologyBaseIri: string | undefined, rawName: str
   const trimmed = rawName.trim();
   if (!trimmed) return '';
   if (isFullIriString(trimmed)) return trimmed;
-  const base = ontologyBaseIri || DEFAULT_ONTOLOGY_BASE_IRI;
-  return `${base}#${sanitizeIriFragment(trimmed)}`;
+  const base = (ontologyBaseIri || DEFAULT_ONTOLOGY_BASE_IRI).trim();
+  const separator = base.endsWith('#') || base.endsWith('/') ? '' : '#';
+  return `${base}${separator}${sanitizeIriFragment(trimmed)}`;
 }
 
 export interface EntityIriPreview {

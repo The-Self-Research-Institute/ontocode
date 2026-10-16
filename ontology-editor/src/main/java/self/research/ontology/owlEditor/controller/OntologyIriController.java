@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import self.research.ontology.owlEditor.service.ImportReferenceUpdater;
+import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.service.OntologyMetadataService;
 
 import java.util.Map;
@@ -39,7 +40,8 @@ public class OntologyIriController {
             String ontologyIri = request.get("ontologyIri");
             String versionIri = request.get("versionIri");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
-            String userId = request.get("userId");
+            String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
+
             String username = request.get("username");
             String oldIri = draft ? null : metadataService.currentOntologyIri(projectId, false, userId);
             java.time.LocalDateTime since = java.time.LocalDateTime.now().minusSeconds(1);

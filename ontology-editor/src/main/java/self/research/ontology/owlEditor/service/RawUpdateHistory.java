@@ -78,7 +78,7 @@ public class RawUpdateHistory {
         String graph = datasetService.getDraftGraphUri(projectId, userId);
         String query = "CONSTRUCT { ?s ?p ?o } FROM <" + graph + "> WHERE { ?s ?p ?o } LIMIT "
                 + (Limit.WHOLE_GRAPH_MAX_TRIPLES.value() + 1);
-        try (RepositoryConnection connection = target.repository().getConnection()) {
+        try (RepositoryConnection connection = TolerantRdfParsing.apply(target.repository().getConnection())) {
             return QueryResults.asModel(connection.prepareGraphQuery(query).evaluate());
         }
     }

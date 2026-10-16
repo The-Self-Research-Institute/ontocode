@@ -14,15 +14,22 @@ public class UndoPreconditions {
 
     private final RollbackMutationPlanner planner;
     private final RollbackGraphFacts facts;
+    private UndoBlockers blockers;
 
     public UndoPreconditions(RollbackMutationPlanner planner, RollbackGraphFacts facts) {
         this.planner = planner;
         this.facts = facts;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setBlockers(UndoBlockers blockers) {
+        this.blockers = blockers;
+    }
+
     public Optional<String> violation(String projectId, List<HistoryChange> entries) {
+        org.eclipse.rdf4j.model.Model own = RollbackWorkSupport.insertedTriples(entries);
         for (HistoryChange entry : entries) {
-            Optional<String> problem = check(projectId, entry);
+            Optional<String> problem = check(projectId, entry, own);
             if (problem.isPresent()) {
                 return problem;
             }
@@ -30,7 +37,7 @@ public class UndoPreconditions {
         return Optional.empty();
     }
 
-    private Optional<String> check(String projectId, HistoryChange entry) {
+    private Optional<String> check(String projectId, HistoryChange entry, org.eclipse.rdf4j.model.Model own) {
         String label = labelOf(entry);
         if (entry.isReverted()) {
             return Optional.of(label + " was already undone");
@@ -63,22 +70,36 @@ public class UndoPreconditions {
         if (!plan.unsupported().isEmpty()) {
             return Optional.of("This kind of change can't be undone yet");
         }
+        if (kind == Kind.MERGE && blockers != null && blockers.importRunning(projectId)) {
+            return Optional.of(UndoBlockers.STILL_LOADING);
+        }
+        if (kind == Kind.MERGE && blockers != null) {
+            List<String> later = blockers.laterChanges(projectId, entry);
+            if (!later.isEmpty()) {
+                return Optional.of(blockers.changedSince(projectId, entry, label + " was changed since this edit"));
+            }
+        }
         if (entry.carriesExactDelta() && !facts.deltaHolds(projectId, entry, true)) {
-            return Optional.of(label + " was changed since this edit");
+            return Optional.of(changedSince(projectId, entry, label));
         }
         if (facts.laterUsesNewName(projectId, entry)) {
             return Optional.of("Others have added items that use the new name of " + label);
         }
         for (HistoryChange.SubChange sub : active) {
             if (kind != Kind.EXACT && plan.handledSubChangeIds().contains(sub.getId()) && changedSince(projectId, entry, sub)) {
-                return Optional.of(label + " was changed since this edit");
+                return Optional.of(changedSince(projectId, entry, label));
             }
         }
         if (RollbackWorkSupport.isCreation(entry, kind)
-                && facts.referencedByOthers(projectId, entry.getEntityIRI(), entry.isDraft(), entry.getUserId())) {
+                && facts.referencedOutside(projectId, entry.getEntityIRI(), entry.isDraft(), entry.getUserId(), own)) {
             return Optional.of("Other items still refer to " + label);
         }
         return Optional.empty();
+    }
+
+    private String changedSince(String projectId, HistoryChange entry, String label) {
+        String plain = label + " was changed since this edit";
+        return blockers == null ? plain : blockers.changedSince(projectId, entry, plain);
     }
 
     private boolean changedSince(String projectId, HistoryChange entry, HistoryChange.SubChange sub) {

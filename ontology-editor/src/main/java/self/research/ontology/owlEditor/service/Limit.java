@@ -7,6 +7,8 @@ public enum Limit {
 
     WHOLE_GRAPH_MAX_TRIPLES(Group.HISTORY, "triples", 1_000, 20_000, 60_000, 150_000),
     MAX_DELTA_TRIPLES(Group.HISTORY, "triples", 100, 2_000, 5_000, 20_000),
+    MERGE_DELTA_MAX_TRIPLES(Group.HISTORY, "triples", 1_000, 20_000, 200_000, 500_000),
+    DELTA_BATCH_TRIPLES(Group.HISTORY, "triples", 100, 1_000, 5_000, 10_000),
     NEIGHBOURHOOD_DEPTH(Group.HISTORY, "levels", 2, 6, 10, 14),
     CANONICAL_ROUNDS(Group.HISTORY, "rounds", 2, 6, 8, 10),
     FEED_PAGE_SIZE(Group.HISTORY, "rows", 10, 100, 200, 400),

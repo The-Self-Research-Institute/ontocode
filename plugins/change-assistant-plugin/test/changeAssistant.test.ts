@@ -3,6 +3,7 @@ import { authorActivity, timelineItems, weekdayActivity } from '../src/assistant
 import {
   ALL_TYPES,
   bucketFromOperation,
+  authorKey,
   fallbackLabel,
   isRollbackChange,
   normaliseAuthor,
@@ -129,6 +130,16 @@ describe('statistics ignore undo and redo rows', () => {
     expect(stats.activeAuthors).toBe(1);
   });
 
+  it('counts only changes that are still in effect and reports the undone ones separately', () => {
+    const undone = parseChange({ ...base, id: 'u', operationType: 'createClass', entityLabel: 'U', reverted: true });
+    const partly = parseChange({ ...base, id: 'p', operationType: 'updateClass', entityLabel: 'P', subChanges: [
+      { id: 's1', predicate: 'http://www.w3.org/2000/01/rdf-schema#label', addition: true, newValue: 'x', reverted: true },
+      { id: 's2', predicate: 'http://www.w3.org/2000/01/rdf-schema#comment', addition: true, newValue: 'y' }] });
+    const stats = computeStats([...changes, undone, partly], []);
+    expect(stats.totalChanges).toBe(3);
+    expect(stats.undoneChanges).toBe(1);
+  });
+
   it('keeps them out of the timeline, weekday chart and author chart', () => {
     expect(timelineItems(changes).map(c => c.id)).toEqual(['a', 'c']);
     const weekdayTotal = weekdayActivity(changes, []);
@@ -233,5 +244,19 @@ describe('prefixes saved together', () => {
   it('is headed as a prefix change and counts every prefix as remaining', () => {
     expect(manualHeading(group).verb).toBe('Changed');
     expect(buildEntityRow(group).remaining).toBe(3);
+  });
+});
+
+describe('author key', () => {
+  it('groups one person once whether the entry stored their email or their user id', () => {
+    const byEmail = authorKey('sam@x.com', 'sam@x.com');
+    const byId = authorKey('sam@x.com', '6ab0aa07dd61926a63117ae4');
+    expect(byId).toBe(byEmail);
+  });
+
+  it('keeps people with different emails apart and falls back to the name or id', () => {
+    expect(authorKey('a@x.com', 'a@x.com')).not.toBe(authorKey('b@x.com', 'b@x.com'));
+    expect(authorKey('Local user', '')).toBe('local user');
+    expect(authorKey('', '6ab0')).toBe('6ab0');
   });
 });

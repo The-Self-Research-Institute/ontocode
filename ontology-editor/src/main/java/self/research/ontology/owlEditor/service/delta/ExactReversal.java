@@ -4,6 +4,8 @@ import self.research.ontology.owlEditor.model.HistoryChange;
 import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.Statement;
 import self.research.ontology.owlEditor.service.DocumentReversal;
+import self.research.ontology.owlEditor.service.Limit;
+import self.research.ontology.owlEditor.service.OntologyMergeService;
 import self.research.ontology.owlEditor.service.RollbackAction;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Plan;
 
@@ -58,13 +60,19 @@ public final class ExactReversal {
         if (delta.isEmpty()) {
             return new Plan(List.of(), List.of(), handled, List.of());
         }
-        String update = undo ? DeltaSparql.reverse(delta.get()) : DeltaSparql.forward(delta.get());
+        List<String> updates = new java.util.ArrayList<>();
+        for (ExactDelta batch : DeltaBatches.split(delta.get(), Limit.DELTA_BATCH_TRIPLES.value())) {
+            updates.add(undo ? DeltaSparql.reverse(batch) : DeltaSparql.forward(batch));
+        }
         List<RollbackAction> actions = new java.util.ArrayList<>();
         if (touchesOntologyHeader(delta.get())) {
             actions.add(RollbackAction.refreshOntology());
         }
+        if (OntologyMergeService.MERGE_OPERATION.equals(change.getOperationType())) {
+            actions.add(RollbackAction.syncStoredFile());
+        }
         actions.addAll(DocumentReversal.actions(change, undo));
-        return new Plan(List.of(), List.of(update), handled, List.of(), actions);
+        return new Plan(List.of(), List.copyOf(updates), handled, List.of(), actions);
     }
 
     private static boolean touchesOntologyHeader(ExactDelta delta) {

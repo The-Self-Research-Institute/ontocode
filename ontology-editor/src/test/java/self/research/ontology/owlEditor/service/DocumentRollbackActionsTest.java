@@ -101,7 +101,7 @@ class DocumentRollbackActionsTest {
     void theCompositeSendsDocumentActionsToTheDocumentRunnerAndTheRestToThePrefixRunner() {
         PrefixRollbackActions prefix = mock(PrefixRollbackActions.class);
         DocumentRollbackActions document = mock(DocumentRollbackActions.class);
-        CompositeRollbackActions composite = new CompositeRollbackActions(prefix, document);
+        CompositeRollbackActions composite = new CompositeRollbackActions(prefix, document, mock(StoredFileRollbackActions.class), mock(MergeCheckpointRollbackActions.class));
 
         composite.run("p", restore(OLD, NEW), false, null);
         composite.run("p", RollbackAction.deletePrefix("ex", "http://x/"), false, null);

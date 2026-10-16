@@ -21,7 +21,7 @@ final class RollbackWorkSupport {
     enum Presence { REQUIRED, FORBIDDEN, IGNORED }
 
     static Presence presence(HistoryChange entry, Kind kind, boolean undo) {
-        if (kind == Kind.PREFIX || kind == Kind.EXACT || kind == Kind.DOCUMENT) {
+        if (kind == Kind.PREFIX || kind == Kind.EXACT || kind == Kind.DOCUMENT || kind == Kind.MERGE) {
             return Presence.IGNORED;
         }
         boolean removed = kind == Kind.DELETE || ExactReversal.deletesEntity(entry);
@@ -35,6 +35,14 @@ final class RollbackWorkSupport {
     static boolean isCreation(HistoryChange entry, Kind kind) {
         boolean named = entry.getOperationType() != null && entry.getOperationType().startsWith("create");
         return kind == Kind.CREATE || named && kind == Kind.EXACT;
+    }
+
+    static org.eclipse.rdf4j.model.Model insertedTriples(java.util.Collection<HistoryChange> entries) {
+        org.eclipse.rdf4j.model.Model inserted = new org.eclipse.rdf4j.model.impl.LinkedHashModel();
+        for (HistoryChange entry : entries) {
+            ExactReversal.deltaOf(entry).ifPresent(delta -> inserted.addAll(delta.inserted()));
+        }
+        return inserted;
     }
 
     private RollbackWorkSupport() {

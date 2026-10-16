@@ -24,7 +24,7 @@ public final class UndoAbility {
             return new Result(false, change.getUndoBlockedReason());
         }
         Kind kind = RollbackMutationPlanner.kindOf(change);
-        if (kind == Kind.EXACT || kind == Kind.DOCUMENT) {
+        if (kind == Kind.EXACT || kind == Kind.DOCUMENT || kind == Kind.MERGE) {
             return new Result(true, null);
         }
         boolean entityless = change.getEntityIRI() == null || change.getEntityIRI().isBlank();

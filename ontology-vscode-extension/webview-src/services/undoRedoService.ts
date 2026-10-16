@@ -1,3 +1,4 @@
+import { apiErrorDetails } from '../utils/apiErrorDetails';
 import apiClient from './apiClient';
 import { isDraftScopeActive } from '../utils/draftScope';
 import { emitCommittedChange } from '../utils/committedChange';
@@ -34,6 +35,36 @@ export interface UndoRedoResult {
   state?: UndoState;
 }
 
+export interface QueueStep {
+  changeId: string;
+  changeSetId?: string;
+  auditId?: string;
+  entityIRI?: string;
+  label?: string;
+  changeCount?: number;
+  sourceView?: string;
+  available?: boolean;
+}
+
+export interface QueueBlock {
+  changeId?: string;
+  changeSetId?: string;
+  label?: string;
+  reason?: string;
+  dependents?: UndoDependent[];
+}
+
+export interface QueueResponse {
+  steps: QueueStep[];
+  blocked: QueueBlock | null;
+}
+
+export type StepOutcome =
+  | { kind: 'done'; auditId?: string; state?: UndoState }
+  | { kind: 'refused'; message: string; state?: UndoState }
+  | { kind: 'running' }
+  | { kind: 'unknown'; message: string };
+
 interface ServerBody extends Partial<UndoState> {
   success?: boolean;
   auditId?: string;
@@ -41,6 +72,15 @@ interface ServerBody extends Partial<UndoState> {
   error?: string;
   message?: string;
   dependents?: UndoDependent[];
+  status?: string;
+  inProgress?: boolean;
+  steps?: QueueStep[];
+  blocked?: QueueBlock | null;
+}
+
+function isStillRunning(body: ServerBody, status?: number): boolean {
+  return status === 202 || body.inProgress === true || /^(RUNNING|IN_PROGRESS)$/i.test(body.status || '')
+    || (status === 409 && /still running/i.test(body.message || body.error || ''));
 }
 
 let inFlight = false;
@@ -68,8 +108,7 @@ function stateOf(body: ServerBody): UndoState | undefined {
 }
 
 function failureText(error: unknown): { text: string; body?: ServerBody } {
-  const response = (error as { response?: { data?: ServerBody } })?.response;
-  const body = response?.data;
+  const body = apiErrorDetails<ServerBody>(error).data;
   if (body) {
     const dependents = body.dependents || [];
     const names = Array.from(new Set(dependents.map((d) => d.username).filter(Boolean)));
@@ -125,7 +164,72 @@ async function perform(projectId: string, step: UndoStep, path: string, guard: s
   return { success: true, label: step.label, entityIRI: step.entityIRI, state: stateOf(body) };
 }
 
+function toStep(step: QueueStep, isRedo: boolean): UndoStep {
+  return {
+    available: true,
+    direction: isRedo ? 'REDO' : 'UNDO',
+    changeId: step.changeId,
+    changeSetId: step.changeSetId,
+    auditId: step.auditId,
+    entityIRI: step.entityIRI,
+    label: step.label,
+    dependents: [],
+  };
+}
+
 export const undoRedoService = {
+  async fetchQueue(projectId: string, count: number): Promise<QueueResponse | null> {
+    const draft = isDraftScopeActive() ? 'true' : 'false';
+    try {
+      const body = unwrap(await apiClient.get<ServerBody>(`${base(projectId)}/undo/queue?draft=${draft}&count=${count}`));
+      return { steps: body.steps || [], blocked: body.blocked || null };
+    } catch (error) {
+      if (apiErrorDetails(error).status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  },
+
+  async sendStep(
+    projectId: string,
+    kind: 'undo' | 'redo',
+    expected: { changeId?: string; auditId?: string },
+    opId: string,
+  ): Promise<StepOutcome> {
+    const guard =
+      kind === 'undo'
+        ? expected.changeId ? `&expectedChangeId=${encodeURIComponent(expected.changeId)}` : ''
+        : expected.auditId ? `&expectedAuditId=${encodeURIComponent(expected.auditId)}` : '';
+    const draft = isDraftScopeActive() ? 'true' : 'false';
+    try {
+      const res = (await apiClient.post<ServerBody>(
+        `${base(projectId)}/${kind}?draft=${draft}&opId=${encodeURIComponent(opId)}${guard}`,
+        {},
+      )) as { status?: number } & ServerBody;
+      const body = unwrap(res);
+      if (isStillRunning(body, res?.status)) return { kind: 'running' };
+      if (body.success === false) {
+        return { kind: 'refused', message: body.error || body.message || 'The request failed', state: stateOf(body) };
+      }
+      return { kind: 'done', auditId: body.auditId, state: stateOf(body) };
+    } catch (error) {
+      const { status } = apiErrorDetails(error);
+      const { text, body } = failureText(error);
+      if (body && isStillRunning(body, status)) return { kind: 'running' };
+      if (!body || (status !== undefined && status >= 500)) return { kind: 'unknown', message: text };
+      return { kind: 'refused', message: text, state: stateOf(body) };
+    }
+  },
+
+  announceStep(projectId: string, step: QueueStep, kind: 'undo' | 'redo', auditId?: string): void {
+    announce(projectId, toStep(step, kind === 'redo'), kind === 'redo', auditId);
+  },
+
+  notifyRefusal(projectId: string): void {
+    window.dispatchEvent(new CustomEvent('ontologyChangesSaved', { detail: { projectId } }));
+  },
+
   isBusy(): boolean {
     return inFlight;
   },

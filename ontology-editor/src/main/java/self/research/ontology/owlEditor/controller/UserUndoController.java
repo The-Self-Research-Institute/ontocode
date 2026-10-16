@@ -10,16 +10,15 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.HistorySyncService;
 import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 import self.research.ontology.owlEditor.service.UndoPreconditions;
+import self.research.ontology.owlEditor.service.UndoRefusalLog;
 import self.research.ontology.owlEditor.service.UserUndoService;
 import self.research.ontology.owlEditor.service.UserUndoService.Identity;
 import self.research.ontology.owlEditor.service.UserUndoService.Next;
-import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.HashMap;
 import java.util.List;
@@ -53,7 +52,7 @@ public class UserUndoController {
     public ResponseEntity<Map<String, Object>> next(@PathVariable String projectId,
                                                     @RequestParam(defaultValue = "false") boolean draft,
                                                     HttpServletRequest request) {
-        Identity who = identity(request, null);
+        Identity who = UndoIdentityResolver.resolve(support, request, null);
         if (who == null) {
             return unauthorized();
         }
@@ -67,7 +66,7 @@ public class UserUndoController {
                                                     @RequestParam(required = false) String opId,
                                                     @RequestBody(required = false) Map<String, Object> body,
                                                     HttpServletRequest request) {
-        Identity who = identity(request, body);
+        Identity who = UndoIdentityResolver.resolve(support, request, body);
         if (who == null) {
             return unauthorized();
         }
@@ -76,11 +75,11 @@ public class UserUndoController {
             return refused(projectId, draft, who, next);
         }
         if (expectedChangeId != null && !expectedChangeId.equals(next.changeId())) {
-            return changed(projectId, draft, who);
+            return changed(projectId, draft, who, ChangeRollbackService.UNDO, next.changeId());
         }
         HistoryChange target = historySync.getHistoryChange(next.changeId());
         if (target == null) {
-            return changed(projectId, draft, who);
+            return changed(projectId, draft, who, ChangeRollbackService.UNDO, next.changeId());
         }
         List<HistoryChange> scope = next.changeSetId() == null
                 ? List.of(target) : historySync.getChangeSet(projectId, next.changeSetId());
@@ -93,7 +92,7 @@ public class UserUndoController {
             return locks.runExclusive(projectId, () -> {
                 Optional<String> violation = preconditions.violation(projectId, scope);
                 if (violation.isPresent()) {
-                    return changedUnderneath(projectId, draft, who, violation.get());
+                    return changedUnderneath(projectId, draft, who, violation.get(), next.changeId());
                 }
                 ChangeRollbackService.Result result = next.changeSetId() != null
                         ? rollbackService.undoChangeSet(projectId, next.changeSetId(), actor, false)
@@ -112,7 +111,7 @@ public class UserUndoController {
                                                     @RequestParam(required = false) String opId,
                                                     @RequestBody(required = false) Map<String, Object> body,
                                                     HttpServletRequest request) {
-        Identity who = identity(request, body);
+        Identity who = UndoIdentityResolver.resolve(support, request, body);
         if (who == null) {
             return unauthorized();
         }
@@ -121,7 +120,7 @@ public class UserUndoController {
             return refused(projectId, draft, who, next);
         }
         if (expectedAuditId != null && !expectedAuditId.equals(next.auditId())) {
-            return changed(projectId, draft, who);
+            return changed(projectId, draft, who, ChangeRollbackService.REDO, next.auditId());
         }
         ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(
                 rollbackService.entriesForUndo(projectId, next.auditId()), projectId, request);
@@ -139,27 +138,20 @@ public class UserUndoController {
         }
     }
 
-    private Identity identity(HttpServletRequest request, Map<String, Object> body) {
-        String verified = JwtIdentityExtractor.extractEmail(request).orElse(null);
-        if (verified != null) {
-            String[] claims = JwtClaimUtils.extractPlanAndUserId(request.getHeader("Authorization"));
-            return Identity.of(verified, claims == null ? null : claims[1]);
-        }
-        if (JwtIdentityExtractor.signatureRequired()) {
-            return null;
-        }
-        return Identity.of(support.actor(request, body).userId());
-    }
-
     private ResponseEntity<Map<String, Object>> finish(String projectId, boolean draft, Identity who,
                                                        ChangeRollbackService.Result result) {
         ResponseEntity<Map<String, Object>> response = RollbackRequestSupport.toBody(result, null, null);
+        if (response.getStatusCode().value() >= 400) {
+            UndoRefusalLog.record(projectId, who, result.direction(), result.scopeId(),
+                    String.valueOf(response.getBody().get("message")));
+        }
         Map<String, Object> body = new HashMap<>(response.getBody());
         body.putAll(state(projectId, draft, who));
         return ResponseEntity.status(response.getStatusCode()).body(body);
     }
 
     private ResponseEntity<Map<String, Object>> refused(String projectId, boolean draft, Identity who, Next next) {
+        UndoRefusalLog.record(projectId, who, next.direction(), next.changeId(), next.reason());
         Map<String, Object> body = new HashMap<>(state(projectId, draft, who));
         body.put("success", false);
         body.put("error", next.reason());
@@ -168,14 +160,17 @@ public class UserUndoController {
     }
 
     private ResponseEntity<Map<String, Object>> changedUnderneath(String projectId, boolean draft, Identity who,
-                                                                  String reason) {
+                                                                  String reason, String changeId) {
+        UndoRefusalLog.record(projectId, who, ChangeRollbackService.UNDO, changeId, reason);
         Map<String, Object> body = new HashMap<>(state(projectId, draft, who));
         body.put("success", false);
         body.put("error", "Nothing was undone: " + reason);
         return ResponseEntity.status(409).body(body);
     }
 
-    private ResponseEntity<Map<String, Object>> changed(String projectId, boolean draft, Identity who) {
+    private ResponseEntity<Map<String, Object>> changed(String projectId, boolean draft, Identity who,
+                                                        String direction, String targetId) {
+        UndoRefusalLog.record(projectId, who, direction, targetId, "history changed since the menu was shown");
         Map<String, Object> body = new HashMap<>(state(projectId, draft, who));
         body.put("success", false);
         body.put("error", "Your history changed since the menu was shown. Try again.");

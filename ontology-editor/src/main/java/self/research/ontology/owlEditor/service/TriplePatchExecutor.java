@@ -33,7 +33,7 @@ final class TriplePatchExecutor {
         }
         SparqlDatasetService.ProjectGraphTarget target = datasetService.graphTarget(projectId);
         String graph = target.graphUri();
-        try (RepositoryConnection conn = target.repository().getConnection()) {
+        try (RepositoryConnection conn = TolerantRdfParsing.apply(target.repository().getConnection())) {
             execute(conn, forwardUpdate(graph, patch));
             Model actual = fetchClosure(conn, graph, patch.subjects(), patch.verifyDepth());
             if (Models.isomorphic(actual, patch.expected())) {

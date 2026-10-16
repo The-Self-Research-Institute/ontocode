@@ -21,6 +21,7 @@ const StatCards: React.FC<{ stats: ChangeStats; isDraftActive: boolean }> = ({ s
         Saved
       </div>
       <div className="text-xl font-bold text-blue-700">{stats.totalChanges}</div>
+      {stats.undoneChanges > 0 && <div className="text-[10px] text-blue-600 opacity-80">{stats.undoneChanges} undone</div>}
     </div>
     <div className="bg-purple-50 p-2 rounded">
       <div className="text-xs text-purple-600 flex items-center gap-1">

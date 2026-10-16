@@ -96,10 +96,12 @@ public final class DeltaSparql {
             return null;
         }
         StringBuilder body = new StringBuilder();
+        boolean blank = false;
         for (Statement statement : model) {
             body.append(triple(statement, false)).append(' ');
+            blank |= touchesBlankNode(statement);
         }
-        return "INSERT DATA { " + body + "}";
+        return blank ? "INSERT { " + body + "} WHERE { }" : "INSERT DATA { " + body + "}";
     }
 
     private static String guardedPattern(Model component) {
@@ -171,6 +173,10 @@ public final class DeltaSparql {
             }
         }
         return new ExactDelta(deleted, inserted);
+    }
+
+    static boolean touchesBlankNode(Statement statement) {
+        return statement.getSubject() instanceof BNode || statement.getObject() instanceof BNode;
     }
 
     static Map<String, Model> components(Model model) {

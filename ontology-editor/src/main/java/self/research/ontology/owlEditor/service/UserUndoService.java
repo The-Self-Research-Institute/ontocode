@@ -77,19 +77,27 @@ public class UserUndoService {
         if (target == null) {
             return Next.none(ChangeRollbackService.UNDO, "You have no changes to undo");
         }
+        Next blocked = blockage(projectId, draft, who, target);
+        if (blocked != null) {
+            return blocked;
+        }
+        return new Next(true, ChangeRollbackService.UNDO, target.getId(), target.getChangeSetId(), null,
+                target.getEntityIRI(), labelOf(target), null, List.of());
+    }
+
+    Next blockage(String projectId, boolean draft, Identity who, HistoryChange target) {
         String label = labelOf(target);
         if (isBlank(target.getEntityIRI()) && !undoableWithoutEntity(target)) {
             return new Next(false, ChangeRollbackService.UNDO, target.getId(), target.getChangeSetId(), null, null,
-                    label, "Your latest change (" + label + ") can't be undone yet", List.of());
+                    label, "Your change (" + label + ") can't be undone yet", List.of());
         }
         List<Dependent> dependents = draft || isBlank(target.getEntityIRI()) ? List.of() : dependentsOf(projectId, target, who);
-        if (!dependents.isEmpty()) {
-            return new Next(false, ChangeRollbackService.UNDO, target.getId(), target.getChangeSetId(), null,
-                    target.getEntityIRI(), label,
-                    "Others have changed " + label + " since, so it can't be undone with the shortcut", dependents);
+        if (dependents.isEmpty()) {
+            return null;
         }
-        return new Next(true, ChangeRollbackService.UNDO, target.getId(), target.getChangeSetId(), null,
-                target.getEntityIRI(), label, null, List.of());
+        return new Next(false, ChangeRollbackService.UNDO, target.getId(), target.getChangeSetId(), null,
+                target.getEntityIRI(), label,
+                "Others have changed " + label + " since, so it can't be undone with the shortcut", dependents);
     }
 
     public Next nextRedo(String projectId, boolean draft, Identity who) {
@@ -165,7 +173,7 @@ public class UserUndoService {
         return kind == RollbackMutationPlanner.Kind.EXACT || kind == RollbackMutationPlanner.Kind.PREFIX;
     }
 
-    private static boolean isRollbackEntry(HistoryChange entry) {
+    static boolean isRollbackEntry(HistoryChange entry) {
         String op = entry.getOperationType();
         return ChangeOrigin.ROLLBACK.equals(entry.getSource())
                 || (op != null && (op.startsWith("ROLLBACK_") || op.startsWith("REDO_")));
@@ -175,7 +183,7 @@ public class UserUndoService {
         return value == null || value.isBlank();
     }
 
-    private static String labelOf(HistoryChange entry) {
+    static String labelOf(HistoryChange entry) {
         if (!isBlank(entry.getEntityLabel())) {
             return entry.getEntityLabel();
         }

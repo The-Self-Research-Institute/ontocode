@@ -12,6 +12,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.model.HistoryChange;
+import self.research.ontology.owlEditor.service.delta.DeltaBatches;
 import self.research.ontology.owlEditor.service.delta.DeltaSparql;
 import self.research.ontology.owlEditor.service.delta.ExactDelta;
 import self.research.ontology.owlEditor.service.delta.ExactReversal;
@@ -63,12 +64,39 @@ public class RollbackGraphFacts {
         return ask(projectId, query, draft, draftOwner);
     }
 
-    public boolean referencedByOthers(String projectId, String iri, boolean draft, String draftOwner) {
+    public boolean referencedOutside(String projectId, String iri, boolean draft, String draftOwner, Model ownInserted) {
         if (iri == null || iri.isBlank() || (!draft && inMemoryIsAuthoritative(projectId))) {
             return false;
         }
         String safe = SparqlSafety.safeIri(iri);
-        return ask(projectId, "ASK { ?s ?p <" + safe + "> FILTER(?s != <" + safe + ">) }", draft, draftOwner);
+        String own = ownReferences(iri, ownInserted);
+        if (own == null) {
+            return ask(projectId, "ASK { ?s ?p <" + safe + "> FILTER(?s != <" + safe + ">) }", draft, draftOwner);
+        }
+        return ask(projectId, "ASK { ?s ?p <" + safe + "> FILTER(?s != <" + safe + ">)" + own + " }", draft, draftOwner);
+    }
+
+    private static String ownReferences(String iri, Model ownInserted) {
+        if (ownInserted == null || ownInserted.isEmpty()) {
+            return "";
+        }
+        StringBuilder clauses = new StringBuilder();
+        int count = 0;
+        boolean blankSubject = false;
+        for (org.eclipse.rdf4j.model.Statement st : ownInserted) {
+            if (!st.getObject().stringValue().equals(iri) || !st.getObject().isIRI()) {
+                continue;
+            }
+            if (st.getSubject().isBNode()) {
+                blankSubject = true;
+            } else if (++count > Limit.WHOLE_GRAPH_MAX_TRIPLES.value() / 10) {
+                return null;
+            } else {
+                clauses.append(" FILTER(!(?s = <").append(SparqlSafety.safeIri(st.getSubject().stringValue()))
+                        .append("> && ?p = <").append(SparqlSafety.safeIri(st.getPredicate().stringValue())).append(">))");
+            }
+        }
+        return blankSubject ? clauses + " FILTER(!isBlank(?s))" : clauses.toString();
     }
 
     public boolean deltaHolds(String projectId, HistoryChange entry, boolean undo) {
@@ -78,10 +106,12 @@ public class RollbackGraphFacts {
         boolean draft = entry.isDraft() && entry.getUserId() != null && !entry.getUserId().isBlank();
         String graph = draft ? datasetService.getDraftGraphUri(projectId, entry.getUserId())
                 : datasetService.getGraphUri(projectId);
-        for (ExactDelta delta : ExactReversal.deltaOf(entry).stream().toList()) {
-            for (String query : DeltaSparql.holds(delta, undo, graph)) {
-                if (!datasetService.execAskInGraph(projectId, graph, query)) {
-                    return false;
+        for (ExactDelta whole : ExactReversal.deltaOf(entry).stream().toList()) {
+            for (ExactDelta delta : DeltaBatches.split(whole, Limit.DELTA_BATCH_TRIPLES.value())) {
+                for (String query : DeltaSparql.holds(delta, undo, graph)) {
+                    if (!datasetService.execAskInGraph(projectId, graph, query)) {
+                        return false;
+                    }
                 }
             }
         }
@@ -98,10 +128,12 @@ public class RollbackGraphFacts {
         try (RepositoryConnection connection = repository.getConnection()) {
             org.eclipse.rdf4j.model.IRI graph = SimpleValueFactory.getInstance().createIRI(SNAPSHOT_GRAPH);
             connection.add(snapshot.get(), graph);
-            for (ExactDelta delta : ExactReversal.deltaOf(entry).stream().toList()) {
-                for (String query : DeltaSparql.holds(delta, undo, SNAPSHOT_GRAPH)) {
-                    if (!connection.prepareBooleanQuery(query).evaluate()) {
-                        return false;
+            for (ExactDelta whole : ExactReversal.deltaOf(entry).stream().toList()) {
+                for (ExactDelta delta : DeltaBatches.split(whole, Limit.DELTA_BATCH_TRIPLES.value())) {
+                    for (String query : DeltaSparql.holds(delta, undo, SNAPSHOT_GRAPH)) {
+                        if (!connection.prepareBooleanQuery(query).evaluate()) {
+                            return false;
+                        }
                     }
                 }
             }

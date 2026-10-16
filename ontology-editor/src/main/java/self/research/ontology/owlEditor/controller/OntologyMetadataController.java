@@ -14,6 +14,8 @@ import self.research.ontology.owlEditor.service.OwlApiFastPathSupport;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyMetadataQueryService;
 
+import self.research.ontology.owlEditor.service.RequestActor;
+
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -120,7 +122,7 @@ public class OntologyMetadataController {
             String language = request.get("language");
             String datatype = request.get("datatype");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
-            String userId = request.get("userId");
+            String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.addOntologyAnnotation(projectId, propertyIri, value, language, datatype, draft, userId, username);
             if (!draft) {
@@ -145,7 +147,7 @@ public class OntologyMetadataController {
             String language = request.get("language");
             String datatype = request.get("datatype");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
-            String userId = request.get("userId");
+            String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype,
                     originalPropertyIri, draft, userId, username);
@@ -169,7 +171,7 @@ public class OntologyMetadataController {
                                              @RequestParam(required = false) String username,
                                              HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteOntologyAnnotation(projectId, propertyIri, value, language, draft, userId, username);
+            metadataService.deleteOntologyAnnotation(projectId, propertyIri, value, language, draft, RequestActor.userIdOr(httpRequest, userId), username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.ONTOLOGY_ANNOTATION_DELETED, propertyIri, httpRequest);
             }
@@ -221,7 +223,7 @@ public class OntologyMetadataController {
         try {
             String importIri = request.get("importIri");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
-            String userId = request.get("userId");
+            String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.addOntologyImport(projectId, importIri, draft, userId, username);
 
@@ -277,7 +279,7 @@ public class OntologyMetadataController {
                                          @RequestParam(required = false) String username,
                                          HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteOntologyImport(projectId, importIri, draft, userId, username);
+            metadataService.deleteOntologyImport(projectId, importIri, draft, RequestActor.userIdOr(httpRequest, userId), username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_REMOVED, importIri, httpRequest);
             }
@@ -309,7 +311,7 @@ public class OntologyMetadataController {
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
-            String userId = request.get("userId");
+            String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.addGCI(projectId, subClass, superClass, draft, userId, username);
             if (!draft) {
@@ -332,7 +334,7 @@ public class OntologyMetadataController {
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
-            String userId = request.get("userId");
+            String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
 
             if (oldValue != null) {
@@ -357,7 +359,7 @@ public class OntologyMetadataController {
                                       @RequestParam(required = false) String username,
                                       HttpServletRequest httpRequest) {
         try {
-            metadataService.deleteGCI(projectId, value, draft, userId, username);
+            metadataService.deleteGCI(projectId, value, draft, RequestActor.userIdOr(httpRequest, userId), username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_REMOVED, value, httpRequest);
             }
@@ -382,14 +384,14 @@ public class OntologyMetadataController {
 
     @PostMapping("/{projectId}/prefixes")
     public ResponseEntity<?> updatePrefix(@PathVariable String projectId,
-                                         @RequestBody Map<String, String> request) {
+                                         @RequestBody Map<String, String> request, HttpServletRequest httpRequest) {
         try {
             String prefix = request.get("prefix");
             String iri = request.get("iri");
             String oldPrefix = request.get("oldPrefix");
             boolean draft = Boolean.parseBoolean(request.get("draft"));
             String userId = request.get("userId");
-            String actorId = request.getOrDefault("actorUserId", userId);
+            String actorId = RequestActor.recordedId(httpRequest, request.getOrDefault("actorUserId", userId), draft);
             metadataService.updatePrefix(projectId, prefix, iri, oldPrefix, draft, userId, actorId,
                     request.get("actorUsername"));
             return ResponseEntity.ok(Map.of("success", true));
@@ -405,10 +407,10 @@ public class OntologyMetadataController {
                                          @RequestParam(required = false, defaultValue = "false") boolean draft,
                                          @RequestParam(required = false) String userId,
                                          @RequestParam(required = false) String actorUserId,
-                                         @RequestParam(required = false) String actorUsername) {
+                                         @RequestParam(required = false) String actorUsername, HttpServletRequest httpRequest) {
         try {
             metadataService.deletePrefix(projectId, prefix, draft, userId,
-                    actorUserId != null ? actorUserId : userId, actorUsername);
+                    RequestActor.recordedId(httpRequest, actorUserId != null ? actorUserId : userId, draft), actorUsername);
             return ResponseEntity.ok(Map.of("success", true));
         } catch (Exception e) {
             log.error("Error deleting prefix", e);

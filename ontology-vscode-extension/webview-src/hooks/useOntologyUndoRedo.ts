@@ -1,28 +1,46 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import undoRedoService, { type UndoState } from '../services/undoRedoService';
+import { undoQueue } from '../services/undoQueue';
 import { notificationService } from '../services/notificationService';
 import { isRealVSCode } from '../utils/desktop';
+import { isTextElement } from '../utils/textEditTarget';
 import { useVsCodeUndoRouting } from './useVsCodeUndoRouting';
 import { hasDesktopUndoMenu, useDesktopUndoRouting } from './useDesktopUndoRouting';
 
 interface Options {
   projectId: string | null | undefined;
+  onOpenHistory?: () => void;
 }
 
-function isTextTarget(target: EventTarget | null): boolean {
-  const element = target as HTMLElement | null;
-  if (!element) {
-    return false;
-  }
-  return element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable;
+export interface UndoMenu {
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel?: string;
+  redoLabel?: string;
+  redoHint?: string;
+  stopPending: () => void;
+  resume: () => void;
+  openHistory: () => void;
 }
 
-export function useOntologyUndoRedo({ projectId }: Options) {
-  const [busy, setBusy] = useState(false);
+function redoHintFor(phase: string): string | undefined {
+  if (phase === 'running') return 'Redo is off while an undo run is active';
+  if (phase === 'paused' || phase === 'checking') return 'Redo is off until the undo run is settled';
+  return undefined;
+}
+
+export function useOntologyUndoRedo({ projectId, onOpenHistory }: Options) {
+  const snap = useSyncExternalStore(undoQueue.subscribe, undoQueue.getSnapshot);
   const [state, setState] = useState<UndoState | undefined>(undefined);
   const stateRef = useRef<UndoState | undefined>(undefined);
   const projectRef = useRef(projectId);
   projectRef.current = projectId;
+  const historyRef = useRef(onOpenHistory);
+  historyRef.current = onOpenHistory;
+  const lastPhase = useRef(snap.phase);
+  const toastedRun = useRef(0);
 
   const apply = useCallback((next: UndoState | undefined) => {
     stateRef.current = next;
@@ -42,34 +60,20 @@ export function useOntologyUndoRedo({ projectId }: Options) {
 
   const run = useCallback(
     async (kind: 'undo' | 'redo') => {
-      if (!projectId || undoRedoService.isBusy()) {
+      if (!projectId) {
         return;
       }
-      setBusy(true);
-      const label = kind === 'undo' ? 'Undo' : 'Redo';
       const step = kind === 'undo' ? stateRef.current?.undo : stateRef.current?.redo;
-      const result =
-        kind === 'undo' ? await undoRedoService.undo(projectId, step) : await undoRedoService.redo(projectId, step);
-      setBusy(false);
-      if (projectRef.current !== projectId) {
-        return;
-      }
-      if (result.state) {
-        apply(result.state);
-      } else {
-        void refresh();
-      }
-      if (result.success) {
-        const what = result.label ? `: ${result.label}` : '';
-        notificationService.success(label, `${kind === 'undo' ? 'Undid' : 'Redid'}${what}`);
-      } else if (result.error) {
-        notificationService.info(label, result.error);
+      const result = await undoQueue.press(projectId, kind, step);
+      if (!result.accepted && result.message && projectRef.current === projectId) {
+        notificationService.info(kind === 'undo' ? 'Undo' : 'Redo', result.message);
       }
     },
-    [projectId, apply, refresh],
+    [projectId],
   );
 
   useEffect(() => {
+    undoQueue.reset();
     apply(undefined);
     void refresh();
     window.addEventListener('focus', refresh);
@@ -77,11 +81,31 @@ export function useOntologyUndoRedo({ projectId }: Options) {
   }, [projectId, apply, refresh]);
 
   useEffect(() => {
+    if (snap.lastState) apply(snap.lastState);
+  }, [snap.lastState, apply]);
+
+  useEffect(() => {
+    const before = lastPhase.current;
+    lastPhase.current = snap.phase;
+    if (before !== snap.phase && (snap.phase === 'idle' || snap.phase === 'finished' || snap.phase === 'paused')) {
+      void refresh();
+    }
+  }, [snap.phase, refresh]);
+
+  useEffect(() => {
+    if (snap.phase !== 'finished' || toastedRun.current === snap.runId) return;
+    toastedRun.current = snap.runId;
+    const only = snap.completed === 1 ? snap.finishedItems[0]?.label : undefined;
+    const verb = snap.kind === 'undo' ? 'Undid' : 'Redid';
+    notificationService.success(snap.kind === 'undo' ? 'Undo' : 'Redo', only ? `${verb}: ${only}` : snap.summary || '');
+  }, [snap.phase, snap.runId, snap.completed, snap.finishedItems, snap.kind, snap.summary]);
+
+  useEffect(() => {
     if (!projectId || isRealVSCode() || hasDesktopUndoMenu()) {
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || isTextTarget(event.target)) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || isTextElement(event.target as Element | null)) {
         return;
       }
       const key = event.key.toLowerCase();
@@ -105,14 +129,21 @@ export function useOntologyUndoRedo({ projectId }: Options) {
   useVsCodeUndoRouting({ onUndo: undo, onRedo: redo });
   useDesktopUndoRouting({ onUndo: undo, onRedo: redo });
 
-  return {
-    busy,
-    state,
-    canUndo: !!projectId && !busy && state?.undo.available !== false,
-    canRedo: !!projectId && !busy && !!state?.redo.available,
-    undoLabel: state?.undo.available ? state.undo.label : undefined,
+  const settled = snap.phase === 'idle' || snap.phase === 'finished';
+  const canUndo = !!projectId && (settled ? state?.undo.available !== false : snap.phase === 'running' && snap.kind === 'undo');
+  const canRedo = !!projectId && settled && !!state?.redo.available;
+  const menu: UndoMenu = {
     undo,
     redo,
-    refresh,
+    canUndo,
+    canRedo,
+    undoLabel: state?.undo.available ? state.undo.label : undefined,
+    redoLabel: state?.redo.available ? state.redo.label : undefined,
+    redoHint: redoHintFor(snap.phase),
+    stopPending: undoQueue.stopPending,
+    resume: () => void undoQueue.resume(),
+    openHistory: () => historyRef.current?.(),
   };
+
+  return { ...menu, menu, busy: !settled, state, refresh };
 }

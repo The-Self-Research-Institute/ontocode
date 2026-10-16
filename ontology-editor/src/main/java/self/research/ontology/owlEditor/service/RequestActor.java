@@ -12,6 +12,17 @@ public record RequestActor(String userId, String username) {
         return new RequestActor(userId, username);
     }
 
+    public static String userIdOr(HttpServletRequest request, String given) {
+        if (!blank(given) || request == null) {
+            return given;
+        }
+        return JwtIdentityExtractor.extractEmail(request).orElse(given);
+    }
+
+    public static String recordedId(HttpServletRequest request, String given, boolean draft) {
+        return draft || request == null ? given : JwtIdentityExtractor.extractEmail(request).orElse(given);
+    }
+
     private static boolean blank(String value) {
         return value == null || value.isBlank();
     }
