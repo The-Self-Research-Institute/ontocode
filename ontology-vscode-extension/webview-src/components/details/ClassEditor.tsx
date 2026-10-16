@@ -14,6 +14,7 @@ import { useAuth } from '../../custom-hook/useAuth';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
 import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
+import { normalizeReasonerType } from '../dashboard-parts/dashboardUtils';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 
@@ -520,6 +521,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
     notificationService.error("Rename Failed", error instanceof Error ? error.message : "Failed to rename entity.");
   }
 };
+  const inferredReasonerKey = viewMode === 'inferred' ? selectedReasoner : null;
   // Load class details including annotations when component mounts.
   // Uses an "alive" flag so stale responses from a previously selected entity
   // are discarded (prevents showing the previous class's data).
@@ -625,7 +627,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       clearTimeout(debounceTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, projectId, viewMode, selectedReasoner]);
+  }, [item.id, projectId, viewMode, inferredReasonerKey]);
 
   // Pre-load all-classes lookup when editor dialog opens so Manchester expressions can resolve labels
   useEffect(() => {
@@ -849,7 +851,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       if (viewMode === "inferred" && !hasOwlApiInferred) {
         try {
           const inferredResponse = await apiClient.get<any>(
-            withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(selectedReasoner)}`),
+            withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(normalizeReasonerType(selectedReasoner))}`),
             undefined,
             { signal, timeout: isDesktop() ? 15_000 : 45_000 },
           );

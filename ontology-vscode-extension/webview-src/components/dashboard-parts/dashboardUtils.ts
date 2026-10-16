@@ -47,7 +47,10 @@ export const REASONER_ID_MAP: Record<string, string> = {
 
 export const REASONER_OPTIONS = Object.keys(REASONER_ID_MAP);
 
-export const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || "HERMIT";
+export const normalizeReasonerType = (label: string): string => {
+  const upper = String(label || "").toUpperCase();
+  return REASONER_ID_MAP[label] || (Object.values(REASONER_ID_MAP).includes(upper) ? upper : "HERMIT");
+};
 
 export function extractDeclarationCountsPatch(countsRes: any): Record<string, number> | null {
   const data = countsRes?.data ?? countsRes;

@@ -8,6 +8,7 @@ import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
 import { withDraftScope, withDraftAndUser } from '../../utils/draftScope';
 import { useCollaboration } from '../../contexts/CollaborationContext';
+import { normalizeReasonerType } from '../dashboard-parts/dashboardUtils';
 
 interface UsageItem {
   type: string;
@@ -208,7 +209,7 @@ const IndividualEditor: React.FC<{
     (async () => {
       try {
         const response = await apiClient.get<any>(
-          withDraftAndUser(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-individual-types?individualIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(selectedReasoner)}`),
+          withDraftAndUser(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-individual-types?individualIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(normalizeReasonerType(selectedReasoner))}`),
         );
         const payload = response?.data ?? response;
         const types = payload?.inferredTypes ?? payload?.data?.inferredTypes ?? [];

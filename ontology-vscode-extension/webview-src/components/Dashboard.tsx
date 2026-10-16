@@ -2847,7 +2847,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > HEAVY_REASONER_TRIPLE_LIMIT)
       ? 'ELK'
-      : selectedReasoner;
+      : normalizedSelectedReasoner;
 
     const fetchWithReasoner = async (reasoner: string) => {
       const response = await apiClient.get<any>(
@@ -2918,7 +2918,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
     const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
-    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
     try {
       const fetchPropHierarchy = async (reasoner: string) => {
         const r = await apiClient.get<any>(
@@ -2959,7 +2959,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
     const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
-    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
     try {
       const fetchPropHierarchy = async (reasoner: string) => {
         const r = await apiClient.get<any>(
@@ -2995,7 +2995,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading inferred annotation property hierarchy...");
     try {
       const res = await apiClient.get<any>(
-        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${selectedReasoner}`),
+        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${normalizeReasonerType(selectedReasoner)}`),
       );
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
@@ -3016,7 +3016,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading inferred datatypes...");
     try {
       const res = await apiClient.get<any>(
-        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-datatypes?reasonerType=${selectedReasoner}`),
+        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-datatypes?reasonerType=${normalizeReasonerType(selectedReasoner)}`),
       );
       const payload = res?.data || res;
       const datatypes = payload?.datatypes || payload?.data?.datatypes || [];
@@ -3033,7 +3033,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     console.log("[Dashboard] Loading inferred individuals...");
     try {
       const res = await apiClient.get<any>(
-        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-individuals?reasonerType=${selectedReasoner}`),
+        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-individuals?reasonerType=${normalizeReasonerType(selectedReasoner)}`),
       );
       const payload = res?.data || res;
       const individuals = payload?.individuals || payload?.data?.individuals || [];
