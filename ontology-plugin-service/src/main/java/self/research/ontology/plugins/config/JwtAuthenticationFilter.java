@@ -81,7 +81,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         boolean onCacheClearPath = request.getRequestURI() != null
                 && request.getRequestURI().contains(CACHE_CLEAR_PATH_PREFIX);
         if (onCacheClearPath && presentedInternalToken != null && internalToken != null
-                && !DEFAULT_INTERNAL_TOKEN.equals(internalToken)
                 && MessageDigest.isEqual(
                         internalToken.getBytes(StandardCharsets.UTF_8),
                         presentedInternalToken.getBytes(StandardCharsets.UTF_8))) {
