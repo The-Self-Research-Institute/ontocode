@@ -59,6 +59,16 @@ async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
   return fetch(input, { ...init, headers });
 }
 
+async function readErrorMessage(response: Response, fallback: string): Promise<string> {
+  const body = await response.json().catch(() => null);
+  const message = body?.error || body?.message;
+  return typeof message === 'string' && message.trim() ? message : fallback;
+}
+
+function formatCount(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : '—';
+}
+
 const TOP_PANEL_HEIGHT_KEY = 'ontocode-reasoner-top-panel-height';
 
 const OWL_AXIOM_KEYWORDS = [
@@ -374,6 +384,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const [entailmentLoading, setEntailmentLoading] = useState(false);
   const [entailmentError, setEntailmentError] = useState<string | null>(null);
   const entailmentRequestIdRef = useRef(0);
+  const [isExplainingInconsistency, setIsExplainingInconsistency] = useState(false);
+  const inconsistencyRequestIdRef = useRef(0);
   const [autoSync, setAutoSync] = useState(true);
 
   const [topPanelHeight, setTopPanelHeight] = useState<number | null>(() => {
@@ -531,7 +543,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       await new Promise((r) => setTimeout(r, 2000));
       const res = await authFetch(`${normalizedApiBaseUrl}/api/dl-query/jobs/${jobId}`);
       if (!res.ok) {
-        throw new Error(`Poll failed: ${res.statusText}`);
+        throw new Error(await readErrorMessage(res, `Poll failed: ${res.status} ${res.statusText}`));
       }
       const job = await res.json();
       const status = String(job?.status || '').toUpperCase();
@@ -644,7 +656,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           const statusRes = await authFetch(
             `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
           );
-          if (!statusRes.ok) throw new Error(`Poll failed: ${statusRes.statusText}`);
+          if (!statusRes.ok) throw new Error(await readErrorMessage(statusRes, `Poll failed: ${statusRes.status} ${statusRes.statusText}`));
           const statusData = await statusRes.json();
           if (statusData.status === 'COMPLETED') { result = statusData; break; }
           if (statusData.status === 'FAILED') throw new Error(statusData.error || 'Classification failed');
@@ -781,8 +793,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     // never update) so this guard can't diverge from what the user can click.
     if (!isOntologyInconsistent) return;
 
+    const requestId = ++inconsistencyRequestIdRef.current;
+    const isLatestRequest = () => inconsistencyRequestIdRef.current === requestId;
     setInconsistencyExplanation(null);
-    setLocalIsRunning(true);
+    setIsExplainingInconsistency(true);
     try {
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
@@ -817,6 +831,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         if (explanation.async && (explanation.jobId || explanation.taskId)) {
           explanation = await pollWorkerJob(explanation.jobId || explanation.taskId);
         }
+        if (!isLatestRequest()) return;
         setInconsistencyExplanation(explanation);
       } else {
         console.error('Failed to fetch inconsistency explanation');
@@ -827,6 +842,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         } catch (ignored) {
           // response body wasn't JSON — fall back to the status text below
         }
+        if (!isLatestRequest()) return;
         setInconsistencyExplanation({
           success: false,
           causes: [],
@@ -835,13 +851,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       }
     } catch (error) {
       console.error('Error fetching inconsistency explanation:', error);
+      if (!isLatestRequest()) return;
       setInconsistencyExplanation({
         success: false,
         causes: [],
         error: error instanceof Error ? error.message : 'Failed to fetch inconsistency explanation',
       });
     } finally {
-      setLocalIsRunning(false);
+      if (isLatestRequest()) {
+        setIsExplainingInconsistency(false);
+      }
     }
   }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, pollWorkerJob, draftUserId]);
 
@@ -1326,13 +1345,19 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   };
 
   const clearCache = async () => {
+    if (!projectId) {
+      alert('Open an ontology first — there is no reasoner cache to clear yet.');
+      return;
+    }
     try {
       const response = await authFetch(
-        `${resolvedApiBaseUrl}/plugin-service/api/reasoner/clear-cache`,
+        `${resolvedApiBaseUrl}/plugin-service/api/reasoner/clear-cache/${encodeURIComponent(projectId)}`,
         { method: 'POST' }
       );
       if (response.ok) {
         alert('Cache cleared successfully');
+      } else {
+        alert(await readErrorMessage(response, `Failed to clear the reasoner cache (HTTP ${response.status})`));
       }
     } catch (error) {
       console.error('Error clearing cache:', error);
@@ -1619,8 +1644,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 </div>
                 {displayStats && (
                   <div className={`text-[11px] mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {(displayStats.satisfiableClasses ?? 'N/A')} satisfiable · {' '}
-                    {(displayStats.unsatisfiableClassesRaw === -1 ? 'N/A' : (displayStats.unsatisfiableClasses ?? 0))} unsatisfiable
+                    {formatCount(displayStats.satisfiableClasses)} satisfiable · {' '}
+                    {displayStats.unsatisfiableClassesRaw === -1 ? '—' : formatCount(displayStats.unsatisfiableClasses)} unsatisfiable
                   </div>
                 )}
               </div>
@@ -2155,14 +2180,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       <input
                         type="radio"
                         checked={justificationMode === 'regular'}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onChange={() => {
                           setJustificationMode('regular');
                           fetchInconsistencyExplanation('regular');
                         }}
                       />
                       Show regular justifications
-                      {localIsRunning && justificationMode === 'regular' && (
+                      {isExplainingInconsistency && justificationMode === 'regular' && (
                         <RefreshCw size={12} className="animate-spin opacity-60" />
                       )}
                     </label>
@@ -2170,14 +2195,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       <input
                         type="radio"
                         checked={justificationMode === 'laconic'}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onChange={() => {
                           setJustificationMode('laconic');
                           fetchInconsistencyExplanation('laconic');
                         }}
                       />
                       Show laconic justifications
-                      {localIsRunning && justificationMode === 'laconic' && (
+                      {isExplainingInconsistency && justificationMode === 'laconic' && (
                         <RefreshCw size={12} className="animate-spin opacity-60" />
                       )}
                     </label>
@@ -2188,7 +2213,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       <input
                         type="radio"
                         checked={justificationLimitMode === 'all'}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onChange={() => {
                           setJustificationLimitMode('all');
                           fetchInconsistencyExplanation(undefined, { mode: 'all', value: justificationLimitValue });
@@ -2201,7 +2226,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                         type="radio"
                         id="justification-limit-radio"
                         checked={justificationLimitMode === 'limit'}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onChange={() => {
                           setJustificationLimitMode('limit');
                           fetchInconsistencyExplanation(undefined, { mode: 'limit', value: justificationLimitValue });
@@ -2215,7 +2240,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                         min={1}
                         max={50}
                         value={justificationLimitValue}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onFocus={() => {
                           if (justificationLimitMode !== 'limit') {
                             setJustificationLimitMode('limit');
@@ -2245,7 +2270,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     </div>
                   </div>
 
-                  {isRunning && !inconsistencyExplanation ? (
+                  {isExplainingInconsistency ? (
                     <div className="text-sm opacity-80 flex items-center gap-2">
                       <RefreshCw size={14} className="animate-spin" />
                       Computing explanation...
@@ -2400,6 +2425,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                         )}
                       </div>
                     ))
+                  ) : inconsistencyExplanation?.error ? (
+                    <div className={`text-sm ${isDark ? 'text-red-400' : 'text-red-600'}`}>{inconsistencyExplanation.error}</div>
                   ) : (
                     <div className="text-sm opacity-80">
                       No further detail available for this inconsistency.
