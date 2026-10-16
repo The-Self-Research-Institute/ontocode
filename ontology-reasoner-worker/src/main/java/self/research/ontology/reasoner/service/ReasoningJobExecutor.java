@@ -86,11 +86,12 @@ public class ReasoningJobExecutor {
             OWLReasoner reasoner = session.reasoner();
             OWLClassExpression expr = parseClassExpression(ontology, job.getExpression());
             if (expr == null) {
-                return Map.of(
-                        "success", false,
-                        "error", "Failed to parse class expression: " + job.getExpression(),
-                        "hint", "Check Manchester OWL syntax. Examples: 'Person', 'Person and hasAge some integer'"
-                );
+                Map<String, Object> parseFailure = new HashMap<>();
+                parseFailure.put("success", false);
+                parseFailure.put("error", "Failed to parse class expression: " + job.getExpression());
+                parseFailure.put("hint", "Check Manchester OWL syntax. Examples: 'Person', 'Person and hasAge some integer'");
+                attachSessionMetadata(parseFailure, session);
+                return parseFailure;
             }
 
             Map<String, Object> results = new HashMap<>();
@@ -672,7 +673,9 @@ public class ReasoningJobExecutor {
             ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
 
             if (!reasoner.isConsistent()) {
-                return analyzeInconsistency(ontology);
+                Map<String, Object> inconsistent = analyzeInconsistency(ontology);
+                attachSessionMetadata(inconsistent, session);
+                return inconsistent;
             }
 
             long start = System.currentTimeMillis();
@@ -701,13 +704,16 @@ public class ReasoningJobExecutor {
             }
 
             List<Map<String, Object>> unsatisfiableList = new ArrayList<>();
+            boolean unsatisfiableKnown = true;
             try {
                 Set<OWLClass> unsatisfiable = new HashSet<>(reasoner.getUnsatisfiableClasses().getEntities());
                 unsatisfiable.remove(df.getOWLNothing());
                 unsatisfiableList = unsatisfiable.stream()
                         .map(cls -> Map.<String, Object>of("iri", cls.getIRI().toString(), "label", label(cls, ontology)))
                         .collect(Collectors.toList());
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                unsatisfiableKnown = false;
+                log.warn("Unsatisfiable-class check failed for project {}: {}", job.getProjectId(), e.getMessage());
             }
 
             List<Map<String, Object>> objectPropertyHierarchy = new ArrayList<>();
@@ -759,8 +765,8 @@ public class ReasoningJobExecutor {
             stats.put("objectPropertyNodes", ontology.getObjectPropertiesInSignature().size());
             stats.put("dataPropertyNodes", ontology.getDataPropertiesInSignature().size());
             stats.put("individuals", ontology.getIndividualsInSignature().size());
-            stats.put("satisfiableClasses", Math.max(0, totalClasses - unsatisfiableList.size()));
-            stats.put("unsatisfiableClasses", unsatisfiableList.size());
+            stats.put("satisfiableClasses", unsatisfiableKnown ? Math.max(0, totalClasses - unsatisfiableList.size()) : -1);
+            stats.put("unsatisfiableClasses", unsatisfiableKnown ? unsatisfiableList.size() : -1);
             stats.put("isConsistent", true);
             result.put("stats", stats);
 
@@ -991,7 +997,9 @@ public class ReasoningJobExecutor {
             ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
 
             if (!reasoner.isConsistent()) {
-                return analyzeInconsistency(ontology);
+                Map<String, Object> inconsistent = analyzeInconsistency(ontology);
+                attachSessionMetadata(inconsistent, session);
+                return inconsistent;
             }
 
             long start = System.currentTimeMillis();
@@ -1001,10 +1009,10 @@ public class ReasoningJobExecutor {
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             final int axiomDisplayLimit = 100;
             Set<OWLAxiom> inferredAxioms = new LinkedHashSet<>();
-            boolean truncated = false;
+            boolean stoppedEarly = false;
             for (OWLClass owlClass : ontology.getClassesInSignature()) {
-                if (inferredAxioms.size() >= axiomDisplayLimit) {
-                    truncated = true;
+                if (inferredAxioms.size() > axiomDisplayLimit) {
+                    stoppedEarly = true;
                     break;
                 }
                 if (owlClass.isOWLThing() || owlClass.isOWLNothing()) {
@@ -1020,6 +1028,7 @@ public class ReasoningJobExecutor {
                 }
             }
             long duration = System.currentTimeMillis() - start;
+            boolean truncated = inferredAxioms.size() > axiomDisplayLimit;
 
             List<Map<String, Object>> axiomsList = inferredAxioms.stream()
                     .limit(axiomDisplayLimit)
@@ -1042,9 +1051,19 @@ public class ReasoningJobExecutor {
             result.put("durationMs", duration);
             result.put("totalInferredAxioms", inferredAxioms.size());
             result.put("axioms", axiomsList);
-            result.put("message", truncated
-                    ? "Showing the first " + axiomsList.size() + " inferred axioms (there may be more)"
-                    : "Showing all " + inferredAxioms.size() + " inferred axioms");
+            if (stoppedEarly) {
+                result.put("totalIsPartial", true);
+            }
+            String message;
+            if (stoppedEarly) {
+                message = "Showing the first " + axiomsList.size() + " of at least " + inferredAxioms.size()
+                        + " inferred axioms (the search stopped early, so there may be more)";
+            } else if (truncated) {
+                message = "Showing the first " + axiomsList.size() + " of " + inferredAxioms.size() + " inferred axioms";
+            } else {
+                message = "Showing all " + inferredAxioms.size() + " inferred axioms";
+            }
+            result.put("message", message);
             attachSessionMetadata(result, session);
             return result;
         }
