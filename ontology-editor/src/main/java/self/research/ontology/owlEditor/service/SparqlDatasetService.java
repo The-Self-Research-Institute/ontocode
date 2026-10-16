@@ -85,10 +85,25 @@ public class SparqlDatasetService {
     @Value("${ontocode.draft.max-triples:500000}")
     private long draftMaxTriples;
 
-    private final Cache<String, org.semanticweb.owlapi.model.OWLOntology> draftOntologyCache = Caffeine.newBuilder()
-        .maximumSize(10)
-        .expireAfterWrite(3, java.util.concurrent.TimeUnit.SECONDS)
+    private static final String DRAFT_GRAPH_PREFIX = "http://ontocode.org/draft/";
+
+    private final ConcurrentHashMap<String, AtomicLong> draftGraphWriteStamps = new ConcurrentHashMap<>();
+
+    private final Cache<String, CompletableFuture<org.semanticweb.owlapi.model.OWLOntology>> draftOntologyCache = Caffeine.newBuilder()
+        .maximumSize(4)
+        .expireAfterAccess(5, java.util.concurrent.TimeUnit.MINUTES)
+        .scheduler(com.github.benmanes.caffeine.cache.Scheduler.systemScheduler())
+        .removalListener((String key, CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> loaded,
+                          com.github.benmanes.caffeine.cache.RemovalCause cause) -> {
+            if (cause == com.github.benmanes.caffeine.cache.RemovalCause.EXPIRED && loaded != null) {
+                loaded.thenAccept(this::releaseDraftOntology);
+            }
+        })
         .build();
+
+    @Autowired(required = false)
+    @Lazy
+    private ReasonerService reasonerService;
 
     @Value("${ontocode.fuseki.queryEndpoint:http://localhost:3030/ontocode/query}")
     private String fusekiQueryEndpoint;
@@ -1340,6 +1355,7 @@ public class SparqlDatasetService {
                 + "CLEAR GRAPH <" + draftGraph + ">";
         long start = System.nanoTime();
         execUpdate(projectId, mainGraph, sparql);
+        noteGraphWritten(draftGraph);
         publishDraftPrefixesToPublic(projectId, userId);
         evictDraftReadyCache(projectId, userId);
         log.info("[DRAFT-MOVE] Published draft→main for project {} user {} in {}ms",
@@ -1354,6 +1370,8 @@ public class SparqlDatasetService {
             int copied = GraphStatementOps.copy(conn, mainGraph, draftGraph);
             log.info("[DRAFT-COPY] Copied {} triples main -> draft for project {} user {} in {}ms",
                     copied, projectId, userId, elapsedMillis(start));
+        } finally {
+            noteGraphWritten(draftGraph);
         }
         if (projectRepoCache != null) {
             projectRepoCache.evict(projectId);
@@ -1376,13 +1394,49 @@ public class SparqlDatasetService {
         }
     }
 
-    public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId) throws Exception {
-        String cacheKey = projectId + "::" + userId;
-        org.semanticweb.owlapi.model.OWLOntology cached = draftOntologyCache.getIfPresent(cacheKey);
-        if (cached != null) {
-            return cached;
-        }
+    public long getDraftWriteStamp(String projectId, String userId) {
+        AtomicLong stamp = draftGraphWriteStamps.get(getDraftGraphUri(projectId, userId));
+        return stamp == null ? 0L : stamp.get();
+    }
 
+    private void noteGraphWritten(String graphUri) {
+        if (graphUri != null && graphUri.startsWith(DRAFT_GRAPH_PREFIX)) {
+            draftGraphWriteStamps.computeIfAbsent(graphUri, k -> new AtomicLong()).incrementAndGet();
+        }
+    }
+
+    private void releaseDraftOntology(org.semanticweb.owlapi.model.OWLOntology ontology) {
+        if (ontology != null && reasonerService != null) {
+            reasonerService.releaseOntologyFromMemory(ontology);
+        }
+    }
+
+    public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId,
+                                                                         long draftVersion) throws Exception {
+        String cacheKey = projectId + "::" + userId + "::" + draftVersion + "::" + getDraftWriteStamp(projectId, userId);
+        CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> loading = new CompletableFuture<>();
+        CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> existing =
+                draftOntologyCache.asMap().putIfAbsent(cacheKey, loading);
+        if (existing != null) {
+            try {
+                return existing.get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                throw cause instanceof Exception ex ? ex : new RuntimeException(cause);
+            }
+        }
+        try {
+            org.semanticweb.owlapi.model.OWLOntology ontology = readDraftAsOntology(projectId, userId);
+            loading.complete(ontology);
+            return ontology;
+        } catch (Exception e) {
+            draftOntologyCache.asMap().remove(cacheKey, loading);
+            loading.completeExceptionally(e);
+            throw e;
+        }
+    }
+
+    private org.semanticweb.owlapi.model.OWLOntology readDraftAsOntology(String projectId, String userId) throws Exception {
         if (!isDraftCopySessionReady(projectId, userId)) {
             throw new IllegalStateException("Draft copy for project " + projectId + " (user " + userId
                     + ") is not ready yet — the copy-on-switch background job hasn't finished.");
@@ -1405,7 +1459,6 @@ public class SparqlDatasetService {
         try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
             ontology = manager.loadOntologyFromOntologyDocument(is);
         }
-        draftOntologyCache.put(cacheKey, ontology);
         return ontology;
     }
 
@@ -1539,6 +1592,7 @@ public class SparqlDatasetService {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             conn.prepareUpdate(updateText).execute();
+            noteGraphWritten(graphUri);
             invalidateDerivedCachesAfterUpdate(projectId);
             log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} triples)", graphUri, projectId, statements.size());
         } catch (Exception e) {
@@ -1587,6 +1641,8 @@ public class SparqlDatasetService {
                         projectId, updateExecMs, commitMs, totalMs, connMs);
                 log.info("[GRAPHDB] UPDATE completed: execTime={}ms commitTime={}ms totalTime={}ms",
                         updateExecMs, commitMs, totalMs);
+
+                noteGraphWritten(targetGraphUri);
 
                 // Phase C: evict the in-memory mirror so the next read repopulates it
                 // with the just-written triples. Cheap (microseconds) + safe.
@@ -2067,6 +2123,7 @@ public class SparqlDatasetService {
 
                     // Invalidate context caches after new data is committed
                     invalidateContextCaches(projectId);
+                    noteGraphWritten(graphUri);
                     if (!draft && mainGraphRevisionService != null) {
                         mainGraphRevisionService.incrementRevision(projectId);
                     }

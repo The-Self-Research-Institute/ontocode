@@ -21,6 +21,7 @@ import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.common.ReasoningFriendlyErrors;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 import org.eclipse.rdf4j.rio.RDFFormat;
@@ -71,6 +72,9 @@ public class ReasonerController {
 
     @Autowired(required = false)
     private ReasonerWorkerClient reasonerWorkerClient;
+
+    @Autowired(required = false)
+    private StorageManager storageManager;
 
     @Autowired(required = false)
     private self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext owlApiContext;
@@ -391,8 +395,10 @@ public class ReasonerController {
                         "async", true, "jobId", jobId, "lazy", true
                 ));
             }
+            long draftVersion = isDraft ? draftGraphVersion(projectId, resolvedUserId) : 0L;
+            long draftWriteStamp = isDraft ? datasetService.getDraftWriteStamp(projectId, resolvedUserId) : 0L;
             OWLOntology ontology = isDraft
-                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId)
+                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId, draftVersion)
                     : loadOntology(projectId);
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
             if (effectiveType.equalsIgnoreCase("ELK")) {
@@ -418,7 +424,8 @@ public class ReasonerController {
 
             // Return cached hierarchy immediately if still fresh (Caffeine handles TTL)
             String cacheKey = isDraft
-                    ? projectId + "-" + type.name() + "-draft-" + resolvedUserId
+                    ? EditorReasonerCacheService.draftHierarchyKey(projectId, type, resolvedUserId,
+                            draftVersion + "." + draftWriteStamp)
                     : projectId + "-" + type.name();
             EditorReasonerCacheService.HierarchyCacheEntry cached =
                     editorReasonerCache.getHierarchy(cacheKey).orElse(null);
@@ -655,7 +662,7 @@ public class ReasonerController {
                 ));
             }
             OWLOntology ontology = isDraft
-                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId)
+                    ? loadDraftOntology(projectId, resolvedUserId)
                     : loadOntology(projectId);
             // ELK has no property hierarchy support — everything else (including HERMIT) is
             // used as requested so this reuses whatever reasoner is already classified for
@@ -775,7 +782,7 @@ public class ReasonerController {
                 ));
             }
             OWLOntology ontology = isDraft
-                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId)
+                    ? loadDraftOntology(projectId, resolvedUserId)
                     : loadOntology(projectId);
             // HERMIT → OPENLLET (binary compat); ELK → OPENLLET (ELK has no property hierarchy support)
             String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") || reasonerType.equalsIgnoreCase("ELK")
@@ -1298,7 +1305,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             OWLOntology ontology = (draft && resolvedUserId != null && !resolvedUserId.isBlank())
-                    ? datasetService.loadDraftAsOntology(projectId, resolvedUserId)
+                    ? loadDraftOntology(projectId, resolvedUserId)
                     : loadOntology(projectId);
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
@@ -1332,9 +1339,17 @@ public class ReasonerController {
     private OWLOntology loadOntologyForRequest(String projectId, String userId, boolean draft, HttpServletRequest request) throws Exception {
         String resolvedUserId = resolveUserId(projectId, userId, request);
         if (draft && resolvedUserId != null && !resolvedUserId.isBlank()) {
-            return datasetService.loadDraftAsOntology(projectId, resolvedUserId);
+            return loadDraftOntology(projectId, resolvedUserId);
         }
         return loadOntology(projectId);
+    }
+
+    private long draftGraphVersion(String projectId, String userId) {
+        return storageManager != null ? storageManager.getDraftGraphVersion(projectId, userId) : 0L;
+    }
+
+    private OWLOntology loadDraftOntology(String projectId, String userId) throws Exception {
+        return datasetService.loadDraftAsOntology(projectId, userId, draftGraphVersion(projectId, userId));
     }
 
     // Helper methods

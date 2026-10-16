@@ -86,9 +86,34 @@ public class ProjectLoadController {
 
     private record QuickUnsatCacheEntry(long version, self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result) {}
     private final ConcurrentHashMap<String, QuickUnsatCacheEntry> quickUnsatCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult>> quickUnsatInFlight = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, QuickUnsatRun> quickUnsatInFlight = new ConcurrentHashMap<>();
     private static final long QUICK_UNSAT_MAX_TRIPLES = 500_000L;
     private static final long QUICK_UNSAT_TIMEOUT_MS = 15_000L;
+
+    private static final class QuickUnsatRun {
+        final java.util.concurrent.CompletableFuture<self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult> result =
+                new java.util.concurrent.CompletableFuture<>();
+        private org.semanticweb.owlapi.reasoner.OWLReasoner reasoner;
+        private boolean cancelled;
+
+        synchronized void attach(org.semanticweb.owlapi.reasoner.OWLReasoner created) {
+            if (cancelled) {
+                throw new java.util.concurrent.CancellationException("Quick unsatisfiable-classes check was cancelled");
+            }
+            reasoner = created;
+        }
+
+        synchronized void cancel() {
+            cancelled = true;
+            if (reasoner != null) {
+                reasoner.interrupt();
+            }
+        }
+
+        synchronized boolean isCancelled() {
+            return cancelled;
+        }
+    }
     private final java.util.concurrent.ExecutorService quickUnsatExecutor = new java.util.concurrent.ThreadPoolExecutor(
             2, 2, 60, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(20),
             r -> {
@@ -1438,32 +1463,18 @@ public class ProjectLoadController {
             }
 
             String versionedKey = cacheKey + "::" + currentVersion;
-            java.util.concurrent.CompletableFuture<self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult> future =
-                    quickUnsatInFlight.computeIfAbsent(versionedKey, k ->
-                            java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                                try {
-                                    OWLOntology ontology;
-                                    if (isDraft) {
-                                        ontology = datasetService.loadDraftAsOntology(projectId, resolvedUserId);
-                                    } else {
-                                        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-                                        Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
-                                        try (InputStream is = Files.newInputStream(exportPath)) {
-                                            ontology = manager.loadOntologyFromOntologyDocument(is);
-                                        }
-                                    }
-                                    self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result =
-                                            owlEditorReasonerService.getUnsatisfiableClassesQuick(ontology, ReasonerType.HERMIT);
-                                    quickUnsatCache.put(cacheKey, new QuickUnsatCacheEntry(currentVersion, result));
-                                    return result;
-                                } catch (Exception e) {
-                                    throw new RuntimeException(e);
-                                }
-                            }, quickUnsatExecutor).whenComplete((r, t) -> quickUnsatInFlight.remove(versionedKey)));
+            QuickUnsatRun run = quickUnsatInFlight.computeIfAbsent(versionedKey, k ->
+                    startQuickUnsat(projectId, resolvedUserId, isDraft, cacheKey, currentVersion));
+            run.result.whenComplete((r, t) -> quickUnsatInFlight.remove(versionedKey, run));
 
-            self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result =
-                    future.get(QUICK_UNSAT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
-            return quickUnsatResponse(projectId, result);
+            try {
+                self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result =
+                        run.result.get(QUICK_UNSAT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                return quickUnsatResponse(projectId, result);
+            } catch (java.util.concurrent.TimeoutException te) {
+                run.cancel();
+                throw te;
+            }
         } catch (Exception e) {
             log.warn("Unsatisfiable-classes-quick check failed for project {} (non-fatal, caller ignores): {}",
                     projectId, e.getMessage());
@@ -1471,6 +1482,35 @@ public class ProjectLoadController {
             body.put("unsatisfiableClasses", java.util.List.of());
             return ResponseEntity.ok(body);
         }
+    }
+
+    private QuickUnsatRun startQuickUnsat(String projectId, String userId, boolean isDraft, String cacheKey,
+                                          long version) {
+        QuickUnsatRun run = new QuickUnsatRun();
+        quickUnsatExecutor.execute(() -> {
+            try {
+                if (run.isCancelled()) {
+                    throw new java.util.concurrent.CancellationException("Quick unsatisfiable-classes check was cancelled");
+                }
+                OWLOntology ontology;
+                if (isDraft) {
+                    ontology = datasetService.loadDraftAsOntology(projectId, userId, version);
+                } else {
+                    OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+                    Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
+                    try (InputStream is = Files.newInputStream(exportPath)) {
+                        ontology = manager.loadOntologyFromOntologyDocument(is);
+                    }
+                }
+                self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result =
+                        owlEditorReasonerService.getUnsatisfiableClassesQuick(ontology, ReasonerType.HERMIT, run::attach);
+                quickUnsatCache.put(cacheKey, new QuickUnsatCacheEntry(version, result));
+                run.result.complete(result);
+            } catch (Throwable t) {
+                run.result.completeExceptionally(t);
+            }
+        });
+        return run;
     }
 
     private String resolveUserId(String projectId, String clientSuppliedUserId, HttpServletRequest request) {

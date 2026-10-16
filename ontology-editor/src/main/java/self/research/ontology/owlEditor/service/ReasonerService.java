@@ -722,10 +722,12 @@ public class ReasonerService {
 
     public record QuickUnsatResult(List<String> unsatisfiableClasses, boolean inconsistent) {}
 
-    public QuickUnsatResult getUnsatisfiableClassesQuick(OWLOntology ontology, ReasonerType type) {
+    public QuickUnsatResult getUnsatisfiableClassesQuick(OWLOntology ontology, ReasonerType type,
+                                                         java.util.function.Consumer<OWLReasoner> onReasonerCreated) {
         OWLOntology reasoningOntology = stripSwrlRules(ontology);
         OWLReasoner reasoner = createReasoner(reasoningOntology, type);
         try {
+            onReasonerCreated.accept(reasoner);
             if (!reasoner.isConsistent()) {
                 return new QuickUnsatResult(Collections.emptyList(), true);
             }
