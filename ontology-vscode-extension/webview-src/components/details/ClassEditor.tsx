@@ -9,10 +9,12 @@ import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import { friendlyApiErrorMessage } from '../../utils/apiErrors';
 import { isDesktop, waitForDesktopOwlApiReady, isOwlApiWarmingResponse } from '../../utils/desktop';
-import { withDraftScope } from '../../utils/draftScope';
+import { withDraftScope, withDraftAndUser, draftBodyFields } from '../../utils/draftScope';
 import { useAuth } from '../../custom-hook/useAuth';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
+import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
+import { normalizeReasonerType } from '../dashboard-parts/dashboardUtils';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 
@@ -286,7 +288,8 @@ const ClassEditor: React.FC<{
   isViewOnly?: boolean;
   onViewOnlyAction?: () => void;
   existingIris?: string[];
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction, existingIris = [] }) => {
+  selectedReasoner?: string;
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction, existingIris = [], selectedReasoner = 'HERMIT' }) => {
   // Get current user for tracking mutations
   const { user } = useAuth();
   const collaboration = useCollaboration();
@@ -299,13 +302,73 @@ const ClassEditor: React.FC<{
     itemRef.current = item;
   });
 
-  const [activeTab, setActiveTab] = useState<"annotations" | "usage" | "description">("annotations");
+  const [activeTab, setActiveTab] = useState<"annotations" | "usage" | "description">("description");
   const [loadingAnnotations, setLoadingAnnotations] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [loadingDetailsElapsed, setLoadingDetailsElapsed] = useState(0);
   const [axiomsLoaded, setAxiomsLoaded] = useState(false);
   const [descriptionTimedOut, setDescriptionTimedOut] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
+  const [conflictIris, setConflictIris] = useState<Set<string> | undefined>(undefined);
+  const [lastEditAt, setLastEditAt] = useState(0);
+
+  useEffect(() => {
+    if (!projectId || !item.id) {
+      setConflictIris(undefined);
+      return;
+    }
+    let cancelled = false;
+
+    const loadConflictIris = async () => {
+
+      let unsatisfiable = item.isUnsatisfiable === true;
+      if (!unsatisfiable) {
+        try {
+          const quick: any = await apiClient.get(withDraftAndUser(`/api/ontology/${projectId}/unsatisfiable-classes-quick`));
+          const list: string[] = Array.isArray(quick?.unsatisfiableClasses) ? quick.unsatisfiableClasses : [];
+          unsatisfiable = list.includes(item.id);
+        } catch (e) {
+          console.warn('[ClassEditor] conflictIris: unsatisfiable-classes-quick failed', e);
+          unsatisfiable = false;
+        }
+      }
+      if (cancelled) return;
+      if (!unsatisfiable) {
+        setConflictIris(undefined);
+        return;
+      }
+
+      try {
+        const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
+          entailmentType: 'UNSATISFIABLE_CLASS',
+          subjectIri: item.id,
+          mode: 'regular',
+          maxJustifications: 10,
+          ...draftBodyFields(),
+        });
+        if (cancelled) return;
+        const data = (res as any)?.data ?? res;
+        const justifications = data?.justifications ?? [];
+        const iris = new Set<string>();
+        for (const justification of justifications) {
+          for (const axiom of justification?.axioms ?? []) {
+            if (axiom?.role !== 'CONFLICT') continue;
+            for (const entity of axiom?.entities ?? []) {
+              if (entity?.iri && entity.iri !== item.id) iris.add(entity.iri);
+            }
+          }
+        }
+        setConflictIris(iris);
+      } catch (e) {
+        console.warn('[ClassEditor] conflictIris: explain-entailment failed', e);
+        if (!cancelled) setConflictIris(undefined);
+      }
+    };
+
+    const debounceTimer = setTimeout(() => { void loadConflictIris(); }, 300);
+    return () => { cancelled = true; clearTimeout(debounceTimer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, item.isUnsatisfiable, projectId, lastEditAt]);
 
   // Manchester Syntax Editor State
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -458,6 +521,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
     notificationService.error("Rename Failed", error instanceof Error ? error.message : "Failed to rename entity.");
   }
 };
+  const inferredReasonerKey = viewMode === 'inferred' ? selectedReasoner : null;
   // Load class details including annotations when component mounts.
   // Uses an "alive" flag so stale responses from a previously selected entity
   // are discarded (prevents showing the previous class's data).
@@ -563,13 +627,15 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       clearTimeout(debounceTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, projectId, viewMode]);
+  }, [item.id, projectId, viewMode, inferredReasonerKey]);
 
   // Pre-load all-classes lookup when editor dialog opens so Manchester expressions can resolve labels
   useEffect(() => {
-    if (isEditorOpen || isGCAEditorOpen) loadAllClassesLookup();
+    if (isEditorOpen || isGCAEditorOpen || (classDetails?.generalClassAxioms?.length ?? 0) > 0) {
+      loadAllClassesLookup();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditorOpen, isGCAEditorOpen]);
+  }, [isEditorOpen, isGCAEditorOpen, classDetails?.generalClassAxioms?.length]);
 
   // Auto-reload when a collaborator modifies this class
   useEffect(() => {
@@ -785,7 +851,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       if (viewMode === "inferred" && !hasOwlApiInferred) {
         try {
           const inferredResponse = await apiClient.get<any>(
-            `/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=STRUCTURAL`,
+            withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-class-details?classIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(normalizeReasonerType(selectedReasoner))}`),
             undefined,
             { signal, timeout: isDesktop() ? 15_000 : 45_000 },
           );
@@ -812,6 +878,9 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
       setClassDetails(details);
       setAxiomsLoaded(true);
+      if (afterMutation) {
+        setLastEditAt(Date.now());
+      }
 
       const updatedItem: TreeNode = {
         ...item,
@@ -946,65 +1015,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
   // Navigation handler for clicking properties in axiom descriptions
   const handleNavigate = (iri: string, type: string) => {
     console.log("[ClassEditor] Navigate to:", { iri, type });
-
-    if (type === "class") {
-      // Find the class in the hierarchy
-      const findInHierarchy = (nodes: TreeNode[]): TreeNode | null => {
-        for (const node of nodes) {
-          if (node.id === iri) return node;
-          if (node.children) {
-            const found = findInHierarchy(node.children);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-
-      const classNode = findInHierarchy(classHierarchy);
-      if (classNode) {
-        console.log("[ClassEditor] Navigating to class:", classNode);
-        // Update the current item to trigger parent re-render with new selection
-        onUpdate(classNode);
-      } else {
-        console.warn("[ClassEditor] Class not found in hierarchy:", iri);
-      }
-    } else if (type === "property" || type === "objectProperty" || type === "dataProperty") {
-      // Find the property in the hierarchies
-      const findInPropertyHierarchy = (nodes: TreeNode[]): TreeNode | null => {
-        for (const node of nodes) {
-          if (node.id === iri) return node;
-          if (node.children) {
-            const found = findInPropertyHierarchy(node.children);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-
-      // Check in object property hierarchy first
-      let propertyNode = objectPropertyHierarchy.length > 0 ? findInPropertyHierarchy(objectPropertyHierarchy) : null;
-
-      // If not found, check in data property hierarchy
-      if (!propertyNode && dataPropertyHierarchy.length > 0) {
-        propertyNode = findInPropertyHierarchy(dataPropertyHierarchy);
-      }
-
-      // If still not found, create a basic property node from the lists
-      if (!propertyNode) {
-        const property = properties.find((p) => p.id === iri) || dataProperties.find((p) => p.id === iri);
-        if (property) {
-          propertyNode = property;
-        }
-      }
-
-      if (propertyNode) {
-        console.log("[ClassEditor] Navigating to property:", propertyNode);
-        // Navigate to the property by updating the selection
-        onUpdate(propertyNode);
-      } else {
-        console.warn("[ClassEditor] Property not found in hierarchies:", iri);
-      }
-    }
+    dispatchCollaborationNavigate({ projectId, entityIRI: iri, entityType: type });
   };
 
   const openEditor = (
@@ -1202,6 +1213,21 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       if (iris) return { expressionType: "union", iris };
     }
     return null;
+  };
+
+  const resolveGCAAxiom = (
+    definition: string,
+  ): { subjectIris: string[]; targetIri: string } | null => {
+    const match = definition.match(/^\s*\(?(.+?)\)?\s+SubClassOf\s+(.+?)\s*$/i);
+    if (!match) return null;
+    const [, subExprText, targetExprText] = match;
+    const parsedSub = parseManchesterExpression(subExprText);
+    if (!parsedSub || parsedSub.expressionType !== "intersection" || parsedSub.iris.length !== 2) {
+      return null;
+    }
+    const targetIri = findClassIriByLabelOrIri(targetExprText.trim(), classHierarchy);
+    if (!targetIri) return null;
+    return { subjectIris: parsedSub.iris, targetIri };
   };
 
   const handleAddAxiom = async (type: AxiomType, definition: string, restrictionData?: RestrictionData) => {
@@ -2372,6 +2398,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                conflictIris={conflictIris}
               />
 
               {/* SubClass Of Section */}
@@ -2395,6 +2422,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                conflictIris={conflictIris}
               />
 
               {/* General Class Axioms Section */}
@@ -2412,6 +2440,9 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                resolveGCAAxiom={resolveGCAAxiom}
+                onNavigate={handleNavigate}
+                conflictIris={conflictIris}
               />
 
               {/* SubClass Of (Anonymous Ancestor) */}
@@ -2505,6 +2536,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                   onViewOnlyAction={onViewOnlyAction}
                   projectId={projectId}
                   parentEntityIri={item.id}
+                  onNavigate={handleNavigate}
                 />
               </div>
 
@@ -2525,6 +2557,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                onNavigate={handleNavigate}
               />
 
               {/* Disjoint With Section */}
@@ -2547,6 +2580,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                conflictIris={conflictIris}
               />
 
               {/* Disjoint Union Of Section */}
@@ -2566,6 +2600,8 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                onNavigate={handleNavigate}
+                conflictIris={conflictIris}
               />
             </div>
             )}

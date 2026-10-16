@@ -1,9 +1,9 @@
 package self.research.ontology.reasoner.service;
 
-import org.semanticweb.HermiT.ReasonerFactory;
 import org.semanticweb.owl.explanation.api.Explanation;
 import org.semanticweb.owl.explanation.api.ExplanationGenerator;
 import org.semanticweb.owl.explanation.api.ExplanationGeneratorFactory;
+import org.semanticweb.owl.explanation.api.ExplanationProgressMonitor;
 import org.semanticweb.owl.explanation.impl.blackbox.checker.InconsistentOntologyExplanationGeneratorFactory;
 import org.semanticweb.owl.explanation.impl.laconic.LaconicExplanationGeneratorFactory;
 import org.semanticweb.owlapi.apibinding.OWLManager;
@@ -12,6 +12,8 @@ import org.semanticweb.owlapi.expression.ShortFormEntityChecker;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
+import org.semanticweb.owlapi.reasoner.ReasonerInterruptedException;
+import org.semanticweb.owlapi.reasoner.TimeOutException;
 import org.semanticweb.owlapi.search.EntitySearcher;
 import org.semanticweb.owlapi.util.BidirectionalShortFormProvider;
 import org.semanticweb.owlapi.util.BidirectionalShortFormProviderAdapter;
@@ -22,6 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.JustificationRendering;
 import self.research.ontology.reasoner.model.ReasoningJob;
 
 import java.util.*;
@@ -40,6 +43,9 @@ public class ReasoningJobExecutor {
 
     @Value("${ontocode.reasoner.justification-timeout-ms:15000}")
     private long justificationTimeoutMs;
+
+    @Value("${ontocode.reasoning.job-timeout-ms:1800000}")
+    private long jobTimeoutMs;
 
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int defaultMaxJustifications;
@@ -83,11 +89,12 @@ public class ReasoningJobExecutor {
             OWLReasoner reasoner = session.reasoner();
             OWLClassExpression expr = parseClassExpression(ontology, job.getExpression());
             if (expr == null) {
-                return Map.of(
-                        "success", false,
-                        "error", "Failed to parse class expression: " + job.getExpression(),
-                        "hint", "Check Manchester OWL syntax. Examples: 'Person', 'Person and hasAge some integer'"
-                );
+                Map<String, Object> parseFailure = new HashMap<>();
+                parseFailure.put("success", false);
+                parseFailure.put("error", "Failed to parse class expression: " + job.getExpression());
+                parseFailure.put("hint", "Check Manchester OWL syntax. Examples: 'Person', 'Person and hasAge some integer'");
+                attachSessionMetadata(parseFailure, session);
+                return parseFailure;
             }
 
             Map<String, Object> results = new HashMap<>();
@@ -116,9 +123,7 @@ public class ReasoningJobExecutor {
             response.put("query", job.getExpression());
             response.put("queryType", types);
             response.put("results", results);
-            if (session.downgradedWarning() != null) {
-                response.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(response, session);
             return response;
         }
     }
@@ -134,9 +139,7 @@ public class ReasoningJobExecutor {
             result.put("consistent", consistent);
             result.put("reasonerType", effective.getDisplayName());
             result.put("projectId", job.getProjectId());
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(result, session);
             if (!consistent) {
                 var unsat = reasoner.getUnsatisfiableClasses().getEntities();
                 OWLDataFactory df = session.ontology().getOWLOntologyManager().getOWLDataFactory();
@@ -164,17 +167,7 @@ public class ReasoningJobExecutor {
             String mode = job.getExplanationMode() != null && !job.getExplanationMode().isBlank()
                     ? job.getExplanationMode() : "regular";
 
-            OWLOntology reasoningOntology = stripSwrlRules(ontology);
-            OWLReasoner explainReasoner = EphemeralReasonerFactory.create(reasoningOntology, effective);
-            boolean isConsistent;
-            try {
-                isConsistent = explainReasoner.isConsistent();
-            } finally {
-                try {
-                    explainReasoner.dispose();
-                } catch (Exception ignored) {
-                }
-            }
+            boolean isConsistent = session.reasoner().isConsistent();
 
             explanation.put("success", true);
             explanation.put("isConsistent", isConsistent);
@@ -182,9 +175,7 @@ public class ReasoningJobExecutor {
             if (requestedType != effective) {
                 explanation.put("reasonerUpgraded", true);
             }
-            if (session.downgradedWarning() != null) {
-                explanation.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(explanation, session);
 
             if (isConsistent) {
                 explanation.put("message", "Ontology is consistent - no explanation needed");
@@ -216,6 +207,7 @@ public class ReasoningJobExecutor {
                     causes.add(cause);
                 }
             } catch (Exception e) {
+                rethrowIfInterrupted(e);
                 log.error("Error checking disjoint violations", e);
             }
 
@@ -233,6 +225,7 @@ public class ReasoningJobExecutor {
                     causes.add(cause);
                 }
             } catch (Exception e) {
+                rethrowIfInterrupted(e);
                 log.error("Error checking property violations", e);
             }
 
@@ -257,6 +250,7 @@ public class ReasoningJobExecutor {
                     causes.add(cause);
                 }
             } catch (Exception e) {
+                rethrowIfInterrupted(e);
                 log.error("Error running justification search", e);
             }
 
@@ -612,11 +606,12 @@ public class ReasoningJobExecutor {
     }
 
     private List<Map<String, Object>> findJustifications(OWLOntology ontology, int limit) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
         InconsistentOntologyExplanationGeneratorFactory factory =
                 new InconsistentOntologyExplanationGeneratorFactory(
-                        new ReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
-        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology);
+                        new LenientHermitReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
+        ExplanationGenerator<OWLAxiom> generator =
+                factory.createExplanationGenerator(reasoningOntology, new StopWhenThreadInterrupted());
         OWLAxiom entailment = EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(
                 EXPLANATION_DATA_FACTORY.getOWLThing(), EXPLANATION_DATA_FACTORY.getOWLNothing());
         Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
@@ -624,16 +619,17 @@ public class ReasoningJobExecutor {
     }
 
     private List<Map<String, Object>> findLaconicJustifications(OWLOntology ontology, int limit) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
 
         InconsistentOntologyExplanationGeneratorFactory baseFactory =
                 new InconsistentOntologyExplanationGeneratorFactory(
-                        new ReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
+                        new LenientHermitReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
 
         ExplanationGeneratorFactory<OWLAxiom> laconicFactory =
                 new LaconicExplanationGeneratorFactory<OWLAxiom>(baseFactory, OWLManager::createOWLOntologyManager);
 
-        ExplanationGenerator<OWLAxiom> generator = laconicFactory.createExplanationGenerator(reasoningOntology);
+        ExplanationGenerator<OWLAxiom> generator =
+                laconicFactory.createExplanationGenerator(reasoningOntology, new StopWhenThreadInterrupted());
         OWLAxiom entailment = EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(
                 EXPLANATION_DATA_FACTORY.getOWLThing(), EXPLANATION_DATA_FACTORY.getOWLNothing());
         Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
@@ -662,91 +658,19 @@ public class ReasoningJobExecutor {
                         .count();
 
                 Map<String, Object> entry = new HashMap<>();
-                entry.put("text", renderAxiom(axiom, ontology));
+                entry.put("text", JustificationRendering.renderAxiom(axiom, ontology, this::label));
                 entry.put("membershipNote",
                         membershipCount == allAxiomSets.size() ? "In ALL other justifications"
                         : membershipCount == 1 ? "In NO other justifications"
                         : "In " + (membershipCount - 1) + " other justifications");
+                entry.put("entities", JustificationRendering.extractEntities(axiom, ontology, this::label));
+                entry.put("role", JustificationRendering.isConflictAxiom(axiom) ? "CONFLICT" : "CONTRIBUTING");
                 axiomEntries.add(entry);
             }
             justification.put("axioms", axiomEntries);
             justifications.add(justification);
         }
         return justifications;
-    }
-
-    private OWLOntology stripSwrlRules(OWLOntology ontology) {
-        Set<OWLAxiom> axioms = ontology.getAxioms().stream()
-                .filter(ax -> ax.getAxiomType() != AxiomType.SWRL_RULE)
-                .collect(Collectors.toSet());
-        try {
-            OWLOntologyManager mgr = OWLManager.createOWLOntologyManager();
-            return mgr.createOntology(axioms);
-        } catch (OWLOntologyCreationException e) {
-            log.warn("Failed to strip SWRL rules, falling back to original ontology", e);
-            return ontology;
-        }
-    }
-
-    private String renderAxiom(OWLAxiom axiom, OWLOntology ontology) {
-        if (axiom instanceof OWLClassAssertionAxiom ax) {
-            if (!ax.getIndividual().isAnonymous() && !ax.getClassExpression().isAnonymous()) {
-                return label(ax.getIndividual().asOWLNamedIndividual(), ontology) + " Type "
-                        + label(ax.getClassExpression().asOWLClass(), ontology);
-            }
-        } else if (axiom instanceof OWLSubClassOfAxiom ax) {
-            if (!ax.getSubClass().isAnonymous() && !ax.getSuperClass().isAnonymous()) {
-                return label(ax.getSubClass().asOWLClass(), ontology) + " SubClassOf "
-                        + label(ax.getSuperClass().asOWLClass(), ontology);
-            }
-        } else if (axiom instanceof OWLDisjointClassesAxiom ax) {
-            String names = ax.getClassesInSignature().stream()
-                    .map(c -> label(c, ontology))
-                    .collect(Collectors.joining(", "));
-            return "DisjointClasses: " + names;
-        } else if (axiom instanceof OWLDisjointUnionAxiom ax) {
-            String disjuncts = ax.getClassExpressions().stream()
-                    .filter(ce -> !ce.isAnonymous())
-                    .map(ce -> label(ce.asOWLClass(), ontology))
-                    .collect(Collectors.joining(", "));
-            return label(ax.getOWLClass(), ontology) + " DisjointUnionOf " + disjuncts;
-        } else if (axiom instanceof OWLEquivalentClassesAxiom ax) {
-            String names = ax.getClassExpressions().stream()
-                    .filter(ce -> !ce.isAnonymous())
-                    .map(ce -> label(ce.asOWLClass(), ontology))
-                    .collect(Collectors.joining(" ≡ "));
-            return "EquivalentClasses: " + names;
-        } else if (axiom instanceof OWLObjectPropertyAssertionAxiom ax) {
-            if (!ax.getSubject().isAnonymous() && !ax.getObject().isAnonymous()) {
-                return label(ax.getSubject().asOWLNamedIndividual(), ontology) + " "
-                        + label(ax.getProperty().getNamedProperty(), ontology) + " "
-                        + label(ax.getObject().asOWLNamedIndividual(), ontology);
-            }
-        } else if (axiom instanceof OWLDifferentIndividualsAxiom ax) {
-            String names = ax.getIndividualsInSignature().stream()
-                    .map(i -> label(i, ontology))
-                    .collect(Collectors.joining(", "));
-            return "DifferentIndividuals: " + names;
-        } else if (axiom instanceof OWLSameIndividualAxiom ax) {
-            String names = ax.getIndividualsInSignature().stream()
-                    .map(i -> label(i, ontology))
-                    .collect(Collectors.joining(" = "));
-            return "SameIndividual: " + names;
-        } else if (axiom instanceof OWLFunctionalObjectPropertyAxiom ax) {
-            return "FunctionalObjectProperty: " + label(ax.getProperty().getNamedProperty(), ontology);
-        } else if (axiom instanceof OWLInverseFunctionalObjectPropertyAxiom ax) {
-            return "InverseFunctionalObjectProperty: " + label(ax.getProperty().getNamedProperty(), ontology);
-        }
-
-        String rendered = axiom.toString();
-        for (OWLEntity entity : axiom.getSignature()) {
-            String entityLabel = label(entity, ontology);
-            String iri = entity.getIRI().toString();
-            if (entityLabel != null && !entityLabel.isBlank() && !entityLabel.equals(iri)) {
-                rendered = rendered.replace("<" + iri + ">", entityLabel);
-            }
-        }
-        return rendered;
     }
 
     private Map<String, Object> executeClassify(ReasoningJob job) throws Exception {
@@ -757,7 +681,9 @@ public class ReasoningJobExecutor {
             ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
 
             if (!reasoner.isConsistent()) {
-                return analyzeInconsistency(ontology);
+                Map<String, Object> inconsistent = analyzeInconsistency(ontology);
+                attachSessionMetadata(inconsistent, session);
+                return inconsistent;
             }
 
             long start = System.currentTimeMillis();
@@ -771,6 +697,7 @@ public class ReasoningJobExecutor {
 
             List<Map<String, Object>> equivalentClasses = new ArrayList<>();
             for (OWLClass cls : ontology.getClassesInSignature()) {
+                OntologySessionService.throwIfInterrupted();
                 try {
                     Set<OWLClass> equivalents = reasoner.getEquivalentClasses(cls).getEntities();
                     if (equivalents.size() > 1) {
@@ -780,19 +707,24 @@ public class ReasoningJobExecutor {
                                 .collect(Collectors.toList()));
                         equivalentClasses.add(eqGroup);
                     }
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    rethrowIfInterrupted(e);
                     // Some reasoners (ELK) choke on individual classes — skip and keep going.
                 }
             }
 
             List<Map<String, Object>> unsatisfiableList = new ArrayList<>();
+            boolean unsatisfiableKnown = true;
             try {
                 Set<OWLClass> unsatisfiable = new HashSet<>(reasoner.getUnsatisfiableClasses().getEntities());
                 unsatisfiable.remove(df.getOWLNothing());
                 unsatisfiableList = unsatisfiable.stream()
                         .map(cls -> Map.<String, Object>of("iri", cls.getIRI().toString(), "label", label(cls, ontology)))
                         .collect(Collectors.toList());
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                rethrowIfInterrupted(e);
+                unsatisfiableKnown = false;
+                log.warn("Unsatisfiable-class check failed for project {}: {}", job.getProjectId(), e.getMessage());
             }
 
             List<Map<String, Object>> objectPropertyHierarchy = new ArrayList<>();
@@ -836,10 +768,20 @@ public class ReasoningJobExecutor {
             result.put("unsatisfiableClasses", unsatisfiableList);
             result.put("objectPropertyHierarchy", objectPropertyHierarchy);
             result.put("dataPropertyHierarchy", dataPropertyHierarchy);
-            result.put("totalClasses", ontology.getClassesInSignature().size());
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            int totalClasses = ontology.getClassesInSignature().size();
+            result.put("totalClasses", totalClasses);
+
+            Map<String, Object> stats = new HashMap<>();
+            stats.put("classHierarchyNodes", totalClasses);
+            stats.put("objectPropertyNodes", ontology.getObjectPropertiesInSignature().size());
+            stats.put("dataPropertyNodes", ontology.getDataPropertiesInSignature().size());
+            stats.put("individuals", ontology.getIndividualsInSignature().size());
+            stats.put("satisfiableClasses", unsatisfiableKnown ? Math.max(0, totalClasses - unsatisfiableList.size()) : -1);
+            stats.put("unsatisfiableClasses", unsatisfiableKnown ? unsatisfiableList.size() : -1);
+            stats.put("isConsistent", true);
+            result.put("stats", stats);
+
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -1017,9 +959,7 @@ public class ReasoningJobExecutor {
             result.put("reasonerType", effective.getDisplayName());
             result.put("durationMs", duration);
             result.put("message", "Realization completed successfully");
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -1032,9 +972,7 @@ public class ReasoningJobExecutor {
             Map<String, Object> result = new HashMap<>();
             long totalStart = System.currentTimeMillis();
 
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
-            }
+            attachSessionMetadata(result, session);
 
             long t0 = System.currentTimeMillis();
             boolean consistent = reasoner.isConsistent();
@@ -1070,7 +1008,9 @@ public class ReasoningJobExecutor {
             ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
 
             if (!reasoner.isConsistent()) {
-                return analyzeInconsistency(ontology);
+                Map<String, Object> inconsistent = analyzeInconsistency(ontology);
+                attachSessionMetadata(inconsistent, session);
+                return inconsistent;
             }
 
             long start = System.currentTimeMillis();
@@ -1078,8 +1018,15 @@ public class ReasoningJobExecutor {
             reasoner.precomputeInferences(org.semanticweb.owlapi.reasoner.InferenceType.CLASS_ASSERTIONS);
 
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            final int axiomDisplayLimit = 100;
             Set<OWLAxiom> inferredAxioms = new LinkedHashSet<>();
+            boolean stoppedEarly = false;
             for (OWLClass owlClass : ontology.getClassesInSignature()) {
+                OntologySessionService.throwIfInterrupted();
+                if (inferredAxioms.size() > axiomDisplayLimit) {
+                    stoppedEarly = true;
+                    break;
+                }
                 if (owlClass.isOWLThing() || owlClass.isOWLNothing()) {
                     continue;
                 }
@@ -1093,14 +1040,21 @@ public class ReasoningJobExecutor {
                 }
             }
             long duration = System.currentTimeMillis() - start;
+            boolean truncated = inferredAxioms.size() > axiomDisplayLimit;
 
-            List<Map<String, String>> axiomsList = inferredAxioms.stream()
-                    .limit(100)
-                    .map(axiom -> Map.of(
-                            "axiomType", axiom.getAxiomType().getName(),
-                            "axiom", axiom.toString(),
-                            "readable", formatAxiom(axiom, ontology)
-                    ))
+            List<Map<String, Object>> axiomsList = inferredAxioms.stream()
+                    .limit(axiomDisplayLimit)
+                    .map(axiom -> {
+                        Map<String, Object> entry = new HashMap<>();
+                        entry.put("axiomType", axiom.getAxiomType().getName());
+                        entry.put("axiom", axiom.toString());
+                        entry.put("readable", formatAxiom(axiom, ontology));
+                        Map<String, Object> entailment = JustificationRendering.describeEntailment(axiom);
+                        if (entailment != null) {
+                            entry.put("entailment", entailment);
+                        }
+                        return entry;
+                    })
                     .collect(Collectors.toList());
 
             Map<String, Object> result = new HashMap<>();
@@ -1109,12 +1063,20 @@ public class ReasoningJobExecutor {
             result.put("durationMs", duration);
             result.put("totalInferredAxioms", inferredAxioms.size());
             result.put("axioms", axiomsList);
-            result.put("message", axiomsList.size() < inferredAxioms.size()
-                    ? "Showing first 100 of " + inferredAxioms.size() + " inferred axioms"
-                    : "Showing all " + inferredAxioms.size() + " inferred axioms");
-            if (session.downgradedWarning() != null) {
-                result.put("downgradedWarning", session.downgradedWarning());
+            if (stoppedEarly) {
+                result.put("totalIsPartial", true);
             }
+            String message;
+            if (stoppedEarly) {
+                message = "Showing the first " + axiomsList.size() + " of at least " + inferredAxioms.size()
+                        + " inferred axioms (the search stopped early, so there may be more)";
+            } else if (truncated) {
+                message = "Showing the first " + axiomsList.size() + " of " + inferredAxioms.size() + " inferred axioms";
+            } else {
+                message = "Showing all " + inferredAxioms.size() + " inferred axioms";
+            }
+            result.put("message", message);
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -1136,6 +1098,36 @@ public class ReasoningJobExecutor {
                     org.semanticweb.owlapi.reasoner.InferenceType.OBJECT_PROPERTY_HIERARCHY,
                     org.semanticweb.owlapi.reasoner.InferenceType.DATA_PROPERTY_HIERARCHY
             );
+        }
+    }
+
+    private void attachSessionMetadata(Map<String, Object> result, OntologySessionService.ReasoningSession session) {
+        if (session.downgradedWarning() != null) {
+            result.put("downgradedWarning", session.downgradedWarning());
+        }
+        if (session.revision() >= 0) {
+            result.put("ontologyRevision", session.revision());
+        }
+    }
+
+    private static void rethrowIfInterrupted(Exception e) {
+        if (e instanceof ReasonerInterruptedException || e instanceof TimeOutException) {
+            throw (RuntimeException) e;
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            throw new ReasonerInterruptedException(e);
+        }
+    }
+
+    private static final class StopWhenThreadInterrupted implements ExplanationProgressMonitor<OWLAxiom> {
+        @Override
+        public void foundExplanation(ExplanationGenerator<OWLAxiom> generator, Explanation<OWLAxiom> explanation,
+                                     Set<Explanation<OWLAxiom>> allFoundExplanations) {
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return Thread.currentThread().isInterrupted();
         }
     }
 
@@ -1258,7 +1250,7 @@ public class ReasoningJobExecutor {
             result.put("hierarchy", hierarchy);
             result.put("reasonerType", effective.getDisplayName());
             result.put("totalClasses", visited.size());
-            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -1303,7 +1295,7 @@ public class ReasoningJobExecutor {
             result.put("success", true);
             result.put("hierarchy", List.of(root));
             result.put("reasonerType", effective.getDisplayName());
-            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            attachSessionMetadata(result, session);
             return result;
         }
     }
@@ -1347,7 +1339,7 @@ public class ReasoningJobExecutor {
             result.put("success", true);
             result.put("hierarchy", List.of(root));
             result.put("reasonerType", effective.getDisplayName());
-            if (session.downgradedWarning() != null) result.put("downgradedWarning", session.downgradedWarning());
+            attachSessionMetadata(result, session);
             return result;
         }
     }

@@ -81,7 +81,7 @@ import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { cancelOntologyExport } from "../services/exportService";
 import { resolveMutationActor } from "../utils/mutationActor";
-import { isDraftScopeActive, withDraftScope, withDraftAndUser } from "../utils/draftScope";
+import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
@@ -202,6 +202,8 @@ import {
   REASONER_ID_MAP,
   REASONER_OPTIONS,
   normalizeReasonerType,
+  isTerminalPollError,
+  pollErrorMessage,
   buildHierarchyTree,
   extractResponseData,
   normalizePrefixMappings,
@@ -1202,11 +1204,6 @@ function isLiveWriteMode(): boolean {
  * Body fields to merge into POST/PUT metadata writes so they route to the draft graph
  * in private mode. Empty object in public mode (no draft, normal public write).
  */
-function draftBodyFields(): Record<string, string> {
-  if (!isDraftScopeActive()) return {};
-  return { draft: "true", userId: resolveMutationActor().userId || "" };
-}
-
 interface DashboardProps {
   onBackToProjects?: () => void;
   onGoToProjectDashboard?: () => void;
@@ -1413,6 +1410,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   // instead of applying stale data to whatever project is now showing.
   const currentProjectIdRef = useRef(projectId);
   useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
+  const reasonerRunIdRef = useRef(0);
 
   // Switching ontology files: keep the previous tree visible (dimmed) until new data arrives.
   // Abort-previous-request + generation-bump is deliberately NOT duplicated here — fetchData
@@ -1678,6 +1676,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSyncReasonerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSyncReasonerInFlightRef = useRef(false);
+  const autoSyncReasonerPendingRef = useRef(false);
+  const autoSyncReasonerRequestRef = useRef<{ runId: number; projectId: string } | null>(null);
+  const runAutoSyncReasonerRef = useRef<() => Promise<void>>(async () => {});
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
   const [showPullPreview, setShowPullPreview] = useState(false);
   const [openPRCount, setOpenPRCount] = useState(0);
@@ -1989,6 +1992,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedClassForIndividuals, setSelectedClassForIndividuals] = useState<TreeNode | null>(null);
   const [classInstances, setClassInstances] = useState<Individual[]>([]);
   const [classInstancesLoading, setClassInstancesLoading] = useState(false);
+  const classInstancesRequestIdRef = useRef(0);
   const [classInstancesQuery, setClassInstancesQuery] = useState("");
   const [classInstancesView, setClassInstancesView] = useState<"direct" | "inferred" | "all">("direct");
   const [classTreeSearchQuery, setClassTreeSearchQuery] = useState("");
@@ -2064,12 +2068,15 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isAnnotationPropertiesLoading, setIsAnnotationPropertiesLoading] = useState(false);
   const [isDatatypesLoading, setIsDatatypesLoading] = useState(false);
   const [inferredClassHierarchy, setInferredClassHierarchy] = useState<TreeNode[]>([]);
+  const inferredClassHierarchyAttemptedKeyRef = useRef<string | null>(null);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
   const [inferredObjectPropertyHierarchy, setInferredObjectPropertyHierarchy] = useState<TreeNode[]>([]);
+  const inferredObjectPropertyLoadKeyRef = useRef<string | null>(null);
   const [dataProperties, setDataProperties] = useState<Property[]>([]);
   const [dataPropertyHierarchy, setDataPropertyHierarchy] = useState<any[]>([]);
   const [inferredDataPropertyHierarchy, setInferredDataPropertyHierarchy] = useState<TreeNode[]>([]);
+  const inferredDataPropertyLoadKeyRef = useRef<string | null>(null);
   const [annotationProperties, setAnnotationProperties] = useState<AnnotationProperty[]>([]);
   const [annotationPropertyHierarchy, setAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
   const [inferredAnnotationPropertyHierarchy, setInferredAnnotationPropertyHierarchy] = useState<TreeNode[]>([]);
@@ -2227,6 +2234,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedReasoner, setSelectedReasoner] = useState<string>("HermiT");
   const [isReasonerRunning, setIsReasonerRunning] = useState(false);
   const [isReasonerSynced, setIsReasonerSynced] = useState(false);
+  const isReasonerSyncedRef = useRef(isReasonerSynced);
+  isReasonerSyncedRef.current = isReasonerSynced;
   const [reasonerResults, setReasonerResults] = useState<any>(null);
   const [inferredAxioms, setInferredAxioms] = useState<any[]>([]);
   const [isReasonerLoading, setIsReasonerLoading] = useState(false);
@@ -2238,6 +2247,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     data: any;
     error: string | null;
   }>({ open: false, loading: false, data: null, error: null });
+  const explanationDismissedRef = useRef(false);
+  const explanationRequestIdRef = useRef(0);
   const [isReasonerSettingsOpen, setIsReasonerSettingsOpen] = useState(false);
 
   const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || "asserted";
@@ -2317,7 +2328,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [showSectionLoadingBar, sectionBarLabels.length]);
 
-  const entitiesTabs = [
+  const entitiesTabs = useMemo(() => [
     {
       id: "Classes",
       label: "Classes",
@@ -2404,7 +2415,14 @@ const Dashboard: React.FC<DashboardProps> = ({
         : (metadata as any)?.individualCount ?? undefined,
       theme: "bg-gradient-to-b from-purple-300 to-purple-500 text-white border-purple-600",
     },
-  ];
+  ], [
+    metadata, classHierarchy, hierarchyViewModes,
+    inferredObjectPropertyHierarchy, reasonerResults, isPropertiesLoading, objectPropertyHierarchy,
+    inferredDataPropertyHierarchy, dataPropertyHierarchy,
+    isAnnotationPropertiesLoading, annotationProperties, annotationPropertyHierarchy,
+    isDatatypesLoading, datatypes,
+    isIndividualsLoading, individuals,
+  ]);
   const activeTheme = entitiesTabs.find((t) => t.id === entitiesTab)?.theme;
 
   const sourceData = React.useMemo(() => {
@@ -2713,16 +2731,19 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [searchQuery, filteredData]);
 
   const fetchReasonerBundle = useCallback(
-    async (reasonerType: string) => {
+    async (reasonerType: string, shouldStop?: () => boolean) => {
       if (!projectId) {
         throw new Error("No ontology loaded");
       }
 
+      const startedProjectId = projectId;
       const encodedProjectId = encodeURIComponent(projectId);
+      const draftUserId = isDraftScopeActive() ? resolveMutationActor().userId : undefined;
 
       // Start classification (async — returns a taskId)
       const startResponse: any = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/classify`, {
         reasonerType,
+        ...(draftUserId ? { userId: draftUserId } : {}),
       });
 
       const startData = startResponse?.data ?? startResponse;
@@ -2737,10 +2758,22 @@ const Dashboard: React.FC<DashboardProps> = ({
           const deadline = Date.now() + MAX_POLL_TIME;
           while (Date.now() < deadline) {
             await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-            const statusResp: any = await apiClient.get(
-              `/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
-            );
-            const statusData = statusResp?.data ?? statusResp;
+            if (shouldStop?.() || !isMountedRef.current || currentProjectIdRef.current !== startedProjectId) {
+              throw new Error("Classification was cancelled");
+            }
+            let statusData: any;
+            try {
+              const statusResp: any = await apiClient.get(
+                `/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
+              );
+              statusData = statusResp?.data ?? statusResp;
+            } catch (error) {
+              if (isTerminalPollError(error)) {
+                throw new Error(pollErrorMessage(error, "The classification task is no longer available. Start the reasoner again."));
+              }
+              console.error("[Dashboard] Failed to poll classify status (non-fatal, retrying):", error);
+              continue;
+            }
             if (statusData?.status === "COMPLETED") {
               return statusData;
             }
@@ -2752,30 +2785,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           throw new Error("Classification timed out after 30 minutes");
         };
 
-        const [classificationResponse, statsResponse] = await Promise.all([
-          pollForResult(),
-          apiClient
-            .get(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`)
-            .catch((error) => {
-              console.warn("[Dashboard] Reasoner stats request failed:", error);
-              return null;
-            }),
-        ]);
-
-        return combineReasonerResults(classificationResponse, statsResponse ?? undefined);
+        const classificationResponse = await pollForResult();
+        return combineReasonerResults(classificationResponse);
       }
 
       // Fallback: backend returned a synchronous result (older API)
-      const [statsResponse] = await Promise.all([
-        apiClient
-          .get(`/api/ontology/${encodedProjectId}/reasoner/stats?reasonerType=${reasonerType}`)
-          .catch((error) => {
-            console.warn("[Dashboard] Reasoner stats request failed:", error);
-            return null;
-          }),
-      ]);
-
-      return combineReasonerResults(startResponse, statsResponse ?? undefined);
+      return combineReasonerResults(startResponse);
     },
     [projectId],
   );
@@ -2801,7 +2816,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   const pollReasonerJob = async (
     targetProjectId: string,
     jobId: string,
-    { intervalMs = 2500, maxWaitMs = 10 * 60 * 1000 }: { intervalMs?: number; maxWaitMs?: number } = {},
+    {
+      intervalMs = 2500,
+      maxWaitMs = 10 * 60 * 1000,
+      isStale,
+    }: { intervalMs?: number; maxWaitMs?: number; isStale?: () => boolean } = {},
   ): Promise<any> => {
     const deadline = Date.now() + maxWaitMs;
     while (Date.now() < deadline) {
@@ -2809,7 +2828,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // User switched projects while this poll was in flight — discard rather than apply
       // stale data to whatever project is showing now. Reuses the existing "timeout" path
       // so every caller already handles this the same way it handles a real timeout.
-      if (currentProjectIdRef.current !== targetProjectId) {
+      if (currentProjectIdRef.current !== targetProjectId || isStale?.() || !isMountedRef.current) {
         return { timeout: true, stale: true };
       }
       try {
@@ -2823,6 +2842,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         // PENDING/QUEUED/RUNNING — keep polling
       } catch (error) {
+        if (isTerminalPollError(error)) {
+          return { success: false, error: pollErrorMessage(error, "The reasoning job is no longer available.") };
+        }
         console.error("[Dashboard] Failed to poll reasoner job:", error);
         // Transient network hiccup — keep polling until the deadline rather than giving up.
       }
@@ -2832,34 +2854,78 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Resolves a hierarchy fetch response into a final payload, transparently polling if the
   // backend handed back an async job instead of an immediate result.
-  const resolveHierarchyPayload = async (targetProjectId: string, payload: any): Promise<any> => {
+  const resolveHierarchyPayload = async (targetProjectId: string, payload: any, isStale?: () => boolean): Promise<any> => {
     if (payload?.async && payload?.jobId) {
-      return pollReasonerJob(targetProjectId, payload.jobId);
+      return pollReasonerJob(targetProjectId, payload.jobId, { isStale });
     }
     return payload;
   };
 
+  const notifyReasonerJobRejected = (error: any) => {
+    if (Number(error?.status ?? error?.response?.status) === 429) {
+      showNotification(pollErrorMessage(error, "Too many reasoning jobs are queued for this project. Try again shortly."), "warning");
+    }
+  };
+
+  const pollReasonerWorkerJob = async (
+    targetProjectId: string,
+    jobId: string,
+    timeoutMs = 10 * 60 * 1000,
+  ): Promise<any> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (currentProjectIdRef.current !== targetProjectId || !isMountedRef.current) {
+        return { timeout: true, stale: true };
+      }
+      let job: any;
+      try {
+        const res: any = await apiClient.get(`/api/dl-query/jobs/${jobId}`);
+        job = extractResponseData(res);
+      } catch (error) {
+        if (isTerminalPollError(error)) {
+          throw new Error(pollErrorMessage(error, "The reasoning job is no longer available."));
+        }
+        console.error("[Dashboard] Failed to poll reasoner worker job:", error);
+        // Transient network hiccup — keep polling until the deadline rather than giving up.
+        continue;
+      }
+      const status = String(job?.status || "").toUpperCase();
+      if (status === "COMPLETED") return job;
+      if (status === "FAILED") {
+        throw new Error(job?.error || job?.message || "Reasoning job failed");
+      }
+      // PENDING/QUEUED/RUNNING — keep polling
+    }
+    throw new Error("Reasoning job timed out");
+  };
+
   const loadInferredHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const startedRunId = reasonerRunIdRef.current;
+    const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
 
     // HermiT/Pellet cannot handle large ontologies — auto-downgrade to ELK above 500K triples.
     // The editor service also enforces this server-side, but doing it here avoids a wasted round-trip.
     const HEAVY_REASONER_TRIPLE_LIMIT = 500_000;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
-    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
+    const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > HEAVY_REASONER_TRIPLE_LIMIT)
       ? 'ELK'
-      : selectedReasoner;
+      : normalizedSelectedReasoner;
 
     const fetchWithReasoner = async (reasoner: string) => {
       const response = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${reasoner}`,
+        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=${reasoner}`),
       );
       const payload = response?.data || response;
-      return resolveHierarchyPayload(projectId, payload);
+      return resolveHierarchyPayload(projectId, payload, isStale);
     };
 
     const applyPayload = (payload: any, timedOut = false) => {
+      if (isStale()) return false;
       const hierarchy = payload?.hierarchy || [];
       if (timedOut || !Array.isArray(hierarchy) || hierarchy.length === 0) {
         setInferredClassHierarchy([]);
@@ -2867,11 +2933,13 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       const normalized = applyInstanceCountsToTree(hierarchy.map(normalizeHierarchyNode), classInstanceCounts);
       setInferredClassHierarchy(normalized);
+      inferredClassHierarchyAttemptedKeyRef.current = `${startedProjectId}::${selectedReasoner}`;
       return true;
     };
 
     try {
       const payload = await fetchWithReasoner(effectiveReasoner);
+      if (isStale()) return;
 
       // Backend signals the ontology is logically inconsistent — reasoning cannot
       // proceed. Tell the user instead of silently showing an empty tree.
@@ -2905,82 +2973,127 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
-      setInferredClassHierarchy([]);
+      if (!isStale()) {
+        setInferredClassHierarchy([]);
+        notifyReasonerJobRejected(error);
+      }
     }
   }, [projectId, metadata, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
 
   const loadInferredObjectPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const startedRunId = reasonerRunIdRef.current;
+    const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
-    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
-    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
+    const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
+    const loadKey = `${startedProjectId}::${effectiveReasoner}::${startedRunId}`;
+    if (inferredObjectPropertyLoadKeyRef.current === loadKey) return;
+    inferredObjectPropertyLoadKeyRef.current = loadKey;
     try {
       const fetchPropHierarchy = async (reasoner: string) => {
         const r = await apiClient.get<any>(
-          `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${reasoner}`,
+          withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-object-property-hierarchy?reasonerType=${reasoner}`),
         );
-        return resolveHierarchyPayload(projectId, r?.data || r);
+        return resolveHierarchyPayload(projectId, r?.data || r, isStale);
       };
 
       let payload = await fetchPropHierarchy(effectiveReasoner);
+      if (isStale()) return;
       if (payload?.tooLargeForReasoner) { setInferredObjectPropertyHierarchy([]); return; }
       // Same auto-downgrade the class hierarchy loader does — a job that couldn't finish in
       // time (or was discarded as stale) retries once with STRUCTURAL, which needs no real
       // reasoning and is always fast, instead of just giving up empty.
       if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
         payload = await fetchPropHierarchy('STRUCTURAL');
+        if (isStale()) return;
       }
       if (payload?.timeout || (payload?.success === false)) {
         console.warn("[Dashboard] Object property hierarchy job did not complete:", payload);
         setInferredObjectPropertyHierarchy([]);
+        if (payload?.success === false && (payload.message || payload.error)) {
+          showNotification(payload.message || payload.error, "error");
+        }
         return;
       }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred object property hierarchy:", error);
-      setInferredObjectPropertyHierarchy([]);
+      if (!isStale()) {
+        setInferredObjectPropertyHierarchy([]);
+        notifyReasonerJobRejected(error);
+      }
+    } finally {
+      if (inferredObjectPropertyLoadKeyRef.current === loadKey) {
+        inferredObjectPropertyLoadKeyRef.current = null;
+      }
     }
   }, [projectId, metadata, selectedReasoner]);
 
   const loadInferredDataPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const startedRunId = reasonerRunIdRef.current;
+    const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
-    const isHeavyReasoner = selectedReasoner === 'HERMIT' || selectedReasoner === 'HermiT' || selectedReasoner === 'PELLET';
-    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : selectedReasoner;
+    const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
+    const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
+    const loadKey = `${startedProjectId}::${effectiveReasoner}::${startedRunId}`;
+    if (inferredDataPropertyLoadKeyRef.current === loadKey) return;
+    inferredDataPropertyLoadKeyRef.current = loadKey;
     try {
       const fetchPropHierarchy = async (reasoner: string) => {
         const r = await apiClient.get<any>(
-          `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${reasoner}`,
+          withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-data-property-hierarchy?reasonerType=${reasoner}`),
         );
-        return resolveHierarchyPayload(projectId, r?.data || r);
+        return resolveHierarchyPayload(projectId, r?.data || r, isStale);
       };
 
       let payload = await fetchPropHierarchy(effectiveReasoner);
+      if (isStale()) return;
       if (payload?.tooLargeForReasoner) { setInferredDataPropertyHierarchy([]); return; }
       if (payload?.timeout && effectiveReasoner !== 'STRUCTURAL') {
         payload = await fetchPropHierarchy('STRUCTURAL');
+        if (isStale()) return;
       }
       if (payload?.timeout || (payload?.success === false)) {
         console.warn("[Dashboard] Data property hierarchy job did not complete:", payload);
         setInferredDataPropertyHierarchy([]);
+        if (payload?.success === false && (payload.message || payload.error)) {
+          showNotification(payload.message || payload.error, "error");
+        }
         return;
       }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred data property hierarchy:", error);
-      setInferredDataPropertyHierarchy([]);
+      if (!isStale()) {
+        setInferredDataPropertyHierarchy([]);
+        notifyReasonerJobRejected(error);
+      }
+    } finally {
+      if (inferredDataPropertyLoadKeyRef.current === loadKey) {
+        inferredDataPropertyLoadKeyRef.current = null;
+      }
     }
   }, [projectId, metadata, selectedReasoner]);
 
   const loadInferredAnnotationPropertyHierarchy = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const startedRunId = reasonerRunIdRef.current;
+    const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     console.log("[Dashboard] Loading inferred annotation property hierarchy...");
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${selectedReasoner}`,
+        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-annotation-property-hierarchy?reasonerType=${normalizeReasonerType(selectedReasoner)}`),
       );
+      if (isStale()) return;
       const payload = res?.data || res;
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       console.log(
@@ -2991,34 +3104,46 @@ const Dashboard: React.FC<DashboardProps> = ({
       setInferredAnnotationPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred annotation property hierarchy:", error);
-      setInferredAnnotationPropertyHierarchy([]);
+      if (!isStale()) {
+        setInferredAnnotationPropertyHierarchy([]);
+      }
     }
   }, [projectId, selectedReasoner]);
 
   const loadInferredDatatypes = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const startedRunId = reasonerRunIdRef.current;
+    const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     console.log("[Dashboard] Loading inferred datatypes...");
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-datatypes?reasonerType=${selectedReasoner}`,
+        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-datatypes?reasonerType=${normalizeReasonerType(selectedReasoner)}`),
       );
+      if (isStale()) return;
       const payload = res?.data || res;
       const datatypes = payload?.datatypes || payload?.data?.datatypes || [];
       console.log("[Dashboard] Inferred datatypes loaded:", Array.isArray(datatypes) ? datatypes.length : 0, "items");
       setInferredDatatypes(Array.isArray(datatypes) ? datatypes : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred datatypes:", error);
-      setInferredDatatypes([]);
+      if (!isStale()) {
+        setInferredDatatypes([]);
+      }
     }
   }, [projectId, selectedReasoner]);
 
   const loadInferredIndividuals = useCallback(async () => {
     if (!projectId) return;
+    const startedProjectId = projectId;
+    const startedRunId = reasonerRunIdRef.current;
+    const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     console.log("[Dashboard] Loading inferred individuals...");
     try {
       const res = await apiClient.get<any>(
-        `/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-individuals?reasonerType=${selectedReasoner}`,
+        withDraftAndUser(`/api/ontology/${encodeProjectId(projectId)}/reasoner/inferred-individuals?reasonerType=${normalizeReasonerType(selectedReasoner)}`),
       );
+      if (isStale()) return;
       const payload = res?.data || res;
       const individuals = payload?.individuals || payload?.data?.individuals || [];
       console.log(
@@ -3029,28 +3154,39 @@ const Dashboard: React.FC<DashboardProps> = ({
       setInferredIndividuals(Array.isArray(individuals) ? individuals : []);
     } catch (error) {
       console.error("[Dashboard] Failed to load inferred individuals:", error);
-      setInferredIndividuals([]);
+      if (!isStale()) {
+        setInferredIndividuals([]);
+      }
     }
   }, [projectId, selectedReasoner]);
 
   const loadClassInstances = useCallback(async () => {
+    const requestId = ++classInstancesRequestIdRef.current;
     if (!projectId || !selectedClassForIndividuals) {
       setClassInstances([]);
+      setClassInstancesLoading(false);
       return;
     }
+    const startedProjectId = projectId;
+    const isStale = () => classInstancesRequestIdRef.current !== requestId || currentProjectIdRef.current !== startedProjectId;
     setClassInstancesLoading(true);
     try {
       const response = await apiClient.get<any>(
         withDraftScope(`/api/ontology/classes/instances/${projectId}?classIri=${encodeURIComponent(selectedClassForIndividuals.id)}`),
       );
+      if (isStale()) return;
       const payload = response?.data || response;
       const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
       setClassInstances(instances);
     } catch (error) {
       console.error("[Dashboard] Failed to load class instances:", error);
-      setClassInstances([]);
+      if (!isStale()) {
+        setClassInstances([]);
+      }
     } finally {
-      setClassInstancesLoading(false);
+      if (classInstancesRequestIdRef.current === requestId) {
+        setClassInstancesLoading(false);
+      }
     }
   }, [projectId, selectedClassForIndividuals]);
 
@@ -3124,6 +3260,70 @@ const Dashboard: React.FC<DashboardProps> = ({
     ];
   }
 
+  function appendUnsatisfiableRoot(tree: TreeNode[], unsatisfiableClassesRaw: any): TreeNode[] {
+  if (tree.length === 0) return tree;
+    if (!Array.isArray(unsatisfiableClassesRaw) || unsatisfiableClassesRaw.length === 0) return tree;
+    const nothingNode: TreeNode = {
+      id: "http://www.w3.org/2002/07/owl#Nothing",
+      label: "owl:Nothing",
+      isUnsatisfiable: true,
+      hasChildren: true,
+      children: unsatisfiableClassesRaw.map((cls: any) => ({
+        id: cls.iri || cls.id,
+        label: cls.label,
+        isUnsatisfiable: true,
+        hasChildren: false,
+        children: [],
+      })),
+    } as TreeNode;
+    const [thingRoot, ...rest] = tree;
+    return [
+      {
+        ...thingRoot,
+        children: [nothingNode, ...(thingRoot.children || [])],
+        hasChildren: true,
+      },
+      ...rest,
+    ];
+  }
+
+  const clearAutoSyncReasoner = useCallback(() => {
+    if (autoSyncReasonerTimerRef.current) {
+      clearTimeout(autoSyncReasonerTimerRef.current);
+      autoSyncReasonerTimerRef.current = null;
+    }
+    autoSyncReasonerPendingRef.current = false;
+    autoSyncReasonerRequestRef.current = null;
+  }, []);
+
+  const clearInferredReasonerState = useCallback(() => {
+    setInferredClassHierarchy([]);
+    setInferredObjectPropertyHierarchy([]);
+    setInferredDataPropertyHierarchy([]);
+    setInferredAnnotationPropertyHierarchy([]);
+    setInferredIndividuals([]);
+    setInferredDatatypes([]);
+    setInferredAxioms([]);
+  }, []);
+
+  const markReasonerResultInconsistent = useCallback(
+    (results: any, reasonerLabel: string, inconsistentProjectId: string) => {
+      setConsistencyResult({
+        consistent: false,
+        isConsistent: false,
+        reasonerType: reasonerLabel,
+        projectId: inconsistentProjectId,
+        issues: results?.issues,
+      });
+      clearInferredReasonerState();
+      notificationService.error(
+        "Ontology Inconsistent",
+        results?.message || "Classification found the ontology is inconsistent. Open Explain Inconsistency to inspect the causes.",
+      );
+    },
+    [clearInferredReasonerState],
+  );
+
   const startReasoner = useCallback(async () => {
     if (!projectId) {
       notificationService.error("No Ontology Loaded", "Please load an ontology first");
@@ -3134,32 +3334,31 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
+    const myRunId = ++reasonerRunIdRef.current;
+    const startedProjectId = projectId;
+    const isStaleRun = () => reasonerRunIdRef.current !== myRunId || currentProjectIdRef.current !== startedProjectId;
+    inferredClassHierarchyAttemptedKeyRef.current = null;
+
     setIsReasonerLoading(true);
     setIsReasonerRunning(true);
 
     try {
       const reasonerType = normalizeReasonerType(selectedReasoner);
-      const results = await fetchReasonerBundle(reasonerType);
+      const results = await fetchReasonerBundle(reasonerType, isStaleRun);
+      if (isStaleRun()) return;
       setReasonerResults(results);
             console.log("[Dashboard] reasoner bundle:", results);
       console.log("[Dashboard] FIRST inferred class item:", JSON.stringify((results as any)?.classHierarchy?.[0], null, 2));
 
       if ((results as any)?.inconsistent === true) {
-        setConsistencyResult({
-          consistent: false,
-          isConsistent: false,
-          reasonerType: selectedReasoner,
-          projectId,
-          issues: (results as any).issues,
-        });
-        notificationService.error(
-          "Ontology Inconsistent",
-          (results as any).message || "Classification found the ontology is inconsistent. Open Explain Inconsistency to inspect the causes.",
-        );
+        markReasonerResultInconsistent(results, selectedReasoner, startedProjectId);
         return;
       }
 
-      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
+      const bundleClassHierarchy = appendUnsatisfiableRoot(
+        buildInferredTreeFromFlatList((results as any)?.classHierarchy),
+        (results as any)?.unsatisfiableClasses,
+      );
       const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
         (results as any)?.objectPropertyHierarchy,
         { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
@@ -3178,14 +3377,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
       }
 
-      // Realize individuals (inferred types) after classification
-      try {
-        await apiClient.post(`/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/realize`, {
-          reasonerType,
-        });
-      } catch (realizeError) {
-        console.warn("[Dashboard] Realization step failed (non-fatal):", realizeError);
-      }
+      if (isStaleRun()) return;
+      const startReasonerDraftUserId = isDraftScopeActive() ? resolveMutationActor().userId : undefined;
 
       // Fetch inferred axioms for the Reasoner tab's "Inferred Axioms" view — this
       // was previously never called from this flow, so that tab stayed permanently
@@ -3193,17 +3386,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       try {
         const axiomsResponse = await apiClient.get<any>(
           `/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/inferred-axioms`,
-          { reasonerType },
+          { reasonerType, ...(startReasonerDraftUserId ? { userId: startReasonerDraftUserId } : {}) },
         );
         const rawAxiomsPayload = axiomsResponse?.data || axiomsResponse;
         // When the reasoner-worker is enabled, this endpoint replies {async:true, jobId}
         // instead of the axioms directly — reuse the same resolve-or-poll helper the
         // hierarchy fetch below relies on, rather than treating the queued response as
         // "no axioms" (which silently emptied this tab even after a successful run).
-        const axiomsPayload = await resolveHierarchyPayload(projectId, rawAxiomsPayload);
+        const axiomsPayload = await resolveHierarchyPayload(projectId, rawAxiomsPayload, isStaleRun);
+        if (isStaleRun()) return;
         setInferredAxioms(Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : []);
       } catch (axiomsError) {
         console.warn("[Dashboard] Inferred axioms fetch failed (non-fatal):", axiomsError);
+        if (isStaleRun()) return;
         setInferredAxioms([]);
       }
 
@@ -3211,6 +3406,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // This ensures we have the full depth across the full hierarchy, not just the bundle's view
       console.log("[Dashboard] Reasoner completed, loading full recursive hierarchies...");
 
+      if (isStaleRun()) return;
       // Load hierarchies sequentially to avoid overwhelming GraphDB — skip the
       // ones we already populated directly from the classify bundle above.
       if (!Array.isArray(bundleClassHierarchy) || bundleClassHierarchy.length === 0) {
@@ -3223,14 +3419,19 @@ const Dashboard: React.FC<DashboardProps> = ({
         await loadInferredDataPropertyHierarchy();
       }
       await loadInferredAnnotationPropertyHierarchy();
+      if (isStaleRun()) return;
       await loadInferredDatatypes();
+      if (isStaleRun()) return;
       await loadInferredIndividuals();
       console.log("[Dashboard] ✅ All inferred hierarchies processed");
 
+      if (isStaleRun()) return;
       // Refresh class instances if user is viewing Individuals by Class
       if (selectedClassForIndividuals) {
         await loadClassInstances();
       }
+
+      if (isStaleRun()) return;
 
       // Automatically switch Classes tab to inferred mode to show the inferred hierarchy
       setHierarchyViewModes((prev) => ({ ...prev, Classes: "inferred" }));
@@ -3255,10 +3456,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       const friendlyMessage =
         backendData?.error || error?.message || "Classification failed for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
-      notificationService.error("Classification Failed", `${friendlyMessage}${suggestion}`);
-      setIsReasonerRunning(false);
+      if (!isStaleRun()) {
+        notificationService.error("Classification Failed", `${friendlyMessage}${suggestion}`);
+        setIsReasonerRunning(false);
+      }
     } finally {
-      setIsReasonerLoading(false);
+      if (!isStaleRun()) {
+        setIsReasonerLoading(false);
+      }
     }
   }, [
     fetchReasonerBundle,
@@ -3273,9 +3478,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     loadInferredIndividuals,
     loadClassInstances,
     selectedClassForIndividuals,
+    markReasonerResultInconsistent,
   ]);
 
   const stopReasoner = useCallback(async () => {
+    reasonerRunIdRef.current += 1;
+    inferredClassHierarchyAttemptedKeyRef.current = null;
+    clearAutoSyncReasoner();
     if (projectId) {
       try {
         await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/stop`, {});
@@ -3288,19 +3497,35 @@ const Dashboard: React.FC<DashboardProps> = ({
     setIsReasonerLoading(false);
     setReasonerResults(null);
     notificationService.success("Reasoner Stopped", "Reasoner session has been disposed");
-  }, [projectId]);
+  }, [projectId, clearAutoSyncReasoner]);
 
-  // Reasoner state belongs to a single project — reset when switching projects so the
-  // Start button isn't left permanently disabled by a stale isReasonerRunning flag.
-  useEffect(() => {
+  const resetReasonerState = useCallback(() => {
+    reasonerRunIdRef.current += 1;
+    inferredClassHierarchyAttemptedKeyRef.current = null;
+    clearAutoSyncReasoner();
+    explanationDismissedRef.current = true;
     setIsReasonerRunning(false);
     setIsReasonerLoading(false);
     setReasonerResults(null);
-    setInferredClassHierarchy([]);
-  }, [projectId]);
+    setConsistencyResult(null);
+    setExplanationState({ open: false, loading: false, data: null, error: null });
+    clearInferredReasonerState();
+    setHierarchyViewModes((prev) =>
+      Object.values(prev).includes("inferred")
+        ? Object.fromEntries(Object.keys(prev).map((key) => [key, "asserted" as const]))
+        : prev,
+    );
+  }, [clearInferredReasonerState, clearAutoSyncReasoner]);
+
+  // Reasoner state belongs to a single project and draft/public scope — reset when either
+  // changes so the Start button isn't left permanently disabled by a stale isReasonerRunning flag.
+  useEffect(() => {
+    resetReasonerState();
+  }, [projectId, syncMode, resetReasonerState]);
 
   const toggleReasonerSync = useCallback(() => {
     const newSyncState = !isReasonerSynced;
+    clearAutoSyncReasoner();
     setIsReasonerSynced(newSyncState);
     console.log("[Dashboard] Reasoner auto-sync:", newSyncState ? "enabled" : "disabled");
     if (newSyncState) {
@@ -3308,13 +3533,16 @@ const Dashboard: React.FC<DashboardProps> = ({
     } else {
       notificationService.info("Auto-sync Disabled", "Reasoner will only run manually");
     }
-  }, [isReasonerSynced]);
+  }, [isReasonerSynced, clearAutoSyncReasoner]);
 
   const handleSelectReasoner = useCallback(
     (reasoner: string) => {
+      clearAutoSyncReasoner();
       // Stop current reasoner if running
       if (isReasonerRunning) {
+        reasonerRunIdRef.current += 1;
         setIsReasonerRunning(false);
+        setIsReasonerLoading(false);
         setReasonerResults(null);
         notificationService.info("Reasoner Stopped", "Previous reasoner stopped due to type change");
       }
@@ -3332,8 +3560,82 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       notificationService.info("Reasoner Selected", descriptions[reasoner] || `${reasoner} reasoner is now active`);
     },
-    [isReasonerRunning],
+    [isReasonerRunning, clearAutoSyncReasoner],
   );
+
+  const runAutoSyncReasoner = async () => {
+    const request = autoSyncReasonerRequestRef.current;
+    if (!request) return;
+    const isStale = () =>
+      !isReasonerSyncedRef.current ||
+      reasonerRunIdRef.current !== request.runId ||
+      currentProjectIdRef.current !== request.projectId ||
+      !isMountedRef.current;
+    if (!isReasonerSynced || !isReasonerRunning || isReasonerLoading || projectId !== request.projectId || isStale()) {
+      return;
+    }
+    if (autoSyncReasonerInFlightRef.current) {
+      autoSyncReasonerPendingRef.current = true;
+      return;
+    }
+    autoSyncReasonerInFlightRef.current = true;
+    try {
+      const results = await fetchReasonerBundle(normalizeReasonerType(selectedReasoner), isStale);
+      if (isStale()) return;
+      setReasonerResults(results);
+
+      if ((results as any)?.inconsistent === true) {
+        markReasonerResultInconsistent(results, selectedReasoner, request.projectId);
+        return;
+      }
+      setConsistencyResult((prev: any) => (prev?.consistent === false || prev?.isConsistent === false ? null : prev));
+
+      // The classify response already contains a working hierarchy — this is
+      // literally what successfully powers the Reasoner tab's own display.
+      // Use it directly for the Entities tab's "Inferred" toggle too, instead
+      // of relying solely on the separate /reasoner/inferred-class-hierarchy
+      // endpoint below — that one doesn't reliably honor the requested
+      // reasonerType and can report a false "inconsistent", wiping out a
+      // perfectly good result we already have right here.
+      const bundleClassHierarchy = appendUnsatisfiableRoot(
+        buildInferredTreeFromFlatList((results as any)?.classHierarchy),
+        (results as any)?.unsatisfiableClasses,
+      );
+      const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.objectPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
+      );
+      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.dataPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topDataProperty", label: "owl:topDataProperty" },
+      );
+      if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
+        setInferredClassHierarchy(bundleClassHierarchy);
+      }
+      if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
+        setInferredObjectPropertyHierarchy(bundleObjectPropertyHierarchy);
+      }
+      if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
+        setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
+      }
+      console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
+    } catch (error: any) {
+      console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
+      if (!isStale()) {
+        notificationService.warning(
+          "Auto-sync Failed",
+          error?.message || "The reasoner could not refresh after your last change.",
+        );
+      }
+    } finally {
+      autoSyncReasonerInFlightRef.current = false;
+      if (autoSyncReasonerPendingRef.current) {
+        autoSyncReasonerPendingRef.current = false;
+        void runAutoSyncReasonerRef.current();
+      }
+    }
+  };
+  runAutoSyncReasonerRef.current = runAutoSyncReasoner;
 
   const checkConsistency = useCallback(async () => {
     if (!projectId) {
@@ -3341,14 +3643,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
+    const checkedProjectId = projectId;
     try {
       setIsConsistencyLoading(true);
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const encodedProjectId = encodeURIComponent(projectId);
       const resp = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/consistency`, {
         reasonerType,
+        ...draftBodyFields(),
       });
-      const data = extractResponseData(resp);
+      let data = extractResponseData(resp);
+      if (data?.async && (data?.jobId || data?.taskId)) {
+        data = await pollReasonerWorkerJob(checkedProjectId, data.jobId || data.taskId);
+      }
+      if (currentProjectIdRef.current !== checkedProjectId || data?.stale) return;
       setConsistencyResult(data);
 
       const inconsistent = data?.consistent === false || data?.isConsistent === false;
@@ -3367,8 +3675,10 @@ const Dashboard: React.FC<DashboardProps> = ({
       const friendlyMessage =
         backendData?.error || error?.message || "Consistency check failed for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
-      setConsistencyResult({ error: friendlyMessage });
-      notificationService.error("Consistency Check Failed", `${friendlyMessage}${suggestion}`);
+      if (currentProjectIdRef.current === checkedProjectId) {
+        setConsistencyResult({ error: friendlyMessage });
+        notificationService.error("Consistency Check Failed", `${friendlyMessage}${suggestion}`);
+      }
     } finally {
       setIsConsistencyLoading(false);
     }
@@ -3380,16 +3690,28 @@ const Dashboard: React.FC<DashboardProps> = ({
       return;
     }
 
+    const checkedProjectId = projectId;
+    const requestId = ++explanationRequestIdRef.current;
+    const isLatestRequest = () => explanationRequestIdRef.current === requestId;
+    const closeExplanation = () => setExplanationState({ open: false, loading: false, data: null, error: null });
+    explanationDismissedRef.current = false;
     try {
       setExplanationState({ open: true, loading: true, data: null, error: null });
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const encodedProjectId = encodeURIComponent(projectId);
       const resp = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/explain-inconsistency`, {
         reasonerType,
+        ...draftBodyFields(),
       });
-      const data = extractResponseData(resp);
-      setExplanationState({ open: true, loading: false, data, error: null });
-      notificationService.info("Explanation Ready", "Review the inconsistency report.");
+      let data = extractResponseData(resp);
+      if (data?.async && (data?.jobId || data?.taskId)) {
+        data = await pollReasonerWorkerJob(checkedProjectId, data.jobId || data.taskId);
+      }
+      if (!isLatestRequest()) return;
+      if (currentProjectIdRef.current !== checkedProjectId || data?.stale) {
+        closeExplanation();
+        return;
+      }
 
       // The explanation just re-ran the check fresh and found the ontology
       // consistent — but the sidebar's consistency banner/stats are frozen
@@ -3400,6 +3722,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         setReasonerResults(null);
         checkConsistency();
       }
+
+      if (explanationDismissedRef.current) return;
+      setExplanationState({ open: true, loading: false, data, error: null });
+      notificationService.info("Explanation Ready", "Review the inconsistency report.");
     } catch (error: any) {
       const backendData = error?.response?.data;
       console.error("[Dashboard] Explain inconsistency failed:", {
@@ -3410,13 +3736,20 @@ const Dashboard: React.FC<DashboardProps> = ({
       const friendlyMessage =
         backendData?.error || error?.message || "Failed to explain inconsistency for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
-      setExplanationState({
-        open: true,
-        loading: false,
-        data: null,
-        error: friendlyMessage,
-      });
-      notificationService.error("Explain Inconsistency Failed", `${friendlyMessage}${suggestion}`);
+      if (!isLatestRequest()) return;
+      if (currentProjectIdRef.current !== checkedProjectId) {
+        closeExplanation();
+        return;
+      }
+      if (!explanationDismissedRef.current) {
+        setExplanationState({
+          open: true,
+          loading: false,
+          data: null,
+          error: friendlyMessage,
+        });
+        notificationService.error("Explain Inconsistency Failed", `${friendlyMessage}${suggestion}`);
+      }
     }
   }, [projectId, selectedReasoner, checkConsistency]);
 
@@ -3427,8 +3760,19 @@ const Dashboard: React.FC<DashboardProps> = ({
     // granted, which is easy to miss for a quick confirmation like this. The
     // toast queue always renders on-screen immediately regardless of that.
     const userId = user?.userId || user?.email || "system";
+    if (!projectId) {
+      collaboration.addNotification({
+        type: "info",
+        message: "Open an ontology first — there is no reasoner cache to clear yet.",
+        userId,
+        username: "",
+        userColor: "#6366f1",
+        timestamp: Date.now(),
+      });
+      return;
+    }
     try {
-      await apiClient.post(`/plugin-service/api/reasoner/clear-cache`, {});
+      await apiClient.post(`/plugin-service/api/reasoner/clear-cache/${encodeURIComponent(projectId)}`, {});
       collaboration.addNotification({
         type: "success",
         message: "Reasoner cache cleared — the next run reloads the ontology fresh.",
@@ -3442,6 +3786,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // possibly-stale ontology last showed) and re-run consistency fresh against
       // the now-uncached ontology, so the sidebar can't keep showing "inconsistent"
       // after the underlying reason for that has already been cleared/fixed.
+      inferredClassHierarchyAttemptedKeyRef.current = null;
       setReasonerResults(null);
       checkConsistency();
     } catch (error: any) {
@@ -3456,7 +3801,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         timestamp: Date.now(),
       });
     }
-  }, [user, collaboration, checkConsistency]);
+  }, [user, collaboration, checkConsistency, projectId]);
 
   const setCurrentHierarchyViewMode = (mode: "asserted" | "inferred") => {
     setHierarchyViewModes((prev) => ({ ...prev, [entitiesTab]: mode }));
@@ -6485,9 +6830,11 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      reasonerRunIdRef.current += 1;
       if (autoDraftPollRef.current) clearInterval(autoDraftPollRef.current);
       if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
       if (conflictCheckTimerRef.current) clearTimeout(conflictCheckTimerRef.current);
+      if (autoSyncReasonerTimerRef.current) clearTimeout(autoSyncReasonerTimerRef.current);
     };
   }, []);
 
@@ -7592,7 +7939,8 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-subclasses`, {
           classIri: nodeId,
           direct: true,
-          reasonerType: selectedReasoner,
+          reasonerType: normalizeReasonerType(selectedReasoner),
+          ...draftBodyFields(),
         });
         const payload = response?.data || response;
         const items = payload?.inferredSubClasses || payload?.data?.inferredSubClasses || [];
@@ -7906,6 +8254,8 @@ const updateItemInState = useCallback(
         // this separate API, which can disagree with the Reasoner tab's own
         // consistency check and reasoner choice, wiping out good data.
         console.log("[Dashboard] Inferred hierarchy already available, skipping API re-fetch");
+      } else if (inferredClassHierarchyAttemptedKeyRef.current === `${projectId}::${selectedReasoner}`) {
+        console.log("[Dashboard] Inferred hierarchy already attempted for this project/reasoner, skipping repeat fetch");
       } else {
         // Always load full recursive hierarchy from API when in inferred mode
         // to ensure we have the full hierarchy depth
@@ -9227,39 +9577,14 @@ const updateItemInState = useCallback(
     // Auto-sync reasoner if enabled
     if (isReasonerSynced && isReasonerRunning && projectId) {
       console.log("[DEBUG] Auto-sync: Re-running reasoner after ontology change");
-      // Debounce reasoner re-run to avoid too many calls
-      setTimeout(async () => {
-        try {
-               const reasonerType = normalizeReasonerType(selectedReasoner);
-      const results = await fetchReasonerBundle(reasonerType);
-      setReasonerResults(results);
-
-      // The classify response already contains a working hierarchy — this is
-      // literally what successfully powers the Reasoner tab's own display.
-      // Use it directly for the Entities tab's "Inferred" toggle too, instead
-      // of relying solely on the separate /reasoner/inferred-class-hierarchy
-      // endpoint below — that one doesn't reliably honor the requested
-      // reasonerType and can report a false "inconsistent", wiping out a
-      // perfectly good result we already have right here.
-      const bundleClassHierarchy = buildInferredTreeFromFlatList((results as any)?.classHierarchy);
-      const bundleObjectPropertyHierarchy = (results as any)?.objectPropertyHierarchy;
-      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList((results as any)?.objectPropertyHierarchy);
-      if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
-        setInferredClassHierarchy(bundleClassHierarchy);
-      }
-      if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
-        setInferredObjectPropertyHierarchy(bundleObjectPropertyHierarchy);
-      }
-      if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
-        setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
-      }
-          console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
-        } catch (error) {
-          console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
-        }
-      }, 2000); // Wait 2 seconds after last change
+      if (autoSyncReasonerTimerRef.current) clearTimeout(autoSyncReasonerTimerRef.current);
+      autoSyncReasonerRequestRef.current = { runId: reasonerRunIdRef.current, projectId };
+      autoSyncReasonerTimerRef.current = setTimeout(() => {
+        autoSyncReasonerTimerRef.current = null;
+        void runAutoSyncReasonerRef.current();
+      }, 2000);
     }
-  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle, user]);
+  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, user]);
 
   // Save changes to backend (publishes only this user's draft to main graph)
   const handleSave = useCallback(async (options?: {
@@ -12843,6 +13168,7 @@ const updateItemInState = useCallback(
               const result: any = await apiClient.get(
                 `/api/ontology/${projectId}/unsatisfiable-classes-quick?${followUpParams.toString()}`,
               );
+              if (result?.skipped === true) return;
               const unsatisfiableClasses: string[] = Array.isArray(result?.unsatisfiableClasses)
                 ? result.unsatisfiableClasses
                 : [];
@@ -12857,11 +13183,12 @@ const updateItemInState = useCallback(
                 setCodeViewLintIsPostSaveWarning(true);
                 setCodeViewLintIssues(
                   newlyUnsatisfiable.map((className) => {
-                    const idx = contentLines.findIndex((l) => l.includes(className));
+                    const localName = className.replace(/^.*[#/]/, "");
+                    const idx = contentLines.findIndex((l) => l.includes(className) || l.includes(localName));
                     return {
                       line: idx >= 0 ? idx + 1 : 1,
                       severity: "warning",
-                      message: `${className} is unsatisfiable (equivalent to owl:Nothing) — it can never have any instances.`,
+                      message: `${localName} is unsatisfiable (equivalent to owl:Nothing) — it can never have any instances.`,
                       iri: className,
                     };
                   }),
@@ -15704,6 +16031,7 @@ const updateItemInState = useCallback(
                 <PluginComponent
                   projectId={projectId || ""}
                   apiBaseUrl={getBaseUrl()}
+                  draftUserId={isDraftScopeActive() ? (resolveMutationActor().userId || undefined) : undefined}
                   selectedReasoner={selectedReasoner}
                   isReasonerRunning={isReasonerRunning}
                   isReasonerLoading={isReasonerLoading}
@@ -18398,7 +18726,10 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
       />
       <ReasonerExplanationModal
         isOpen={explanationState.open}
-        onClose={() => setExplanationState((prev) => ({ ...prev, open: false }))}
+        onClose={() => {
+          explanationDismissedRef.current = true;
+          setExplanationState((prev) => ({ ...prev, open: false }));
+        }}
         data={explanationState.data}
         loading={explanationState.loading}
         error={explanationState.error}
@@ -18903,6 +19234,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                     onViewOnlyAction={handleViewOnlyAction}
                     isReasonerRunning={isReasonerRunning}
                     selectedReasoner={selectedReasoner}
+                    syncMode={syncMode}
                     user={user}
                   />
                 </div>

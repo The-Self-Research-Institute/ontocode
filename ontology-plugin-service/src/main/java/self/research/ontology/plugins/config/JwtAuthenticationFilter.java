@@ -21,6 +21,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.crypto.SecretKey;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 
 @Slf4j
@@ -28,11 +30,21 @@ import java.util.ArrayList;
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    public static final String AUTHENTICATED_USER_ID_ATTRIBUTE = "authenticatedUserId";
+
     @Value("${jwt.secret}")
     private String jwtSecret;
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
+
+    private static final String DEFAULT_INTERNAL_TOKEN = "ontocode-internal";
+    private static final String CACHE_CLEAR_PATH_PREFIX = "/api/reasoner/clear-cache/";
+
+    @Value("${ontocode.internal.token:" + DEFAULT_INTERNAL_TOKEN + "}")
+    private String internalToken;
+
+    public static final String INTERNAL_SERVICE_PRINCIPAL = "internal-service";
 
     @PostConstruct
     public void validateSecrets() {
@@ -61,6 +73,24 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         if (desktopMode) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        String presentedInternalToken = request.getHeader("X-Ontocode-Internal-Token");
+        boolean onCacheClearPath = request.getRequestURI() != null
+                && request.getRequestURI().contains(CACHE_CLEAR_PATH_PREFIX);
+        if (onCacheClearPath && presentedInternalToken != null && internalToken != null
+                && MessageDigest.isEqual(
+                        internalToken.getBytes(StandardCharsets.UTF_8),
+                        presentedInternalToken.getBytes(StandardCharsets.UTF_8))) {
+            UserDetails internalUser = User.builder()
+                    .username(INTERNAL_SERVICE_PRINCIPAL)
+                    .password("")
+                    .authorities(new ArrayList<>())
+                    .build();
+            SecurityContextHolder.getContext().setAuthentication(
+                    new UsernamePasswordAuthenticationToken(internalUser, null, internalUser.getAuthorities()));
             filterChain.doFilter(request, response);
             return;
         }
@@ -95,6 +125,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                     log.debug("JWT authentication successful for user: {}", email);
+                    String userId = claims.get("userId", String.class);
+                    if (userId != null && !userId.isBlank()) {
+                        request.setAttribute(AUTHENTICATED_USER_ID_ATTRIBUTE, userId);
+                    }
                 }
             } catch (Exception e) {
                 log.error("JWT authentication failed: {}", e.getMessage());

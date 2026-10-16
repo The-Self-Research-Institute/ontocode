@@ -8,6 +8,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import self.research.ontology.common.ReasoningFriendlyErrors;
 
 import java.util.HashMap;
@@ -67,6 +68,13 @@ public class ReasonerWorkerClient {
             log.info("[DIAG] submitJob: sentJobType={} projectId={} receivedJobId={} receivedJobType={} atMs={}",
                     jobType, projectId, result.get("jobId"), result.get("jobType"), System.currentTimeMillis());
             return result;
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            log.warn("Worker refused {} job for {}: too many queued jobs", jobType, projectId);
+            return Map.of(
+                    "success", false,
+                    "rateLimited", true,
+                    "error", queueFullMessage(e)
+            );
         } catch (Exception e) {
             log.error("Failed to submit reasoning job to worker: {}", e.getMessage());
             return Map.of(
@@ -74,6 +82,17 @@ public class ReasonerWorkerClient {
                     "error", ReasoningFriendlyErrors.forUser(e.getMessage())
             );
         }
+    }
+
+    static String queueFullMessage(HttpClientErrorException e) {
+        try {
+            Map<?, ?> body = e.getResponseBodyAs(Map.class);
+            if (body != null && body.get("error") instanceof String message && !message.isBlank()) {
+                return message;
+            }
+        } catch (Exception ignored) {
+        }
+        return "Too many reasoning jobs are already queued for this project. Please wait for them to finish and try again.";
     }
 
     public Map<String, Object> getJob(String jobId) {

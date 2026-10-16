@@ -219,4 +219,26 @@ class OntologyMutationServiceTest {
         verify(topLevelCacheService, org.mockito.Mockito.never()).evict(anyString());
         verify(hierarchyIndexService).markStale("proj-1");
     }
+
+    @Test
+    void draftWriteOnlyDropsThatUsersDraftReasonerEntries() {
+        EditorReasonerCacheService reasonerCache = org.mockito.Mockito.mock(EditorReasonerCacheService.class);
+        ReflectionTestUtils.setField(service, "editorReasonerCacheService", reasonerCache);
+
+        service.applyRawUpdate("proj-1", "INSERT DATA { <urn:a> <urn:b> <urn:c> }", true, "user-1");
+
+        verify(reasonerCache).invalidateDraft("proj-1", "user-1");
+        verify(reasonerCache, org.mockito.Mockito.never()).invalidateOntology(anyString());
+    }
+
+    @Test
+    void publishedWriteStillDropsThePublishedReasonerCache() {
+        EditorReasonerCacheService reasonerCache = org.mockito.Mockito.mock(EditorReasonerCacheService.class);
+        ReflectionTestUtils.setField(service, "editorReasonerCacheService", reasonerCache);
+
+        service.invalidateReasonerCaches("proj-1", false);
+
+        verify(reasonerCache).invalidateOntology("proj-1");
+        verify(reasonerCache, org.mockito.Mockito.never()).invalidateDraft(anyString(), org.mockito.ArgumentMatchers.any());
+    }
 }

@@ -87,6 +87,9 @@ public class OntologyMutationService {
     @Value("${ontology.plugin-service.url:http://localhost:8087}")
     private String pluginServiceUrl;
 
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
     private final RestTemplate reasonerCacheInvalidationRestTemplate = buildShortTimeoutRestTemplate();
 
     private static RestTemplate buildShortTimeoutRestTemplate() {
@@ -129,19 +132,38 @@ public class OntologyMutationService {
     }
 
     public void invalidateReasonerCaches(String projectId) {
+        invalidateReasonerCaches(projectId, false);
+    }
+
+    public void invalidateReasonerCaches(String projectId, boolean draft) {
+        invalidateReasonerCaches(projectId, draft, null);
+    }
+
+    public void invalidateReasonerCaches(String projectId, boolean draft, @Nullable String userId) {
         if (editorReasonerCacheService != null) {
             try {
-                editorReasonerCacheService.invalidateOntology(projectId);
+                if (draft) {
+                    editorReasonerCacheService.invalidateDraft(projectId, userId);
+                } else {
+                    editorReasonerCacheService.invalidateOntology(projectId);
+                }
             } catch (Exception e) {
                 log.warn("[MUTATION] Failed invalidating editor reasoner cache for project {}", projectId, e);
             }
+        }
+
+        if (draft) {
+            return;
         }
 
         metadataExecutor.execute(() -> {
             try {
                 String url = pluginServiceUrl + "/api/reasoner/clear-cache/"
                     + URLEncoder.encode(projectId, StandardCharsets.UTF_8);
-                reasonerCacheInvalidationRestTemplate.postForEntity(url, null, Map.class);
+                org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+                headers.set("X-Ontocode-Internal-Token", internalToken);
+                reasonerCacheInvalidationRestTemplate.postForEntity(
+                        url, new org.springframework.http.HttpEntity<>(headers), Map.class);
             } catch (Exception e) {
                 log.warn("[MUTATION] Failed busting plugin-service reasoner cache for project {} (non-fatal)",
                     projectId, e);
@@ -267,7 +289,7 @@ public class OntologyMutationService {
 
             invalidatePublicCodeViewCache(projectId, draft);
             invalidateEntityCaches(projectId, affectedIris(ops, reverseReferenceIris), draft);
-            invalidateReasonerCaches(projectId);
+            invalidateReasonerCaches(projectId, draft, userId);
             log.info("[MUTATION] Graph cache cleared after mutations");
 
             if (ops.stream().anyMatch(op -> "addDisjointUnion".equals(op.type()))) {
@@ -381,7 +403,7 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
-         invalidateReasonerCaches(projectId);
+         invalidateReasonerCaches(projectId, draft, userId);
         if (!draft && classDetailCacheService != null) {
              classDetailCacheService.dropAll(projectId);
         }
@@ -437,7 +459,7 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
-        invalidateReasonerCaches(projectId);
+        invalidateReasonerCaches(projectId, draft, userId);
 
         if (!draft) {
             CompletableFuture.runAsync(() -> {

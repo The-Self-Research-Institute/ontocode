@@ -2,6 +2,7 @@ package self.research.ontology.reasoner.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.common.ReasoningFriendlyErrors;
@@ -44,8 +45,13 @@ public class ReasoningJobController {
             body.put("jobType", job.getJobType().name());
             body.put("status", job.getStatus().name());
             body.put("queuePosition", job.getQueuePosition());
-            body.put("estimatedWaitTimeMs", queueManager.getEstimatedWaitTimeMs(job.getJobId()));
+            body.put("estimatedWaitTimeMs", queueManager.getEstimatedWaitTimeMs(job));
             return ResponseEntity.accepted().body(body);
+        } catch (ReasoningQueueManager.ProjectQueueFullException e) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage()
+            ));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of(
                     "success", false,
@@ -63,6 +69,18 @@ public class ReasoningJobController {
         return ResponseEntity.ok(toResponse(job));
     }
 
+    @DeleteMapping("/jobs/{jobId}")
+    public ResponseEntity<Map<String, Object>> cancel(@PathVariable String jobId) {
+        ReasoningQueueManager.CancelResult result = queueProcessor.cancel(jobId);
+        if (result.outcome() == ReasoningQueueManager.CancelOutcome.NOT_FOUND) {
+            return ResponseEntity.notFound().build();
+        }
+        Map<String, Object> body = toResponse(result.job());
+        body.put("cancelled", result.outcome() == ReasoningQueueManager.CancelOutcome.CANCELLED_QUEUED
+                || result.outcome() == ReasoningQueueManager.CancelOutcome.CANCELLED_RUNNING);
+        return ResponseEntity.ok(body);
+    }
+
     @GetMapping("/stats")
     public ResponseEntity<ReasoningJobEvent.QueueStats> stats() {
         return ResponseEntity.ok(queueManager.getQueueStats());
@@ -76,7 +94,7 @@ public class ReasoningJobController {
         response.put("projectId", job.getProjectId());
         response.put("status", job.getStatus().name());
         response.put("queuePosition", job.getQueuePosition());
-        response.put("estimatedWaitTimeMs", queueManager.getEstimatedWaitTimeMs(job.getJobId()));
+        response.put("estimatedWaitTimeMs", queueManager.getEstimatedWaitTimeMs(job));
         response.put("executionTimeMs", job.getExecutionTimeMs());
         if (job.getResult() != null) {
             response.putAll(job.getResult());
