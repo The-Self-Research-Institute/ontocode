@@ -135,7 +135,11 @@ public class ReasonerController {
         // Even with streaming export, loading a 2.8M-triple ontology into OWLOntology
         // objects exhausts the heap — the guard is the only thing that prevents that.
         try {
-            long tripleCount = datasetService.getDatasetSize(projectId);
+            long tripleCount = datasetService.getDatasetSizeOrUnknown(projectId);
+            if (tripleCount < 0) {
+                throw new IllegalArgumentException("Could not determine the ontology's size for project " + projectId
+                        + ", so it was not loaded for in-memory reasoning. Please try again shortly.");
+            }
             if (tripleCount > maxReasonerTriples) {
                 throw new IllegalArgumentException(String.format(
                     "Ontology too large for in-memory reasoning: %,d triples (limit: %,d). " +
@@ -1299,7 +1303,7 @@ public class ReasonerController {
             ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
 
             Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
-            stats.put("success", true);
+            stats.put("success", !stats.containsKey("error"));
             stats.put("projectId", projectId);
 
             return ResponseEntity.ok(stats);

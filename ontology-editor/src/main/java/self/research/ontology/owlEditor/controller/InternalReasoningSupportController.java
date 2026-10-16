@@ -51,7 +51,7 @@ public class InternalReasoningSupportController {
     @GetMapping("/reasoning/{projectId}/triple-count")
     public ResponseEntity<Map<String, Object>> tripleCount(@PathVariable String projectId) {
         try {
-            long count = datasetService.getDatasetSize(projectId);
+            long count = datasetService.getDatasetSizeOrUnknown(projectId);
             return ResponseEntity.ok(Map.of("projectId", projectId, "tripleCount", count));
         } catch (Exception e) {
             log.error("Triple count failed for {}", projectId, e);

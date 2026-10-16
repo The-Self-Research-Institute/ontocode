@@ -2774,8 +2774,12 @@ public class SparqlDatasetService {
      * Get dataset size (triple count) for a project
      */
     public long getDatasetSize(String projectId) {
+        long size = getDatasetSizeOrUnknown(projectId);
+        return size < 0 ? 0 : size;
+    }
+
+    public long getDatasetSizeOrUnknown(String projectId) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
-        String graphUri = binding.graphUri();
 
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long sizeStart = System.nanoTime();
@@ -2789,7 +2793,7 @@ public class SparqlDatasetService {
             return total;
         } catch (Exception e) {
             log.error("Failed to get dataset size for project: {}", projectId, e);
-            return 0;
+            return -1;
         }
     }
 

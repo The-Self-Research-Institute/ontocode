@@ -1427,11 +1427,12 @@ public class ProjectLoadController {
 
             long tripleCount = isDraft
                     ? datasetService.countDraftTriples(projectId, resolvedUserId)
-                    : datasetService.getDatasetSize(projectId);
+                    : datasetService.getDatasetSizeOrUnknown(projectId);
             if (tripleCount < 0 || tripleCount > QUICK_UNSAT_MAX_TRIPLES) {
                 body.put("success", true);
                 body.put("projectId", projectId);
                 body.put("skipped", true);
+                body.put("reason", tripleCount < 0 ? "SIZE_UNKNOWN" : "TOO_LARGE");
                 body.put("unsatisfiableClasses", java.util.List.of());
                 return ResponseEntity.ok(body);
             }
