@@ -133,9 +133,17 @@ public class OntologyMutationService {
     }
 
     public void invalidateReasonerCaches(String projectId, boolean draft) {
+        invalidateReasonerCaches(projectId, draft, null);
+    }
+
+    public void invalidateReasonerCaches(String projectId, boolean draft, @Nullable String userId) {
         if (editorReasonerCacheService != null) {
             try {
-                editorReasonerCacheService.invalidateOntology(projectId);
+                if (draft) {
+                    editorReasonerCacheService.invalidateDraft(projectId, userId);
+                } else {
+                    editorReasonerCacheService.invalidateOntology(projectId);
+                }
             } catch (Exception e) {
                 log.warn("[MUTATION] Failed invalidating editor reasoner cache for project {}", projectId, e);
             }
@@ -278,7 +286,7 @@ public class OntologyMutationService {
 
             invalidatePublicCodeViewCache(projectId, draft);
             invalidateEntityCaches(projectId, affectedIris(ops, reverseReferenceIris), draft);
-            invalidateReasonerCaches(projectId, draft);
+            invalidateReasonerCaches(projectId, draft, userId);
             log.info("[MUTATION] Graph cache cleared after mutations");
 
             if (ops.stream().anyMatch(op -> "addDisjointUnion".equals(op.type()))) {
@@ -389,7 +397,7 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
-         invalidateReasonerCaches(projectId, draft);
+         invalidateReasonerCaches(projectId, draft, userId);
         if (!draft && classDetailCacheService != null) {
              classDetailCacheService.dropAll(projectId);
         }
@@ -445,7 +453,7 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
-        invalidateReasonerCaches(projectId, draft);
+        invalidateReasonerCaches(projectId, draft, userId);
 
         if (!draft) {
             CompletableFuture.runAsync(() -> {

@@ -45,6 +45,10 @@ public class EditorReasonerCacheService {
 
     public record HierarchyCacheEntry(List<Map<String, Object>> hierarchy, String reasonerType) {}
 
+    public static String draftHierarchyKey(String projectId, ReasonerType type, String userId, String draftVersion) {
+        return projectId + "-" + type.name() + "-draft-" + userId + "@" + draftVersion;
+    }
+
     private record CachedOntology(OWLOntology ontology, Instant lastAccessed) {}
 
     private record CachedHierarchy(HierarchyCacheEntry entry, Instant lastAccessed) {}
@@ -113,6 +117,14 @@ public class EditorReasonerCacheService {
         }
         synchronized (hierarchies) {
             hierarchies.keySet().removeIf(key -> key.startsWith(projectId + "-"));
+        }
+    }
+
+    public void invalidateDraft(String projectId, String userId) {
+        String projectPrefix = projectId + "-";
+        String userMarker = (userId == null || userId.isBlank()) ? "-draft-" : "-draft-" + userId + "@";
+        synchronized (hierarchies) {
+            hierarchies.keySet().removeIf(key -> key.startsWith(projectPrefix) && key.contains(userMarker));
         }
     }
 
