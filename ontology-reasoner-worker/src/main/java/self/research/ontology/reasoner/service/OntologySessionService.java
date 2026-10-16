@@ -122,8 +122,7 @@ public class OntologySessionService {
 
         boolean storedInCache = cacheEligible && revision >= 0;
         if (storedInCache) {
-            ontologyCache.put(projectId, revision, manager, ontology);
-            ontologyCache.beginUse(ontology);
+            ontologyCache.putAndBeginUse(projectId, revision, manager, ontology);
         }
 
         OWLReasoner reasoner;
