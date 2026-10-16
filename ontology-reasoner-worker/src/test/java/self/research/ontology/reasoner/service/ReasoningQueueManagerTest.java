@@ -1,6 +1,7 @@
 package self.research.ontology.reasoner.service;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.reasoner.model.ReasoningJob;
 
 import java.util.List;
@@ -11,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ReasoningQueueManagerTest {
 
@@ -94,6 +96,58 @@ class ReasoningQueueManagerTest {
                 third.getJobId() + ":QUEUED:2",
                 first.getJobId() + ":PROCESSING:0"), sender.events);
         manager.shutdown();
+    }
+
+    @Test
+    void cancellingAQueuedJobFailsItAndMovesTheRestUp() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob first = QueueTestSupport.enqueue(manager, "P1");
+        ReasoningJob second = QueueTestSupport.enqueue(manager, "P2");
+
+        ReasoningQueueManager.CancelResult result = manager.cancel(first.getJobId());
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.CANCELLED_QUEUED, result.outcome());
+        assertEquals(ReasoningJob.Status.FAILED, manager.getJob(first.getJobId()).getStatus());
+        assertEquals(ReasoningQueueManager.CANCELLED_MESSAGE, manager.getJob(first.getJobId()).getError());
+        assertEquals(1, second.getQueuePosition());
+        assertEquals(1, manager.queuedJobCount());
+        assertSame(second, manager.dequeue());
+    }
+
+    @Test
+    void cancellingARunningJobKeepsItsSlotUntilTheWorkStops() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        manager.dequeue();
+
+        ReasoningQueueManager.CancelResult result = manager.cancel(job.getJobId());
+        manager.markCompleted(job, Map.of("success", true), 5);
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.CANCELLED_RUNNING, result.outcome());
+        assertEquals(ReasoningJob.Status.FAILED, manager.getJob(job.getJobId()).getStatus());
+        assertEquals(ReasoningQueueManager.CANCELLED_MESSAGE, manager.getJob(job.getJobId()).getError());
+        assertEquals(0, manager.activeJobCount());
+    }
+
+    @Test
+    void cancellingAnUnknownJobReportsNotFound() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.NOT_FOUND, manager.cancel("missing").outcome());
+    }
+
+    @Test
+    void projectCannotQueueMoreThanTheConfiguredNumberOfJobs() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReflectionTestUtils.setField(manager, "maxQueuedPerProject", 2);
+        manager.enqueue(ReasoningJob.JobType.REASONER_CLASSIFY, "P1", null, null, "HERMIT", null);
+        manager.enqueue(ReasoningJob.JobType.REASONER_REALIZE, "P1", null, null, "HERMIT", null);
+
+        assertSame(manager.getJob(QueueTestSupport.enqueue(manager, "P1").getJobId()),
+                QueueTestSupport.enqueue(manager, "P1"));
+        assertThrows(ReasoningQueueManager.ProjectQueueFullException.class, () ->
+                manager.enqueue(ReasoningJob.JobType.REASONER_CONSISTENCY, "P1", null, null, "HERMIT", null));
+        assertNotNull(QueueTestSupport.enqueue(manager, "P2"));
     }
 
     static final class RecordingSender extends ReasoningJobEventSender {

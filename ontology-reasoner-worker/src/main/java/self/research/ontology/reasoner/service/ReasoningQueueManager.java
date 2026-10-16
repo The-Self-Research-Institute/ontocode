@@ -3,6 +3,7 @@ package self.research.ontology.reasoner.service;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.ReasoningFriendlyErrors;
 import self.research.ontology.reasoner.model.ReasoningJob;
@@ -37,6 +38,20 @@ public class ReasoningQueueManager {
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
     private static final long MAX_WAIT_TIME_MS = 30 * 60 * 1000;
+    static final String CANCELLED_MESSAGE = "Cancelled";
+
+    @Value("${ontocode.reasoning.max-queued-per-project:5}")
+    private int maxQueuedPerProject = 5;
+
+    public enum CancelOutcome { NOT_FOUND, CANCELLED_QUEUED, CANCELLED_RUNNING, ALREADY_FINISHED }
+
+    public record CancelResult(CancelOutcome outcome, ReasoningJob job) {}
+
+    public static class ProjectQueueFullException extends RuntimeException {
+        public ProjectQueueFullException(String message) {
+            super(message);
+        }
+    }
 
     @Autowired
     public ReasoningQueueManager(EditorClient editorClient,
@@ -91,6 +106,11 @@ public class ReasoningQueueManager {
                 return duplicate;
             }
 
+            if (maxQueuedPerProject > 0 && queuedJobCount(projectId) >= maxQueuedPerProject) {
+                throw new ProjectQueueFullException("This project already has " + maxQueuedPerProject
+                        + " reasoning jobs waiting to run. Wait for one of them to finish, then try again.");
+            }
+
             resultRetention.makeRoomForIncomingJob();
 
             job = ReasoningJob.builder()
@@ -124,6 +144,16 @@ public class ReasoningQueueManager {
                 job.getJobId(), jobType, projectId, Thread.currentThread().getName(),
                 System.identityHashCode(job), System.currentTimeMillis());
         return job;
+    }
+
+    private int queuedJobCount(String projectId) {
+        int count = 0;
+        for (ReasoningJob queued : queue) {
+            if (Objects.equals(queued.getProjectId(), projectId)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private ReasoningJob findInFlightDuplicate(ReasoningJob.JobType jobType, String projectId, String expression,
@@ -181,6 +211,10 @@ public class ReasoningQueueManager {
     public synchronized void markCompleted(ReasoningJob job, Map<String, Object> result, long durationMs) {
         log.info("[DIAG] markCompleted: jobId={} jobType={} identityHash={} atMs={}",
                 job.getJobId(), job.getJobType(), System.identityHashCode(job), System.currentTimeMillis());
+        if (isFinished(job)) {
+            releaseFinishedJob(job);
+            return;
+        }
         job.setStatus(ReasoningJob.Status.COMPLETED);
         job.setCompletedAt(Instant.now());
         job.setExecutionTimeMs(durationMs);
@@ -194,6 +228,10 @@ public class ReasoningQueueManager {
     }
 
     public synchronized void markFailed(ReasoningJob job, String error) {
+        if (isFinished(job)) {
+            releaseFinishedJob(job);
+            return;
+        }
         job.setStatus(ReasoningJob.Status.FAILED);
         job.setCompletedAt(Instant.now());
         job.setError(error);
@@ -206,6 +244,9 @@ public class ReasoningQueueManager {
     }
 
     public synchronized void reportTimedOut(ReasoningJob job, String error) {
+        if (isFinished(job)) {
+            return;
+        }
         job.setStatus(ReasoningJob.Status.FAILED);
         job.setCompletedAt(Instant.now());
         job.setError(error);
@@ -218,6 +259,54 @@ public class ReasoningQueueManager {
     public synchronized void releaseAbandonedSlot(String jobId) {
         activeJobs.remove(jobId);
         liveJobs.remove(jobId);
+    }
+
+    public synchronized CancelResult cancel(String jobId) {
+        ReasoningJob job = liveJobs.get(jobId);
+        if (job == null) {
+            ReasoningJob finished = resultRetention.get(jobId).orElse(null);
+            return finished != null
+                    ? new CancelResult(CancelOutcome.ALREADY_FINISHED, finished)
+                    : new CancelResult(CancelOutcome.NOT_FOUND, null);
+        }
+        if (job.getStatus() == ReasoningJob.Status.QUEUED) {
+            queue.remove(job);
+            finishAsCancelled(job);
+            liveJobs.remove(jobId);
+            updateQueuePositions();
+            log.info("[Reasoning] Cancelled queued job {}", jobId);
+            return new CancelResult(CancelOutcome.CANCELLED_QUEUED, job);
+        }
+        if (job.getStatus() == ReasoningJob.Status.PROCESSING) {
+            finishAsCancelled(job);
+            log.info("[Reasoning] Cancelled running job {} — its slot is released once the thread stops", jobId);
+            return new CancelResult(CancelOutcome.CANCELLED_RUNNING, job);
+        }
+        return new CancelResult(CancelOutcome.ALREADY_FINISHED, job);
+    }
+
+    private void finishAsCancelled(ReasoningJob job) {
+        job.setStatus(ReasoningJob.Status.FAILED);
+        job.setCompletedAt(Instant.now());
+        job.setError(CANCELLED_MESSAGE);
+        job.setQueuePosition(0);
+        resultRetention.retain(job);
+        notifyJob(job);
+        touchActivity();
+    }
+
+    public synchronized boolean isStillProcessing(ReasoningJob job) {
+        return job.getStatus() == ReasoningJob.Status.PROCESSING;
+    }
+
+    private static boolean isFinished(ReasoningJob job) {
+        return job.getStatus() == ReasoningJob.Status.COMPLETED || job.getStatus() == ReasoningJob.Status.FAILED;
+    }
+
+    private void releaseFinishedJob(ReasoningJob job) {
+        liveJobs.remove(job.getJobId());
+        activeJobs.remove(job.getJobId());
+        touchActivity();
     }
 
     public ReasoningJob getJob(String jobId) {

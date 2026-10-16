@@ -69,6 +69,10 @@ public class ReasoningQueueProcessor {
             Future<Map<String, Object>> future = jobThread.submit(() -> jobExecutor.execute(job));
             jobThread.shutdown();
             runningJobs.put(job.getJobId(), new RunningJob(capturedThread[0], future));
+            if (!queueManager.isStillProcessing(job)) {
+                future.cancel(true);
+                interruptJobThread(capturedThread[0]);
+            }
             Map<String, Object> result;
             try {
                 result = future.get(jobTimeoutMs, TimeUnit.MILLISECONDS);
@@ -117,6 +121,18 @@ public class ReasoningQueueProcessor {
             }
             processNext();
         }
+    }
+
+    public ReasoningQueueManager.CancelResult cancel(String jobId) {
+        ReasoningQueueManager.CancelResult result = queueManager.cancel(jobId);
+        if (result.outcome() == ReasoningQueueManager.CancelOutcome.CANCELLED_RUNNING) {
+            RunningJob running = runningJobs.get(jobId);
+            if (running != null) {
+                running.future().cancel(true);
+                interruptJobThread(running.thread());
+            }
+        }
+        return result;
     }
 
     private static void interruptJobThread(Thread thread) {
