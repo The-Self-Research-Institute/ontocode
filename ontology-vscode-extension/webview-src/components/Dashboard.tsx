@@ -13166,6 +13166,7 @@ const updateItemInState = useCallback(
               const result: any = await apiClient.get(
                 `/api/ontology/${projectId}/unsatisfiable-classes-quick?${followUpParams.toString()}`,
               );
+              if (result?.skipped === true) return;
               const unsatisfiableClasses: string[] = Array.isArray(result?.unsatisfiableClasses)
                 ? result.unsatisfiableClasses
                 : [];
