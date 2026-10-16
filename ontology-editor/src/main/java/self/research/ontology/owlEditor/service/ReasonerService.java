@@ -42,13 +42,11 @@ public class ReasonerService {
     private final Cache<String, CompletableFuture<OWLReasoner>> reasonerCache = Caffeine.newBuilder()
         .maximumSize(5)
         .expireAfterAccess(15, TimeUnit.MINUTES)
-        .removalListener((key, value, cause) -> {
-            if (value instanceof CompletableFuture<?> future && future.isDone() && !future.isCompletedExceptionally()) {
-                future.thenAccept(v -> {
-                    if (v instanceof OWLReasoner reasoner) {
-                        log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
-                        try { reasoner.dispose(); } catch (Exception ignored) {}
-                    }
+        .removalListener((String key, CompletableFuture<OWLReasoner> future, com.github.benmanes.caffeine.cache.RemovalCause cause) -> {
+            if (future != null) {
+                future.thenAccept(reasoner -> {
+                    log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
+                    try { reasoner.dispose(); } catch (Exception ignored) {}
                 });
             }
         })
@@ -69,6 +67,9 @@ public class ReasonerService {
     @Value("${ontocode.reasoner.save-consistency-timeout-ms:8000}")
     private long SAVE_CONSISTENCY_TIMEOUT_MS;
 
+    @Value("${ontocode.reasoner.save-consistency-setup-timeout-ms:8000}")
+    private long SAVE_CONSISTENCY_SETUP_TIMEOUT_MS;
+
     @Value("${ontocode.reasoner.operation-timeout-ms:45000}")
     private long reasonerOperationTimeoutMs;
     private final ExecutorService inferredTypesExecutor = Executors.newCachedThreadPool(r -> {
@@ -80,6 +81,13 @@ public class ReasonerService {
     private final ExecutorService saveConsistencyExecutor = new ThreadPoolExecutor(1, 2, 60, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(10), r -> {
                 Thread t = new Thread(r, "reasoner-save-consistency-worker");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.AbortPolicy());
+
+    private final ExecutorService saveConsistencySetupExecutor = new ThreadPoolExecutor(1, 2, 60, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(10), r -> {
+                Thread t = new Thread(r, "reasoner-save-setup-worker");
                 t.setDaemon(true);
                 return t;
             }, new ThreadPoolExecutor.AbortPolicy());
@@ -102,12 +110,15 @@ public class ReasonerService {
         try {
             reasoner = future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            reasonerCache.invalidate(cacheKey);
+            reasonerCache.asMap().remove(cacheKey, future);
             throw new RuntimeException(type.getDisplayName() + " reasoning timed out after "
                     + (reasonerOperationTimeoutMs / 1000) + "s — the ontology may be too large or complex "
                     + "for this reasoner. Try a different reasoner or a smaller scope.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(type.getDisplayName() + " reasoning was interrupted", e);
         } catch (Exception e) {
-            reasonerCache.invalidate(cacheKey);
+            reasonerCache.asMap().remove(cacheKey, future);
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
         }
@@ -642,16 +653,31 @@ public class ReasonerService {
         }
 
         long setupStart = System.currentTimeMillis();
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
-        OWLReasoner reasoner = createReasoner(reasoningOntology, type);
-        long consistencyStart = System.currentTimeMillis();
-        long remainingBudgetMs = SAVE_CONSISTENCY_TIMEOUT_MS - (consistencyStart - setupStart);
-        if (remainingBudgetMs <= 0) {
-            log.warn("Save-time setup (strip+create) alone used the full {} ms budget; allowing save through unchecked",
-                    SAVE_CONSISTENCY_TIMEOUT_MS);
-            try { reasoner.dispose(); } catch (Exception ignored) {}
+        CompletableFuture<OWLReasoner> setup;
+        try {
+            setup = CompletableFuture.supplyAsync(() -> createReasoner(stripSwrlRules(ontology), type),
+                    saveConsistencySetupExecutor);
+        } catch (RejectedExecutionException ree) {
+            log.warn("Too many concurrent save-time reasoner setups; allowing save through unchecked");
             return SaveConsistencyResult.timedOut();
         }
+        OWLReasoner reasoner;
+        try {
+            reasoner = setup.get(SAVE_CONSISTENCY_SETUP_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            log.warn("Save-time setup (strip+create) took longer than {} ms; allowing save through unchecked",
+                    SAVE_CONSISTENCY_SETUP_TIMEOUT_MS);
+            setup.thenAccept(r -> { try { r.dispose(); } catch (Exception ignored) {} });
+            return SaveConsistencyResult.timedOut();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            setup.thenAccept(r -> { try { r.dispose(); } catch (Exception ignored) {} });
+            return SaveConsistencyResult.timedOut();
+        } catch (Exception e) {
+            log.warn("Save-time setup failed ({}); allowing save through unchecked", e.getMessage());
+            return SaveConsistencyResult.timedOut();
+        }
+        long consistencyStart = System.currentTimeMillis();
         CompletableFuture<Boolean> future;
         try {
             future = CompletableFuture.supplyAsync(reasoner::isConsistent, saveConsistencyExecutor);
@@ -663,12 +689,17 @@ public class ReasonerService {
 
         boolean consistent;
         try {
-            consistent = future.get(remainingBudgetMs, TimeUnit.MILLISECONDS);
+            consistent = future.get(SAVE_CONSISTENCY_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             log.info("[TIMING] Save-time reasoning: strip+create {} ms, isConsistent() {} ms",
                     consistencyStart - setupStart, System.currentTimeMillis() - consistencyStart);
         } catch (TimeoutException te) {
-            log.warn("Save-time consistency check timed out after {} ms (of the {} ms total budget); allowing save through unchecked",
-                    remainingBudgetMs, SAVE_CONSISTENCY_TIMEOUT_MS);
+            log.warn("Save-time consistency check timed out after {} ms; allowing save through unchecked",
+                    SAVE_CONSISTENCY_TIMEOUT_MS);
+            reasoner.interrupt();
+            future.whenComplete((r, ex) -> { try { reasoner.dispose(); } catch (Exception ignored) {} });
+            return SaveConsistencyResult.timedOut();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
             reasoner.interrupt();
             future.whenComplete((r, ex) -> { try { reasoner.dispose(); } catch (Exception ignored) {} });
             return SaveConsistencyResult.timedOut();
