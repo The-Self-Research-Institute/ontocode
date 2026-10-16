@@ -52,6 +52,17 @@ export const normalizeReasonerType = (label: string): string => {
   return REASONER_ID_MAP[label] || (Object.values(REASONER_ID_MAP).includes(upper) ? upper : "HERMIT");
 };
 
+export const isTerminalPollError = (error: any): boolean => {
+  const status = Number(error?.status ?? error?.response?.status);
+  return status >= 400 && status < 500 && status !== 408;
+};
+
+export const pollErrorMessage = (error: any, fallback: string): string => {
+  const body = error?.data ?? error?.response?.data;
+  const bodyMessage = body && typeof body === "object" ? body.error || body.message : undefined;
+  return bodyMessage || error?.message || fallback;
+};
+
 export function extractDeclarationCountsPatch(countsRes: any): Record<string, number> | null {
   const data = countsRes?.data ?? countsRes;
   if (!data || typeof data !== "object") return null;

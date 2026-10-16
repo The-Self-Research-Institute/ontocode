@@ -200,6 +200,8 @@ import {
   REASONER_ID_MAP,
   REASONER_OPTIONS,
   normalizeReasonerType,
+  isTerminalPollError,
+  pollErrorMessage,
   buildHierarchyTree,
   extractResponseData,
   normalizePrefixMappings,
@@ -2687,11 +2689,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [searchQuery, filteredData]);
 
   const fetchReasonerBundle = useCallback(
-    async (reasonerType: string) => {
+    async (reasonerType: string, shouldStop?: () => boolean) => {
       if (!projectId) {
         throw new Error("No ontology loaded");
       }
 
+      const startedProjectId = projectId;
       const encodedProjectId = encodeURIComponent(projectId);
       const draftUserId = isDraftScopeActive() ? resolveMutationActor().userId : undefined;
 
@@ -2713,6 +2716,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           const deadline = Date.now() + MAX_POLL_TIME;
           while (Date.now() < deadline) {
             await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+            if (shouldStop?.() || !isMountedRef.current || currentProjectIdRef.current !== startedProjectId) {
+              throw new Error("Classification was cancelled");
+            }
             let statusData: any;
             try {
               const statusResp: any = await apiClient.get(
@@ -2720,6 +2726,9 @@ const Dashboard: React.FC<DashboardProps> = ({
               );
               statusData = statusResp?.data ?? statusResp;
             } catch (error) {
+              if (isTerminalPollError(error)) {
+                throw new Error(pollErrorMessage(error, "The classification task is no longer available. Start the reasoner again."));
+              }
               console.error("[Dashboard] Failed to poll classify status (non-fatal, retrying):", error);
               continue;
             }
@@ -2765,7 +2774,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   const pollReasonerJob = async (
     targetProjectId: string,
     jobId: string,
-    { intervalMs = 2500, maxWaitMs = 10 * 60 * 1000 }: { intervalMs?: number; maxWaitMs?: number } = {},
+    {
+      intervalMs = 2500,
+      maxWaitMs = 10 * 60 * 1000,
+      isStale,
+    }: { intervalMs?: number; maxWaitMs?: number; isStale?: () => boolean } = {},
   ): Promise<any> => {
     const deadline = Date.now() + maxWaitMs;
     while (Date.now() < deadline) {
@@ -2773,7 +2786,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // User switched projects while this poll was in flight — discard rather than apply
       // stale data to whatever project is showing now. Reuses the existing "timeout" path
       // so every caller already handles this the same way it handles a real timeout.
-      if (currentProjectIdRef.current !== targetProjectId) {
+      if (currentProjectIdRef.current !== targetProjectId || isStale?.() || !isMountedRef.current) {
         return { timeout: true, stale: true };
       }
       try {
@@ -2787,6 +2800,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         // PENDING/QUEUED/RUNNING — keep polling
       } catch (error) {
+        if (isTerminalPollError(error)) {
+          return { success: false, error: pollErrorMessage(error, "The reasoning job is no longer available.") };
+        }
         console.error("[Dashboard] Failed to poll reasoner job:", error);
         // Transient network hiccup — keep polling until the deadline rather than giving up.
       }
@@ -2796,11 +2812,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   // Resolves a hierarchy fetch response into a final payload, transparently polling if the
   // backend handed back an async job instead of an immediate result.
-  const resolveHierarchyPayload = async (targetProjectId: string, payload: any): Promise<any> => {
+  const resolveHierarchyPayload = async (targetProjectId: string, payload: any, isStale?: () => boolean): Promise<any> => {
     if (payload?.async && payload?.jobId) {
-      return pollReasonerJob(targetProjectId, payload.jobId);
+      return pollReasonerJob(targetProjectId, payload.jobId, { isStale });
     }
     return payload;
+  };
+
+  const notifyReasonerJobRejected = (error: any) => {
+    if (Number(error?.status ?? error?.response?.status) === 429) {
+      showNotification(pollErrorMessage(error, "Too many reasoning jobs are queued for this project. Try again shortly."), "warning");
+    }
   };
 
   const pollReasonerWorkerJob = async (
@@ -2811,7 +2833,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      if (currentProjectIdRef.current !== targetProjectId) {
+      if (currentProjectIdRef.current !== targetProjectId || !isMountedRef.current) {
         return { timeout: true, stale: true };
       }
       let job: any;
@@ -2819,6 +2841,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         const res: any = await apiClient.get(`/api/dl-query/jobs/${jobId}`);
         job = extractResponseData(res);
       } catch (error) {
+        if (isTerminalPollError(error)) {
+          throw new Error(pollErrorMessage(error, "The reasoning job is no longer available."));
+        }
         console.error("[Dashboard] Failed to poll reasoner worker job:", error);
         // Transient network hiccup — keep polling until the deadline rather than giving up.
         continue;
@@ -2907,6 +2932,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
       if (!isStaleProjectSwitch()) {
         setInferredClassHierarchy([]);
+        notifyReasonerJobRejected(error);
       }
     }
   }, [projectId, metadata, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
@@ -2940,6 +2966,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (payload?.timeout || (payload?.success === false)) {
         console.warn("[Dashboard] Object property hierarchy job did not complete:", payload);
         setInferredObjectPropertyHierarchy([]);
+        if (payload?.success === false && (payload.message || payload.error)) {
+          showNotification(payload.message || payload.error, "error");
+        }
         return;
       }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
@@ -2948,6 +2977,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.error("[Dashboard] Failed to load inferred object property hierarchy:", error);
       if (!isStaleProjectSwitch()) {
         setInferredObjectPropertyHierarchy([]);
+        notifyReasonerJobRejected(error);
       }
     }
   }, [projectId, metadata, selectedReasoner]);
@@ -2978,6 +3008,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (payload?.timeout || (payload?.success === false)) {
         console.warn("[Dashboard] Data property hierarchy job did not complete:", payload);
         setInferredDataPropertyHierarchy([]);
+        if (payload?.success === false && (payload.message || payload.error)) {
+          showNotification(payload.message || payload.error, "error");
+        }
         return;
       }
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
@@ -2986,6 +3019,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.error("[Dashboard] Failed to load inferred data property hierarchy:", error);
       if (!isStaleProjectSwitch()) {
         setInferredDataPropertyHierarchy([]);
+        notifyReasonerJobRejected(error);
       }
     }
   }, [projectId, metadata, selectedReasoner]);
@@ -3186,7 +3220,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       const reasonerType = normalizeReasonerType(selectedReasoner);
-      const results = await fetchReasonerBundle(reasonerType);
+      const results = await fetchReasonerBundle(reasonerType, isStaleRun);
       if (isStaleRun()) return;
       setReasonerResults(results);
             console.log("[Dashboard] reasoner bundle:", results);
@@ -3417,7 +3451,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (data?.async && (data?.jobId || data?.taskId)) {
         data = await pollReasonerWorkerJob(checkedProjectId, data.jobId || data.taskId);
       }
-      if (currentProjectIdRef.current !== checkedProjectId) return;
+      if (currentProjectIdRef.current !== checkedProjectId || data?.stale) return;
       setConsistencyResult(data);
 
       const inconsistent = data?.consistent === false || data?.isConsistent === false;
@@ -6564,6 +6598,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      reasonerRunIdRef.current += 1;
       if (autoDraftPollRef.current) clearInterval(autoDraftPollRef.current);
       if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
       if (conflictCheckTimerRef.current) clearTimeout(conflictCheckTimerRef.current);
