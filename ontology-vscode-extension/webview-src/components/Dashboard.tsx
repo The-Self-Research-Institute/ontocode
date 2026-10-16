@@ -2212,6 +2212,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     error: string | null;
   }>({ open: false, loading: false, data: null, error: null });
   const explanationDismissedRef = useRef(false);
+  const explanationRequestIdRef = useRef(0);
   const [isReasonerSettingsOpen, setIsReasonerSettingsOpen] = useState(false);
 
   const currentHierarchyViewMode = hierarchyViewModes[entitiesTab] || "asserted";
@@ -3640,6 +3641,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     const checkedProjectId = projectId;
+    const requestId = ++explanationRequestIdRef.current;
+    const isLatestRequest = () => explanationRequestIdRef.current === requestId;
+    const closeExplanation = () => setExplanationState({ open: false, loading: false, data: null, error: null });
     explanationDismissedRef.current = false;
     try {
       setExplanationState({ open: true, loading: true, data: null, error: null });
@@ -3653,10 +3657,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (data?.async && (data?.jobId || data?.taskId)) {
         data = await pollReasonerWorkerJob(checkedProjectId, data.jobId || data.taskId);
       }
-      if (currentProjectIdRef.current !== checkedProjectId) return;
-      if (explanationDismissedRef.current) return;
-      setExplanationState({ open: true, loading: false, data, error: null });
-      notificationService.info("Explanation Ready", "Review the inconsistency report.");
+      if (!isLatestRequest()) return;
+      if (currentProjectIdRef.current !== checkedProjectId || data?.stale) {
+        closeExplanation();
+        return;
+      }
 
       // The explanation just re-ran the check fresh and found the ontology
       // consistent — but the sidebar's consistency banner/stats are frozen
@@ -3667,6 +3672,10 @@ const Dashboard: React.FC<DashboardProps> = ({
         setReasonerResults(null);
         checkConsistency();
       }
+
+      if (explanationDismissedRef.current) return;
+      setExplanationState({ open: true, loading: false, data, error: null });
+      notificationService.info("Explanation Ready", "Review the inconsistency report.");
     } catch (error: any) {
       const backendData = error?.response?.data;
       console.error("[Dashboard] Explain inconsistency failed:", {
@@ -3677,7 +3686,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       const friendlyMessage =
         backendData?.error || error?.message || "Failed to explain inconsistency for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
-      if (currentProjectIdRef.current === checkedProjectId && !explanationDismissedRef.current) {
+      if (!isLatestRequest()) return;
+      if (currentProjectIdRef.current !== checkedProjectId) {
+        closeExplanation();
+        return;
+      }
+      if (!explanationDismissedRef.current) {
         setExplanationState({
           open: true,
           loading: false,
@@ -3696,8 +3710,19 @@ const Dashboard: React.FC<DashboardProps> = ({
     // granted, which is easy to miss for a quick confirmation like this. The
     // toast queue always renders on-screen immediately regardless of that.
     const userId = user?.userId || user?.email || "system";
+    if (!projectId) {
+      collaboration.addNotification({
+        type: "info",
+        message: "Open an ontology first — there is no reasoner cache to clear yet.",
+        userId,
+        username: "",
+        userColor: "#6366f1",
+        timestamp: Date.now(),
+      });
+      return;
+    }
     try {
-      await apiClient.post(`/plugin-service/api/reasoner/clear-cache/${encodeURIComponent(projectId || "")}`, {});
+      await apiClient.post(`/plugin-service/api/reasoner/clear-cache/${encodeURIComponent(projectId)}`, {});
       collaboration.addNotification({
         type: "success",
         message: "Reasoner cache cleared — the next run reloads the ontology fresh.",
