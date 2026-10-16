@@ -1,6 +1,5 @@
 package self.research.ontology.reasoner.service;
 
-import org.semanticweb.HermiT.ReasonerFactory;
 import org.semanticweb.owl.explanation.api.Explanation;
 import org.semanticweb.owl.explanation.api.ExplanationGenerator;
 import org.semanticweb.owl.explanation.api.ExplanationGeneratorFactory;
@@ -603,7 +602,7 @@ public class ReasoningJobExecutor {
         OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
         InconsistentOntologyExplanationGeneratorFactory factory =
                 new InconsistentOntologyExplanationGeneratorFactory(
-                        new ReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
+                        new LenientHermitReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
         ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology);
         OWLAxiom entailment = EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(
                 EXPLANATION_DATA_FACTORY.getOWLThing(), EXPLANATION_DATA_FACTORY.getOWLNothing());
@@ -616,7 +615,7 @@ public class ReasoningJobExecutor {
 
         InconsistentOntologyExplanationGeneratorFactory baseFactory =
                 new InconsistentOntologyExplanationGeneratorFactory(
-                        new ReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
+                        new LenientHermitReasonerFactory(), EXPLANATION_DATA_FACTORY, OWLManager::createOWLOntologyManager, justificationTimeoutMs);
 
         ExplanationGeneratorFactory<OWLAxiom> laconicFactory =
                 new LaconicExplanationGeneratorFactory<OWLAxiom>(baseFactory, OWLManager::createOWLOntologyManager);
