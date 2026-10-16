@@ -1645,6 +1645,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const autoSyncReasonerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSyncReasonerInFlightRef = useRef(false);
   const autoSyncReasonerPendingRef = useRef(false);
+  const autoSyncReasonerRequestRef = useRef<{ runId: number; projectId: string } | null>(null);
+  const runAutoSyncReasonerRef = useRef<() => Promise<void>>(async () => {});
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
   const [showPullPreview, setShowPullPreview] = useState(false);
   const [openPRCount, setOpenPRCount] = useState(0);
@@ -2196,6 +2198,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedReasoner, setSelectedReasoner] = useState<string>("HermiT");
   const [isReasonerRunning, setIsReasonerRunning] = useState(false);
   const [isReasonerSynced, setIsReasonerSynced] = useState(false);
+  const isReasonerSyncedRef = useRef(isReasonerSynced);
+  isReasonerSyncedRef.current = isReasonerSynced;
   const [reasonerResults, setReasonerResults] = useState<any>(null);
   const [inferredAxioms, setInferredAxioms] = useState<any[]>([]);
   const [isReasonerLoading, setIsReasonerLoading] = useState(false);
@@ -3232,6 +3236,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     ];
   }
 
+  const clearAutoSyncReasoner = useCallback(() => {
+    if (autoSyncReasonerTimerRef.current) {
+      clearTimeout(autoSyncReasonerTimerRef.current);
+      autoSyncReasonerTimerRef.current = null;
+    }
+    autoSyncReasonerPendingRef.current = false;
+    autoSyncReasonerRequestRef.current = null;
+  }, []);
+
   const clearInferredReasonerState = useCallback(() => {
     setInferredClassHierarchy([]);
     setInferredObjectPropertyHierarchy([]);
@@ -3420,6 +3433,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const stopReasoner = useCallback(async () => {
     reasonerRunIdRef.current += 1;
     inferredClassHierarchyAttemptedKeyRef.current = null;
+    clearAutoSyncReasoner();
     if (projectId) {
       try {
         await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/stop`, {});
@@ -3432,11 +3446,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     setIsReasonerLoading(false);
     setReasonerResults(null);
     notificationService.success("Reasoner Stopped", "Reasoner session has been disposed");
-  }, [projectId]);
+  }, [projectId, clearAutoSyncReasoner]);
 
   const resetReasonerState = useCallback(() => {
     reasonerRunIdRef.current += 1;
     inferredClassHierarchyAttemptedKeyRef.current = null;
+    clearAutoSyncReasoner();
     explanationDismissedRef.current = true;
     setIsReasonerRunning(false);
     setIsReasonerLoading(false);
@@ -3449,7 +3464,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         ? Object.fromEntries(Object.keys(prev).map((key) => [key, "asserted" as const]))
         : prev,
     );
-  }, [clearInferredReasonerState]);
+  }, [clearInferredReasonerState, clearAutoSyncReasoner]);
 
   // Reasoner state belongs to a single project and draft/public scope — reset when either
   // changes so the Start button isn't left permanently disabled by a stale isReasonerRunning flag.
@@ -3459,6 +3474,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const toggleReasonerSync = useCallback(() => {
     const newSyncState = !isReasonerSynced;
+    clearAutoSyncReasoner();
     setIsReasonerSynced(newSyncState);
     console.log("[Dashboard] Reasoner auto-sync:", newSyncState ? "enabled" : "disabled");
     if (newSyncState) {
@@ -3466,10 +3482,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     } else {
       notificationService.info("Auto-sync Disabled", "Reasoner will only run manually");
     }
-  }, [isReasonerSynced]);
+  }, [isReasonerSynced, clearAutoSyncReasoner]);
 
   const handleSelectReasoner = useCallback(
     (reasoner: string) => {
+      clearAutoSyncReasoner();
       // Stop current reasoner if running
       if (isReasonerRunning) {
         reasonerRunIdRef.current += 1;
@@ -3492,8 +3509,82 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       notificationService.info("Reasoner Selected", descriptions[reasoner] || `${reasoner} reasoner is now active`);
     },
-    [isReasonerRunning],
+    [isReasonerRunning, clearAutoSyncReasoner],
   );
+
+  const runAutoSyncReasoner = async () => {
+    const request = autoSyncReasonerRequestRef.current;
+    if (!request) return;
+    const isStale = () =>
+      !isReasonerSyncedRef.current ||
+      reasonerRunIdRef.current !== request.runId ||
+      currentProjectIdRef.current !== request.projectId ||
+      !isMountedRef.current;
+    if (!isReasonerSynced || !isReasonerRunning || isReasonerLoading || projectId !== request.projectId || isStale()) {
+      return;
+    }
+    if (autoSyncReasonerInFlightRef.current) {
+      autoSyncReasonerPendingRef.current = true;
+      return;
+    }
+    autoSyncReasonerInFlightRef.current = true;
+    try {
+      const results = await fetchReasonerBundle(normalizeReasonerType(selectedReasoner), isStale);
+      if (isStale()) return;
+      setReasonerResults(results);
+
+      if ((results as any)?.inconsistent === true) {
+        markReasonerResultInconsistent(results, selectedReasoner, request.projectId);
+        return;
+      }
+      setConsistencyResult((prev: any) => (prev?.consistent === false || prev?.isConsistent === false ? null : prev));
+
+      // The classify response already contains a working hierarchy — this is
+      // literally what successfully powers the Reasoner tab's own display.
+      // Use it directly for the Entities tab's "Inferred" toggle too, instead
+      // of relying solely on the separate /reasoner/inferred-class-hierarchy
+      // endpoint below — that one doesn't reliably honor the requested
+      // reasonerType and can report a false "inconsistent", wiping out a
+      // perfectly good result we already have right here.
+      const bundleClassHierarchy = appendUnsatisfiableRoot(
+        buildInferredTreeFromFlatList((results as any)?.classHierarchy),
+        (results as any)?.unsatisfiableClasses,
+      );
+      const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.objectPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
+      );
+      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList(
+        (results as any)?.dataPropertyHierarchy,
+        { id: "http://www.w3.org/2002/07/owl#topDataProperty", label: "owl:topDataProperty" },
+      );
+      if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
+        setInferredClassHierarchy(bundleClassHierarchy);
+      }
+      if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
+        setInferredObjectPropertyHierarchy(bundleObjectPropertyHierarchy);
+      }
+      if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
+        setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
+      }
+      console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
+    } catch (error: any) {
+      console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
+      if (!isStale()) {
+        notificationService.warning(
+          "Auto-sync Failed",
+          error?.message || "The reasoner could not refresh after your last change.",
+        );
+      }
+    } finally {
+      autoSyncReasonerInFlightRef.current = false;
+      if (autoSyncReasonerPendingRef.current) {
+        autoSyncReasonerPendingRef.current = false;
+        void runAutoSyncReasonerRef.current();
+      }
+    }
+  };
+  runAutoSyncReasonerRef.current = runAutoSyncReasoner;
 
   const checkConsistency = useCallback(async () => {
     if (!projectId) {
@@ -9411,62 +9502,14 @@ const updateItemInState = useCallback(
     // Auto-sync reasoner if enabled
     if (isReasonerSynced && isReasonerRunning && projectId) {
       console.log("[DEBUG] Auto-sync: Re-running reasoner after ontology change");
-      const syncedProjectId = projectId;
       if (autoSyncReasonerTimerRef.current) clearTimeout(autoSyncReasonerTimerRef.current);
-      const runAutoSyncReasoner = async () => {
-        if (autoSyncReasonerInFlightRef.current) {
-          autoSyncReasonerPendingRef.current = true;
-          return;
-        }
-        autoSyncReasonerInFlightRef.current = true;
-        try {
-               const reasonerType = normalizeReasonerType(selectedReasoner);
-      const results = await fetchReasonerBundle(reasonerType);
-      if (currentProjectIdRef.current !== syncedProjectId) return;
-      setReasonerResults(results);
-
-      // The classify response already contains a working hierarchy — this is
-      // literally what successfully powers the Reasoner tab's own display.
-      // Use it directly for the Entities tab's "Inferred" toggle too, instead
-      // of relying solely on the separate /reasoner/inferred-class-hierarchy
-      // endpoint below — that one doesn't reliably honor the requested
-      // reasonerType and can report a false "inconsistent", wiping out a
-      // perfectly good result we already have right here.
-      const bundleClassHierarchy = appendUnsatisfiableRoot(
-        buildInferredTreeFromFlatList((results as any)?.classHierarchy),
-        (results as any)?.unsatisfiableClasses,
-      );
-      const bundleObjectPropertyHierarchy = buildInferredTreeFromFlatList(
-        (results as any)?.objectPropertyHierarchy,
-        { id: "http://www.w3.org/2002/07/owl#topObjectProperty", label: "owl:topObjectProperty" },
-      );
-      const bundleDataPropertyHierarchy = buildInferredTreeFromFlatList(
-        (results as any)?.dataPropertyHierarchy,
-        { id: "http://www.w3.org/2002/07/owl#topDataProperty", label: "owl:topDataProperty" },
-      );
-      if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
-        setInferredClassHierarchy(bundleClassHierarchy);
-      }
-      if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
-        setInferredObjectPropertyHierarchy(bundleObjectPropertyHierarchy);
-      }
-      if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
-        setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
-      }
-          console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
-        } catch (error) {
-          console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
-        } finally {
-          autoSyncReasonerInFlightRef.current = false;
-          if (autoSyncReasonerPendingRef.current) {
-            autoSyncReasonerPendingRef.current = false;
-            void runAutoSyncReasoner();
-          }
-        }
-      };
-      autoSyncReasonerTimerRef.current = setTimeout(() => { void runAutoSyncReasoner(); }, 2000);
+      autoSyncReasonerRequestRef.current = { runId: reasonerRunIdRef.current, projectId };
+      autoSyncReasonerTimerRef.current = setTimeout(() => {
+        autoSyncReasonerTimerRef.current = null;
+        void runAutoSyncReasonerRef.current();
+      }, 2000);
     }
-  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, selectedReasoner, fetchReasonerBundle, user]);
+  }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, user]);
 
   // Save changes to backend (publishes only this user's draft to main graph)
   const handleSave = useCallback(async (options?: {
