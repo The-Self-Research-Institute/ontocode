@@ -7903,7 +7903,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         const response = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-subclasses`, {
           classIri: nodeId,
           direct: true,
-          reasonerType: selectedReasoner,
+          reasonerType: normalizeReasonerType(selectedReasoner),
           ...draftBodyFields(),
         });
         const payload = response?.data || response;
