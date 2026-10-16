@@ -28,6 +28,7 @@ public class ReasoningQueueManager {
     private final EditorClient editorClient;
     private final ReasoningConcurrencyPolicy concurrencyPolicy;
     private final ReasoningResultRetention resultRetention;
+    private final ReasoningJobStore jobStore;
     private final LinkedList<ReasoningJob> queue = new LinkedList<>();
     private final Map<String, ReasoningJob> activeJobs = new ConcurrentHashMap<>();
     private final Map<String, ReasoningJob> liveJobs = new ConcurrentHashMap<>();
@@ -56,18 +57,21 @@ public class ReasoningQueueManager {
     @Autowired
     public ReasoningQueueManager(EditorClient editorClient,
                                  ReasoningConcurrencyPolicy concurrencyPolicy,
-                                 ReasoningResultRetention resultRetention) {
-        this(editorClient, concurrencyPolicy, resultRetention,
+                                 ReasoningResultRetention resultRetention,
+                                 ReasoningJobStore jobStore) {
+        this(editorClient, concurrencyPolicy, resultRetention, jobStore,
                 new ReasoningJobEventSender(editorClient::publishJobEvent, 1000));
     }
 
     ReasoningQueueManager(EditorClient editorClient,
                           ReasoningConcurrencyPolicy concurrencyPolicy,
                           ReasoningResultRetention resultRetention,
+                          ReasoningJobStore jobStore,
                           ReasoningJobEventSender eventSender) {
         this.editorClient = editorClient;
         this.concurrencyPolicy = concurrencyPolicy;
         this.resultRetention = resultRetention;
+        this.jobStore = jobStore;
         this.eventSender = eventSender;
     }
 
@@ -135,6 +139,7 @@ public class ReasoningQueueManager {
             liveJobs.put(job.getJobId(), job);
             updateQueuePositions();
             notifyJob(job);
+            jobStore.save(job);
             touchActivity();
         }
         log.info("[Reasoning] Enqueued {} job {} for project {} (position {})",
@@ -195,6 +200,7 @@ public class ReasoningQueueManager {
         activeJobs.put(candidate.getJobId(), candidate);
         updateQueuePositions();
         notifyJob(candidate);
+        jobStore.save(candidate);
         touchActivity();
         return candidate;
     }
@@ -224,6 +230,7 @@ public class ReasoningQueueManager {
         activeJobs.remove(job.getJobId());
         recordDuration(durationMs);
         notifyJob(job);
+        jobStore.save(job);
         touchActivity();
     }
 
@@ -239,6 +246,7 @@ public class ReasoningQueueManager {
         liveJobs.remove(job.getJobId());
         activeJobs.remove(job.getJobId());
         notifyJob(job);
+        jobStore.save(job);
         touchActivity();
         log.error("[Reasoning] Failed job {}: {}", job.getJobId(), error);
     }
@@ -252,6 +260,7 @@ public class ReasoningQueueManager {
         job.setError(error);
         resultRetention.retain(job);
         notifyJob(job);
+        jobStore.save(job);
         touchActivity();
         log.error("[Reasoning] Timed out job {}: {}", job.getJobId(), error);
     }
@@ -261,7 +270,17 @@ public class ReasoningQueueManager {
         liveJobs.remove(jobId);
     }
 
-    public synchronized CancelResult cancel(String jobId) {
+    public CancelResult cancel(String jobId) {
+        CancelResult result = cancelInMemory(jobId);
+        if (result.outcome() != CancelOutcome.NOT_FOUND) {
+            return result;
+        }
+        return jobStore.find(jobId)
+                .map(stored -> new CancelResult(CancelOutcome.ALREADY_FINISHED, stored))
+                .orElse(result);
+    }
+
+    private synchronized CancelResult cancelInMemory(String jobId) {
         ReasoningJob job = liveJobs.get(jobId);
         if (job == null) {
             ReasoningJob finished = resultRetention.get(jobId).orElse(null);
@@ -292,6 +311,7 @@ public class ReasoningQueueManager {
         job.setQueuePosition(0);
         resultRetention.retain(job);
         notifyJob(job);
+        jobStore.save(job);
         touchActivity();
     }
 
@@ -317,10 +337,15 @@ public class ReasoningQueueManager {
             return live;
         }
         ReasoningJob retained = resultRetention.get(jobId).orElse(null);
-        log.info("[DIAG] getJob: jobId={} source=retention jobType={} identityHash={} atMs={}",
-                jobId, retained != null ? retained.getJobType() : "NOT_FOUND",
-                retained != null ? System.identityHashCode(retained) : -1, System.currentTimeMillis());
-        return retained;
+        if (retained != null) {
+            log.info("[DIAG] getJob: jobId={} source=retention jobType={} identityHash={} atMs={}",
+                    jobId, retained.getJobType(), System.identityHashCode(retained), System.currentTimeMillis());
+            return retained;
+        }
+        ReasoningJob stored = jobStore.find(jobId).orElse(null);
+        log.info("[DIAG] getJob: jobId={} source=store status={} atMs={}",
+                jobId, stored != null ? stored.getStatus() : "NOT_FOUND", System.currentTimeMillis());
+        return stored;
     }
 
     public int activeJobCount() {
@@ -333,10 +358,6 @@ public class ReasoningQueueManager {
 
     private void touchActivity() {
         lastActivityAt = Instant.now();
-    }
-
-    public synchronized long getEstimatedWaitTimeMs(String jobId) {
-        return getEstimatedWaitTimeMs(getJob(jobId));
     }
 
     public synchronized long getEstimatedWaitTimeMs(ReasoningJob job) {

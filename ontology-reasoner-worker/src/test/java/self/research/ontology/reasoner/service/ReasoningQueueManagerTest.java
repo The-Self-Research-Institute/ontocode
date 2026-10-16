@@ -3,9 +3,12 @@ package self.research.ontology.reasoner.service;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.reasoner.model.ReasoningJob;
+import self.research.ontology.reasoner.model.ReasoningJobRecord;
+import self.research.ontology.reasoner.repository.ReasoningJobRecordRepository;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -13,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ReasoningQueueManagerTest {
 
@@ -76,7 +81,7 @@ class ReasoningQueueManagerTest {
         RecordingSender sender = new RecordingSender();
         EditorClient editorClient = QueueTestSupport.editorClient();
         ReasoningQueueManager manager = new ReasoningQueueManager(editorClient,
-                QueueTestSupport.policy(editorClient), QueueTestSupport.retention(), sender);
+                QueueTestSupport.policy(editorClient), QueueTestSupport.retention(), ReasoningJobStore.disabled(), sender);
 
         ReasoningJob first = QueueTestSupport.enqueue(manager, "P1");
         ReasoningJob second = QueueTestSupport.enqueue(manager, "P2");
@@ -148,6 +153,28 @@ class ReasoningQueueManagerTest {
         assertThrows(ReasoningQueueManager.ProjectQueueFullException.class, () ->
                 manager.enqueue(ReasoningJob.JobType.REASONER_CONSISTENCY, "P1", null, null, "HERMIT", null));
         assertNotNull(QueueTestSupport.enqueue(manager, "P2"));
+    }
+
+    @Test
+    void jobMissingFromMemoryIsReadBackFromTheStore() {
+        ReasoningJobRecordRepository repository = mock(ReasoningJobRecordRepository.class);
+        when(repository.findById("old-job")).thenReturn(Optional.of(ReasoningJobRecord.builder()
+                .jobId("old-job")
+                .jobType("REASONER_CLASSIFY")
+                .status("FAILED")
+                .error(ReasoningJobStore.RESTART_MESSAGE)
+                .build()));
+        EditorClient editorClient = QueueTestSupport.editorClient();
+        ReasoningQueueManager manager = new ReasoningQueueManager(editorClient,
+                QueueTestSupport.policy(editorClient), QueueTestSupport.retention(),
+                new ReasoningJobStore(repository, 1_000_000, 72));
+
+        ReasoningJob job = manager.getJob("old-job");
+
+        assertEquals(ReasoningJob.Status.FAILED, job.getStatus());
+        assertEquals(ReasoningJobStore.RESTART_MESSAGE, job.getError());
+        assertEquals(ReasoningQueueManager.CancelOutcome.ALREADY_FINISHED, manager.cancel("old-job").outcome());
+        manager.shutdown();
     }
 
     static final class RecordingSender extends ReasoningJobEventSender {

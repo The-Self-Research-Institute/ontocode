@@ -44,7 +44,7 @@ final class QueueTestSupport {
     }
 
     static ReasoningQueueManager queueManager(EditorClient editorClient) {
-        return new ReasoningQueueManager(editorClient, policy(editorClient), retention());
+        return new ReasoningQueueManager(editorClient, policy(editorClient), retention(), ReasoningJobStore.disabled());
     }
 
     static ReasoningJob enqueue(ReasoningQueueManager manager, String projectId) {
