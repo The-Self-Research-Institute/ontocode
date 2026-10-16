@@ -1444,12 +1444,21 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
      * Submit a reasoning job to the isolated reasoner worker and return the
      * async-accepted contract shared by all worker-backed endpoints.
      */
+    private ResponseEntity<Map<String, Object>> workerRejected(Map<String, Object> worker) {
+        if (Boolean.TRUE.equals(worker.get("rateLimited"))) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
+                    "success", false,
+                    "error", String.valueOf(worker.get("error"))));
+        }
+        return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", ReasoningFriendlyErrors.forUser(String.valueOf(worker.get("error")))));
+    }
+
     private ResponseEntity<Map<String, Object>> submitToWorker(String jobType, String projectId, String reasonerType) {
         Map<String, Object> worker = reasonerWorkerClient.submit(jobType, projectId, reasonerType);
         if (Boolean.FALSE.equals(worker.get("success"))) {
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", ReasoningFriendlyErrors.forUser(String.valueOf(worker.get("error")))));
+            return workerRejected(worker);
         }
         String jobId = String.valueOf(worker.get("jobId"));
         return ResponseEntity.accepted().body(Map.of(
@@ -1466,9 +1475,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
         Map<String, Object> worker = reasonerWorkerClient.submit(
                 "REASONER_EXPLAIN_INCONSISTENCY", projectId, reasonerType, explanationMode, maxJustifications);
         if (Boolean.FALSE.equals(worker.get("success"))) {
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", ReasoningFriendlyErrors.forUser(String.valueOf(worker.get("error")))));
+            return workerRejected(worker);
         }
         String jobId = String.valueOf(worker.get("jobId"));
         return ResponseEntity.accepted().body(Map.of(

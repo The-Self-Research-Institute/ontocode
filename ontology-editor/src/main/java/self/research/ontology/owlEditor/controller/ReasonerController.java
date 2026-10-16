@@ -237,11 +237,27 @@ public class ReasonerController {
      * idle timeout on a genuinely slow reasoning run — moving the wait to client-side polling
      * means no single HTTP request ever needs to stay open longer than a status check.
      */
+    static final class WorkerQueueFullException extends RuntimeException {
+        WorkerQueueFullException(String message) {
+            super(message);
+        }
+    }
+
+    private ResponseEntity<Map<String, Object>> queueFull(String projectId, WorkerQueueFullException e) {
+        return ResponseEntity.status(429).body(Map.of(
+                "success", false,
+                "projectId", projectId,
+                "error", e.getMessage()));
+    }
+
     private String submitHierarchyJob(String jobType, String projectId, String reasonerType) {
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return null;
         }
         Map<String, Object> submitted = reasonerWorkerClient.submitJob(jobType, projectId, null, null, reasonerType, null);
+        if (Boolean.TRUE.equals(submitted.get("rateLimited"))) {
+            throw new WorkerQueueFullException(String.valueOf(submitted.get("error")));
+        }
         if (Boolean.FALSE.equals(submitted.get("success"))) {
             log.warn("Worker rejected {} job for {}: {}", jobType, projectId, submitted.get("error"));
             return null;
@@ -521,6 +537,8 @@ public class ReasonerController {
             } finally {
                 executor.shutdown();
             }
+        } catch (WorkerQueueFullException e) {
+            return queueFull(projectId, e);
         } catch (Exception e) {
             log.error("Error getting inferred class hierarchy", e);
             return ResponseEntity.ok(friendlyError(e));
@@ -753,6 +771,8 @@ public class ReasonerController {
                     "reasonerType", type.getDisplayName(),
                     "hierarchy", List.of(root)
             ));
+        } catch (WorkerQueueFullException e) {
+            return queueFull(projectId, e);
         } catch (Exception e) {
             log.error("Error getting inferred object property hierarchy", e);
             return ResponseEntity.ok(friendlyError(e));
@@ -863,6 +883,8 @@ public class ReasonerController {
                     "reasonerType", type.getDisplayName(),
                     "hierarchy", List.of(root)
             ));
+        } catch (WorkerQueueFullException e) {
+            return queueFull(projectId, e);
         } catch (Exception e) {
             log.error("Error getting inferred data property hierarchy", e);
             return ResponseEntity.ok(friendlyError(e));
