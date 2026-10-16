@@ -118,11 +118,19 @@ public class ReasoningConcurrencyPolicy {
             return false;
         }
 
-        if (memoryAware && !activeJobs.isEmpty() && freeHeapRatio() < minFreeHeapRatio) {
-            return false;
-        }
         if (activeJobs.size() >= Math.max(1, configuredMax)) {
             return false;
+        }
+        if (!activeJobs.isEmpty()) {
+            if (yieldToImports && editorClient.getActiveImportCount() > 0) {
+                return false;
+            }
+            if (usedSlots(activeJobs) + Math.max(1, candidate.getSlotWeight()) > Math.max(1, slotBudget)) {
+                return false;
+            }
+            if (memoryAware && activeJobs.size() >= maxJobsFromHeap(activeJobs, freeHeapRatio())) {
+                return false;
+            }
         }
         boolean heavy = isHeavy(candidate);
         long activeInLane = activeJobs.stream().filter(j -> isHeavy(j) == heavy).count();
