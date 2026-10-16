@@ -10,7 +10,8 @@ import {
   TYPE_LABELS
 } from '../src/assistant/changeKinds';
 import { computeStats, countableChanges, extractLabelFromIRI, parseChange } from '../src/assistant/changeParsing';
-import { buildEntityRow, canUndoEntry } from '../src/changeSets/entityRows';
+import { buildEntityRow, canUndoEntry, manualHeading, propertyRows } from '../src/changeSets/entityRows';
+import { parseServerTime } from '../src/changeSets/timeFormat';
 import type { ChangeEntry } from '../src/changeSets/types';
 
 const base = {
@@ -190,5 +191,47 @@ describe('undo availability in the list', () => {
     }));
     expect(row.undoable).toBe(true);
     expect(row.label).toBe('ex');
+  });
+});
+
+describe('server time', () => {
+  it('reads a timestamp without a zone as UTC', () => {
+    expect(parseServerTime('2026-10-14T23:37:51.416').toISOString()).toBe('2026-10-14T23:37:51.416Z');
+    expect(parseServerTime('2026-10-14T23:37:51').toISOString()).toBe('2026-10-14T23:37:51.000Z');
+  });
+
+  it('leaves timestamps that carry a zone or an offset alone', () => {
+    expect(parseServerTime('2026-10-14T23:37:51Z').toISOString()).toBe('2026-10-14T23:37:51.000Z');
+    expect(parseServerTime('2026-10-15T04:37:51+05:00').toISOString()).toBe('2026-10-14T23:37:51.000Z');
+    expect(parseServerTime(Date.UTC(2026, 9, 14, 23, 37, 51)).toISOString()).toBe('2026-10-14T23:37:51.000Z');
+  });
+
+  it('puts an undo after the edit it undoes whatever zone the browser is in', () => {
+    const edited = parseServerTime('2026-10-14T23:37:51');
+    const undone = parseServerTime('2026-10-14T23:40:00');
+    expect(undone.getTime()).toBeGreaterThan(edited.getTime());
+  });
+});
+
+describe('prefixes saved together', () => {
+  const group = {
+    id: 'g1', changeSetId: 's1', operationType: 'prefixesChanged', entityLabel: '3 prefixes', undoable: true,
+    description: 'Code View save changed 3 prefixes',
+    subChanges: [
+      { id: 'a', predicate: 'a', annotationProperty: 'prefixAdded', newValue: 'http://a/', addition: true },
+      { id: 'b', predicate: 'b', annotationProperty: 'prefixModified', oldValue: 'http://o/', newValue: 'http://n/', addition: true },
+      { id: 'c', predicate: 'c', annotationProperty: 'prefixDeleted', oldValue: 'http://c/', addition: false }
+    ]
+  } as unknown as ChangeEntry;
+
+  it('shows one readable row per prefix and no per-row undo target', () => {
+    const rows = propertyRows(group);
+    expect(rows.map(r => r.label)).toEqual(['Prefix a', 'Prefix b', 'Prefix c']);
+    expect(rows.every(r => r.subChangeId === null)).toBe(true);
+  });
+
+  it('is headed as a prefix change and counts every prefix as remaining', () => {
+    expect(manualHeading(group).verb).toBe('Changed');
+    expect(buildEntityRow(group).remaining).toBe(3);
   });
 });

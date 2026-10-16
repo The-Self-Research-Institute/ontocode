@@ -2,6 +2,7 @@ import React from 'react';
 import { Clock, GitBranch } from 'lucide-react';
 import { fallbackLabel } from './changeKinds';
 import { getChangeIcon } from './display';
+import { parseServerTime } from '../changeSets/timeFormat';
 
 function actionClass(details: any): string {
   const action = (details.operationType || details.action || '').toLowerCase();
@@ -62,7 +63,7 @@ export const ChangeInfo: React.FC<{ details: any }> = ({ details }) => (
     <InfoGrid details={details} />
     <div className="text-xs text-gray-500 pt-1 border-t">
       <Clock className="w-3 h-3 inline mr-1" />
-      {details.timestamp ? new Date(details.timestamp).toLocaleString() : 'Unknown time'}
+      {details.timestamp ? parseServerTime(details.timestamp).toLocaleString() : 'Unknown time'}
     </div>
   </div>
 );

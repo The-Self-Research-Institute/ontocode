@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle, CheckCircle, XCircle, ArrowRight } from 'lucide-react';
+import { parseServerTime } from '../changeSets/timeFormat';
 
 interface Conflict {
   id: string;
@@ -120,7 +121,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({ conflict, onResolve
               </div>
               {conflict.remoteTimestamp && (
                 <div className="text-xs text-gray-500 mt-2">
-                  {new Date(conflict.remoteTimestamp).toLocaleString()}
+                  {parseServerTime(conflict.remoteTimestamp).toLocaleString()}
                 </div>
               )}
             </div>

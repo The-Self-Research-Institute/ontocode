@@ -1,6 +1,7 @@
 import { authorKey, fallbackLabel, isRollbackChange, normaliseAuthor, resolveChangeType } from './changeKinds';
 import { generateWarnings } from './draftWarnings';
 import { ChangeAction, ChangeStats, ChangeStatus, ChangeType, OntologyChange } from './types';
+import { parseServerTime } from '../changeSets/timeFormat';
 
 export function extractLabelFromIRI(iri: string): string {
   if (!iri) return '';
@@ -58,7 +59,7 @@ function mapAction(operationType: string): ChangeAction {
 export function parseDraft(draft: any): OntologyChange {
   return {
     id: draft.id || `draft-${Date.now()}-${Math.random()}`,
-    timestamp: new Date(draft.timestamp),
+    timestamp: parseServerTime(draft.timestamp),
     author: normaliseAuthor(draft.username, draft.userId) || 'You',
     authorEmail: draft.userId || '',
     type: mapOperationToType(draft.operationType),
@@ -80,7 +81,7 @@ export function parseChange(change: any) {
   const parsedLabel = change.entityLabel || extractLabelFromIRI(change.entityIRI);
   return {
     id: change.id,
-    timestamp: new Date(change.timestamp),
+    timestamp: parseServerTime(change.timestamp),
     author: normaliseAuthor(change.username, change.userId),
     authorEmail: change.userId || '',
     type: mapChangeType(originalOperationType, change.changeCategory || change.entityType),

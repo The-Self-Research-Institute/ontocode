@@ -53,6 +53,18 @@ final class RollbackWorkSupport {
         return entry.getSubChanges().stream().filter(sc -> subChangeId.equals(sc.getId())).findFirst().orElse(null);
     }
 
+    static List<HistoryChange> loadByIds(String projectId, List<String> ids,
+                                         java.util.function.Function<String, HistoryChange> lookup) {
+        List<HistoryChange> entries = new ArrayList<>();
+        for (String id : ids) {
+            HistoryChange entry = lookup.apply(id);
+            if (entry != null && projectId.equals(entry.getProjectId())) {
+                entries.add(entry);
+            }
+        }
+        return entries;
+    }
+
     static Work skip(HistoryChange entry, String reason) {
         return new Work(entry, emptyPlan(), List.of(),
                 new ArrayList<>(List.of(new Item(entry.getId(), null, entry.getEntityIRI(), entry.getEntityLabel(), null, reason))),
@@ -74,19 +86,30 @@ final class RollbackWorkSupport {
     static List<Item> appliedItems(Work work) {
         List<Item> items = new ArrayList<>();
         if (work.plan().isEmpty()) {
-            return items;
+            return work.completesEntry() ? entryItems(work.entry()) : items;
         }
         HistoryChange entry = work.entry();
         Set<String> handled = work.plan().handledSubChangeIds();
         List<HistoryChange.SubChange> handledTargets = work.targets().stream()
                 .filter(sc -> handled.contains(sc.getId())).toList();
-        boolean perProperty = work.subLevel() || RollbackMutationPlanner.kindOf(entry) == Kind.GROUPED_MODIFY;
+        boolean perProperty = work.subLevel() || RollbackMutationPlanner.kindOf(entry) == Kind.GROUPED_MODIFY
+                || !handledTargets.isEmpty();
         if (perProperty) {
             handledTargets.forEach(sc -> items.add(item(entry, sc, null)));
         } else {
-            items.add(new Item(entry.getId(), null, entry.getEntityIRI(), entry.getEntityLabel(), null, null));
+            items.addAll(entryItems(entry));
         }
         return items;
+    }
+
+    static List<Item> entryItems(HistoryChange entry) {
+        List<HistoryChange.SubChange> subs = entry.getSubChanges() == null ? List.of() : entry.getSubChanges();
+        List<HistoryChange.SubChange> open = subs.stream().filter(sc -> !sc.isReverted()).toList();
+        List<HistoryChange.SubChange> counted = open.isEmpty() ? subs : open;
+        if (counted.isEmpty()) {
+            return List.of(new Item(entry.getId(), null, entry.getEntityIRI(), entry.getEntityLabel(), null, null));
+        }
+        return counted.stream().map(sc -> item(entry, sc, null)).toList();
     }
 
     static List<Item> unsupportedItems(HistoryChange entry, Plan plan) {

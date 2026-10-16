@@ -1,5 +1,6 @@
 import React from 'react';
 import { MessageSquare } from 'lucide-react';
+import { parseServerTime } from '../changeSets/timeFormat';
 
 interface DetailsCommentsProps {
   details: any;
@@ -15,7 +16,7 @@ const CommentList: React.FC<{ comments: any[] }> = ({ comments }) => (
         <div className="flex items-center gap-2 text-gray-600 mb-1">
           <span className="font-medium">{comment.username || 'User'}</span>
           <span className="text-xs">
-            {comment.timestamp ? new Date(comment.timestamp).toLocaleString() : ''}
+            {comment.timestamp ? parseServerTime(comment.timestamp).toLocaleString() : ''}
           </span>
         </div>
         <p className="text-gray-700">{comment.text}</p>

@@ -10,21 +10,32 @@ final class PrefixReversal {
     private PrefixReversal() {
     }
 
+    static final String AGGREGATE = "prefixesChanged";
+
     static boolean isPrefixOp(String operationType) {
         return "prefixAdded".equals(operationType) || "prefixModified".equals(operationType)
-                || "prefixDeleted".equals(operationType);
+                || "prefixDeleted".equals(operationType) || AGGREGATE.equals(operationType);
+    }
+
+    static boolean isAggregate(HistoryChange change) {
+        return AGGREGATE.equals(change.getOperationType());
     }
 
     static Optional<RollbackAction> plan(HistoryChange change, boolean undo) {
-        String prefix = change.getEntityLabel();
-        String oldNamespace = blankToNull(change.getOldValue());
-        String newNamespace = blankToNull(change.getNewValue());
-        String oldPrefix = blankToNull(change.getAnnotationProperty());
+        return plan(change.getOperationType(), change.getEntityLabel(), change.getOldValue(), change.getNewValue(),
+                change.getAnnotationProperty(), undo);
+    }
+
+    private static Optional<RollbackAction> plan(String operationType, String prefix, String oldValue,
+                                                 String newValue, String oldPrefixValue, boolean undo) {
+        String oldNamespace = blankToNull(oldValue);
+        String newNamespace = blankToNull(newValue);
+        String oldPrefix = blankToNull(oldPrefixValue);
         if (prefix == null || prefix.isBlank()) {
             return Optional.empty();
         }
         boolean renamed = oldPrefix != null && !oldPrefix.equals(prefix);
-        return switch (change.getOperationType()) {
+        return switch (operationType == null ? "" : operationType) {
             case "prefixAdded" -> undo
                     ? Optional.of(RollbackAction.deletePrefix(prefix, newNamespace))
                     : newNamespace == null ? Optional.empty()
@@ -54,7 +65,23 @@ final class PrefixReversal {
     }
 
     static List<RollbackAction> actions(HistoryChange change, boolean undo) {
-        return plan(change, undo).map(List::of).orElse(List.of());
+        if (!isAggregate(change)) {
+            return plan(change, undo).map(List::of).orElse(List.of());
+        }
+        List<HistoryChange.SubChange> parts = change.getSubChanges() == null ? List.of() : change.getSubChanges();
+        List<RollbackAction> actions = new java.util.ArrayList<>();
+        for (HistoryChange.SubChange part : parts) {
+            Optional<RollbackAction> action = plan(part.getAnnotationProperty(), part.getPredicate(), part.getOldValue(),
+                    part.getNewValue(), null, undo);
+            if (action.isEmpty()) {
+                return List.of();
+            }
+            actions.add(action.get());
+        }
+        if (undo) {
+            java.util.Collections.reverse(actions);
+        }
+        return actions;
     }
 
     private static String blankToNull(String value) {

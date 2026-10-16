@@ -111,6 +111,21 @@ class ExactRollbackTest {
     }
 
     @Test
+    void thePreviewCountsEverySubChangeOfTheCarrierAndOfTheEntriesItCovers() {
+        HistoryChange carrier = carrier("c1", A, 1);
+        carrier.getSubChanges().add(new HistoryChange.SubChange("p1", null, "x", null, true));
+        carrier.getSubChanges().add(new HistoryChange.SubChange("p2", null, "y", null, true));
+        HistoryChange covered = entry("c2", B);
+        covered.setCoveredBy("c1");
+        covered.getSubChanges().add(new HistoryChange.SubChange("p3", null, "z", null, true));
+        when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(covered, carrier));
+
+        Result result = service.undoChangeSet(P, "set-1", ACTOR, true);
+
+        assertEquals(3, result.applied().size());
+    }
+
+    @Test
     void aRenameIsRefusedWhenLaterEditsUseTheNewName() {
         HistoryChange rename = carrier("c1", A, 0);
         rename.setOperationType("renameEntity");

@@ -320,6 +320,9 @@ public class RollbackMutationPlanner {
             return;
         }
         plan.actions.addAll(actions);
+        if (PrefixReversal.isAggregate(change) && change.getSubChanges() != null) {
+            change.getSubChanges().forEach(sc -> plan.handled.add(sc.getId()));
+        }
     }
 
     private void planRename(Builder plan, HistoryChange change, boolean undo) {
