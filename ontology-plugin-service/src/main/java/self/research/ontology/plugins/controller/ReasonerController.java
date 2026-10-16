@@ -128,9 +128,7 @@ public class ReasonerController {
                         java.util.concurrent.atomic.AtomicInteger count = draftOntologyUseCount.get(evicted);
                         if (count == null || count.get() <= 0) {
                             draftOntologyUseCount.remove(evicted);
-                            reasonerService.disposeReasoners(evicted);
-                            draftManagerRefs.remove(evicted);
-                            managerRefs.remove(eldest.getKey());
+                            disposeDraftOntology(evicted);
                         } else {
                             draftOntologyPendingDisposal.add(evicted);
                         }
@@ -174,10 +172,17 @@ public class ReasonerController {
             if (count.decrementAndGet() <= 0) {
                 draftOntologyUseCount.remove(ontology);
                 if (draftOntologyPendingDisposal.remove(ontology)) {
-                    reasonerService.disposeReasoners(ontology);
-                    draftManagerRefs.remove(ontology);
+                    disposeDraftOntology(ontology);
                 }
             }
+        }
+    }
+
+    private void disposeDraftOntology(OWLOntology ontology) {
+        reasonerService.disposeReasoners(ontology);
+        OWLOntologyManager manager = draftManagerRefs.remove(ontology);
+        if (manager != null) {
+            managerRefs.values().remove(manager);
         }
     }
 
@@ -282,11 +287,9 @@ public class ReasonerController {
                 triedIds = projectId + " and " + extractBaseProjectId(projectId);
             }
             log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", triedIds);
-            Throwable cause = lastLoadFailure.get();
-            String causeSuffix = cause != null ? " Last load attempt failed with: " + cause.getMessage() : "";
             throw new OntologyNotFoundException("Ontology file not found for project: " + triedIds +
-                ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system."
-                + causeSuffix);
+                ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.",
+                lastLoadFailure.get());
         } finally {
             lastLoadFailure.remove();
         }
@@ -296,6 +299,10 @@ public class ReasonerController {
     static class OntologyNotFoundException extends RuntimeException {
         OntologyNotFoundException(String message) {
             super(message);
+        }
+
+        OntologyNotFoundException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 
@@ -407,46 +414,15 @@ public class ReasonerController {
         return (userId == null || userId.isBlank()) ? lookupId : lookupId + "::draft::" + userId;
     }
 
-    private static final long DRAFT_REUSE_WINDOW_MS = 5000;
-    private final Map<String, Long> lastDraftFetchAtMs = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<OWLOntology>> draftLoadsInFlight =
+        new ConcurrentHashMap<>();
 
     private OWLOntology tryLoadOntologyForId(String lookupId, String userId) throws Exception {
         if (lookupId == null || lookupId.isBlank()) {
             return null;
         }
         if (userId != null && !userId.isBlank()) {
-            String draftKey = cacheKeyFor(lookupId, userId);
-            Object lock = loadLocks.computeIfAbsent(draftKey, k -> new Object());
-            synchronized (lock) {
-                synchronized (draftDisposalLock) {
-                    OWLOntology recentlyFetched = lastDraftOntology.get(draftKey);
-                    Long fetchedAt = lastDraftFetchAtMs.get(draftKey);
-                    if (recentlyFetched != null && fetchedAt != null
-                            && System.currentTimeMillis() - fetchedAt < DRAFT_REUSE_WINDOW_MS) {
-                        beginDraftUse(recentlyFetched);
-                        return recentlyFetched;
-                    }
-                }
-                OWLOntology fresh = loadOntologyFromEditorService(lookupId, userId);
-                if (fresh != null) {
-                    lastDraftFetchAtMs.put(draftKey, System.currentTimeMillis());
-                    synchronized (draftDisposalLock) {
-                        beginDraftUse(fresh);
-                        OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
-                        if (previous != null && previous != fresh) {
-                            java.util.concurrent.atomic.AtomicInteger previousCount = draftOntologyUseCount.get(previous);
-                            if (previousCount == null || previousCount.get() <= 0) {
-                                draftOntologyUseCount.remove(previous);
-                                reasonerService.disposeReasoners(previous);
-                                draftManagerRefs.remove(previous);
-                            } else {
-                                draftOntologyPendingDisposal.add(previous);
-                            }
-                        }
-                    }
-                }
-                return fresh;
-            }
+            return loadDraftOntology(lookupId, userId);
         }
 
         // Fast path: return cached without acquiring a lock.
@@ -505,6 +481,63 @@ public class ReasonerController {
 
             return null;
         }
+    }
+
+    private OWLOntology loadDraftOntology(String lookupId, String userId) throws Exception {
+        String draftKey = cacheKeyFor(lookupId, userId);
+        while (true) {
+            java.util.concurrent.CompletableFuture<OWLOntology> mine = new java.util.concurrent.CompletableFuture<>();
+            java.util.concurrent.CompletableFuture<OWLOntology> inFlight = draftLoadsInFlight.putIfAbsent(draftKey, mine);
+            if (inFlight == null) {
+                try {
+                    OWLOntology fresh = fetchDraftOntology(lookupId, userId, draftKey);
+                    mine.complete(fresh);
+                    return fresh;
+                } catch (Throwable t) {
+                    mine.completeExceptionally(t);
+                    throw t;
+                } finally {
+                    draftLoadsInFlight.remove(draftKey, mine);
+                }
+            }
+            OWLOntology shared;
+            try {
+                shared = inFlight.join();
+            } catch (java.util.concurrent.CompletionException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                throw cause instanceof Exception ex ? ex : new RuntimeException(cause);
+            }
+            if (shared == null) {
+                return null;
+            }
+            synchronized (draftDisposalLock) {
+                if (lastDraftOntology.get(draftKey) == shared || draftOntologyUseCount.containsKey(shared)) {
+                    beginDraftUse(shared);
+                    return shared;
+                }
+            }
+        }
+    }
+
+    private OWLOntology fetchDraftOntology(String lookupId, String userId, String draftKey) {
+        OWLOntology fresh = loadOntologyFromEditorService(lookupId, userId);
+        if (fresh == null) {
+            return null;
+        }
+        synchronized (draftDisposalLock) {
+            beginDraftUse(fresh);
+            OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
+            if (previous != null && previous != fresh) {
+                java.util.concurrent.atomic.AtomicInteger previousCount = draftOntologyUseCount.get(previous);
+                if (previousCount == null || previousCount.get() <= 0) {
+                    draftOntologyUseCount.remove(previous);
+                    disposeDraftOntology(previous);
+                } else {
+                    draftOntologyPendingDisposal.add(previous);
+                }
+            }
+        }
+        return fresh;
     }
 
     private String editorOntologyFileUrl(String projectId) {
@@ -815,18 +848,18 @@ public class ReasonerController {
                     taskInfo.put("success", true);
                     taskInfo.put("durationMs", duration);
                     taskInfo.put("message", "Classification completed successfully");
-                    taskInfo.put("classHierarchy", classificationData.get("classHierarchy"));
-                    taskInfo.put("objectPropertyHierarchy", classificationData.get("objectPropertyHierarchy"));
-                    taskInfo.put("dataPropertyHierarchy", classificationData.get("dataPropertyHierarchy"));
-                    taskInfo.put("equivalentClasses", classificationData.get("equivalentClasses"));
-                    taskInfo.put("unsatisfiableClasses", classificationData.get("unsatisfiableClasses"));
-                    taskInfo.put("totalClasses", classificationData.get("totalClasses"));
-                    taskInfo.put("stats", classificationData.get("stats"));
+                    for (String key : List.of("classHierarchy", "objectPropertyHierarchy", "dataPropertyHierarchy",
+                            "equivalentClasses", "unsatisfiableClasses", "totalClasses", "stats")) {
+                        Object value = classificationData.get(key);
+                        if (value != null) {
+                            taskInfo.put(key, value);
+                        }
+                    }
                 } catch (Throwable e) {
                     log.error("Async classification failed for project: {}", projectId, e);
                     taskInfo.put("status", "FAILED");
                     taskInfo.put("success", false);
-                    taskInfo.put("error", e.getMessage());
+                    taskInfo.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
                 } finally {
                     endDraftUse(ontology);
                 }
