@@ -2,6 +2,7 @@ package self.research.ontology.reasoner.service;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import self.research.ontology.common.ReasoningFriendlyErrors;
 import self.research.ontology.reasoner.model.ReasoningJob;
 import self.research.ontology.reasoner.model.ReasoningJobRecord;
 import self.research.ontology.reasoner.repository.ReasoningJobRecordRepository;
@@ -93,6 +94,8 @@ class ReasoningJobStoreTest {
         ReasoningJob restored = store.toJob(record);
         assertEquals(ReasoningJob.Status.FAILED, restored.getStatus());
         assertEquals(ReasoningJobStore.RESULT_TOO_LARGE_MESSAGE, restored.getError());
+        assertEquals(ReasoningJobStore.RESULT_TOO_LARGE_MESSAGE, ReasoningFriendlyErrors.forUser(restored.getError()));
+        assertEquals(ReasoningJobStore.RESTART_MESSAGE, ReasoningFriendlyErrors.forUser(ReasoningJobStore.RESTART_MESSAGE));
     }
 
     @Test

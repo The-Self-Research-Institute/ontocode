@@ -31,7 +31,7 @@ public class ReasoningJobStore implements SmartInitializingSingleton {
 
     static final String RESTART_MESSAGE = "Reasoning worker restarted before this job finished. Please run it again.";
     static final String RESULT_TOO_LARGE_MESSAGE =
-            "This result was too large to keep after it left the worker's memory. Please run it again.";
+            "This result was bigger than the worker saves, and it is no longer in memory. Please run it again.";
     private static final long OUTAGE_BACKOFF_MS = 30_000;
     private static final TypeReference<Map<String, Object>> RESULT_TYPE = new TypeReference<>() {};
 
