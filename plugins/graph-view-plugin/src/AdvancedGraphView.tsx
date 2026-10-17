@@ -6119,7 +6119,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       headers,
       body: JSON.stringify({
         ops,
-        userId: context?.userId || 'graph-view-plugin',
+        userId: context?.userId,
         username: context?.username || 'Graph View Plugin',
         sessionId: context?.sessionId || `graph-view-${Date.now()}`
       })
@@ -6259,7 +6259,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             label: newLabel,
             parent: parentIriForMutation
           }],
-          userId: context?.userId || 'graph-view-plugin',
+          userId: context?.userId,
           username: context?.username || 'Graph View Plugin',
           sessionId: context?.sessionId || `graph-view-${Date.now()}`
         })
