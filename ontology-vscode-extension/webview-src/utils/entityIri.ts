@@ -37,3 +37,10 @@ export function computeEntityIriPreview(
   const canCreate = !!trimmedName && !isDuplicate;
   return { trimmedName, computedIri, isDuplicate, canCreate };
 }
+
+const BULK_CHANGE_PREFIXES = ["urn:ontocode:spreadsheet-import:", "urn:ontocode:merge:"];
+
+export function isBulkChangeIri(iri: unknown): boolean {
+  const text = String(iri ?? "");
+  return BULK_CHANGE_PREFIXES.some((prefix) => text.startsWith(prefix));
+}
