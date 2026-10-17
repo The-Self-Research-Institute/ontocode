@@ -81,6 +81,7 @@ import { cancelOntologyExport } from "../services/exportService";
 import {
   cancelReasonerSnapshots,
   invalidateReasonerSnapshots,
+  peekReasonerSnapshot,
   ReasonerSnapshotError,
   type ReasonerSnapshot,
 } from "../services/reasonerSnapshot";
@@ -3747,7 +3748,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       setIsConsistencyLoading(true);
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const encodedProjectId = encodeURIComponent(projectId);
-      const snapshot = await loadReasonerSnapshot();
+      const snapshot = peekReasonerSnapshot(pageReasonerSnapshotScope(checkedProjectId, selectedReasoner));
       let data: any;
       if (snapshot) {
         data = snapshotToConsistencyResult(snapshot, checkedProjectId);
