@@ -37,6 +37,9 @@ public class ReasonerService {
 
     private static final int INFERRED_AXIOM_COUNT_MAX_CLASSES = 2000;
 
+    private final Set<CompletableFuture<OWLReasoner>> classHierarchyOnlyBuilds =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     // Caffeine cache: max 5 reasoners, evict after 30 min idle, dispose on removal
     // (each reasoner holds the full ontology + inference state in heap)
     private final Cache<String, CompletableFuture<OWLReasoner>> reasonerCache = Caffeine.newBuilder()
@@ -44,6 +47,7 @@ public class ReasonerService {
         .expireAfterAccess(15, TimeUnit.MINUTES)
         .removalListener((String key, CompletableFuture<OWLReasoner> future, com.github.benmanes.caffeine.cache.RemovalCause cause) -> {
             if (future != null) {
+                classHierarchyOnlyBuilds.remove(future);
                 future.thenAccept(reasoner -> {
                     log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
                     try { reasoner.dispose(); } catch (Exception ignored) {}
@@ -103,9 +107,18 @@ public class ReasonerService {
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
+        return obtainReasoner(ontology, type, true);
+    }
+
+    public OWLReasoner getClassHierarchyReasoner(OWLOntology ontology, ReasonerType type) {
+        return obtainReasoner(ontology, type, false);
+    }
+
+    private OWLReasoner obtainReasoner(OWLOntology ontology, ReasonerType type, boolean withClassAssertions) {
         String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
 
-        CompletableFuture<OWLReasoner> future = reasonerCache.get(cacheKey, k -> submitReasonerBuild(ontology, type));
+        CompletableFuture<OWLReasoner> future = reasonerCache.get(cacheKey,
+                k -> submitReasonerBuild(ontology, type, withClassAssertions));
         OWLReasoner reasoner;
         try {
             reasoner = future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
@@ -123,6 +136,10 @@ public class ReasonerService {
             throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
         }
 
+        if (withClassAssertions && classHierarchyOnlyBuilds.remove(future)) {
+            precomputeAll(reasoner, type);
+        }
+
         try {
             reasoner.flush();
         } catch (Exception e) {
@@ -131,12 +148,18 @@ public class ReasonerService {
         return reasoner;
     }
 
-    private CompletableFuture<OWLReasoner> submitReasonerBuild(OWLOntology ontology, ReasonerType type) {
+    private CompletableFuture<OWLReasoner> submitReasonerBuild(OWLOntology ontology, ReasonerType type,
+                                                               boolean withClassAssertions) {
         CompletableFuture<OWLReasoner> future = new CompletableFuture<>();
+        if (!withClassAssertions) {
+            classHierarchyOnlyBuilds.add(future);
+        }
         try {
             reasonerBuildExecutor.execute(() -> {
                 try {
-                    future.complete(buildReasonerWithPrecompute(ontology, type));
+                    future.complete(withClassAssertions
+                            ? buildReasonerWithPrecompute(ontology, type)
+                            : buildClassHierarchyReasoner(ontology, type));
                 } catch (Throwable t) {
                     future.completeExceptionally(t);
                 }
@@ -151,6 +174,22 @@ public class ReasonerService {
     private OWLReasoner buildReasonerWithPrecompute(OWLOntology ontology, ReasonerType type) {
         OWLReasoner reasoner = createReasoner(ontology, type);
         log.info("Precomputing inferences for new {} reasoner", type.getDisplayName());
+        precomputeAll(reasoner, type);
+        return reasoner;
+    }
+
+    private OWLReasoner buildClassHierarchyReasoner(OWLOntology ontology, ReasonerType type) {
+        OWLReasoner reasoner = createReasoner(ontology, type);
+        log.info("Precomputing the class hierarchy for new {} reasoner", type.getDisplayName());
+        try {
+            reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+        } catch (Exception e) {
+            log.warn("Failed to precompute the class hierarchy, some results might be incomplete: {}", e.getMessage());
+        }
+        return reasoner;
+    }
+
+    private void precomputeAll(OWLReasoner reasoner, ReasonerType type) {
         try {
             if (type == ReasonerType.ELK) {
                 // ELK only supports EL profile inferences
@@ -169,7 +208,6 @@ public class ReasonerService {
         } catch (Exception e) {
             log.warn("Failed to precompute inferences, some results might be incomplete: {}", e.getMessage());
         }
-        return reasoner;
     }
 
     /**
@@ -316,8 +354,10 @@ public class ReasonerService {
      * Get inferred subclasses for a class
      */
     public Set<OWLClass> getInferredSubClasses(OWLOntology ontology, OWLClass owlClass, ReasonerType type, boolean direct) {
-        OWLReasoner reasoner = getReasoner(ontology, type);
-        
+        return getInferredSubClasses(getReasoner(ontology, type), owlClass, direct);
+    }
+
+    public Set<OWLClass> getInferredSubClasses(OWLReasoner reasoner, OWLClass owlClass, boolean direct) {
         try {
             NodeSet<OWLClass> subClasses = reasoner.getSubClasses(owlClass, direct);
             return subClasses.getNodes().stream()

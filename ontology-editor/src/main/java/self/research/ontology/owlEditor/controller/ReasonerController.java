@@ -372,9 +372,9 @@ public class ReasonerController {
 
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLClass owlClass = df.getOWLClass(IRI.create(classIri));
-            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
+            OWLReasoner reasoner = reasonerService.getClassHierarchyReasoner(ontology, type);
 
-            Set<OWLClass> subClasses = reasonerService.getInferredSubClasses(ontology, owlClass, type, direct);
+            Set<OWLClass> subClasses = reasonerService.getInferredSubClasses(reasoner, owlClass, direct);
 
             List<Map<String, Object>> subClassesList = subClasses.stream()
                 .map(cls -> {
