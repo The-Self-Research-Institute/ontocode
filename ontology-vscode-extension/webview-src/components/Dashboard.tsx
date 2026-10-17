@@ -2860,7 +2860,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const loadReasonerSnapshot = async (
     options: { signal?: AbortSignal; reasonerLabel?: string } = {},
   ): Promise<ReasonerSnapshot | null> => {
-    if (!projectId) return null;
+    if (!projectId) {
+      return null;
+    }
     const scope = pageReasonerSnapshotScope(projectId, options.reasonerLabel ?? selectedReasoner);
     return withReasonerSnapshot<ReasonerSnapshot | null>(scope, (snapshot) => snapshot, () => null, { signal: options.signal });
   };
@@ -2947,7 +2949,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       const snapshot = await loadReasonerSnapshotForTab();
-      if (isStale()) return;
+      if (isStale()) {
+        return;
+      }
       if (snapshot) {
         if (snapshot.consistent === false) {
           setInferredClassHierarchy([]);
@@ -2992,7 +2996,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         applyPayload(payload);
       }
     } catch (error) {
-      if (isReasoningJobCancelled(error)) return;
+      if (isReasoningJobCancelled(error)) {
+        return;
+      }
       console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
       if (!isStale()) {
         setInferredClassHierarchy([]);
@@ -3022,7 +3028,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       };
 
       const snapshot = await loadReasonerSnapshotForTab();
-      if (isStale()) return;
+      if (isStale()) {
+        return;
+      }
       if (snapshot) {
         if (snapshot.consistent === false) {
           setInferredObjectPropertyHierarchy([]);
@@ -3054,7 +3062,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
-      if (isReasoningJobCancelled(error)) return;
+      if (isReasoningJobCancelled(error)) {
+        return;
+      }
       console.error("[Dashboard] Failed to load inferred object property hierarchy:", error);
       if (!isStale()) {
         setInferredObjectPropertyHierarchy([]);
@@ -3088,7 +3098,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       };
 
       const snapshot = await loadReasonerSnapshotForTab();
-      if (isStale()) return;
+      if (isStale()) {
+        return;
+      }
       if (snapshot) {
         if (snapshot.consistent === false) {
           setInferredDataPropertyHierarchy([]);
@@ -3117,7 +3129,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
-      if (isReasoningJobCancelled(error)) return;
+      if (isReasoningJobCancelled(error)) {
+        return;
+      }
       console.error("[Dashboard] Failed to load inferred data property hierarchy:", error);
       if (!isStale()) {
         setInferredDataPropertyHierarchy([]);
@@ -3397,7 +3411,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const snapshot = await loadReasonerSnapshot();
-      if (isStaleRun()) return;
+      if (isStaleRun()) {
+        return;
+      }
       const results = snapshot
         ? combineReasonerResults(snapshotToReasonerResults(snapshot))
         : await fetchReasonerBundle(reasonerType, isStaleRun);
@@ -3651,11 +3667,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isRunStale = () => controller.signal.aborted || isStale();
     try {
       const snapshot = await loadReasonerSnapshot({ signal: controller.signal });
-      if (isRunStale()) return;
+      if (isRunStale()) {
+        return;
+      }
       const results = snapshot
         ? combineReasonerResults(snapshotToReasonerResults(snapshot))
         : await fetchReasonerBundle(normalizeReasonerType(selectedReasoner), isRunStale, controller.signal);
-      if (isRunStale()) return;
+      if (isRunStale()) {
+        return;
+      }
       setReasonerResults(results);
 
       if ((results as any)?.inconsistent === true) {
@@ -3698,7 +3718,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
     } catch (error: any) {
-      if (isReasoningJobCancelled(error)) return;
+      if (isReasoningJobCancelled(error)) {
+        return;
+      }
       console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
       if (!isRunStale()) {
         notificationService.warning(
@@ -3749,7 +3771,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         notificationService.success("Consistency Checked", `${selectedReasoner} reports the ontology is consistent`);
       }
     } catch (error: any) {
-      if (isReasoningJobCancelled(error)) return;
+      if (isReasoningJobCancelled(error)) {
+        return;
+      }
       const backendData = error?.response?.data;
       console.error("[Dashboard] Consistency check failed:", {
         status: error?.response?.status,
