@@ -103,7 +103,7 @@ public class ReasoningQueueManager {
         ReasoningJob job;
         synchronized (this) {
             ReasoningJob duplicate = findInFlightDuplicate(jobType, projectId, expression, queryTypes,
-                    reasonerType, maxJustifications, explanationMode);
+                    reasonerType, ownerEmail, maxJustifications, explanationMode);
             if (duplicate != null) {
                 log.info("[Reasoning] Reusing in-flight {} job {} for project {} instead of enqueueing a duplicate",
                         jobType, duplicate.getJobId(), projectId);
@@ -162,12 +162,12 @@ public class ReasoningQueueManager {
     }
 
     private ReasoningJob findInFlightDuplicate(ReasoningJob.JobType jobType, String projectId, String expression,
-                                                List<String> queryTypes, String reasonerType,
+                                                List<String> queryTypes, String reasonerType, String ownerEmail,
                                                 Integer maxJustifications, String explanationMode) {
         for (ReasoningJob candidate : queue) {
             if (candidate.getStatus() == ReasoningJob.Status.QUEUED
                     && isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
-                    maxJustifications, explanationMode)) {
+                    ownerEmail, maxJustifications, explanationMode)) {
                 return candidate;
             }
         }
@@ -176,14 +176,19 @@ public class ReasoningQueueManager {
 
     private boolean isSameRequest(ReasoningJob candidate, ReasoningJob.JobType jobType, String projectId,
                                    String expression, List<String> queryTypes, String reasonerType,
-                                   Integer maxJustifications, String explanationMode) {
+                                   String ownerEmail, Integer maxJustifications, String explanationMode) {
         return Objects.equals(candidate.getJobType(), jobType)
                 && Objects.equals(candidate.getProjectId(), projectId)
                 && Objects.equals(candidate.getExpression(), expression)
                 && Objects.equals(candidate.getQueryTypes(), queryTypes)
                 && Objects.equals(candidate.getReasonerType(), reasonerType)
+                && Objects.equals(ownerKey(candidate.getOwnerEmail()), ownerKey(ownerEmail))
                 && Objects.equals(candidate.getMaxJustifications(), maxJustifications)
                 && Objects.equals(candidate.getExplanationMode(), explanationMode);
+    }
+
+    private static String ownerKey(String ownerEmail) {
+        return ownerEmail == null || ownerEmail.isBlank() ? null : ownerEmail;
     }
 
     public synchronized ReasoningJob dequeue() {

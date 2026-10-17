@@ -34,6 +34,25 @@ class ReasoningQueueManagerTest {
     }
 
     @Test
+    void queuedJobIsSharedOnlyByRequestsFromTheSameOwner() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob alice = manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, "alice@example.com");
+        ReasoningJob bob = manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, "bob@example.com");
+        ReasoningJob published = manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, null);
+
+        assertNotEquals(alice.getJobId(), bob.getJobId());
+        assertNotEquals(alice.getJobId(), published.getJobId());
+        assertNotEquals(bob.getJobId(), published.getJobId());
+        assertSame(alice, manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, "alice@example.com"));
+        assertSame(published, manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, " "));
+    }
+
+    @Test
     void timedOutJobIsNeverHandedBackForANewRequest() {
         ReasoningQueueManager manager = QueueTestSupport.queueManager();
         ReasoningJob first = QueueTestSupport.enqueue(manager, "P1");
