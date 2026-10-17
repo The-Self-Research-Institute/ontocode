@@ -153,6 +153,8 @@ public class ReasonerController {
     // tracked, removed only once it's actually disposed (immediately or deferred via endDraftUse).
     private final Map<OWLOntology, OWLOntologyManager> draftManagerRefs = new java.util.IdentityHashMap<>();
 
+    private final Map<OWLOntology, String> draftVersionOf = new java.util.IdentityHashMap<>();
+
     private void beginDraftUse(OWLOntology ontology) {
         synchronized (draftDisposalLock) {
             draftOntologyUseCount.computeIfAbsent(ontology, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
@@ -179,6 +181,7 @@ public class ReasonerController {
     }
 
     private void disposeDraftOntology(OWLOntology ontology) {
+        draftVersionOf.remove(ontology);
         reasonerService.disposeReasoners(ontology);
         OWLOntologyManager manager = draftManagerRefs.remove(ontology);
         if (manager != null) {
@@ -485,19 +488,31 @@ public class ReasonerController {
 
     private OWLOntology loadDraftOntology(String lookupId, String userId) throws Exception {
         String draftKey = cacheKeyFor(lookupId, userId);
+        String version = currentDraftVersion(lookupId, userId);
+        if (version != null) {
+            synchronized (draftDisposalLock) {
+                OWLOntology cached = lastDraftOntology.get(draftKey);
+                if (cached != null && version.equals(draftVersionOf.get(cached))) {
+                    log.info("Reusing draft ontology for {} (draft version {})", draftKey, version);
+                    beginDraftUse(cached);
+                    return cached;
+                }
+            }
+        }
+        String flightKey = draftKey + "@" + (version != null ? version : "unknown");
         while (true) {
             java.util.concurrent.CompletableFuture<OWLOntology> mine = new java.util.concurrent.CompletableFuture<>();
-            java.util.concurrent.CompletableFuture<OWLOntology> inFlight = draftLoadsInFlight.putIfAbsent(draftKey, mine);
+            java.util.concurrent.CompletableFuture<OWLOntology> inFlight = draftLoadsInFlight.putIfAbsent(flightKey, mine);
             if (inFlight == null) {
                 try {
-                    OWLOntology fresh = fetchDraftOntology(lookupId, userId, draftKey);
+                    OWLOntology fresh = fetchDraftOntology(lookupId, userId, draftKey, version);
                     mine.complete(fresh);
                     return fresh;
                 } catch (Throwable t) {
                     mine.completeExceptionally(t);
                     throw t;
                 } finally {
-                    draftLoadsInFlight.remove(draftKey, mine);
+                    draftLoadsInFlight.remove(flightKey, mine);
                 }
             }
             OWLOntology shared;
@@ -519,13 +534,16 @@ public class ReasonerController {
         }
     }
 
-    private OWLOntology fetchDraftOntology(String lookupId, String userId, String draftKey) {
+    private OWLOntology fetchDraftOntology(String lookupId, String userId, String draftKey, String version) {
         OWLOntology fresh = loadOntologyFromEditorService(lookupId, userId);
         if (fresh == null) {
             return null;
         }
         synchronized (draftDisposalLock) {
             beginDraftUse(fresh);
+            if (version != null) {
+                draftVersionOf.put(fresh, version);
+            }
             OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
             if (previous != null && previous != fresh) {
                 java.util.concurrent.atomic.AtomicInteger previousCount = draftOntologyUseCount.get(previous);
@@ -538,6 +556,29 @@ public class ReasonerController {
             }
         }
         return fresh;
+    }
+
+    private String currentDraftVersion(String projectId, String userId) {
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    editorDraftVersionUrl(projectId, userId), org.springframework.http.HttpMethod.GET,
+                    editorInternalAuthEntity(), Map.class);
+            if (response == null || response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
+                return null;
+            }
+            Object version = response.getBody().get("version");
+            return version instanceof String text && !text.isBlank() ? text : null;
+        } catch (Exception e) {
+            log.debug("Could not read the draft version for {} (user {}): {}", projectId, userId, e.getMessage());
+            return null;
+        }
+    }
+
+    private String editorDraftVersionUrl(String projectId, String userId) {
+        String encodedProject = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
+        String encodedUser = java.net.URLEncoder.encode(userId, StandardCharsets.UTF_8).replace("+", "%20");
+        String base = editorServiceUrl.endsWith("/") ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
+        return base + "/internal/reasoning/" + encodedProject + "/draft-version?userId=" + encodedUser;
     }
 
     private String editorOntologyFileUrl(String projectId) {

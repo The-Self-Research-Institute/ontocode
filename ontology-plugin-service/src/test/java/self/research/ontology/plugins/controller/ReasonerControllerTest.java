@@ -242,4 +242,47 @@ class ReasonerControllerTest {
         assertFalse(managerRefs.containsValue(inUse.getOWLOntologyManager()));
         assertTrue(managerRefs.containsValue(other.getOWLOntologyManager()));
     }
+
+    private static final String DRAFT_VERSION_URL_PART = "/internal/reasoning/proj-1/draft-version?userId=user-1";
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void draftIsReusedUntilItsDraftVersionChanges() {
+        ReflectionTestUtils.setField(controller, "maxDraftOntologies", 10);
+        AtomicReference<String> version = new AtomicReference<>("editor-a:3.7");
+        when(restTemplate.exchange(contains(DRAFT_VERSION_URL_PART), eq(HttpMethod.GET), any(), eq(Map.class)))
+                .thenAnswer(invocation -> ResponseEntity.ok((Map) Map.of("version", version.get())));
+        when(restTemplate.exchange(contains(DRAFT_EXPORT_URL_PART), eq(HttpMethod.GET), any(), eq(byte[].class)))
+                .thenAnswer(invocation -> ResponseEntity.ok(TINY_ONTOLOGY));
+
+        OWLOntology first = (OWLOntology) invokeDraftLoad("user-1");
+        ReflectionTestUtils.invokeMethod(controller, "endDraftUse", first);
+        OWLOntology repeat = (OWLOntology) invokeDraftLoad("user-1");
+        ReflectionTestUtils.invokeMethod(controller, "endDraftUse", repeat);
+
+        assertSame(first, repeat);
+        verify(restTemplate, times(1)).exchange(contains(DRAFT_EXPORT_URL_PART), eq(HttpMethod.GET), any(), eq(byte[].class));
+
+        version.set("editor-a:3.8");
+        OWLOntology afterWrite = (OWLOntology) invokeDraftLoad("user-1");
+
+        assertFalse(afterWrite == first);
+        verify(restTemplate, times(2)).exchange(contains(DRAFT_EXPORT_URL_PART), eq(HttpMethod.GET), any(), eq(byte[].class));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void draftVersionCheckSendsTheInternalToken() {
+        when(restTemplate.exchange(contains(DRAFT_VERSION_URL_PART), eq(HttpMethod.GET), any(), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok((Map) Map.of("version", "editor-a:1.1")));
+        when(restTemplate.exchange(contains(DRAFT_EXPORT_URL_PART), eq(HttpMethod.GET), any(), eq(byte[].class)))
+                .thenAnswer(invocation -> ResponseEntity.ok(TINY_ONTOLOGY));
+
+        invokeDraftLoad("user-1");
+
+        org.mockito.ArgumentCaptor<org.springframework.http.HttpEntity> entity =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.http.HttpEntity.class);
+        verify(restTemplate).exchange(contains(DRAFT_VERSION_URL_PART), eq(HttpMethod.GET), entity.capture(), eq(Map.class));
+        assertEquals("ontocode-internal", entity.getValue().getHeaders().getFirst("X-Ontocode-Internal-Token"));
+    }
 }
