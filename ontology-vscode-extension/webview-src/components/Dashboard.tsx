@@ -78,6 +78,19 @@ import type {
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { cancelOntologyExport } from "../services/exportService";
+import { invalidateReasonerSnapshots, ReasonerSnapshotError, type ReasonerSnapshot } from "../services/reasonerSnapshot";
+import {
+  snapshotClassTree,
+  snapshotDataPropertyTree,
+  snapshotInconsistencyMessage,
+  snapshotInferredAxioms,
+  snapshotObjectPropertyTree,
+  snapshotToConsistencyResult,
+  snapshotToReasonerResults,
+  withReasonerSnapshot,
+} from "../services/reasonerSnapshotUse";
+import { pageReasonerSnapshotScope } from "../services/reasonerSnapshotScope";
+import { isReasoningJobCancelled, ReasoningJobTimeoutError } from "../services/reasoningJobWait";
 import { resolveMutationActor } from "../utils/mutationActor";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
@@ -2833,6 +2846,32 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
+  const loadReasonerSnapshot = async (
+    options: { signal?: AbortSignal; reasonerLabel?: string } = {},
+  ): Promise<ReasonerSnapshot | null> => {
+    if (!projectId) return null;
+    const scope = pageReasonerSnapshotScope(projectId, options.reasonerLabel ?? selectedReasoner);
+    return withReasonerSnapshot<ReasonerSnapshot | null>(scope, (snapshot) => snapshot, () => null, { signal: options.signal });
+  };
+
+  const loadReasonerSnapshotForTab = async (): Promise<ReasonerSnapshot | null> => {
+    try {
+      return await loadReasonerSnapshot();
+    } catch (error) {
+      if (error instanceof ReasoningJobTimeoutError && normalizeReasonerType(selectedReasoner) !== "STRUCTURAL") {
+        return loadReasonerSnapshot({ reasonerLabel: "STRUCTURAL" });
+      }
+      throw error;
+    }
+  };
+
+  const reportReasonerSnapshotFailure = (error: unknown) => {
+    if (error instanceof ReasonerSnapshotError) {
+      showNotification(error.message, "error");
+    }
+    notifyReasonerJobRejected(error);
+  };
+
   const pollReasonerWorkerJob = async (
     targetProjectId: string,
     jobId: string,
@@ -2904,6 +2943,18 @@ const Dashboard: React.FC<DashboardProps> = ({
     };
 
     try {
+      const snapshot = await loadReasonerSnapshotForTab();
+      if (isStale()) return;
+      if (snapshot) {
+        if (snapshot.consistent === false) {
+          setInferredClassHierarchy([]);
+          showNotification(snapshotInconsistencyMessage(snapshot), "error");
+          return;
+        }
+        applyPayload({ hierarchy: snapshotClassTree(snapshot) });
+        return;
+      }
+
       const payload = await fetchWithReasoner(effectiveReasoner);
       if (isStale()) return;
 
@@ -2938,10 +2989,11 @@ const Dashboard: React.FC<DashboardProps> = ({
         applyPayload(payload);
       }
     } catch (error) {
+      if (isReasoningJobCancelled(error)) return;
       console.error("[Dashboard] Failed to load inferred class hierarchy:", error);
       if (!isStale()) {
         setInferredClassHierarchy([]);
-        notifyReasonerJobRejected(error);
+        reportReasonerSnapshotFailure(error);
       }
     }
   }, [projectId, metadata, applyInstanceCountsToTree, classInstanceCounts, selectedReasoner, normalizeHierarchyNode]);
@@ -2966,6 +3018,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         return resolveHierarchyPayload(projectId, r?.data || r, isStale);
       };
 
+      const snapshot = await loadReasonerSnapshotForTab();
+      if (isStale()) return;
+      if (snapshot) {
+        if (snapshot.consistent === false) {
+          setInferredObjectPropertyHierarchy([]);
+          showNotification(snapshotInconsistencyMessage(snapshot), "error");
+          return;
+        }
+        setInferredObjectPropertyHierarchy(snapshotObjectPropertyTree(snapshot));
+        return;
+      }
+
       let payload = await fetchPropHierarchy(effectiveReasoner);
       if (isStale()) return;
       if (payload?.tooLargeForReasoner) { setInferredObjectPropertyHierarchy([]); return; }
@@ -2987,10 +3051,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       setInferredObjectPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
+      if (isReasoningJobCancelled(error)) return;
       console.error("[Dashboard] Failed to load inferred object property hierarchy:", error);
       if (!isStale()) {
         setInferredObjectPropertyHierarchy([]);
-        notifyReasonerJobRejected(error);
+        reportReasonerSnapshotFailure(error);
       }
     } finally {
       if (inferredObjectPropertyLoadKeyRef.current === loadKey) {
@@ -3019,6 +3084,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         return resolveHierarchyPayload(projectId, r?.data || r, isStale);
       };
 
+      const snapshot = await loadReasonerSnapshotForTab();
+      if (isStale()) return;
+      if (snapshot) {
+        if (snapshot.consistent === false) {
+          setInferredDataPropertyHierarchy([]);
+          showNotification(snapshotInconsistencyMessage(snapshot), "error");
+          return;
+        }
+        setInferredDataPropertyHierarchy(snapshotDataPropertyTree(snapshot));
+        return;
+      }
+
       let payload = await fetchPropHierarchy(effectiveReasoner);
       if (isStale()) return;
       if (payload?.tooLargeForReasoner) { setInferredDataPropertyHierarchy([]); return; }
@@ -3037,10 +3114,11 @@ const Dashboard: React.FC<DashboardProps> = ({
       const hierarchy = payload?.hierarchy || payload?.data?.hierarchy || [];
       setInferredDataPropertyHierarchy(Array.isArray(hierarchy) ? hierarchy : []);
     } catch (error) {
+      if (isReasoningJobCancelled(error)) return;
       console.error("[Dashboard] Failed to load inferred data property hierarchy:", error);
       if (!isStale()) {
         setInferredDataPropertyHierarchy([]);
-        notifyReasonerJobRejected(error);
+        reportReasonerSnapshotFailure(error);
       }
     } finally {
       if (inferredDataPropertyLoadKeyRef.current === loadKey) {
@@ -3310,7 +3388,11 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       const reasonerType = normalizeReasonerType(selectedReasoner);
-      const results = await fetchReasonerBundle(reasonerType, isStaleRun);
+      const snapshot = await loadReasonerSnapshot();
+      if (isStaleRun()) return;
+      const results = snapshot
+        ? combineReasonerResults(snapshotToReasonerResults(snapshot))
+        : await fetchReasonerBundle(reasonerType, isStaleRun);
       if (isStaleRun()) return;
       setReasonerResults(results);
             console.log("[Dashboard] reasoner bundle:", results);
@@ -3349,23 +3431,27 @@ const Dashboard: React.FC<DashboardProps> = ({
       // Fetch inferred axioms for the Reasoner tab's "Inferred Axioms" view — this
       // was previously never called from this flow, so that tab stayed permanently
       // empty regardless of how many times classification succeeded.
-      try {
-        const axiomsResponse = await apiClient.get<any>(
-          `/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/inferred-axioms`,
-          { reasonerType, ...(startReasonerDraftUserId ? { userId: startReasonerDraftUserId } : {}) },
-        );
-        const rawAxiomsPayload = axiomsResponse?.data || axiomsResponse;
-        // When the reasoner-worker is enabled, this endpoint replies {async:true, jobId}
-        // instead of the axioms directly — reuse the same resolve-or-poll helper the
-        // hierarchy fetch below relies on, rather than treating the queued response as
-        // "no axioms" (which silently emptied this tab even after a successful run).
-        const axiomsPayload = await resolveHierarchyPayload(projectId, rawAxiomsPayload, isStaleRun);
-        if (isStaleRun()) return;
-        setInferredAxioms(Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : []);
-      } catch (axiomsError) {
-        console.warn("[Dashboard] Inferred axioms fetch failed (non-fatal):", axiomsError);
-        if (isStaleRun()) return;
-        setInferredAxioms([]);
+      if (snapshot) {
+        setInferredAxioms(snapshotInferredAxioms(snapshot));
+      } else {
+        try {
+          const axiomsResponse = await apiClient.get<any>(
+            `/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/inferred-axioms`,
+            { reasonerType, ...(startReasonerDraftUserId ? { userId: startReasonerDraftUserId } : {}) },
+          );
+          const rawAxiomsPayload = axiomsResponse?.data || axiomsResponse;
+          // When the reasoner-worker is enabled, this endpoint replies {async:true, jobId}
+          // instead of the axioms directly — reuse the same resolve-or-poll helper the
+          // hierarchy fetch below relies on, rather than treating the queued response as
+          // "no axioms" (which silently emptied this tab even after a successful run).
+          const axiomsPayload = await resolveHierarchyPayload(projectId, rawAxiomsPayload, isStaleRun);
+          if (isStaleRun()) return;
+          setInferredAxioms(Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : []);
+        } catch (axiomsError) {
+          console.warn("[Dashboard] Inferred axioms fetch failed (non-fatal):", axiomsError);
+          if (isStaleRun()) return;
+          setInferredAxioms([]);
+        }
       }
 
       // After successful classification, load full recursive hierarchies from the main API
@@ -3408,6 +3494,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         `${selectedReasoner} reasoner completed successfully. View inferred hierarchy in Entities > Classes tab.`,
       );
     } catch (error: any) {
+      if (isReasoningJobCancelled(error)) {
+        if (!isStaleRun()) {
+          setIsReasonerRunning(false);
+        }
+        return;
+      }
       // Log the full backend payload (error, errorType, technicalDetail, suggestion)
       // so it's always in the console even when the notification only has room for
       // a short message — this is what TSRI-196 asked for: never just "Not Found"
@@ -3546,7 +3638,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
     autoSyncReasonerInFlightRef.current = true;
     try {
-      const results = await fetchReasonerBundle(normalizeReasonerType(selectedReasoner), isStale);
+      const snapshot = await loadReasonerSnapshot();
+      if (isStale()) return;
+      const results = snapshot
+        ? combineReasonerResults(snapshotToReasonerResults(snapshot))
+        : await fetchReasonerBundle(normalizeReasonerType(selectedReasoner), isStale);
       if (isStale()) return;
       setReasonerResults(results);
 
@@ -3584,8 +3680,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (Array.isArray(bundleDataPropertyHierarchy) && bundleDataPropertyHierarchy.length > 0) {
         setInferredDataPropertyHierarchy(bundleDataPropertyHierarchy);
       }
+      if (snapshot) {
+        setInferredAxioms(snapshotInferredAxioms(snapshot));
+      }
       console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
     } catch (error: any) {
+      if (isReasoningJobCancelled(error)) return;
       console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
       if (!isStale()) {
         notificationService.warning(
@@ -3614,13 +3714,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       setIsConsistencyLoading(true);
       const reasonerType = normalizeReasonerType(selectedReasoner);
       const encodedProjectId = encodeURIComponent(projectId);
-      const resp = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/consistency`, {
-        reasonerType,
-        ...draftBodyFields(),
-      });
-      let data = extractResponseData(resp);
-      if (data?.async && (data?.jobId || data?.taskId)) {
-        data = await pollReasonerWorkerJob(checkedProjectId, data.jobId || data.taskId);
+      const snapshot = await loadReasonerSnapshot();
+      let data: any;
+      if (snapshot) {
+        data = snapshotToConsistencyResult(snapshot, checkedProjectId);
+      } else {
+        const resp = await apiClient.post(`/plugin-service/api/reasoner/${encodedProjectId}/consistency`, {
+          reasonerType,
+          ...draftBodyFields(),
+        });
+        data = extractResponseData(resp);
+        if (data?.async && (data?.jobId || data?.taskId)) {
+          data = await pollReasonerWorkerJob(checkedProjectId, data.jobId || data.taskId);
+        }
       }
       if (currentProjectIdRef.current !== checkedProjectId || data?.stale) return;
       setConsistencyResult(data);
@@ -3632,6 +3738,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         notificationService.success("Consistency Checked", `${selectedReasoner} reports the ontology is consistent`);
       }
     } catch (error: any) {
+      if (isReasoningJobCancelled(error)) return;
       const backendData = error?.response?.data;
       console.error("[Dashboard] Consistency check failed:", {
         status: error?.response?.status,
@@ -3686,6 +3793,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // after the ontology was fixed, directly contradicting this dialog.
       if (data?.isConsistent === true) {
         setReasonerResults(null);
+        invalidateReasonerSnapshots({ projectId: checkedProjectId });
         checkConsistency();
       }
 
@@ -3754,6 +3862,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       // after the underlying reason for that has already been cleared/fixed.
       inferredClassHierarchyAttemptedKeyRef.current = null;
       setReasonerResults(null);
+      invalidateReasonerSnapshots({ projectId });
       checkConsistency();
     } catch (error: any) {
       const friendlyMessage =
@@ -9517,6 +9626,9 @@ const updateItemInState = useCallback(
   const markAsUnsaved = useCallback(() => {
     console.log("[DEBUG] markAsUnsaved called");
     codeViewDirtyRef.current = true;
+    if (projectId) {
+      invalidateReasonerSnapshots({ projectId });
+    }
     if (!isLiveWriteMode()) {
       setHasUnsavedChanges(true);
       // Wait 1.5 s before polling draft count — gives the backend time to persist the draft record

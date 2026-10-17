@@ -26,6 +26,7 @@ import {
   withReasonerSnapshot,
 } from "../services/reasonerSnapshotUse";
 import { ReasoningJobCancelledError } from "../services/reasoningJobWait";
+import { cachedUnsatisfiable, pageReasonerSnapshotScope, snapshotKnowsUnsatisfiable } from "../services/reasonerSnapshotScope";
 import { attachReasoningSocket, resetReasoningTopicState } from "../services/reasoningJobTopic";
 
 const get = apiClient.get as unknown as ReturnType<typeof vi.fn>;
@@ -299,5 +300,21 @@ describe("inferred class expand from the snapshot", () => {
       consistent: false,
       unsatisfiableClasses: [{ iri: "B", label: "B" }],
     });
+  });
+});
+
+describe("class editor quick check from the page cache", () => {
+  it("answers from a cached consistent snapshot and defers otherwise", async () => {
+    expect(snapshotKnowsUnsatisfiable(snapshot(), "B")).toBe(true);
+    expect(snapshotKnowsUnsatisfiable(snapshot(), "A")).toBe(false);
+    expect(snapshotKnowsUnsatisfiable(snapshot({ unsatisfiableKnown: false }), "B")).toBeNull();
+    expect(snapshotKnowsUnsatisfiable(snapshot({ consistent: false }), "B")).toBeNull();
+    expect(snapshotKnowsUnsatisfiable(undefined, "B")).toBeNull();
+
+    expect(cachedUnsatisfiable("p1", "HermiT", "B")).toBeNull();
+    get.mockResolvedValueOnce(snapshot());
+    await getReasonerSnapshot(pageReasonerSnapshotScope("p1", "HermiT"));
+    expect(cachedUnsatisfiable("p1", "HermiT", "B")).toBe(true);
+    expect(cachedUnsatisfiable("p1", "ELK", "B")).toBeNull();
   });
 });
