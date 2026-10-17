@@ -26,9 +26,11 @@ import java.util.concurrent.atomic.AtomicLong;
 @Service
 public class ReasoningSnapshotService {
 
-    record Key(String projectId, long revision, String reasoner) {}
+    record Key(String projectId, long revision, long tripleCount, String reasoner) {}
 
     private record Entry(Map<String, Object> snapshot, long storedAtMs) {}
+
+    private record Built(Map<String, Object> snapshot, long revision, long tripleCount) {}
 
     static final class AbandonedSnapshotException extends RuntimeException {
         AbandonedSnapshotException(Throwable cause) {
@@ -62,13 +64,12 @@ public class ReasoningSnapshotService {
         ReasonerType requested = ReasonerType.fromRequest(reasonerType);
         String owner = ownerEmail == null || ownerEmail.isBlank() ? null : ownerEmail;
         if (owner != null) {
-            return served(build(projectId, requested, owner), false);
+            return served(build(projectId, requested, owner).snapshot(), false);
         }
-        long revision = sessionService.currentRevision(projectId);
-        if (revision < 0) {
-            return served(build(projectId, requested, null), false);
+        Key key = cacheKey(projectId, requested);
+        if (key == null) {
+            return served(build(projectId, requested, null).snapshot(), false);
         }
-        Key key = new Key(projectId, revision, requested.name());
         while (true) {
             Map<String, Object> hit = lookup(key);
             if (hit != null) {
@@ -80,31 +81,34 @@ public class ReasoningSnapshotService {
                 return buildAndShare(key, mine, requested);
             }
             log.info("[Snapshot] Waiting for the {} snapshot of project {} revision {} that is already being built",
-                    key.reasoner(), projectId, revision);
+                    key.reasoner(), projectId, key.revision());
             Map<String, Object> joined = await(running);
             if (joined != null) {
                 return served(joined, false);
             }
             log.info("[Snapshot] The run building the {} snapshot of project {} revision {} was stopped — building it here",
-                    key.reasoner(), projectId, revision);
+                    key.reasoner(), projectId, key.revision());
         }
     }
 
-    public Optional<Map<String, Object>> cached(String projectId, String reasonerType) {
-        long revision = sessionService.currentRevision(projectId);
-        if (revision < 0) {
+    public Optional<Map<String, Object>> cached(String projectId, String reasonerType, long tripleCount) {
+        if (tripleCount < 0) {
             return Optional.empty();
         }
-        Map<String, Object> hit = lookup(new Key(projectId, revision, ReasonerType.fromRequest(reasonerType).name()));
+        long revision = sessionService.currentRevision(projectId);
+        if (revision <= 0) {
+            return Optional.empty();
+        }
+        Map<String, Object> hit = lookup(new Key(projectId, revision, tripleCount,
+                ReasonerType.fromRequest(reasonerType).name()));
         return hit != null ? Optional.of(served(hit, true)) : Optional.empty();
     }
 
     public Optional<Map<String, Object>> cachedOrInFlight(String projectId, String reasonerType) {
-        long revision = sessionService.currentRevision(projectId);
-        if (revision < 0) {
+        Key key = cacheKey(projectId, ReasonerType.fromRequest(reasonerType));
+        if (key == null) {
             return Optional.empty();
         }
-        Key key = new Key(projectId, revision, ReasonerType.fromRequest(reasonerType).name());
         Map<String, Object> hit = lookup(key);
         if (hit != null) {
             return Optional.of(served(hit, true));
@@ -142,6 +146,18 @@ public class ReasoningSnapshotService {
         }
     }
 
+    private Key cacheKey(String projectId, ReasonerType requested) {
+        long revision = sessionService.currentRevision(projectId);
+        if (revision <= 0) {
+            return null;
+        }
+        long tripleCount = sessionService.currentTripleCount(projectId);
+        if (tripleCount < 0) {
+            return null;
+        }
+        return new Key(projectId, revision, tripleCount, requested.name());
+    }
+
     int size() {
         synchronized (entries) {
             return entries.size();
@@ -161,11 +177,11 @@ public class ReasoningSnapshotService {
                 mine.complete(hit);
                 return served(hit, true);
             }
-            Map<String, Object> built = build(key.projectId(), requested, null);
+            Built built = build(key.projectId(), requested, null);
             remember(key, built);
             inFlight.remove(key, mine);
-            mine.complete(built);
-            return served(built, false);
+            mine.complete(built.snapshot());
+            return served(built.snapshot(), false);
         } catch (Throwable t) {
             inFlight.remove(key, mine);
             mine.completeExceptionally(wasStopped(t) ? new AbandonedSnapshotException(t) : t);
@@ -173,7 +189,7 @@ public class ReasoningSnapshotService {
         }
     }
 
-    private Map<String, Object> build(String projectId, ReasonerType requested, String owner) throws Exception {
+    private Built build(String projectId, ReasonerType requested, String owner) throws Exception {
         builds.incrementAndGet();
         try (OntologySessionService.ReasoningSession session =
                      sessionService.openSnapshotSession(projectId, requested, owner)) {
@@ -192,18 +208,17 @@ public class ReasoningSnapshotService {
             log.info("[Snapshot] Built {} snapshot for project {} revision {} with {} / {} in {} ms",
                     requested, projectId, session.revision(), session.actualReasonerType(),
                     session.propertyReasonerType(), built.get("durationMs"));
-            return response;
+            return new Built(response, session.revision(), session.tripleCount());
         }
     }
 
-    private void remember(Key requestedKey, Map<String, Object> snapshot) {
-        long revision = snapshot.get("ontologyRevision") instanceof Number n ? n.longValue() : -1;
-        if (revision < 0) {
+    private void remember(Key requestedKey, Built built) {
+        if (built.revision() <= 0 || built.tripleCount() < 0) {
             return;
         }
-        Key key = new Key(requestedKey.projectId(), revision, requestedKey.reasoner());
-        keepInMemory(key, snapshot);
-        store.save(key.projectId(), key.revision(), key.reasoner(), snapshot);
+        Key key = new Key(requestedKey.projectId(), built.revision(), built.tripleCount(), requestedKey.reasoner());
+        keepInMemory(key, built.snapshot());
+        store.save(key.projectId(), key.revision(), key.tripleCount(), key.reasoner(), built.snapshot());
     }
 
     private void keepInMemory(Key key, Map<String, Object> snapshot) {
@@ -212,7 +227,8 @@ public class ReasoningSnapshotService {
         }
         synchronized (entries) {
             entries.entrySet().removeIf(e -> e.getKey().projectId().equals(key.projectId())
-                    && e.getKey().revision() < key.revision());
+                    && (e.getKey().revision() < key.revision()
+                    || (e.getKey().revision() == key.revision() && e.getKey().tripleCount() != key.tripleCount())));
             entries.put(key, new Entry(snapshot, System.currentTimeMillis()));
             boolean squeezed = ReasoningHeapMonitor.usedRatio() >= heapPressureUsedRatio;
             Iterator<Key> it = entries.keySet().iterator();
@@ -232,7 +248,7 @@ public class ReasoningSnapshotService {
         if (inMemory != null) {
             return inMemory;
         }
-        Optional<Map<String, Object>> saved = store.find(key.projectId(), key.revision(), key.reasoner());
+        Optional<Map<String, Object>> saved = store.find(key.projectId(), key.revision(), key.tripleCount(), key.reasoner());
         if (saved.isEmpty()) {
             return null;
         }

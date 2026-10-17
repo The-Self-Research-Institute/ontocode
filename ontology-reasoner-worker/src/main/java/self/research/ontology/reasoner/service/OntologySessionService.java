@@ -70,6 +70,10 @@ public class OntologySessionService {
         return editorClient.getRevision(projectId);
     }
 
+    public long currentTripleCount(String projectId) {
+        return editorClient.getTripleCount(projectId);
+    }
+
     public ReasoningSession openSession(String projectId, ReasonerType reasonerType) throws Exception {
         return openSession(projectId, reasonerType, null);
     }
@@ -118,9 +122,10 @@ public class OntologySessionService {
 
         boolean cacheEligible = (userId == null || userId.isBlank());
         long revision = cacheEligible ? editorClient.getRevision(projectId) : -1;
+        boolean useCache = cacheEligible && revision > 0;
 
-        if (cacheEligible && revision >= 0) {
-            var cached = ontologyCache.getAndBeginUse(projectId, revision);
+        if (useCache) {
+            var cached = ontologyCache.getAndBeginUse(projectId, revision, tripleCount);
             if (cached.isPresent()) {
                 OWLOntology ontology = cached.get();
                 log.info("[Reasoner] Skipping OWL load — reusing cached ontology for {} (revision={})", projectId, revision);
@@ -150,9 +155,9 @@ public class OntologySessionService {
         log.info("Loaded ontology for {} ({} axioms, userId={}, reasoner={})",
                 projectId, ontology.getAxiomCount(), userId, effectiveType);
 
-        boolean storedInCache = cacheEligible && revision >= 0;
+        boolean storedInCache = useCache;
         if (storedInCache) {
-            ontologyCache.putAndBeginUse(projectId, revision, manager, ontology);
+            ontologyCache.putAndBeginUse(projectId, revision, tripleCount, manager, ontology);
         }
 
         try {
@@ -171,7 +176,8 @@ public class OntologySessionService {
                                           long revision, boolean snapshot, long tripleCount) {
         if (!snapshot) {
             OWLReasoner reasoner = createRegisteredReasoner(ontology, type);
-            return new ReasoningSession(manager, ontology, reasoner, type, downgradedWarning, fromCache, cache, revision);
+            return new ReasoningSession(manager, ontology, reasoner, type, downgradedWarning, fromCache, cache, revision,
+                    null, type, tripleCount);
         }
 
         ReasonerType classType = type;
@@ -206,7 +212,7 @@ public class OntologySessionService {
             }
         }
         return new ReasoningSession(manager, ontology, classReasoner, classType, downgradedWarning, fromCache, cache,
-                revision, propertyReasoner, propertyType);
+                revision, propertyReasoner, propertyType, tripleCount);
     }
 
     static String rootMessage(Throwable error) {
@@ -285,6 +291,7 @@ public class OntologySessionService {
         private final long revision;
         private final OWLReasoner propertyReasoner;
         private final ReasonerType propertyReasonerType;
+        private final long tripleCount;
 
         ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
                          ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
@@ -297,6 +304,14 @@ public class OntologySessionService {
                          ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
                          OntologyCache cache, long revision,
                          OWLReasoner propertyReasoner, ReasonerType propertyReasonerType) {
+            this(manager, ontology, reasoner, actualReasonerType, downgradedWarning, fromCache, cache, revision,
+                    propertyReasoner, propertyReasonerType, -1);
+        }
+
+        ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
+                         ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
+                         OntologyCache cache, long revision,
+                         OWLReasoner propertyReasoner, ReasonerType propertyReasonerType, long tripleCount) {
             this.manager = manager;
             this.ontology = ontology;
             this.reasoner = reasoner;
@@ -307,6 +322,7 @@ public class OntologySessionService {
             this.revision = revision;
             this.propertyReasoner = propertyReasoner;
             this.propertyReasonerType = propertyReasonerType != null ? propertyReasonerType : actualReasonerType;
+            this.tripleCount = tripleCount;
         }
 
         public OWLOntology ontology() { return ontology; }
@@ -316,6 +332,7 @@ public class OntologySessionService {
         public ReasonerType propertyReasonerType() { return propertyReasonerType; }
         public String downgradedWarning() { return downgradedWarning; }
         public long revision() { return revision; }
+        public long tripleCount() { return tripleCount; }
 
         @Override
         public void close() {

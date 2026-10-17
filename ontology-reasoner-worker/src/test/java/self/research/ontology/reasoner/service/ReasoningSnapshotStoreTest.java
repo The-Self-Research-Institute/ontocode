@@ -31,16 +31,17 @@ class ReasoningSnapshotStoreTest {
         ReasoningSnapshotRecordRepository repository = mock(ReasoningSnapshotRecordRepository.class);
         ReasoningSnapshotStore store = new ReasoningSnapshotStore(repository, 1_000_000, 72);
 
-        store.save("P1", 3, "HERMIT", Map.of("success", true, "consistent", true, "ontologyRevision", 3L,
+        store.save("P1", 3, 900, "HERMIT", Map.of("success", true, "consistent", true, "ontologyRevision", 3L,
                 "classTree", List.of(Map.of("id", "owl:Thing"))));
 
         ArgumentCaptor<ReasoningSnapshotRecord> saved = ArgumentCaptor.forClass(ReasoningSnapshotRecord.class);
         verify(repository, timeout(5_000)).save(saved.capture());
         verify(repository, timeout(5_000)).deleteByProjectIdAndRevisionLessThan("P1", 3);
-        assertEquals("P1|3|HERMIT", saved.getValue().getId());
-        when(repository.findById("P1|3|HERMIT")).thenReturn(Optional.of(saved.getValue()));
+        assertEquals("P1|3|900|HERMIT", saved.getValue().getId());
+        assertEquals(900, saved.getValue().getTripleCount());
+        when(repository.findById("P1|3|900|HERMIT")).thenReturn(Optional.of(saved.getValue()));
 
-        Map<String, Object> restored = store.find("P1", 3, "HERMIT").orElseThrow();
+        Map<String, Object> restored = store.find("P1", 3, 900, "HERMIT").orElseThrow();
 
         assertEquals(true, restored.get("consistent"));
         assertEquals(3L, restored.get("ontologyRevision"));
@@ -53,10 +54,10 @@ class ReasoningSnapshotStoreTest {
         ReasoningSnapshotRecordRepository repository = mock(ReasoningSnapshotRecordRepository.class);
         ReasoningSnapshotStore store = new ReasoningSnapshotStore(repository, 50, 72);
 
-        store.save("P1", 3, "HERMIT", Map.of("success", true, "message", "x".repeat(200)));
+        store.save("P1", 3, 900, "HERMIT", Map.of("success", true, "message", "x".repeat(200)));
 
         verify(repository, after(300).never()).save(any());
-        assertTrue(store.toRecord("P1", 3, "HERMIT", Map.of("message", "x".repeat(200))).isEmpty());
+        assertTrue(store.toRecord("P1", 3, 900, "HERMIT", Map.of("message", "x".repeat(200))).isEmpty());
         store.shutdown();
     }
 
@@ -64,11 +65,11 @@ class ReasoningSnapshotStoreTest {
     void savedSnapshotOlderThanTheRetentionIsIgnored() {
         ReasoningSnapshotRecordRepository repository = mock(ReasoningSnapshotRecordRepository.class);
         ReasoningSnapshotStore store = new ReasoningSnapshotStore(repository, 1_000_000, 72);
-        ReasoningSnapshotRecord record = store.toRecord("P1", 3, "HERMIT", Map.of("consistent", true)).orElseThrow();
+        ReasoningSnapshotRecord record = store.toRecord("P1", 3, 900, "HERMIT", Map.of("consistent", true)).orElseThrow();
         record.setUpdatedAt(Instant.now().minus(Duration.ofHours(73)));
-        when(repository.findById("P1|3|HERMIT")).thenReturn(Optional.of(record));
+        when(repository.findById("P1|3|900|HERMIT")).thenReturn(Optional.of(record));
 
-        assertTrue(store.find("P1", 3, "HERMIT").isEmpty());
+        assertTrue(store.find("P1", 3, 900, "HERMIT").isEmpty());
         store.shutdown();
     }
 
@@ -78,9 +79,9 @@ class ReasoningSnapshotStoreTest {
         when(repository.findById(anyString())).thenThrow(new IllegalStateException("Timed out waiting for a server"));
         ReasoningSnapshotStore store = new ReasoningSnapshotStore(repository, 1_000_000, 72);
 
-        assertTrue(store.find("P1", 3, "HERMIT").isEmpty());
-        assertTrue(store.find("P1", 3, "HERMIT").isEmpty());
-        store.save("P1", 3, "HERMIT", Map.of("consistent", true));
+        assertTrue(store.find("P1", 3, 900, "HERMIT").isEmpty());
+        assertTrue(store.find("P1", 3, 900, "HERMIT").isEmpty());
+        store.save("P1", 3, 900, "HERMIT", Map.of("consistent", true));
 
         verify(repository, times(1)).findById(anyString());
         verify(repository, after(300).never()).save(any());
@@ -88,12 +89,27 @@ class ReasoningSnapshotStoreTest {
     }
 
     @Test
+    void revisionZeroOrAnUnknownTripleCountIsNeverSavedOrRead() {
+        ReasoningSnapshotRecordRepository repository = mock(ReasoningSnapshotRecordRepository.class);
+        ReasoningSnapshotStore store = new ReasoningSnapshotStore(repository, 1_000_000, 72);
+
+        store.save("P1", 0, 900, "HERMIT", Map.of("consistent", true));
+        store.save("P1", 3, -1, "HERMIT", Map.of("consistent", true));
+
+        assertTrue(store.find("P1", 0, 900, "HERMIT").isEmpty());
+        assertTrue(store.find("P1", 3, -1, "HERMIT").isEmpty());
+        verify(repository, after(300).never()).save(any());
+        verify(repository, never()).findById(anyString());
+        store.shutdown();
+    }
+
+    @Test
     void disabledStoreDoesNothing() {
         ReasoningSnapshotStore store = ReasoningSnapshotStore.disabled();
 
-        store.save("P1", 3, "HERMIT", Map.of("consistent", true));
+        store.save("P1", 3, 900, "HERMIT", Map.of("consistent", true));
 
-        assertTrue(store.find("P1", 3, "HERMIT").isEmpty());
+        assertTrue(store.find("P1", 3, 900, "HERMIT").isEmpty());
         store.purgeOldSnapshots();
     }
 
@@ -107,7 +123,9 @@ class ReasoningSnapshotStoreTest {
         Map<String, Object> built = first.snapshot("P1", "OPENLLET", null);
         ArgumentCaptor<ReasoningSnapshotRecord> saved = ArgumentCaptor.forClass(ReasoningSnapshotRecord.class);
         verify(repository, timeout(5_000)).save(saved.capture());
-        when(repository.findById("P1|1|OPENLLET")).thenReturn(Optional.of(saved.getValue()));
+        String id = "P1|1|" + editor.tripleCount("P1") + "|OPENLLET";
+        assertEquals(id, saved.getValue().getId());
+        when(repository.findById(id)).thenReturn(Optional.of(saved.getValue()));
 
         OntologySessionService restartedSessions = SnapshotTestSupport.sessions(editor);
         ReasoningSnapshotService restarted = SnapshotTestSupport.snapshots(restartedSessions, store);
@@ -128,7 +146,7 @@ class ReasoningSnapshotStoreTest {
         assertEquals(built.get("totalClasses"), served.get("totalClasses"));
         assertEquals(1L, hierarchy.get("ontologyRevision"));
         assertEquals(built.get("classTreeVisited"), hierarchy.get("totalClasses"));
-        verify(repository, times(2)).findById("P1|1|OPENLLET");
+        verify(repository, times(2)).findById(id);
         store.shutdown();
     }
 

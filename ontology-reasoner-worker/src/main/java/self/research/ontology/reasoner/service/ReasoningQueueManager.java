@@ -118,11 +118,11 @@ public class ReasoningQueueManager {
                                 String ownerEmail,
                                 Integer maxJustifications,
                                 String explanationMode) {
-        ReasoningJob answered = answerFromCachedSnapshot(jobType, projectId, reasonerType, ownerEmail);
+        long tripleCount = editorClient.getTripleCount(projectId);
+        ReasoningJob answered = answerFromCachedSnapshot(jobType, projectId, reasonerType, ownerEmail, tripleCount);
         if (answered != null) {
             return answered;
         }
-        long tripleCount = editorClient.getTripleCount(projectId);
         int slotWeight = concurrencyPolicy.slotWeight(tripleCount);
 
         ReasoningJob job;
@@ -178,13 +178,13 @@ public class ReasoningQueueManager {
     }
 
     private ReasoningJob answerFromCachedSnapshot(ReasoningJob.JobType jobType, String projectId,
-                                                  String reasonerType, String ownerEmail) {
+                                                  String reasonerType, String ownerEmail, long tripleCount) {
         if (jobType != ReasoningJob.JobType.REASONER_SNAPSHOT || snapshotService == null || ownerKey(ownerEmail) != null) {
             return null;
         }
         Optional<Map<String, Object>> cached;
         try {
-            cached = snapshotService.cached(projectId, reasonerType);
+            cached = snapshotService.cached(projectId, reasonerType, tripleCount);
         } catch (Exception e) {
             log.warn("[Reasoning] Could not look up a cached snapshot for project {}: {}", projectId, e.getMessage());
             return null;
@@ -210,7 +210,7 @@ public class ReasoningQueueManager {
                     .executionTimeMs(0)
                     .result(cached.get())
                     .ownerEmail(ownerEmail)
-                    .tripleCount(-1)
+                    .tripleCount(tripleCount)
                     .slotWeight(0)
                     .build();
             resultRetention.retain(job);

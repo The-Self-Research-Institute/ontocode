@@ -20,6 +20,7 @@ public class ReasoningSnapshotRecord {
     private String id;
     private String projectId;
     private long revision;
+    private long tripleCount;
     private String reasoner;
     private String resultJson;
     private Instant createdAt;

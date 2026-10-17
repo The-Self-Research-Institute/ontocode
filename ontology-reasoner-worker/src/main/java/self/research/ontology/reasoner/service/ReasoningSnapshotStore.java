@@ -62,28 +62,32 @@ public class ReasoningSnapshotStore {
         return new ReasoningSnapshotStore((ReasoningSnapshotRecordRepository) null, 0, 0);
     }
 
-    static String id(String projectId, long revision, String reasoner) {
-        return projectId + "|" + revision + "|" + reasoner;
+    static String id(String projectId, long revision, long tripleCount, String reasoner) {
+        return projectId + "|" + revision + "|" + tripleCount + "|" + reasoner;
     }
 
-    public void save(String projectId, long revision, String reasoner, Map<String, Object> snapshot) {
-        if (writer == null || snapshot == null || revision < 0 || !available()) {
+    private static boolean cacheable(long revision, long tripleCount) {
+        return revision > 0 && tripleCount >= 0;
+    }
+
+    public void save(String projectId, long revision, long tripleCount, String reasoner, Map<String, Object> snapshot) {
+        if (writer == null || snapshot == null || !cacheable(revision, tripleCount) || !available()) {
             return;
         }
         try {
-            writer.execute(() -> write(projectId, revision, reasoner, snapshot));
+            writer.execute(() -> write(projectId, revision, tripleCount, reasoner, snapshot));
         } catch (RejectedExecutionException e) {
             log.warn("[SnapshotStore] Write queue full — not saving the {} snapshot of project {} revision {}",
                     reasoner, projectId, revision);
         }
     }
 
-    public Optional<Map<String, Object>> find(String projectId, long revision, String reasoner) {
-        if (repository == null || revision < 0 || !available()) {
+    public Optional<Map<String, Object>> find(String projectId, long revision, long tripleCount, String reasoner) {
+        if (repository == null || !cacheable(revision, tripleCount) || !available()) {
             return Optional.empty();
         }
         try {
-            Optional<ReasoningSnapshotRecord> record = repository.findById(id(projectId, revision, reasoner));
+            Optional<ReasoningSnapshotRecord> record = repository.findById(id(projectId, revision, tripleCount, reasoner));
             markAvailable();
             return record.filter(this::isFresh).flatMap(this::toSnapshot);
         } catch (Exception e) {
@@ -124,7 +128,7 @@ public class ReasoningSnapshotStore {
         }
     }
 
-    Optional<ReasoningSnapshotRecord> toRecord(String projectId, long revision, String reasoner,
+    Optional<ReasoningSnapshotRecord> toRecord(String projectId, long revision, long tripleCount, String reasoner,
                                                Map<String, Object> snapshot) {
         try {
             byte[] json = objectMapper.writeValueAsBytes(snapshot);
@@ -135,9 +139,10 @@ public class ReasoningSnapshotStore {
             }
             Instant now = Instant.now();
             return Optional.of(ReasoningSnapshotRecord.builder()
-                    .id(id(projectId, revision, reasoner))
+                    .id(id(projectId, revision, tripleCount, reasoner))
                     .projectId(projectId)
                     .revision(revision)
+                    .tripleCount(tripleCount)
                     .reasoner(reasoner)
                     .resultJson(new String(json, StandardCharsets.UTF_8))
                     .createdAt(now)
@@ -149,11 +154,11 @@ public class ReasoningSnapshotStore {
         }
     }
 
-    private void write(String projectId, long revision, String reasoner, Map<String, Object> snapshot) {
+    private void write(String projectId, long revision, long tripleCount, String reasoner, Map<String, Object> snapshot) {
         if (!available()) {
             return;
         }
-        Optional<ReasoningSnapshotRecord> record = toRecord(projectId, revision, reasoner, snapshot);
+        Optional<ReasoningSnapshotRecord> record = toRecord(projectId, revision, tripleCount, reasoner, snapshot);
         if (record.isEmpty()) {
             return;
         }

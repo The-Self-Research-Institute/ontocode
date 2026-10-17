@@ -30,6 +30,7 @@ final class SnapshotTestSupport {
 
     static final String PIZZA = "PizzaTutorialWithDataV2 (1).owl";
     static final String INCONSISTENT = "inconsistent-ontology.owl";
+    static final String CONSISTENT = "consistent-ontology.owl";
 
     private static final Map<String, byte[]> CONVERTED = new ConcurrentHashMap<>();
 
@@ -113,6 +114,15 @@ final class SnapshotTestSupport {
 
         void bumpRevision(String projectId) {
             revisions.computeIfAbsent(projectId, id -> new AtomicLong(1)).incrementAndGet();
+        }
+
+        FakeEditor revision(String projectId, long revision) {
+            revisions.computeIfAbsent(projectId, id -> new AtomicLong(1)).set(revision);
+            return this;
+        }
+
+        long tripleCount(String projectId) {
+            return lines(published.get(projectId));
         }
 
         private static int lines(byte[] content) {

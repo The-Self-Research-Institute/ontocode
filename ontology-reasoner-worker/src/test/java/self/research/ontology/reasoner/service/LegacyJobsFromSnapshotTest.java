@@ -83,6 +83,44 @@ class LegacyJobsFromSnapshotTest {
     }
 
     @Test
+    void jobsAtRevisionZeroEachBuildTheirOwnSnapshot() throws Exception {
+        SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor()
+                .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA)
+                .revision("P1", 0);
+        OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
+        ReasoningJobExecutor executor = executor(sessions);
+
+        Map<String, Object> first = executor.execute(job(ReasoningJob.JobType.REASONER_HIERARCHY, "OPENLLET", null));
+        Map<String, Object> second = executor.execute(job(ReasoningJob.JobType.REASONER_HIERARCHY, "OPENLLET", null));
+        Map<String, Object> consistency = executor.execute(
+                job(ReasoningJob.JobType.REASONER_CONSISTENCY, "OPENLLET", null));
+
+        verify(sessions, times(2)).openSnapshotSession(any(), any(), any());
+        verify(sessions, times(1)).openSession(any(), any(), any());
+        assertEquals(3, editor.loads.get());
+        assertEquals(first.get("totalClasses"), second.get("totalClasses"));
+        assertEquals(0L, first.get("ontologyRevision"));
+        assertEquals(true, consistency.get("consistent"));
+    }
+
+    @Test
+    void sameRevisionWithADifferentTripleCountGivesTheNewAnswer() throws Exception {
+        SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor()
+                .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
+        OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
+        ReasoningJobExecutor executor = executor(sessions);
+
+        Map<String, Object> before = executor.execute(job(ReasoningJob.JobType.REASONER_CLASSIFY, "OPENLLET", null));
+        editor.project("P1", SnapshotTestSupport.CONSISTENT);
+        Map<String, Object> after = executor.execute(job(ReasoningJob.JobType.REASONER_CLASSIFY, "OPENLLET", null));
+
+        verify(sessions, times(2)).openSnapshotSession(any(), any(), any());
+        assertEquals(2, editor.loads.get());
+        assertTrue(!before.get("totalClasses").equals(after.get("totalClasses")));
+        assertEquals(1L, after.get("ontologyRevision"));
+    }
+
+    @Test
     void ownerJobsAreBuiltForThatOwnerAndNeverShared() throws Exception {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor()
                 .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA)

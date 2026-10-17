@@ -86,6 +86,50 @@ class ReasoningSnapshotServiceTest {
     }
 
     @Test
+    void revisionZeroIsNeverCachedOrShared() throws Exception {
+        SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor()
+                .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA)
+                .revision("P1", 0);
+        OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
+        ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
+
+        Map<String, Object> first = snapshots.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> second = snapshots.snapshot("P1", "OPENLLET", null);
+
+        assertEquals(2, snapshots.buildCount());
+        assertEquals(2, editor.loads.get());
+        assertEquals(false, first.get("cached"));
+        assertEquals(false, second.get("cached"));
+        assertEquals(true, second.get("consistent"));
+        assertEquals(0L, second.get("ontologyRevision"));
+        assertEquals(0, snapshots.size());
+        assertTrue(snapshots.cached("P1", "OPENLLET", editor.tripleCount("P1")).isEmpty());
+        assertTrue(snapshots.cachedOrInFlight("P1", "OPENLLET").isEmpty());
+    }
+
+    @Test
+    void sameRevisionWithADifferentTripleCountIsBuiltAgain() throws Exception {
+        SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor()
+                .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
+        ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
+
+        Map<String, Object> before = snapshots.snapshot("P1", "OPENLLET", null);
+        long triplesBefore = editor.tripleCount("P1");
+        editor.project("P1", SnapshotTestSupport.CONSISTENT);
+        Map<String, Object> after = snapshots.snapshot("P1", "OPENLLET", null);
+
+        assertTrue(editor.tripleCount("P1") != triplesBefore);
+        assertEquals(2, snapshots.buildCount());
+        assertEquals(2, editor.loads.get());
+        assertEquals(false, after.get("cached"));
+        assertEquals(1L, after.get("ontologyRevision"));
+        assertTrue(!before.get("totalClasses").equals(after.get("totalClasses")));
+        assertEquals(1, snapshots.size());
+        assertTrue(snapshots.cached("P1", "OPENLLET", triplesBefore).isEmpty());
+        assertEquals(true, snapshots.snapshot("P1", "OPENLLET", null).get("cached"));
+    }
+
+    @Test
     void differentReasonersAreCachedSeparately() throws Exception {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor().projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
@@ -95,9 +139,11 @@ class ReasoningSnapshotServiceTest {
 
         assertEquals(2, snapshots.buildCount());
         assertEquals("ELK", elk.get("requestedReasoner"));
-        assertEquals(true, snapshots.cached("P1", "elk").orElseThrow().get("cached"));
-        assertEquals(true, snapshots.cached("P1", null).orElseThrow().get("cached"));
-        assertTrue(snapshots.cached("P1", "HERMIT").isEmpty());
+        long triples = editor.tripleCount("P1");
+        assertEquals(true, snapshots.cached("P1", "elk", triples).orElseThrow().get("cached"));
+        assertEquals(true, snapshots.cached("P1", null, triples).orElseThrow().get("cached"));
+        assertTrue(snapshots.cached("P1", "HERMIT", triples).isEmpty());
+        assertTrue(snapshots.cached("P1", "elk", triples + 1).isEmpty());
     }
 
     @Test

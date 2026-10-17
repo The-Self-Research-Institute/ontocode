@@ -23,6 +23,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 class SnapshotJobFlowTest {
@@ -57,7 +58,8 @@ class SnapshotJobFlowTest {
         assertEquals(0, manager.queuedJobCount());
         assertEquals(0, manager.activeJobCount());
         assertEquals(1, snapshots.buildCount());
-        verify(editor.client, never()).getTripleCount(any());
+        verify(editor.client, times(1)).getTripleCount("P1");
+        assertEquals(editor.tripleCount("P1"), job.getTripleCount());
         assertEquals(List.of(job.getJobId() + ":COMPLETED:0"), sender.events);
         ReasoningJob found = manager.getJob(job.getJobId());
         assertEquals(ReasoningJob.Status.COMPLETED, found.getStatus());
@@ -96,6 +98,28 @@ class SnapshotJobFlowTest {
 
         ReasoningJob legacy = manager.enqueue(ReasoningJob.JobType.REASONER_HIERARCHY, "P1", null, null, "OPENLLET", null);
         assertEquals(ReasoningJob.Status.QUEUED, legacy.getStatus());
+
+        editor.project("P1", SnapshotTestSupport.CONSISTENT);
+        ReasoningJob changedSize = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "OPENLLET", null);
+        assertEquals(ReasoningJob.Status.QUEUED, changedSize.getStatus());
+        manager.shutdown();
+    }
+
+    @Test
+    void snapshotSubmitAtRevisionZeroIsAlwaysQueued() throws Exception {
+        SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor()
+                .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA)
+                .revision("P1", 0);
+        OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
+        ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
+        ReasoningQueueManager manager = new ReasoningQueueManager(editor.client,
+                QueueTestSupport.policy(editor.client), QueueTestSupport.retention(), ReasoningJobStore.disabled(),
+                new ReasoningQueueManagerTest.RecordingSender(), snapshots);
+
+        snapshots.snapshot("P1", "OPENLLET", null);
+        ReasoningJob job = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "OPENLLET", null);
+
+        assertEquals(ReasoningJob.Status.QUEUED, job.getStatus());
         manager.shutdown();
     }
 
