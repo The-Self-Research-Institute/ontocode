@@ -19,3 +19,14 @@ describe("buildEntityIri", () => {
     expect(buildEntityIri("http://example.org/onto", "http://other.org/x#Cat")).toBe("http://other.org/x#Cat");
   });
 });
+
+import { isBulkChangeIri } from '../utils/entityIri';
+
+describe('isBulkChangeIri', () => {
+  it('treats spreadsheet imports and merges as bulk changes', () => {
+    expect(isBulkChangeIri('urn:ontocode:merge:123')).toBe(true);
+    expect(isBulkChangeIri('urn:ontocode:spreadsheet-import:9')).toBe(true);
+    expect(isBulkChangeIri('http://example.org/A')).toBe(false);
+    expect(isBulkChangeIri(undefined)).toBe(false);
+  });
+});

@@ -178,7 +178,7 @@ import {
   type CodeViewPageWindow,
 } from "./dashboard-parts/codeViewPaging";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
-import { buildEntityIri } from "../utils/entityIri";
+import { buildEntityIri, isBulkChangeIri } from "../utils/entityIri";
 import { clearChildrenOf, keepPendingChildren } from "../utils/treeChildren";
 import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
 import { ROLLBACK_REFRESH_DELAY_MS } from "../utils/refreshTiming";
@@ -3024,6 +3024,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       const payload = response?.data || response;
       const instances = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
       setClassInstances(instances);
+      const stillListed = (item: Individual | null) => !item || instances.some((entry: Individual) => entry.id === item.id);
+      setSelectedClassIndividual((prev) => (stillListed(prev) ? prev : null));
+      setSelectedClassIndividualDetails((prev) => (stillListed(prev) ? prev : null));
     } catch (error) {
       console.error("[Dashboard] Failed to load class instances:", error);
       setClassInstances([]);
@@ -3031,6 +3034,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       setClassInstancesLoading(false);
     }
   }, [projectId, selectedClassForIndividuals]);
+
+  const loadClassInstancesRef = useRef(loadClassInstances);
+  loadClassInstancesRef.current = loadClassInstances;
 
   useEffect(() => {
     setClassInstancesQuery("");
@@ -8639,6 +8645,14 @@ const updateItemInState = useCallback(
         return;
       }
 
+      try {
+        window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: ["rollback"] } }));
+      } catch {
+        /* non-fatal */
+      }
+
+      void loadClassInstancesRef.current();
+
       const rollbackUser = detail.username || "Someone";
       const originalAuthor = detail.originalAuthor || "Unknown";
       const oldValue = detail.oldValue;
@@ -8660,7 +8674,7 @@ const updateItemInState = useCallback(
 
       showNotification(message, "info");
 
-      if (String(detail?.entityIRI ?? "").startsWith("urn:ontocode:spreadsheet-import:")) {
+      if (isBulkChangeIri(detail?.entityIRI)) {
         refreshAfterBulkWriteRef.current("rollback");
         return;
       }
@@ -8766,6 +8780,9 @@ const updateItemInState = useCallback(
                 // If this is the selected item, update it to show new values immediately
                 if (selectedItem?.id === detail.entityIRI) {
                   setSelectedItem(newData);
+                  if (!isEditingFormField(document.activeElement)) {
+                    setEntityDetailsRefreshKey((key) => key + 1);
+                  }
                 }
 
                 // For annotation changes, just update the node in place without refreshing hierarchy
@@ -12475,6 +12492,7 @@ const updateItemInState = useCallback(
       /* non-fatal */
     }
     void refreshSelectedEntity();
+    void loadClassInstancesRef.current();
     if (!isEditingFormField(document.activeElement)) {
       setEntityDetailsRefreshKey((key) => key + 1);
     }
