@@ -46,6 +46,14 @@ public class ReasoningJobController {
             body.put("status", job.getStatus().name());
             body.put("queuePosition", job.getQueuePosition());
             body.put("estimatedWaitTimeMs", queueManager.getEstimatedWaitTimeMs(job));
+            if (job.getJobType() == ReasoningJob.JobType.REASONER_SNAPSHOT
+                    && job.getStatus() == ReasoningJob.Status.COMPLETED && job.getResult() != null) {
+                body.put("async", false);
+                body.put("projectId", job.getProjectId());
+                body.put("executionTimeMs", job.getExecutionTimeMs());
+                body.put("result", job.getResult());
+                return ResponseEntity.ok(body);
+            }
             return ResponseEntity.accepted().body(body);
         } catch (ReasoningQueueManager.ProjectQueueFullException e) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(

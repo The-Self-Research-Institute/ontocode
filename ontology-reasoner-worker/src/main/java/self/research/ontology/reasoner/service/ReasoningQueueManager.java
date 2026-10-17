@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -36,6 +37,7 @@ public class ReasoningQueueManager {
     private final AtomicLong completedCount = new AtomicLong(0);
     private volatile Instant lastActivityAt = Instant.now();
     private final ReasoningJobEventSender eventSender;
+    private final ReasoningSnapshotService snapshotService;
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
     private static final long MAX_WAIT_TIME_MS = 30 * 60 * 1000;
@@ -58,9 +60,18 @@ public class ReasoningQueueManager {
     public ReasoningQueueManager(EditorClient editorClient,
                                  ReasoningConcurrencyPolicy concurrencyPolicy,
                                  ReasoningResultRetention resultRetention,
-                                 ReasoningJobStore jobStore) {
+                                 ReasoningJobStore jobStore,
+                                 ReasoningSnapshotService snapshotService) {
         this(editorClient, concurrencyPolicy, resultRetention, jobStore,
-                new ReasoningJobEventSender(editorClient::publishJobEvent, 1000));
+                new ReasoningJobEventSender(editorClient::publishJobEvent, 1000), snapshotService);
+    }
+
+    ReasoningQueueManager(EditorClient editorClient,
+                          ReasoningConcurrencyPolicy concurrencyPolicy,
+                          ReasoningResultRetention resultRetention,
+                          ReasoningJobStore jobStore) {
+        this(editorClient, concurrencyPolicy, resultRetention, jobStore,
+                new ReasoningJobEventSender(editorClient::publishJobEvent, 1000), null);
     }
 
     ReasoningQueueManager(EditorClient editorClient,
@@ -68,11 +79,21 @@ public class ReasoningQueueManager {
                           ReasoningResultRetention resultRetention,
                           ReasoningJobStore jobStore,
                           ReasoningJobEventSender eventSender) {
+        this(editorClient, concurrencyPolicy, resultRetention, jobStore, eventSender, null);
+    }
+
+    ReasoningQueueManager(EditorClient editorClient,
+                          ReasoningConcurrencyPolicy concurrencyPolicy,
+                          ReasoningResultRetention resultRetention,
+                          ReasoningJobStore jobStore,
+                          ReasoningJobEventSender eventSender,
+                          ReasoningSnapshotService snapshotService) {
         this.editorClient = editorClient;
         this.concurrencyPolicy = concurrencyPolicy;
         this.resultRetention = resultRetention;
         this.jobStore = jobStore;
         this.eventSender = eventSender;
+        this.snapshotService = snapshotService;
     }
 
     @PreDestroy
@@ -97,6 +118,10 @@ public class ReasoningQueueManager {
                                 String ownerEmail,
                                 Integer maxJustifications,
                                 String explanationMode) {
+        ReasoningJob answered = answerFromCachedSnapshot(jobType, projectId, reasonerType, ownerEmail);
+        if (answered != null) {
+            return answered;
+        }
         long tripleCount = editorClient.getTripleCount(projectId);
         int slotWeight = concurrencyPolicy.slotWeight(tripleCount);
 
@@ -149,6 +174,52 @@ public class ReasoningQueueManager {
         log.info("[DIAG] enqueue: jobId={} jobType={} projectId={} thread={} identityHash={} atMs={}",
                 job.getJobId(), jobType, projectId, Thread.currentThread().getName(),
                 System.identityHashCode(job), System.currentTimeMillis());
+        return job;
+    }
+
+    private ReasoningJob answerFromCachedSnapshot(ReasoningJob.JobType jobType, String projectId,
+                                                  String reasonerType, String ownerEmail) {
+        if (jobType != ReasoningJob.JobType.REASONER_SNAPSHOT || snapshotService == null || ownerKey(ownerEmail) != null) {
+            return null;
+        }
+        Optional<Map<String, Object>> cached;
+        try {
+            cached = snapshotService.cached(projectId, reasonerType);
+        } catch (Exception e) {
+            log.warn("[Reasoning] Could not look up a cached snapshot for project {}: {}", projectId, e.getMessage());
+            return null;
+        }
+        if (cached.isEmpty()) {
+            return null;
+        }
+        ReasoningJob job;
+        synchronized (this) {
+            resultRetention.makeRoomForIncomingJob();
+            Instant now = Instant.now();
+            job = ReasoningJob.builder()
+                    .jobId(UUID.randomUUID().toString())
+                    .jobType(jobType)
+                    .projectId(projectId)
+                    .reasonerType(reasonerType)
+                    .status(ReasoningJob.Status.COMPLETED)
+                    .queuePosition(0)
+                    .estimatedWaitTimeMs(0)
+                    .queuedAt(now)
+                    .startedAt(now)
+                    .completedAt(now)
+                    .executionTimeMs(0)
+                    .result(cached.get())
+                    .ownerEmail(ownerEmail)
+                    .tripleCount(-1)
+                    .slotWeight(0)
+                    .build();
+            resultRetention.retain(job);
+            notifyJob(job);
+            jobStore.save(job);
+            touchActivity();
+        }
+        log.info("[Reasoning] Answered {} job {} for project {} from the cached snapshot without queueing it",
+                jobType, job.getJobId(), projectId);
         return job;
     }
 
