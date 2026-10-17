@@ -91,7 +91,13 @@ import {
   withReasonerSnapshot,
 } from "../services/reasonerSnapshotUse";
 import { pageReasonerSnapshotScope } from "../services/reasonerSnapshotScope";
-import { isReasoningJobCancelled, ReasoningJobTimeoutError } from "../services/reasoningJobWait";
+import {
+  dlQueryJobUrl,
+  isReasoningJobCancelled,
+  ReasoningJobFailedError,
+  ReasoningJobTimeoutError,
+  waitForReasoningJob,
+} from "../services/reasoningJobWait";
 import { resolveMutationActor } from "../utils/mutationActor";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
@@ -214,7 +220,6 @@ import {
   REASONER_ID_MAP,
   REASONER_OPTIONS,
   normalizeReasonerType,
-  isTerminalPollError,
   pollErrorMessage,
   buildHierarchyTree,
   extractResponseData,
@@ -2731,39 +2736,35 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       // If the backend returned a taskId, poll for completion
       if (startData?.taskId) {
-        const taskId = startData.taskId;
-        const POLL_INTERVAL = 3000; // 3 seconds
+        const taskId = String(startData.taskId);
         const MAX_POLL_TIME = 1_800_000; // 30 minutes — large ontologies (e.g. Mondo 3.1M triples) need time to load
 
         const pollForResult = async (): Promise<any> => {
-          const deadline = Date.now() + MAX_POLL_TIME;
-          while (Date.now() < deadline) {
-            await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-            if (shouldStop?.() || !isMountedRef.current || currentProjectIdRef.current !== startedProjectId) {
+          try {
+            return await waitForReasoningJob(startedProjectId, taskId, {
+              maxWaitMs: MAX_POLL_TIME,
+              push: startData?.async === true,
+              isStale: () =>
+                shouldStop?.() === true || !isMountedRef.current || currentProjectIdRef.current !== startedProjectId,
+              fetchJob: async () => {
+                const statusResp: any = await apiClient.get(
+                  `/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
+                );
+                return statusResp?.data ?? statusResp;
+              },
+            });
+          } catch (error) {
+            if (isReasoningJobCancelled(error)) {
               throw new Error("Classification was cancelled");
             }
-            let statusData: any;
-            try {
-              const statusResp: any = await apiClient.get(
-                `/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
-              );
-              statusData = statusResp?.data ?? statusResp;
-            } catch (error) {
-              if (isTerminalPollError(error)) {
-                throw new Error(pollErrorMessage(error, "The classification task is no longer available. Start the reasoner again."));
-              }
-              console.error("[Dashboard] Failed to poll classify status (non-fatal, retrying):", error);
-              continue;
+            if (error instanceof ReasoningJobTimeoutError) {
+              throw new Error("Classification timed out after 30 minutes");
             }
-            if (statusData?.status === "COMPLETED") {
-              return statusData;
+            if (error instanceof ReasoningJobFailedError) {
+              throw new Error(error.job ? error.job.error || "Classification failed" : error.message);
             }
-            if (statusData?.status === "FAILED") {
-              throw new Error(statusData?.error || "Classification failed");
-            }
-            // still RUNNING — continue polling
+            throw error;
           }
-          throw new Error("Classification timed out after 30 minutes");
         };
 
         const classificationResponse = await pollForResult();
@@ -2803,34 +2804,24 @@ const Dashboard: React.FC<DashboardProps> = ({
       isStale,
     }: { intervalMs?: number; maxWaitMs?: number; isStale?: () => boolean } = {},
   ): Promise<any> => {
-    const deadline = Date.now() + maxWaitMs;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      // User switched projects while this poll was in flight — discard rather than apply
-      // stale data to whatever project is showing now. Reuses the existing "timeout" path
-      // so every caller already handles this the same way it handles a real timeout.
-      if (currentProjectIdRef.current !== targetProjectId || isStale?.() || !isMountedRef.current) {
+    try {
+      return await waitForReasoningJob(targetProjectId, jobId, {
+        maxWaitMs,
+        fallbackIntervalMs: intervalMs,
+        isStale: () => currentProjectIdRef.current !== targetProjectId || isStale?.() === true || !isMountedRef.current,
+      });
+    } catch (error) {
+      if (isReasoningJobCancelled(error)) {
         return { timeout: true, stale: true };
       }
-      try {
-        const res = await apiClient.get<any>(
-          `/api/ontology/${encodeProjectId(targetProjectId)}/reasoner/jobs/${jobId}`,
-        );
-        const job = res?.data || res;
-        if (job?.status === "COMPLETED") return job;
-        if (job?.status === "FAILED") {
-          return { success: false, error: job?.error || "Reasoning job failed" };
-        }
-        // PENDING/QUEUED/RUNNING — keep polling
-      } catch (error) {
-        if (isTerminalPollError(error)) {
-          return { success: false, error: pollErrorMessage(error, "The reasoning job is no longer available.") };
-        }
-        console.error("[Dashboard] Failed to poll reasoner job:", error);
-        // Transient network hiccup — keep polling until the deadline rather than giving up.
+      if (error instanceof ReasoningJobTimeoutError) {
+        return { timeout: true };
       }
+      if (error instanceof ReasoningJobFailedError) {
+        return { success: false, error: error.message };
+      }
+      throw error;
     }
-    return { timeout: true };
   };
 
   // Resolves a hierarchy fetch response into a final payload, transparently polling if the
@@ -2879,32 +2870,21 @@ const Dashboard: React.FC<DashboardProps> = ({
     jobId: string,
     timeoutMs = 10 * 60 * 1000,
   ): Promise<any> => {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      if (currentProjectIdRef.current !== targetProjectId || !isMountedRef.current) {
+    try {
+      return await waitForReasoningJob(targetProjectId, jobId, {
+        maxWaitMs: timeoutMs,
+        isStale: () => currentProjectIdRef.current !== targetProjectId || !isMountedRef.current,
+        fetchJob: async () => extractResponseData(await apiClient.get(dlQueryJobUrl(jobId))),
+      });
+    } catch (error) {
+      if (isReasoningJobCancelled(error)) {
         return { timeout: true, stale: true };
       }
-      let job: any;
-      try {
-        const res: any = await apiClient.get(`/api/dl-query/jobs/${jobId}`);
-        job = extractResponseData(res);
-      } catch (error) {
-        if (isTerminalPollError(error)) {
-          throw new Error(pollErrorMessage(error, "The reasoning job is no longer available."));
-        }
-        console.error("[Dashboard] Failed to poll reasoner worker job:", error);
-        // Transient network hiccup — keep polling until the deadline rather than giving up.
-        continue;
+      if (error instanceof ReasoningJobTimeoutError) {
+        throw new Error("Reasoning job timed out");
       }
-      const status = String(job?.status || "").toUpperCase();
-      if (status === "COMPLETED") return job;
-      if (status === "FAILED") {
-        throw new Error(job?.error || job?.message || "Reasoning job failed");
-      }
-      // PENDING/QUEUED/RUNNING — keep polling
+      throw error;
     }
-    throw new Error("Reasoning job timed out");
   };
 
   const loadInferredHierarchy = useCallback(async () => {

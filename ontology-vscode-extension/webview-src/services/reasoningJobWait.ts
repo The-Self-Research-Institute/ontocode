@@ -64,6 +64,7 @@ export interface WaitForReasoningJobOptions {
   jobUrl?: string;
   fetchJob?: () => Promise<any>;
   acceptPushResult?: boolean;
+  push?: boolean;
 }
 
 const isTerminal = (status: unknown) => {
@@ -83,6 +84,7 @@ export async function waitForReasoningJob(
     pushIntervalMs = PUSH_POLL_INTERVAL_MS,
     fallbackIntervalMs = FALLBACK_POLL_INTERVAL_MS,
     acceptPushResult = false,
+    push = true,
   } = options;
   const fetchJob = options.fetchJob ?? (() => apiClient.get<any>(options.jobUrl ?? reasonerJobUrl(projectId, jobId)));
   const cancelled = () => signal?.aborted === true || isStale?.() === true;
@@ -108,12 +110,14 @@ export async function waitForReasoningJob(
       timer = setTimeout(wakeUp, Math.max(0, ms));
     });
 
-  const unsubscribe = subscribeReasoningJob(jobId, (payload) => {
-    if (isTerminal(payload?.status)) {
-      pushed = payload;
-      wakeUp();
-    }
-  });
+  const unsubscribe = push
+    ? subscribeReasoningJob(jobId, (payload) => {
+      if (isTerminal(payload?.status)) {
+        pushed = payload;
+        wakeUp();
+      }
+    })
+    : () => undefined;
   const offState = onReasoningSocketStateChange(wakeUp);
   signal?.addEventListener("abort", wakeUp);
 
@@ -140,7 +144,7 @@ export async function waitForReasoningJob(
       if (now >= deadline) {
         throw new ReasoningJobTimeoutError();
       }
-      const interval = isReasoningPushAvailable(jobId) ? pushIntervalMs : fallbackIntervalMs;
+      const interval = push && isReasoningPushAvailable(jobId) ? pushIntervalMs : fallbackIntervalMs;
       const dueAt = checkNow ? now : lastCheckAt + interval;
       if (now < dueAt) {
         const until = Math.min(dueAt, deadline) - now;

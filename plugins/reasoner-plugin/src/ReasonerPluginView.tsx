@@ -43,6 +43,7 @@ import {
   ChevronDown,
   Zap
 } from 'lucide-react';
+import { pollJobUntilDone } from './reasoningJobPolling';
 
 /** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
 async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -538,9 +539,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   // works as the poll target regardless of which service originally submitted the
   // job — it falls back to asking the worker directly when it has no local record.
   const pollWorkerJob = useCallback(async (jobId: string, timeoutMs = 10 * 60 * 1000) => {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2000));
+    return pollJobUntilDone<any>(jobId, async () => {
       const res = await authFetch(`${normalizedApiBaseUrl}/api/dl-query/jobs/${jobId}`);
       if (!res.ok) {
         throw new Error(await readErrorMessage(res, `Poll failed: ${res.status} ${res.statusText}`));
@@ -549,8 +548,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       const status = String(job?.status || '').toUpperCase();
       if (status === 'COMPLETED') return job;
       if (status === 'FAILED') throw new Error(job.error || job.message || 'Reasoning job failed');
-    }
-    throw new Error('Reasoning job timed out');
+      return undefined;
+    }, { timeoutMs, timeoutMessage: 'Reasoning job timed out' });
   }, [normalizedApiBaseUrl]);
 
   const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
@@ -647,24 +646,23 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       // Handle async classify response (taskId-based polling)
       if (result.taskId && task === 'classification') {
-        const taskId = result.taskId;
-        const POLL_INTERVAL = 3000;
+        const taskId = String(result.taskId);
         const MAX_POLL_TIME = 600_000;
-        const deadline = Date.now() + MAX_POLL_TIME;
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        result = await pollJobUntilDone<any>(taskId, async () => {
           const statusRes = await authFetch(
             `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
           );
           if (!statusRes.ok) throw new Error(await readErrorMessage(statusRes, `Poll failed: ${statusRes.status} ${statusRes.statusText}`));
           const statusData = await statusRes.json();
-          if (statusData.status === 'COMPLETED') { result = statusData; break; }
+          if (statusData.status === 'COMPLETED') return statusData;
           if (statusData.status === 'FAILED') throw new Error(statusData.error || 'Classification failed');
           setReasonerStatus('Classifying... (still running)');
-        }
-        if (result.taskId && result.status === 'RUNNING') {
-          throw new Error('Classification timed out after 10 minutes');
-        }
+          return undefined;
+        }, {
+          timeoutMs: MAX_POLL_TIME,
+          timeoutMessage: 'Classification timed out after 10 minutes',
+          push: result.async === true,
+        });
       }
 
       if (task === 'consistency') {
