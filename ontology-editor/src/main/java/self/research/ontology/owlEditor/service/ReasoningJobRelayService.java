@@ -98,6 +98,14 @@ public class ReasoningJobRelayService {
     }
 
     public synchronized DLQueryJob markLost(String jobId, String error) {
+        return failIfUnfinished(jobId, error);
+    }
+
+    public synchronized DLQueryJob markStopped(String jobId, String message) {
+        return failIfUnfinished(jobId, message);
+    }
+
+    private DLQueryJob failIfUnfinished(String jobId, String error) {
         DLQueryJob job = jobRetention.get(jobId).orElse(null);
         if (job == null || isTerminal(job.getStatus())) {
             return job;

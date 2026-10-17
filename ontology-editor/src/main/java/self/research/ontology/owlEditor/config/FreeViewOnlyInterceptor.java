@@ -47,7 +47,9 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
     private static final List<String> FREE_PUT_DELETE_ALLOW_PATTERNS = List.of(
         "/api/sparql/*/queries/**",
-        "/api/preferences/**"
+        "/api/preferences/**",
+        "/api/ontology/*/reasoner/jobs/*",
+        "/api/dl-query/jobs/*"
     );
 
     private static final String PROPOSE_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/propose";

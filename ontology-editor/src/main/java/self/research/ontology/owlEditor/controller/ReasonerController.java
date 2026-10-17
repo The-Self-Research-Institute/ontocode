@@ -20,6 +20,8 @@ import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
+import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
+import self.research.ontology.owlEditor.model.DLQueryJob;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.common.ReasoningFriendlyErrors;
@@ -72,6 +74,9 @@ public class ReasonerController {
 
     @Autowired(required = false)
     private ReasonerWorkerClient reasonerWorkerClient;
+
+    @Autowired(required = false)
+    private ReasoningJobRelayService reasoningJobRelayService;
 
     @Autowired(required = false)
     private StorageManager storageManager;
@@ -286,6 +291,25 @@ public class ReasonerController {
         Map<String, Object> response = new HashMap<>(job);
         response.put("projectId", projectId);
         return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/{projectId}/reasoner/jobs/{jobId}")
+    public ResponseEntity<Map<String, Object>> cancelReasonerJob(
+            @PathVariable String projectId,
+            @PathVariable String jobId
+    ) {
+        if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
+            return ResponseEntity.ok(Map.of("success", true, "cancelled", false));
+        }
+        DLQueryJob relayed = reasoningJobRelayService != null ? reasoningJobRelayService.getJob(jobId) : null;
+        if (relayed != null && relayed.getProjectId() != null && !relayed.getProjectId().equals(projectId)) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
+        }
+        Map<String, Object> result = reasonerWorkerClient.cancelJob(jobId);
+        if (Boolean.TRUE.equals(result.get("cancelled")) && reasoningJobRelayService != null) {
+            reasoningJobRelayService.markStopped(jobId, DLQueryJobController.STOPPED_MESSAGE);
+        }
+        return ResponseEntity.ok(result);
     }
 
     /**
