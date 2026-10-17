@@ -53,7 +53,7 @@ public class EditorReasonerCacheService {
         return projectId + "-" + type.name() + "-draft-" + userId + "@" + draftVersion;
     }
 
-    private record CachedOntology(OWLOntology ontology, Instant lastAccessed) {}
+    private record CachedOntology(OWLOntology ontology, long version, Instant lastAccessed) {}
 
     private record CachedHierarchy(HierarchyCacheEntry entry, Instant lastAccessed) {}
 
@@ -98,14 +98,33 @@ public class EditorReasonerCacheService {
             if (cached == null) {
                 return Optional.empty();
             }
-            ontologies.put(projectId, new CachedOntology(cached.ontology(), Instant.now()));
+            ontologies.put(projectId, new CachedOntology(cached.ontology(), cached.version(), Instant.now()));
+            return Optional.of(cached.ontology());
+        }
+    }
+
+    public Optional<OWLOntology> getOntologyAtVersion(String projectId, long version) {
+        if (version < 0) {
+            return Optional.empty();
+        }
+        synchronized (ontologies) {
+            CachedOntology cached = ontologies.get(projectId);
+            if (cached == null || cached.version() != version) {
+                return Optional.empty();
+            }
+            ontologies.remove(projectId);
+            ontologies.put(projectId, new CachedOntology(cached.ontology(), cached.version(), Instant.now()));
             return Optional.of(cached.ontology());
         }
     }
 
     public void putOntology(String projectId, OWLOntology ontology) {
+        putOntology(projectId, ontology, -1L);
+    }
+
+    public void putOntology(String projectId, OWLOntology ontology, long version) {
         synchronized (ontologies) {
-            ontologies.put(projectId, new CachedOntology(ontology, Instant.now()));
+            ontologies.put(projectId, new CachedOntology(ontology, version, Instant.now()));
             log.debug("[EditorReasonerCache] Cached ontology {} ({} projects, heap {}% used)",
                     projectId, ontologies.size(), Math.round(ReasoningHeapMonitor.usedRatio() * 100));
         }

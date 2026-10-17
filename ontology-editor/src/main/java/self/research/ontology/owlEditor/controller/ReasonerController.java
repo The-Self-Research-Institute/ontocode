@@ -161,6 +161,7 @@ public class ReasonerController {
         }
 
         editorReasonerCache.prepareForOntologyLoad(projectId);
+        long loadedVersion = publicGraphVersion(projectId);
 
         // Desktop OWLAPI-first: reuse the model already cached in memory instead of exporting
         // to Fuseki and re-parsing from scratch — this is how Protege reasons too, with no
@@ -180,7 +181,7 @@ public class ReasonerController {
                     OWLOntology snapshot = snapshotManager.copyOntology(live.get(), org.semanticweb.owlapi.model.parameters.OntologyCopy.DEEP);
                     log.info("Ontology loaded from OWLAPI in-memory cache for project {}: {} axioms, {} classes",
                             projectId, snapshot.getAxiomCount(), snapshot.getClassesInSignature().size());
-                    editorReasonerCache.putOntology(projectId, snapshot);
+                    editorReasonerCache.putOntology(projectId, snapshot, loadedVersion);
                     return snapshot;
                 } catch (Exception e) {
                     log.warn("Failed to snapshot in-memory OWLAPI model for {}, falling back to Fuseki/GridFS: {}",
@@ -241,7 +242,7 @@ public class ReasonerController {
                             "application/n-triples");
                     OWLOntology ontology = manager.loadOntologyFromOntologyDocument(source);
                     log.info("Ontology loaded from Fuseki stream: {} axioms, {} classes", ontology.getAxiomCount(), ontology.getClassesInSignature().size());
-                    editorReasonerCache.putOntology(projectId, ontology);
+                    editorReasonerCache.putOntology(projectId, ontology, loadedVersion);
                     return ontology;
                 }
             }
@@ -278,7 +279,7 @@ public class ReasonerController {
             log.info("Class count: {}", ontology.getClassesInSignature().size());
             log.info("Object property count: {}", ontology.getObjectPropertiesInSignature().size());
             log.info("Data property count: {}", ontology.getDataPropertiesInSignature().size());
-            editorReasonerCache.putOntology(projectId, ontology);
+            editorReasonerCache.putOntology(projectId, ontology, loadedVersion);
             return ontology;
         } catch (Exception e) {
             log.error("Error loading ontology from GridFS", e);
@@ -1713,6 +1714,17 @@ public class ReasonerController {
             return loadDraftOntology(projectId, resolvedUserId);
         }
         return loadOntology(projectId);
+    }
+
+    private long publicGraphVersion(String projectId) {
+        if (storageManager == null) {
+            return -1L;
+        }
+        try {
+            return storageManager.getPublicGraphVersion(projectId);
+        } catch (Exception e) {
+            return -1L;
+        }
     }
 
     private long draftGraphVersion(String projectId, String userId) {

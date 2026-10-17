@@ -772,7 +772,15 @@ public class ReasonerService {
 
     public QuickUnsatResult getUnsatisfiableClassesQuick(OWLOntology ontology, ReasonerType type,
                                                          java.util.function.Consumer<OWLReasoner> onReasonerCreated) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        return getUnsatisfiableClassesQuickWithoutSwrl(stripSwrlRules(ontology), type, onReasonerCreated);
+    }
+
+    public OWLOntology withoutSwrlRules(OWLOntology ontology) {
+        return stripSwrlRules(ontology);
+    }
+
+    public QuickUnsatResult getUnsatisfiableClassesQuickWithoutSwrl(OWLOntology reasoningOntology, ReasonerType type,
+                                                                    java.util.function.Consumer<OWLReasoner> onReasonerCreated) {
         OWLReasoner reasoner = createReasoner(reasoningOntology, type);
         try {
             onReasonerCreated.accept(reasoner);
@@ -780,7 +788,7 @@ public class ReasonerService {
                 return new QuickUnsatResult(Collections.emptyList(), true);
             }
             Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
-            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+            OWLDataFactory df = reasoningOntology.getOWLOntologyManager().getOWLDataFactory();
             List<String> unsatisfiable = bottomNode.getEntities().stream()
                 .filter(c -> !c.equals(df.getOWLNothing()))
                 .map(c -> c.getIRI().toString())
