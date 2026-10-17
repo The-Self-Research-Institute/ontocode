@@ -9,6 +9,9 @@ import self.research.ontology.reasoner.model.ReasoningJob;
 import self.research.ontology.reasoner.service.ReasoningQueueManager;
 import self.research.ontology.reasoner.service.ReasoningQueueProcessor;
 
+import java.util.List;
+import java.util.Map;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -66,8 +69,29 @@ class ReasoningJobControllerTest {
 
         mvc.perform(delete("/api/reasoning/jobs/job-1"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.cancelled").value(true))
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.error").value("Cancelled"));
+    }
+
+    @Test
+    void cancellingAJobOthersStillWaitForSucceedsWithoutCancellingIt() throws Exception {
+        ReasoningJob job = ReasoningJob.builder()
+                .jobId("job-2")
+                .jobType(ReasoningJob.JobType.REASONER_CLASSIFY)
+                .projectId("P1")
+                .status(ReasoningJob.Status.PROCESSING)
+                .result(Map.of("classTree", List.of()))
+                .build();
+        when(queueProcessor.cancel("job-2")).thenReturn(
+                new ReasoningQueueManager.CancelResult(ReasoningQueueManager.CancelOutcome.STILL_REQUESTED, job));
+
+        mvc.perform(delete("/api/reasoning/jobs/job-2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.cancelled").value(false))
+                .andExpect(jsonPath("$.status").value("PROCESSING"))
+                .andExpect(jsonPath("$.classTree").doesNotExist());
     }
 }

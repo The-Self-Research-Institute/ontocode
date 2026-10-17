@@ -154,6 +154,54 @@ class ReasoningQueueManagerTest {
     }
 
     @Test
+    void sharedQueuedJobIsOnlyCancelledOnceEveryRequesterHasCancelled() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        assertSame(job, QueueTestSupport.enqueue(manager, "P1"));
+        assertEquals(2, job.getRequesterCount());
+
+        ReasoningQueueManager.CancelResult first = manager.cancel(job.getJobId());
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.STILL_REQUESTED, first.outcome());
+        assertEquals(ReasoningJob.Status.QUEUED, manager.getJob(job.getJobId()).getStatus());
+        assertEquals(1, manager.queuedJobCount());
+
+        ReasoningQueueManager.CancelResult second = manager.cancel(job.getJobId());
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.CANCELLED_QUEUED, second.outcome());
+        assertEquals(ReasoningJob.Status.FAILED, manager.getJob(job.getJobId()).getStatus());
+        assertEquals(0, manager.queuedJobCount());
+    }
+
+    @Test
+    void sharedRunningJobKeepsRunningUntilTheLastRequesterCancels() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        QueueTestSupport.enqueue(manager, "P1");
+        QueueTestSupport.enqueue(manager, "P1");
+        manager.dequeue();
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.STILL_REQUESTED, manager.cancel(job.getJobId()).outcome());
+        assertEquals(ReasoningQueueManager.CancelOutcome.STILL_REQUESTED, manager.cancel(job.getJobId()).outcome());
+        assertEquals(ReasoningJob.Status.PROCESSING, manager.getJob(job.getJobId()).getStatus());
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.CANCELLED_RUNNING, manager.cancel(job.getJobId()).outcome());
+        assertEquals(ReasoningJob.Status.FAILED, manager.getJob(job.getJobId()).getStatus());
+    }
+
+    @Test
+    void cancellingAFinishedSharedJobChangesNothing() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        QueueTestSupport.enqueue(manager, "P1");
+        manager.dequeue();
+        manager.markCompleted(job, Map.of("success", true), 5);
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.ALREADY_FINISHED, manager.cancel(job.getJobId()).outcome());
+        assertEquals(ReasoningJob.Status.COMPLETED, manager.getJob(job.getJobId()).getStatus());
+    }
+
+    @Test
     void cancellingAnUnknownJobReportsNotFound() {
         ReasoningQueueManager manager = QueueTestSupport.queueManager();
 

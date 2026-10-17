@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -103,6 +104,38 @@ class ReasoningQueueProcessorTest {
         assertTrue(waitUntil(() -> manager.activeJobCount() == 0, 5_000));
         assertEquals(ReasoningJob.Status.FAILED, manager.getJob(job.getJobId()).getStatus());
         assertEquals(ReasoningQueueManager.CANCELLED_MESSAGE, manager.getJob(job.getJobId()).getError());
+    }
+
+    @Test
+    void cancellingASharedRunningJobOnlyInterruptsItForTheLastRequester() throws Exception {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        ReasoningJobExecutor executor = mock(ReasoningJobExecutor.class);
+        when(executor.execute(any())).thenAnswer(invocation -> {
+            started.countDown();
+            try {
+                Thread.sleep(60_000);
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+            }
+            return Map.of("success", true);
+        });
+        ReasoningQueueProcessor processor = new ReasoningQueueProcessor(manager, executor, pool,
+                new RunawayReasoningHealthIndicator(), 60_000, 5_000);
+
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        QueueTestSupport.enqueue(manager, "P1");
+        processor.processNext();
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.STILL_REQUESTED, processor.cancel(job.getJobId()).outcome());
+        assertFalse(interrupted.await(300, TimeUnit.MILLISECONDS));
+        assertEquals(ReasoningJob.Status.PROCESSING, manager.getJob(job.getJobId()).getStatus());
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.CANCELLED_RUNNING, processor.cancel(job.getJobId()).outcome());
+        assertTrue(interrupted.await(5, TimeUnit.SECONDS));
+        assertTrue(waitUntil(() -> manager.activeJobCount() == 0, 5_000));
     }
 
     static boolean waitUntil(BooleanSupplier condition, long timeoutMs) throws InterruptedException {

@@ -75,9 +75,18 @@ public class ReasoningJobController {
         if (result.outcome() == ReasoningQueueManager.CancelOutcome.NOT_FOUND) {
             return ResponseEntity.notFound().build();
         }
-        Map<String, Object> body = toResponse(result.job());
+        ReasoningJob job = result.job();
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", true);
         body.put("cancelled", result.outcome() == ReasoningQueueManager.CancelOutcome.CANCELLED_QUEUED
                 || result.outcome() == ReasoningQueueManager.CancelOutcome.CANCELLED_RUNNING);
+        body.put("jobId", job.getJobId());
+        body.put("jobType", job.getJobType() != null ? job.getJobType().name() : null);
+        body.put("projectId", job.getProjectId());
+        body.put("status", job.getStatus().name());
+        if (job.getError() != null) {
+            body.put("error", ReasoningFriendlyErrors.forUser(job.getError()));
+        }
         return ResponseEntity.ok(body);
     }
 

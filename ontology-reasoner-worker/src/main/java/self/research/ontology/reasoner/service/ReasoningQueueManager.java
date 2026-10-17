@@ -44,7 +44,7 @@ public class ReasoningQueueManager {
     @Value("${ontocode.reasoning.max-queued-per-project:5}")
     private int maxQueuedPerProject = 5;
 
-    public enum CancelOutcome { NOT_FOUND, CANCELLED_QUEUED, CANCELLED_RUNNING, ALREADY_FINISHED }
+    public enum CancelOutcome { NOT_FOUND, CANCELLED_QUEUED, CANCELLED_RUNNING, ALREADY_FINISHED, STILL_REQUESTED }
 
     public record CancelResult(CancelOutcome outcome, ReasoningJob job) {}
 
@@ -105,8 +105,9 @@ public class ReasoningQueueManager {
             ReasoningJob duplicate = findInFlightDuplicate(jobType, projectId, expression, queryTypes,
                     reasonerType, ownerEmail, maxJustifications, explanationMode);
             if (duplicate != null) {
-                log.info("[Reasoning] Reusing in-flight {} job {} for project {} instead of enqueueing a duplicate",
-                        jobType, duplicate.getJobId(), projectId);
+                duplicate.setRequesterCount(duplicate.getRequesterCount() + 1);
+                log.info("[Reasoning] Reusing in-flight {} job {} for project {} instead of enqueueing a duplicate ({} requesters)",
+                        jobType, duplicate.getJobId(), projectId, duplicate.getRequesterCount());
                 return duplicate;
             }
 
@@ -292,6 +293,12 @@ public class ReasoningQueueManager {
             return finished != null
                     ? new CancelResult(CancelOutcome.ALREADY_FINISHED, finished)
                     : new CancelResult(CancelOutcome.NOT_FOUND, null);
+        }
+        if (!isFinished(job) && job.getRequesterCount() > 1) {
+            job.setRequesterCount(job.getRequesterCount() - 1);
+            log.info("[Reasoning] Kept job {} running — {} other requester(s) still waiting for it",
+                    jobId, job.getRequesterCount());
+            return new CancelResult(CancelOutcome.STILL_REQUESTED, job);
         }
         if (job.getStatus() == ReasoningJob.Status.QUEUED) {
             queue.remove(job);

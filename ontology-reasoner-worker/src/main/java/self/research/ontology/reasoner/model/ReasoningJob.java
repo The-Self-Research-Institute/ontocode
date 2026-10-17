@@ -48,6 +48,8 @@ public class ReasoningJob {
     private String ownerEmail;
     private long tripleCount;
     private int slotWeight;
+    @Builder.Default
+    private int requesterCount = 1;
 
     public long getWaitTimeMs() {
         if (queuedAt == null) {
