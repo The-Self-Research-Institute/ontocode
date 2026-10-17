@@ -37,6 +37,7 @@ public class ReasoningSnapshotService {
     }
 
     private final OntologySessionService sessionService;
+    private final ReasoningSnapshotStore store;
     private final int maxEntries;
     private final long ttlMs;
     private final double heapPressureUsedRatio;
@@ -46,10 +47,12 @@ public class ReasoningSnapshotService {
 
     @Autowired
     public ReasoningSnapshotService(OntologySessionService sessionService,
+                                    ReasoningSnapshotStore store,
                                     @Value("${ontocode.reasoning.snapshot-cache.max-entries:6}") int maxEntries,
                                     @Value("${ontocode.reasoning.snapshot-cache.ttl-minutes:120}") long ttlMinutes,
                                     @Value("${ontocode.reasoning.heap-pressure-used-ratio:0.70}") double heapPressureUsedRatio) {
         this.sessionService = sessionService;
+        this.store = store != null ? store : ReasoningSnapshotStore.disabled();
         this.maxEntries = Math.max(0, maxEntries);
         this.ttlMs = Math.max(1, ttlMinutes) * 60_000L;
         this.heapPressureUsedRatio = heapPressureUsedRatio;
@@ -152,7 +155,7 @@ public class ReasoningSnapshotService {
     private Map<String, Object> buildAndShare(Key key, CompletableFuture<Map<String, Object>> mine,
                                               ReasonerType requested) throws Exception {
         try {
-            Map<String, Object> hit = lookup(key);
+            Map<String, Object> hit = lookupInMemory(key);
             if (hit != null) {
                 inFlight.remove(key, mine);
                 mine.complete(hit);
@@ -194,14 +197,19 @@ public class ReasoningSnapshotService {
     }
 
     private void remember(Key requestedKey, Map<String, Object> snapshot) {
-        if (maxEntries == 0) {
-            return;
-        }
         long revision = snapshot.get("ontologyRevision") instanceof Number n ? n.longValue() : -1;
         if (revision < 0) {
             return;
         }
         Key key = new Key(requestedKey.projectId(), revision, requestedKey.reasoner());
+        keepInMemory(key, snapshot);
+        store.save(key.projectId(), key.revision(), key.reasoner(), snapshot);
+    }
+
+    private void keepInMemory(Key key, Map<String, Object> snapshot) {
+        if (maxEntries == 0) {
+            return;
+        }
         synchronized (entries) {
             entries.entrySet().removeIf(e -> e.getKey().projectId().equals(key.projectId())
                     && e.getKey().revision() < key.revision());
@@ -220,6 +228,21 @@ public class ReasoningSnapshotService {
     }
 
     private Map<String, Object> lookup(Key key) {
+        Map<String, Object> inMemory = lookupInMemory(key);
+        if (inMemory != null) {
+            return inMemory;
+        }
+        Optional<Map<String, Object>> saved = store.find(key.projectId(), key.revision(), key.reasoner());
+        if (saved.isEmpty()) {
+            return null;
+        }
+        log.info("[Snapshot] Using the saved {} snapshot of project {} revision {}",
+                key.reasoner(), key.projectId(), key.revision());
+        keepInMemory(key, saved.get());
+        return saved.get();
+    }
+
+    private Map<String, Object> lookupInMemory(Key key) {
         synchronized (entries) {
             Entry entry = entries.get(key);
             if (entry == null) {

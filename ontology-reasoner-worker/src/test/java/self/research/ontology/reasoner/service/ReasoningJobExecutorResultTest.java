@@ -100,7 +100,7 @@ class ReasoningJobExecutorResultTest {
         when(sessions.openSnapshotSession(eq("P1"), any(), any())).thenAnswer(invocation ->
                 new OntologySessionService.ReasoningSession(null, ontology,
                         EphemeralReasonerFactory.create(ontology, type, 60_000), type, null, false, null, 7));
-        ReasoningJobExecutor executor = new ReasoningJobExecutor(sessions, new ReasoningSnapshotService(sessions, 6, 120, 1.0));
+        ReasoningJobExecutor executor = new ReasoningJobExecutor(sessions, new ReasoningSnapshotService(sessions, ReasoningSnapshotStore.disabled(), 6, 120, 1.0));
         return executor.execute(ReasoningJob.builder()
                 .jobId("job-1")
                 .jobType(jobType)

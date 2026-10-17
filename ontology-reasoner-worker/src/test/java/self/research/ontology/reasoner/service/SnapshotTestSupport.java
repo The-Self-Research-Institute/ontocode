@@ -133,6 +133,10 @@ final class SnapshotTestSupport {
     }
 
     static ReasoningSnapshotService snapshots(OntologySessionService sessions) {
-        return new ReasoningSnapshotService(sessions, 6, 120, 1.0);
+        return snapshots(sessions, ReasoningSnapshotStore.disabled());
+    }
+
+    static ReasoningSnapshotService snapshots(OntologySessionService sessions, ReasoningSnapshotStore store) {
+        return new ReasoningSnapshotService(sessions, store, 6, 120, 1.0);
     }
 }
