@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -36,6 +37,7 @@ public class ReasoningQueueManager {
     private final AtomicLong completedCount = new AtomicLong(0);
     private volatile Instant lastActivityAt = Instant.now();
     private final ReasoningJobEventSender eventSender;
+    private final ReasoningSnapshotService snapshotService;
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
     private static final long MAX_WAIT_TIME_MS = 30 * 60 * 1000;
@@ -44,7 +46,7 @@ public class ReasoningQueueManager {
     @Value("${ontocode.reasoning.max-queued-per-project:5}")
     private int maxQueuedPerProject = 5;
 
-    public enum CancelOutcome { NOT_FOUND, CANCELLED_QUEUED, CANCELLED_RUNNING, ALREADY_FINISHED }
+    public enum CancelOutcome { NOT_FOUND, CANCELLED_QUEUED, CANCELLED_RUNNING, ALREADY_FINISHED, STILL_REQUESTED }
 
     public record CancelResult(CancelOutcome outcome, ReasoningJob job) {}
 
@@ -58,9 +60,18 @@ public class ReasoningQueueManager {
     public ReasoningQueueManager(EditorClient editorClient,
                                  ReasoningConcurrencyPolicy concurrencyPolicy,
                                  ReasoningResultRetention resultRetention,
-                                 ReasoningJobStore jobStore) {
+                                 ReasoningJobStore jobStore,
+                                 ReasoningSnapshotService snapshotService) {
         this(editorClient, concurrencyPolicy, resultRetention, jobStore,
-                new ReasoningJobEventSender(editorClient::publishJobEvent, 1000));
+                new ReasoningJobEventSender(editorClient::publishJobEvent, 1000), snapshotService);
+    }
+
+    ReasoningQueueManager(EditorClient editorClient,
+                          ReasoningConcurrencyPolicy concurrencyPolicy,
+                          ReasoningResultRetention resultRetention,
+                          ReasoningJobStore jobStore) {
+        this(editorClient, concurrencyPolicy, resultRetention, jobStore,
+                new ReasoningJobEventSender(editorClient::publishJobEvent, 1000), null);
     }
 
     ReasoningQueueManager(EditorClient editorClient,
@@ -68,11 +79,21 @@ public class ReasoningQueueManager {
                           ReasoningResultRetention resultRetention,
                           ReasoningJobStore jobStore,
                           ReasoningJobEventSender eventSender) {
+        this(editorClient, concurrencyPolicy, resultRetention, jobStore, eventSender, null);
+    }
+
+    ReasoningQueueManager(EditorClient editorClient,
+                          ReasoningConcurrencyPolicy concurrencyPolicy,
+                          ReasoningResultRetention resultRetention,
+                          ReasoningJobStore jobStore,
+                          ReasoningJobEventSender eventSender,
+                          ReasoningSnapshotService snapshotService) {
         this.editorClient = editorClient;
         this.concurrencyPolicy = concurrencyPolicy;
         this.resultRetention = resultRetention;
         this.jobStore = jobStore;
         this.eventSender = eventSender;
+        this.snapshotService = snapshotService;
     }
 
     @PreDestroy
@@ -98,15 +119,20 @@ public class ReasoningQueueManager {
                                 Integer maxJustifications,
                                 String explanationMode) {
         long tripleCount = editorClient.getTripleCount(projectId);
+        ReasoningJob answered = answerFromCachedSnapshot(jobType, projectId, reasonerType, ownerEmail, tripleCount);
+        if (answered != null) {
+            return answered;
+        }
         int slotWeight = concurrencyPolicy.slotWeight(tripleCount);
 
         ReasoningJob job;
         synchronized (this) {
             ReasoningJob duplicate = findInFlightDuplicate(jobType, projectId, expression, queryTypes,
-                    reasonerType, maxJustifications, explanationMode);
+                    reasonerType, ownerEmail, maxJustifications, explanationMode);
             if (duplicate != null) {
-                log.info("[Reasoning] Reusing in-flight {} job {} for project {} instead of enqueueing a duplicate",
-                        jobType, duplicate.getJobId(), projectId);
+                duplicate.setRequesterCount(duplicate.getRequesterCount() + 1);
+                log.info("[Reasoning] Reusing in-flight {} job {} for project {} instead of enqueueing a duplicate ({} requesters)",
+                        jobType, duplicate.getJobId(), projectId, duplicate.getRequesterCount());
                 return duplicate;
             }
 
@@ -151,6 +177,52 @@ public class ReasoningQueueManager {
         return job;
     }
 
+    private ReasoningJob answerFromCachedSnapshot(ReasoningJob.JobType jobType, String projectId,
+                                                  String reasonerType, String ownerEmail, long tripleCount) {
+        if (jobType != ReasoningJob.JobType.REASONER_SNAPSHOT || snapshotService == null || ownerKey(ownerEmail) != null) {
+            return null;
+        }
+        Optional<Map<String, Object>> cached;
+        try {
+            cached = snapshotService.cached(projectId, reasonerType, tripleCount);
+        } catch (Exception e) {
+            log.warn("[Reasoning] Could not look up a cached snapshot for project {}: {}", projectId, e.getMessage());
+            return null;
+        }
+        if (cached.isEmpty()) {
+            return null;
+        }
+        ReasoningJob job;
+        synchronized (this) {
+            resultRetention.makeRoomForIncomingJob();
+            Instant now = Instant.now();
+            job = ReasoningJob.builder()
+                    .jobId(UUID.randomUUID().toString())
+                    .jobType(jobType)
+                    .projectId(projectId)
+                    .reasonerType(reasonerType)
+                    .status(ReasoningJob.Status.COMPLETED)
+                    .queuePosition(0)
+                    .estimatedWaitTimeMs(0)
+                    .queuedAt(now)
+                    .startedAt(now)
+                    .completedAt(now)
+                    .executionTimeMs(0)
+                    .result(cached.get())
+                    .ownerEmail(ownerEmail)
+                    .tripleCount(tripleCount)
+                    .slotWeight(0)
+                    .build();
+            resultRetention.retain(job);
+            notifyJob(job);
+            jobStore.save(job);
+            touchActivity();
+        }
+        log.info("[Reasoning] Answered {} job {} for project {} from the cached snapshot without queueing it",
+                jobType, job.getJobId(), projectId);
+        return job;
+    }
+
     private int queuedJobCount(String projectId) {
         int count = 0;
         for (ReasoningJob queued : queue) {
@@ -162,12 +234,12 @@ public class ReasoningQueueManager {
     }
 
     private ReasoningJob findInFlightDuplicate(ReasoningJob.JobType jobType, String projectId, String expression,
-                                                List<String> queryTypes, String reasonerType,
+                                                List<String> queryTypes, String reasonerType, String ownerEmail,
                                                 Integer maxJustifications, String explanationMode) {
         for (ReasoningJob candidate : queue) {
             if (candidate.getStatus() == ReasoningJob.Status.QUEUED
                     && isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
-                    maxJustifications, explanationMode)) {
+                    ownerEmail, maxJustifications, explanationMode)) {
                 return candidate;
             }
         }
@@ -176,14 +248,19 @@ public class ReasoningQueueManager {
 
     private boolean isSameRequest(ReasoningJob candidate, ReasoningJob.JobType jobType, String projectId,
                                    String expression, List<String> queryTypes, String reasonerType,
-                                   Integer maxJustifications, String explanationMode) {
+                                   String ownerEmail, Integer maxJustifications, String explanationMode) {
         return Objects.equals(candidate.getJobType(), jobType)
                 && Objects.equals(candidate.getProjectId(), projectId)
                 && Objects.equals(candidate.getExpression(), expression)
                 && Objects.equals(candidate.getQueryTypes(), queryTypes)
                 && Objects.equals(candidate.getReasonerType(), reasonerType)
+                && Objects.equals(ownerKey(candidate.getOwnerEmail()), ownerKey(ownerEmail))
                 && Objects.equals(candidate.getMaxJustifications(), maxJustifications)
                 && Objects.equals(candidate.getExplanationMode(), explanationMode);
+    }
+
+    private static String ownerKey(String ownerEmail) {
+        return ownerEmail == null || ownerEmail.isBlank() ? null : ownerEmail;
     }
 
     public synchronized ReasoningJob dequeue() {
@@ -287,6 +364,12 @@ public class ReasoningQueueManager {
             return finished != null
                     ? new CancelResult(CancelOutcome.ALREADY_FINISHED, finished)
                     : new CancelResult(CancelOutcome.NOT_FOUND, null);
+        }
+        if (!isFinished(job) && job.getRequesterCount() > 1) {
+            job.setRequesterCount(job.getRequesterCount() - 1);
+            log.info("[Reasoning] Kept job {} running — {} other requester(s) still waiting for it",
+                    jobId, job.getRequesterCount());
+            return new CancelResult(CancelOutcome.STILL_REQUESTED, job);
         }
         if (job.getStatus() == ReasoningJob.Status.QUEUED) {
             queue.remove(job);

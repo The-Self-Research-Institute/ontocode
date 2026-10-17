@@ -21,7 +21,7 @@ public class OntologyCache {
 
     private static final Logger log = LoggerFactory.getLogger(OntologyCache.class);
 
-    private record CachedEntry(long revision, OWLOntologyManager manager, OWLOntology ontology) {}
+    private record CachedEntry(long revision, long tripleCount, OWLOntologyManager manager, OWLOntology ontology) {}
 
     @Value("${ontocode.reasoner.ontology-cache-max-projects:20}")
     private int maxProjects;
@@ -51,21 +51,21 @@ public class OntologyCache {
         }
     }
 
-    public Optional<OWLOntology> getAndBeginUse(String projectId, long revision) {
-        return lookup(projectId, revision, true);
+    public Optional<OWLOntology> getAndBeginUse(String projectId, long revision, long tripleCount) {
+        return lookup(projectId, revision, tripleCount, true);
     }
 
-    public Optional<OWLOntology> get(String projectId, long revision) {
-        return lookup(projectId, revision, false);
+    public Optional<OWLOntology> get(String projectId, long revision, long tripleCount) {
+        return lookup(projectId, revision, tripleCount, false);
     }
 
-    private Optional<OWLOntology> lookup(String projectId, long revision, boolean beginUse) {
+    private Optional<OWLOntology> lookup(String projectId, long revision, long tripleCount, boolean beginUse) {
         CachedEntry staleEntry = null;
         OWLOntology hit = null;
         List<CachedEntry> toEvict = new ArrayList<>();
         synchronized (useLock) {
             CachedEntry entry = cache.get(projectId);
-            if (entry != null && entry.revision() == revision) {
+            if (entry != null && entry.revision() == revision && entry.tripleCount() == tripleCount) {
                 hit = entry.ontology();
                 if (beginUse) {
                     useCount.computeIfAbsent(hit, k -> new AtomicInteger()).incrementAndGet();
@@ -82,23 +82,24 @@ public class OntologyCache {
             return Optional.of(hit);
         }
         if (staleEntry != null) {
-            log.info("[OntologyCache] STALE project={} cached={} current={} — evicting",
-                    projectId, staleEntry.revision(), revision);
+            log.info("[OntologyCache] STALE project={} cached={}/{} triples current={}/{} triples — evicting",
+                    projectId, staleEntry.revision(), staleEntry.tripleCount(), revision, tripleCount);
         }
         return Optional.empty();
     }
 
-    public void put(String projectId, long revision, OWLOntologyManager manager, OWLOntology ontology) {
-        store(projectId, revision, manager, ontology, false);
+    public void put(String projectId, long revision, long tripleCount, OWLOntologyManager manager, OWLOntology ontology) {
+        store(projectId, revision, tripleCount, manager, ontology, false);
     }
 
-    public void putAndBeginUse(String projectId, long revision, OWLOntologyManager manager, OWLOntology ontology) {
-        store(projectId, revision, manager, ontology, true);
+    public void putAndBeginUse(String projectId, long revision, long tripleCount, OWLOntologyManager manager,
+                               OWLOntology ontology) {
+        store(projectId, revision, tripleCount, manager, ontology, true);
     }
 
-    private void store(String projectId, long revision, OWLOntologyManager manager, OWLOntology ontology,
-                       boolean beginUse) {
-        CachedEntry newEntry = new CachedEntry(revision, manager, ontology);
+    private void store(String projectId, long revision, long tripleCount, OWLOntologyManager manager,
+                       OWLOntology ontology, boolean beginUse) {
+        CachedEntry newEntry = new CachedEntry(revision, tripleCount, manager, ontology);
         List<CachedEntry> toEvict = new ArrayList<>();
         List<String> lruEvicted = new ArrayList<>();
         synchronized (useLock) {

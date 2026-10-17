@@ -46,6 +46,14 @@ public class ReasoningJobController {
             body.put("status", job.getStatus().name());
             body.put("queuePosition", job.getQueuePosition());
             body.put("estimatedWaitTimeMs", queueManager.getEstimatedWaitTimeMs(job));
+            if (job.getJobType() == ReasoningJob.JobType.REASONER_SNAPSHOT
+                    && job.getStatus() == ReasoningJob.Status.COMPLETED && job.getResult() != null) {
+                body.put("async", false);
+                body.put("projectId", job.getProjectId());
+                body.put("executionTimeMs", job.getExecutionTimeMs());
+                body.put("result", job.getResult());
+                return ResponseEntity.ok(body);
+            }
             return ResponseEntity.accepted().body(body);
         } catch (ReasoningQueueManager.ProjectQueueFullException e) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of(
@@ -75,9 +83,18 @@ public class ReasoningJobController {
         if (result.outcome() == ReasoningQueueManager.CancelOutcome.NOT_FOUND) {
             return ResponseEntity.notFound().build();
         }
-        Map<String, Object> body = toResponse(result.job());
+        ReasoningJob job = result.job();
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", true);
         body.put("cancelled", result.outcome() == ReasoningQueueManager.CancelOutcome.CANCELLED_QUEUED
                 || result.outcome() == ReasoningQueueManager.CancelOutcome.CANCELLED_RUNNING);
+        body.put("jobId", job.getJobId());
+        body.put("jobType", job.getJobType() != null ? job.getJobType().name() : null);
+        body.put("projectId", job.getProjectId());
+        body.put("status", job.getStatus().name());
+        if (job.getError() != null) {
+            body.put("error", ReasoningFriendlyErrors.forUser(job.getError()));
+        }
         return ResponseEntity.ok(body);
     }
 

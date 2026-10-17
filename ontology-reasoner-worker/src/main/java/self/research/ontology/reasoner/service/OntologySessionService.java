@@ -13,22 +13,39 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 @Service
 public class OntologySessionService {
 
     private static final Logger log = LoggerFactory.getLogger(OntologySessionService.class);
 
-    private static final java.util.concurrent.ConcurrentHashMap<Long, OWLReasoner> ACTIVE_REASONER_BY_THREAD =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Set<OWLReasoner>> ACTIVE_REASONERS_BY_THREAD =
+            new ConcurrentHashMap<>();
 
     public static void interruptReasonerOnThread(long threadId) {
-        OWLReasoner reasoner = ACTIVE_REASONER_BY_THREAD.get(threadId);
-        if (reasoner != null) {
+        Set<OWLReasoner> reasoners = ACTIVE_REASONERS_BY_THREAD.get(threadId);
+        if (reasoners == null) {
+            return;
+        }
+        for (OWLReasoner reasoner : reasoners) {
             try {
                 reasoner.interrupt();
             } catch (Exception ignored) {
             }
         }
+    }
+
+    private static void register(long threadId, OWLReasoner reasoner) {
+        ACTIVE_REASONERS_BY_THREAD.computeIfAbsent(threadId, id -> ConcurrentHashMap.newKeySet()).add(reasoner);
+    }
+
+    private static void unregister(long threadId, OWLReasoner reasoner) {
+        ACTIVE_REASONERS_BY_THREAD.computeIfPresent(threadId, (id, reasoners) -> {
+            reasoners.remove(reasoner);
+            return reasoners.isEmpty() ? null : reasoners;
+        });
     }
 
     private final EditorClient editorClient;
@@ -49,11 +66,28 @@ public class OntologySessionService {
         this.maxTriples = maxTriples;
     }
 
+    public long currentRevision(String projectId) {
+        return editorClient.getRevision(projectId);
+    }
+
+    public long currentTripleCount(String projectId) {
+        return editorClient.getTripleCount(projectId);
+    }
+
     public ReasoningSession openSession(String projectId, ReasonerType reasonerType) throws Exception {
         return openSession(projectId, reasonerType, null);
     }
 
     public ReasoningSession openSession(String projectId, ReasonerType reasonerType, String userId) throws Exception {
+        return open(projectId, reasonerType, userId, false);
+    }
+
+    public ReasoningSession openSnapshotSession(String projectId, ReasonerType requestedType, String userId) throws Exception {
+        return open(projectId, requestedType, userId, true);
+    }
+
+    private ReasoningSession open(String projectId, ReasonerType reasonerType, String userId, boolean snapshot)
+            throws Exception {
         long tripleCount = editorClient.getTripleCount(projectId);
         log.info("[Reasoner] Triple count for project {}: {}", projectId, tripleCount);
 
@@ -88,20 +122,20 @@ public class OntologySessionService {
 
         boolean cacheEligible = (userId == null || userId.isBlank());
         long revision = cacheEligible ? editorClient.getRevision(projectId) : -1;
+        boolean useCache = cacheEligible && revision > 0;
 
-        if (cacheEligible && revision >= 0) {
-            var cached = ontologyCache.getAndBeginUse(projectId, revision);
+        if (useCache) {
+            var cached = ontologyCache.getAndBeginUse(projectId, revision, tripleCount);
             if (cached.isPresent()) {
                 OWLOntology ontology = cached.get();
                 log.info("[Reasoner] Skipping OWL load — reusing cached ontology for {} (revision={})", projectId, revision);
-                OWLReasoner reasoner;
                 try {
-                    reasoner = createRegisteredReasoner(ontology, effectiveType);
+                    return startSession(null, ontology, effectiveType, downgradedWarning, true, ontologyCache,
+                            revision, snapshot, tripleCount);
                 } catch (RuntimeException e) {
                     ontologyCache.endUse(ontology);
                     throw e;
                 }
-                return new ReasoningSession(null, ontology, reasoner, effectiveType, downgradedWarning, true, ontologyCache, revision);
             }
         }
 
@@ -121,39 +155,100 @@ public class OntologySessionService {
         log.info("Loaded ontology for {} ({} axioms, userId={}, reasoner={})",
                 projectId, ontology.getAxiomCount(), userId, effectiveType);
 
-        boolean storedInCache = cacheEligible && revision >= 0;
+        boolean storedInCache = useCache;
         if (storedInCache) {
-            ontologyCache.putAndBeginUse(projectId, revision, manager, ontology);
+            ontologyCache.putAndBeginUse(projectId, revision, tripleCount, manager, ontology);
         }
 
-        OWLReasoner reasoner;
         try {
-            reasoner = createRegisteredReasoner(ontology, effectiveType);
+            return startSession(storedInCache ? null : manager, ontology, effectiveType, downgradedWarning,
+                    storedInCache, storedInCache ? ontologyCache : null, revision, snapshot, tripleCount);
         } catch (RuntimeException e) {
             if (storedInCache) {
                 ontologyCache.endUse(ontology);
             }
             throw e;
         }
+    }
 
-        return new ReasoningSession(storedInCache ? null : manager, ontology, reasoner, effectiveType,
-                downgradedWarning, storedInCache, storedInCache ? ontologyCache : null, revision);
+    private ReasoningSession startSession(OWLOntologyManager manager, OWLOntology ontology, ReasonerType type,
+                                          String downgradedWarning, boolean fromCache, OntologyCache cache,
+                                          long revision, boolean snapshot, long tripleCount) {
+        if (!snapshot) {
+            OWLReasoner reasoner = createRegisteredReasoner(ontology, type);
+            return new ReasoningSession(manager, ontology, reasoner, type, downgradedWarning, fromCache, cache, revision,
+                    null, type, tripleCount);
+        }
+
+        ReasonerType classType = type;
+        OWLReasoner classReasoner;
+        try {
+            classReasoner = createRegisteredReasoner(ontology, classType);
+        } catch (RuntimeException e) {
+            if (classType != ReasonerType.HERMIT || e instanceof ReasonerInterruptedException
+                    || Thread.currentThread().isInterrupted()) {
+                throw e;
+            }
+            String reason = rootMessage(e);
+            log.warn("[Reasoner] HermiT could not be started ({}), using Openllet for this snapshot", reason);
+            classType = ReasonerType.OPENLLET;
+            classReasoner = createRegisteredReasoner(ontology, classType);
+            String fallback = "HermiT could not be started for this ontology (" + reason + "), so Openllet was used instead.";
+            downgradedWarning = downgradedWarning == null ? fallback : downgradedWarning + " " + fallback;
+        }
+
+        ReasonerType propertyType = classType;
+        OWLReasoner propertyReasoner = null;
+        if (classType == ReasonerType.ELK && tripleCount <= hermitMaxTriples) {
+            try {
+                propertyReasoner = createRegisteredReasoner(ontology, ReasonerType.OPENLLET);
+                propertyType = ReasonerType.OPENLLET;
+            } catch (ReasonerInterruptedException e) {
+                closeReasoner(classReasoner);
+                throw e;
+            } catch (RuntimeException e) {
+                log.warn("[Reasoner] Openllet could not be started for the property hierarchies, using ELK: {}",
+                        e.getMessage());
+            }
+        }
+        return new ReasoningSession(manager, ontology, classReasoner, classType, downgradedWarning, fromCache, cache,
+                revision, propertyReasoner, propertyType, tripleCount);
+    }
+
+    static String rootMessage(Throwable error) {
+        Throwable root = error;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        return message == null || message.isBlank() ? root.getClass().getSimpleName() : message;
+    }
+
+    OWLReasoner createReasoner(OWLOntology ontology, ReasonerType type) {
+        return EphemeralReasonerFactory.create(ontology, type, reasonerTimeoutMs);
     }
 
     private OWLReasoner createRegisteredReasoner(OWLOntology ontology, ReasonerType type) {
         throwIfInterrupted();
-        OWLReasoner reasoner = EphemeralReasonerFactory.create(ontology, type, reasonerTimeoutMs);
+        OWLReasoner reasoner = createReasoner(ontology, type);
         long threadId = Thread.currentThread().threadId();
-        ACTIVE_REASONER_BY_THREAD.put(threadId, reasoner);
+        register(threadId, reasoner);
         if (Thread.currentThread().isInterrupted()) {
-            ACTIVE_REASONER_BY_THREAD.remove(threadId, reasoner);
-            try {
-                reasoner.dispose();
-            } catch (Exception ignored) {
-            }
+            closeReasoner(reasoner);
             throw new ReasonerInterruptedException("Reasoning was stopped before it started");
         }
         return reasoner;
+    }
+
+    private static void closeReasoner(OWLReasoner reasoner) {
+        if (reasoner == null) {
+            return;
+        }
+        unregister(Thread.currentThread().threadId(), reasoner);
+        try {
+            reasoner.dispose();
+        } catch (Exception ignored) {
+        }
     }
 
     static void throwIfInterrupted() {
@@ -194,10 +289,29 @@ public class OntologySessionService {
         private final boolean fromCache;
         private final OntologyCache cache;
         private final long revision;
+        private final OWLReasoner propertyReasoner;
+        private final ReasonerType propertyReasonerType;
+        private final long tripleCount;
 
         ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
                          ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
                          OntologyCache cache, long revision) {
+            this(manager, ontology, reasoner, actualReasonerType, downgradedWarning, fromCache, cache, revision,
+                    null, actualReasonerType);
+        }
+
+        ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
+                         ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
+                         OntologyCache cache, long revision,
+                         OWLReasoner propertyReasoner, ReasonerType propertyReasonerType) {
+            this(manager, ontology, reasoner, actualReasonerType, downgradedWarning, fromCache, cache, revision,
+                    propertyReasoner, propertyReasonerType, -1);
+        }
+
+        ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
+                         ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
+                         OntologyCache cache, long revision,
+                         OWLReasoner propertyReasoner, ReasonerType propertyReasonerType, long tripleCount) {
             this.manager = manager;
             this.ontology = ontology;
             this.reasoner = reasoner;
@@ -206,21 +320,24 @@ public class OntologySessionService {
             this.fromCache = fromCache;
             this.cache = cache;
             this.revision = revision;
+            this.propertyReasoner = propertyReasoner;
+            this.propertyReasonerType = propertyReasonerType != null ? propertyReasonerType : actualReasonerType;
+            this.tripleCount = tripleCount;
         }
 
         public OWLOntology ontology() { return ontology; }
         public OWLReasoner reasoner() { return reasoner; }
+        public OWLReasoner propertyReasoner() { return propertyReasoner; }
         public ReasonerType actualReasonerType() { return actualReasonerType; }
+        public ReasonerType propertyReasonerType() { return propertyReasonerType; }
         public String downgradedWarning() { return downgradedWarning; }
         public long revision() { return revision; }
+        public long tripleCount() { return tripleCount; }
 
         @Override
         public void close() {
-            ACTIVE_REASONER_BY_THREAD.remove(Thread.currentThread().threadId(), reasoner);
-            try {
-                reasoner.dispose();
-            } catch (Exception ignored) {
-            }
+            closeReasoner(propertyReasoner);
+            closeReasoner(reasoner);
 
             if (fromCache) {
                 if (cache != null) {

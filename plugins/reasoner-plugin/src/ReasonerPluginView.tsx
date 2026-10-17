@@ -43,6 +43,14 @@ import {
   ChevronDown,
   Zap
 } from 'lucide-react';
+import { JobCancelledError, isJobCancelled, pollJobUntilDone } from './reasoningJobPolling';
+
+interface JobSession {
+  controller: AbortController;
+  jobs: Map<string, string>;
+}
+
+const createJobSession = (): JobSession => ({ controller: new AbortController(), jobs: new Map() });
 
 /** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
 async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -537,23 +545,57 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   // instead of the result body when the worker is enabled. /api/dl-query/jobs/{jobId}
   // works as the poll target regardless of which service originally submitted the
   // job — it falls back to asking the worker directly when it has no local record.
-  const pollWorkerJob = useCallback(async (jobId: string, timeoutMs = 10 * 60 * 1000) => {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const res = await authFetch(`${normalizedApiBaseUrl}/api/dl-query/jobs/${jobId}`);
-      if (!res.ok) {
-        throw new Error(await readErrorMessage(res, `Poll failed: ${res.status} ${res.statusText}`));
-      }
-      const job = await res.json();
-      const status = String(job?.status || '').toUpperCase();
-      if (status === 'COMPLETED') return job;
-      if (status === 'FAILED') throw new Error(job.error || job.message || 'Reasoning job failed');
+  const jobSessionRef = useRef<JobSession>(createJobSession());
+
+  const cancelActiveJobs = useCallback(() => {
+    const session = jobSessionRef.current;
+    jobSessionRef.current = createJobSession();
+    session.controller.abort();
+    session.jobs.forEach((url) => {
+      authFetch(url, { method: 'DELETE' }).catch((error) => {
+        console.warn('[ReasonerPluginView] Cancel request failed:', error);
+      });
+    });
+    session.jobs.clear();
+  }, []);
+
+  const pollWorkerJob = useCallback(async (
+    jobId: string,
+    timeoutMs = 10 * 60 * 1000,
+    session: JobSession = jobSessionRef.current,
+  ) => {
+    const jobUrl = `${normalizedApiBaseUrl}/api/dl-query/jobs/${encodeURIComponent(jobId)}`;
+    if (session.controller.signal.aborted) throw new JobCancelledError();
+    session.jobs.set(jobId, jobUrl);
+    try {
+      return await pollJobUntilDone<any>(jobId, async () => {
+        const res = await authFetch(jobUrl);
+        if (!res.ok) {
+          throw new Error(await readErrorMessage(res, `Poll failed: ${res.status} ${res.statusText}`));
+        }
+        const job = await res.json();
+        const status = String(job?.status || '').toUpperCase();
+        if (status === 'COMPLETED') return job;
+        if (status === 'FAILED') throw new Error(job.error || job.message || 'Reasoning job failed');
+        return undefined;
+      }, { timeoutMs, timeoutMessage: 'Reasoning job timed out', signal: session.controller.signal });
+    } finally {
+      session.jobs.delete(jobId);
     }
-    throw new Error('Reasoning job timed out');
   }, [normalizedApiBaseUrl]);
 
-  const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
+  useEffect(() => () => cancelActiveJobs(), [cancelActiveJobs]);
+
+  const jobScopeRef = useRef(`${projectId}|${draftUserId ?? ''}`);
+  useEffect(() => {
+    const scope = `${projectId}|${draftUserId ?? ''}`;
+    if (jobScopeRef.current !== scope) {
+      jobScopeRef.current = scope;
+      cancelActiveJobs();
+    }
+  }, [projectId, draftUserId, cancelActiveJobs]);
+
+  const fetchInferredAxioms = useCallback(async (reasonerType: string, session: JobSession = jobSessionRef.current) => {
     try {
       const encodedProjectId = encodeURIComponent(projectId);
       const userIdParam = draftUserId ? `&userId=${encodeURIComponent(draftUserId)}` : '';
@@ -566,8 +608,9 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       }
       let data = await response.json();
       if (data.async && (data.jobId || data.taskId)) {
-        data = await pollWorkerJob(data.jobId || data.taskId);
+        data = await pollWorkerJob(data.jobId || data.taskId, undefined, session);
       }
+      if (session.controller.signal.aborted) return;
       if (data.axioms && Array.isArray(data.axioms)) {
         setInferredAxioms(data.axioms);
         setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
@@ -581,6 +624,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
   // Start reasoning
   const startReasoner = useCallback(async (task: 'consistency' | 'classification' | 'realization') => {
+    const session = jobSessionRef.current;
+    const throwIfStopped = () => {
+      if (session.controller.signal.aborted) throw new JobCancelledError();
+    };
     setLocalIsRunning(true);
     setReasonerStatus(`Running ${task}...`);
 
@@ -634,6 +681,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       let result = await response.json();
       console.log('[ReasonerPluginView] Reasoning result:', result);
+      throwIfStopped();
 
       // Consistency/realization have no dedicated status endpoint of their own — when
       // the reasoner-worker is enabled, the initial POST above returns a queued job
@@ -642,29 +690,33 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       // endpoint, which already understands both the worker and non-worker paths.
       if (result.async && (result.jobId || result.taskId) && task !== 'classification') {
         setReasonerStatus(`Running ${task}... (queued)`);
-        result = await pollWorkerJob(result.jobId || result.taskId);
+        result = await pollWorkerJob(result.jobId || result.taskId, undefined, session);
       }
 
       // Handle async classify response (taskId-based polling)
       if (result.taskId && task === 'classification') {
-        const taskId = result.taskId;
-        const POLL_INTERVAL = 3000;
+        const taskId = String(result.taskId);
         const MAX_POLL_TIME = 600_000;
-        const deadline = Date.now() + MAX_POLL_TIME;
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        const workerJob = result.async === true;
+        if (workerJob) {
+          session.jobs.set(taskId, `${normalizedApiBaseUrl}/api/dl-query/jobs/${encodeURIComponent(taskId)}`);
+        }
+        result = await pollJobUntilDone<any>(taskId, async () => {
           const statusRes = await authFetch(
             `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
           );
           if (!statusRes.ok) throw new Error(await readErrorMessage(statusRes, `Poll failed: ${statusRes.status} ${statusRes.statusText}`));
           const statusData = await statusRes.json();
-          if (statusData.status === 'COMPLETED') { result = statusData; break; }
+          if (statusData.status === 'COMPLETED') return statusData;
           if (statusData.status === 'FAILED') throw new Error(statusData.error || 'Classification failed');
           setReasonerStatus('Classifying... (still running)');
-        }
-        if (result.taskId && result.status === 'RUNNING') {
-          throw new Error('Classification timed out after 10 minutes');
-        }
+          return undefined;
+        }, {
+          timeoutMs: MAX_POLL_TIME,
+          timeoutMessage: 'Classification timed out after 10 minutes',
+          push: workerJob,
+          signal: session.controller.signal,
+        }).finally(() => session.jobs.delete(taskId));
       }
 
       if (task === 'consistency') {
@@ -673,7 +725,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           setUnsatisfiableClasses(result.unsatisfiableClasses);
         }
         if (result.consistent) {
-          await fetchInferredAxioms(reasonerType);
+          await fetchInferredAxioms(reasonerType, session);
         }
       } else if (task === 'classification') {
         // Set consistency from classification result
@@ -702,7 +754,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         } catch (explainErr) {
           console.error('[ReasonerPluginView] generateExplanations failed:', explainErr);
         }
-        await fetchInferredAxioms(reasonerType);
+        await fetchInferredAxioms(reasonerType, session);
       } else if (task === 'realization') {
         // Set consistency from realization result
         if (result.isConsistent !== undefined) {
@@ -710,21 +762,30 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         }
       }
 
-      // Get stats
-      const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`);
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
+      throwIfStopped();
+      if (result?.stats && typeof result.stats === 'object') {
+        setStats(result.stats);
+      } else {
+        const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`);
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          throwIfStopped();
+          setStats(statsData);
+        }
       }
 
       setReasonerStatus(`${task} completed successfully`);
     } catch (error) {
+      if (isJobCancelled(error)) {
+        setReasonerStatus('Stopped');
+        return;
+      }
       console.error('[ReasonerPluginView] Reasoning error:', error);
       setReasonerStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob, draftUserId]);
+  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob, draftUserId, normalizedApiBaseUrl]);
 
   // Generate explanations for reasoning results
   const generateExplanations = (classificationResult: any) => {
@@ -850,6 +911,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         });
       }
     } catch (error) {
+      if (isJobCancelled(error)) return;
       console.error('Error fetching inconsistency explanation:', error);
       if (!isLatestRequest()) return;
       setInconsistencyExplanation({
@@ -1365,7 +1427,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   };
 
   function stopReasoner(): void {
-    throw new Error('Function not implemented.');
+    cancelActiveJobs();
+    setLocalIsRunning(false);
+    setReasonerStatus('Stopped');
+    if (projectId) {
+      authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/stop`, { method: 'POST' })
+        .catch((error) => console.warn('[ReasonerPluginView] Stop request failed:', error));
+    }
   }
 
   return (
@@ -1396,7 +1464,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
         {/* Stop Button */}
         <button
-          onClick={() => dashboardStopReasoner ? dashboardStopReasoner() : stopReasoner()}
+          onClick={() => {
+            if (dashboardStopReasoner) {
+              cancelActiveJobs();
+              dashboardStopReasoner();
+            } else {
+              stopReasoner();
+            }
+          }}
           disabled={!isRunning || isLoading}
           className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
           title="Stop reasoner"

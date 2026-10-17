@@ -20,12 +20,14 @@ import self.research.ontology.owlEditor.service.ProjectAccessService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.SparqlQueryContext;
+import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @RestController
@@ -41,6 +43,11 @@ public class InternalReasoningSupportController {
 
     @Autowired(required = false) @Nullable
     private OwlApiOntologyContext owlApiContext;
+
+    @Autowired(required = false) @Nullable
+    private StorageManager storageManager;
+
+    private static final String INSTANCE_ID = UUID.randomUUID().toString();
 
     private boolean draftAccessDenied(String projectId, HttpServletRequest request) {
         return JwtIdentityExtractor.extractEmail(request)
@@ -167,6 +174,23 @@ public class InternalReasoningSupportController {
             log.warn("[InternalReasoning] Fuseki sync failed for {} before export: {}", projectId, e.getMessage());
             return false;
         }
+    }
+
+    @GetMapping("/reasoning/{projectId}/draft-version")
+    public ResponseEntity<Map<String, Object>> draftVersion(
+            @PathVariable String projectId,
+            @RequestParam String userId,
+            HttpServletRequest request) {
+        if (draftAccessDenied(projectId, request)) {
+            return ResponseEntity.status(403).build();
+        }
+        long draftVersion = storageManager != null ? storageManager.getDraftGraphVersion(projectId, userId) : 0L;
+        long writeStamp = datasetService.getDraftWriteStamp(projectId, userId);
+        return ResponseEntity.ok(Map.of(
+                "projectId", projectId,
+                "draftVersion", draftVersion,
+                "writeStamp", writeStamp,
+                "version", INSTANCE_ID + ":" + draftVersion + "." + writeStamp));
     }
 
     @GetMapping("/reasoning/{projectId}/revision")

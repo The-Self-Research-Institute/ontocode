@@ -70,6 +70,15 @@ public class ReasonerController {
     @Value("${ontocode.reasoner-worker.enabled:false}")
     private boolean reasonerWorkerEnabled;
 
+    @Value("${ontocode.reasoner.operation-timeout-ms:45000}")
+    private long statsSnapshotWaitMs = 45_000L;
+
+    private long statsSnapshotPollMs = 500L;
+
+    private static final java.util.Set<String> WORKER_JOB_KEYS = java.util.Set.of(
+            "async", "jobId", "jobType", "projectId", "status", "queuePosition",
+            "estimatedWaitTimeMs", "executionTimeMs", "error", "rateLimited", "success");
+
     private static RestTemplate buildRestTemplate() {
         org.springframework.http.client.SimpleClientHttpRequestFactory f =
             new org.springframework.http.client.SimpleClientHttpRequestFactory();
@@ -153,6 +162,8 @@ public class ReasonerController {
     // tracked, removed only once it's actually disposed (immediately or deferred via endDraftUse).
     private final Map<OWLOntology, OWLOntologyManager> draftManagerRefs = new java.util.IdentityHashMap<>();
 
+    private final Map<OWLOntology, String> draftVersionOf = new java.util.IdentityHashMap<>();
+
     private void beginDraftUse(OWLOntology ontology) {
         synchronized (draftDisposalLock) {
             draftOntologyUseCount.computeIfAbsent(ontology, k -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
@@ -179,6 +190,7 @@ public class ReasonerController {
     }
 
     private void disposeDraftOntology(OWLOntology ontology) {
+        draftVersionOf.remove(ontology);
         reasonerService.disposeReasoners(ontology);
         OWLOntologyManager manager = draftManagerRefs.remove(ontology);
         if (manager != null) {
@@ -485,19 +497,31 @@ public class ReasonerController {
 
     private OWLOntology loadDraftOntology(String lookupId, String userId) throws Exception {
         String draftKey = cacheKeyFor(lookupId, userId);
+        String version = currentDraftVersion(lookupId, userId);
+        if (version != null) {
+            synchronized (draftDisposalLock) {
+                OWLOntology cached = lastDraftOntology.get(draftKey);
+                if (cached != null && version.equals(draftVersionOf.get(cached))) {
+                    log.info("Reusing draft ontology for {} (draft version {})", draftKey, version);
+                    beginDraftUse(cached);
+                    return cached;
+                }
+            }
+        }
+        String flightKey = draftKey + "@" + (version != null ? version : "unknown");
         while (true) {
             java.util.concurrent.CompletableFuture<OWLOntology> mine = new java.util.concurrent.CompletableFuture<>();
-            java.util.concurrent.CompletableFuture<OWLOntology> inFlight = draftLoadsInFlight.putIfAbsent(draftKey, mine);
+            java.util.concurrent.CompletableFuture<OWLOntology> inFlight = draftLoadsInFlight.putIfAbsent(flightKey, mine);
             if (inFlight == null) {
                 try {
-                    OWLOntology fresh = fetchDraftOntology(lookupId, userId, draftKey);
+                    OWLOntology fresh = fetchDraftOntology(lookupId, userId, draftKey, version);
                     mine.complete(fresh);
                     return fresh;
                 } catch (Throwable t) {
                     mine.completeExceptionally(t);
                     throw t;
                 } finally {
-                    draftLoadsInFlight.remove(draftKey, mine);
+                    draftLoadsInFlight.remove(flightKey, mine);
                 }
             }
             OWLOntology shared;
@@ -519,13 +543,16 @@ public class ReasonerController {
         }
     }
 
-    private OWLOntology fetchDraftOntology(String lookupId, String userId, String draftKey) {
+    private OWLOntology fetchDraftOntology(String lookupId, String userId, String draftKey, String version) {
         OWLOntology fresh = loadOntologyFromEditorService(lookupId, userId);
         if (fresh == null) {
             return null;
         }
         synchronized (draftDisposalLock) {
             beginDraftUse(fresh);
+            if (version != null) {
+                draftVersionOf.put(fresh, version);
+            }
             OWLOntology previous = lastDraftOntology.put(draftKey, fresh);
             if (previous != null && previous != fresh) {
                 java.util.concurrent.atomic.AtomicInteger previousCount = draftOntologyUseCount.get(previous);
@@ -538,6 +565,29 @@ public class ReasonerController {
             }
         }
         return fresh;
+    }
+
+    private String currentDraftVersion(String projectId, String userId) {
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    editorDraftVersionUrl(projectId, userId), org.springframework.http.HttpMethod.GET,
+                    editorInternalAuthEntity(), Map.class);
+            if (response == null || response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
+                return null;
+            }
+            Object version = response.getBody().get("version");
+            return version instanceof String text && !text.isBlank() ? text : null;
+        } catch (Exception e) {
+            log.debug("Could not read the draft version for {} (user {}): {}", projectId, userId, e.getMessage());
+            return null;
+        }
+    }
+
+    private String editorDraftVersionUrl(String projectId, String userId) {
+        String encodedProject = java.net.URLEncoder.encode(projectId, StandardCharsets.UTF_8).replace("+", "%20");
+        String encodedUser = java.net.URLEncoder.encode(userId, StandardCharsets.UTF_8).replace("+", "%20");
+        String base = editorServiceUrl.endsWith("/") ? editorServiceUrl.substring(0, editorServiceUrl.length() - 1) : editorServiceUrl;
+        return base + "/internal/reasoning/" + encodedProject + "/draft-version?userId=" + encodedUser;
     }
 
     private String editorOntologyFileUrl(String projectId) {
@@ -1179,13 +1229,24 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     @GetMapping("/{projectId}/stats")
     public ResponseEntity<Map<String, Object>> getReasonerStats(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "HERMIT") String reasonerType
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(required = false) String userId
     ) {
         try {
-            OWLOntology ontology = loadOntology(projectId, null);
-            try {
-                ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            if (workerAvailable() && (userId == null || userId.isBlank())) {
+                Map<String, Object> worker = reasonerWorkerClient.submit("REASONER_SNAPSHOT", projectId, type.name());
+                if (Boolean.TRUE.equals(worker.get("rateLimited"))) {
+                    return workerRejected(worker);
+                }
+                Map<String, Object> snapshot = awaitSnapshot(projectId, worker);
+                if (snapshot != null && Boolean.TRUE.equals(snapshot.get("consistent"))) {
+                    return ResponseEntity.ok(statsFromSnapshot(projectId, type, snapshot));
+                }
+            }
 
+            OWLOntology ontology = loadOntology(projectId, userId);
+            try {
                 Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
                 stats.put("success", true);
                 stats.put("projectId", projectId);
@@ -1198,6 +1259,93 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "getting reasoner stats");
         }
+    }
+
+    private Map<String, Object> awaitSnapshot(String projectId, Map<String, Object> submitted) throws InterruptedException {
+        if (Boolean.FALSE.equals(submitted.get("success")) || submitted.get("jobId") == null) {
+            log.warn("Worker did not take the stats snapshot for {} ({}); computing stats here",
+                    projectId, submitted.get("error"));
+            return null;
+        }
+        String jobId = String.valueOf(submitted.get("jobId"));
+        Map<String, Object> job = submitted;
+        long deadline = System.currentTimeMillis() + statsSnapshotWaitMs;
+        while (true) {
+            String status = String.valueOf(job.getOrDefault("status", "QUEUED"));
+            if ("COMPLETED".equals(status)) {
+                return snapshotOf(job);
+            }
+            if ("FAILED".equals(status)) {
+                log.warn("Stats snapshot job {} failed for {} ({}); computing stats here", jobId, projectId, job.get("error"));
+                return null;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                reasonerWorkerClient.cancelJob(jobId);
+                throw new IllegalStateException("Reasoning timed out after " + (statsSnapshotWaitMs / 1000)
+                        + "s while collecting reasoner stats — the ontology may be too large or complex for this reasoner.");
+            }
+            Thread.sleep(statsSnapshotPollMs);
+            Map<String, Object> polled = reasonerWorkerClient.getJob(jobId);
+            if (polled != null && polled.get("jobId") != null) {
+                job = polled;
+            } else if (polled != null && String.valueOf(polled.get("error")).contains("404")) {
+                log.warn("Worker no longer has stats snapshot job {} for {}; computing stats here", jobId, projectId);
+                return null;
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> snapshotOf(Map<String, Object> job) {
+        if (job.get("result") instanceof Map<?, ?> nested) {
+            return (Map<String, Object>) nested;
+        }
+        Map<String, Object> snapshot = new HashMap<>();
+        job.forEach((key, value) -> {
+            if (!WORKER_JOB_KEYS.contains(key)) {
+                snapshot.put(key, value);
+            }
+        });
+        return snapshot;
+    }
+
+    private Map<String, Object> statsFromSnapshot(String projectId, ReasonerType requested, Map<String, Object> snapshot) {
+        Map<?, ?> counts = snapshot.get("stats") instanceof Map<?, ?> m ? m : Map.of();
+        int classCount = intValue(snapshot.get("totalClasses"), intValue(counts.get("classHierarchyNodes"), 0));
+        int objectPropertyCount = intValue(counts.get("objectPropertyNodes"), 0);
+        int dataPropertyCount = intValue(counts.get("dataPropertyNodes"), 0);
+        String reasonerName = snapshot.get("reasonerType") != null
+                ? String.valueOf(snapshot.get("reasonerType")) : requested.getDisplayName();
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("reasonerType", reasonerName);
+        stats.put("reasonerName", reasonerName);
+        stats.put("isConsistent", true);
+        stats.put("classCount", classCount);
+        stats.put("objectPropertyCount", objectPropertyCount);
+        stats.put("dataPropertyCount", dataPropertyCount);
+        stats.put("propertyCount", objectPropertyCount + dataPropertyCount);
+        stats.put("individualCount", intValue(counts.get("individuals"), 0));
+        stats.put("unsatisfiableClasses", intValue(counts.get("unsatisfiableClasses"), -1));
+        stats.put("satisfiableClasses", intValue(counts.get("satisfiableClasses"), classCount));
+        OWLOntology loaded = ontologyCache.get(projectId);
+        if (loaded != null) {
+            stats.put("logicalAxiomCount", loaded.getLogicalAxiomCount());
+            stats.put("totalAxiomCount", loaded.getAxiomCount());
+        }
+        stats.put("supportsIncrementalReasoning", false);
+        stats.put("supportsDatatypeReasoning", requested != ReasonerType.STRUCTURAL);
+        stats.put("supportsOWL2DL", requested == ReasonerType.HERMIT || requested == ReasonerType.PELLET);
+        if (snapshot.get("downgradedWarning") != null) {
+            stats.put("downgradedWarning", snapshot.get("downgradedWarning"));
+        }
+        stats.put("success", true);
+        stats.put("projectId", projectId);
+        return stats;
+    }
+
+    private static int intValue(Object raw, int fallback) {
+        return raw instanceof Number n ? n.intValue() : fallback;
     }
 
     /**

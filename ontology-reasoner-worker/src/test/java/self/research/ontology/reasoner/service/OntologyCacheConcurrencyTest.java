@@ -22,12 +22,12 @@ class OntologyCacheConcurrencyTest {
         OntologyCache cache = new OntologyCache();
         ReflectionTestUtils.setField(cache, "maxProjects", 1);
         OWLOntologyManager firstManager = OWLManager.createOWLOntologyManager();
-        cache.put("P1", 1, firstManager, firstManager.createOntology());
+        cache.put("P1", 1, 10, firstManager, firstManager.createOntology());
 
         AtomicBoolean stop = new AtomicBoolean();
         Thread reader = new Thread(() -> {
             while (!stop.get()) {
-                cache.getAndBeginUse("P1", 1).ifPresent(cache::endUse);
+                cache.getAndBeginUse("P1", 1, 10).ifPresent(cache::endUse);
             }
         }, "repro-reader-getAndBeginUse");
         Thread writer = new Thread(() -> {
@@ -36,7 +36,7 @@ class OntologyCacheConcurrencyTest {
                 try {
                     OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
                     OWLOntology ontology = manager.createOntology();
-                    cache.put((i++ % 2 == 0) ? "P2" : "P1", 1, manager, ontology);
+                    cache.put((i++ % 2 == 0) ? "P2" : "P1", 1, 10, manager, ontology);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
@@ -76,12 +76,12 @@ class OntologyCacheConcurrencyTest {
         OWLOntologyManager firstManager = OWLManager.createOWLOntologyManager();
         OWLOntology first = firstManager.createOntology();
 
-        cache.putAndBeginUse("P1", 1, firstManager, first);
+        cache.putAndBeginUse("P1", 1, 10, firstManager, first);
 
         OWLOntologyManager secondManager = OWLManager.createOWLOntologyManager();
-        cache.put("P2", 1, secondManager, secondManager.createOntology());
+        cache.put("P2", 1, 10, secondManager, secondManager.createOntology());
 
-        assertTrue(cache.get("P1", 1).isEmpty());
+        assertTrue(cache.get("P1", 1, 10).isEmpty());
         assertTrue(firstManager.contains(first), "in-use ontology must not be removed while a job is reading it");
 
         cache.endUse(first);
@@ -95,13 +95,13 @@ class OntologyCacheConcurrencyTest {
         ReflectionTestUtils.setField(cache, "maxProjects", 1);
         OWLOntologyManager firstManager = OWLManager.createOWLOntologyManager();
         OWLOntology first = firstManager.createOntology();
-        cache.put("P1", 1, firstManager, first);
+        cache.put("P1", 1, 10, firstManager, first);
 
         OWLOntologyManager secondManager = OWLManager.createOWLOntologyManager();
         OWLOntology second = secondManager.createOntology();
-        cache.put("P2", 1, secondManager, second);
+        cache.put("P2", 1, 10, secondManager, second);
 
         assertFalse(firstManager.contains(first));
-        assertTrue(cache.get("P2", 1).isPresent());
+        assertTrue(cache.get("P2", 1, 10).isPresent());
     }
 }

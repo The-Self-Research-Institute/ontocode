@@ -15,6 +15,7 @@ import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
 import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
 import { normalizeReasonerType } from '../dashboard-parts/dashboardUtils';
+import { cachedUnsatisfiable } from '../../services/reasonerSnapshotScope';
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 
@@ -322,7 +323,10 @@ const ClassEditor: React.FC<{
     const loadConflictIris = async () => {
 
       let unsatisfiable = item.isUnsatisfiable === true;
-      if (!unsatisfiable) {
+      const knownFromSnapshot = unsatisfiable ? null : cachedUnsatisfiable(projectId, selectedReasoner, item.id);
+      if (knownFromSnapshot !== null) {
+        unsatisfiable = knownFromSnapshot;
+      } else if (!unsatisfiable) {
         try {
           const quick: any = await apiClient.get(withDraftAndUser(`/api/ontology/${projectId}/unsatisfiable-classes-quick`));
           const list: string[] = Array.isArray(quick?.unsatisfiableClasses) ? quick.unsatisfiableClasses : [];
@@ -368,7 +372,7 @@ const ClassEditor: React.FC<{
     const debounceTimer = setTimeout(() => { void loadConflictIris(); }, 300);
     return () => { cancelled = true; clearTimeout(debounceTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, item.isUnsatisfiable, projectId, lastEditAt]);
+  }, [item.id, item.isUnsatisfiable, projectId, lastEditAt, selectedReasoner]);
 
   // Manchester Syntax Editor State
   const [isEditorOpen, setIsEditorOpen] = useState(false);

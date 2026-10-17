@@ -34,6 +34,25 @@ class ReasoningQueueManagerTest {
     }
 
     @Test
+    void queuedJobIsSharedOnlyByRequestsFromTheSameOwner() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob alice = manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, "alice@example.com");
+        ReasoningJob bob = manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, "bob@example.com");
+        ReasoningJob published = manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, null);
+
+        assertNotEquals(alice.getJobId(), bob.getJobId());
+        assertNotEquals(alice.getJobId(), published.getJobId());
+        assertNotEquals(bob.getJobId(), published.getJobId());
+        assertSame(alice, manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, "alice@example.com"));
+        assertSame(published, manager.enqueue(ReasoningJob.JobType.DL_QUERY, "P1", "Pizza",
+                List.of("subclasses"), null, " "));
+    }
+
+    @Test
     void timedOutJobIsNeverHandedBackForANewRequest() {
         ReasoningQueueManager manager = QueueTestSupport.queueManager();
         ReasoningJob first = QueueTestSupport.enqueue(manager, "P1");
@@ -132,6 +151,54 @@ class ReasoningQueueManagerTest {
         assertEquals(ReasoningJob.Status.FAILED, manager.getJob(job.getJobId()).getStatus());
         assertEquals(ReasoningQueueManager.CANCELLED_MESSAGE, manager.getJob(job.getJobId()).getError());
         assertEquals(0, manager.activeJobCount());
+    }
+
+    @Test
+    void sharedQueuedJobIsOnlyCancelledOnceEveryRequesterHasCancelled() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        assertSame(job, QueueTestSupport.enqueue(manager, "P1"));
+        assertEquals(2, job.getRequesterCount());
+
+        ReasoningQueueManager.CancelResult first = manager.cancel(job.getJobId());
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.STILL_REQUESTED, first.outcome());
+        assertEquals(ReasoningJob.Status.QUEUED, manager.getJob(job.getJobId()).getStatus());
+        assertEquals(1, manager.queuedJobCount());
+
+        ReasoningQueueManager.CancelResult second = manager.cancel(job.getJobId());
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.CANCELLED_QUEUED, second.outcome());
+        assertEquals(ReasoningJob.Status.FAILED, manager.getJob(job.getJobId()).getStatus());
+        assertEquals(0, manager.queuedJobCount());
+    }
+
+    @Test
+    void sharedRunningJobKeepsRunningUntilTheLastRequesterCancels() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        QueueTestSupport.enqueue(manager, "P1");
+        QueueTestSupport.enqueue(manager, "P1");
+        manager.dequeue();
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.STILL_REQUESTED, manager.cancel(job.getJobId()).outcome());
+        assertEquals(ReasoningQueueManager.CancelOutcome.STILL_REQUESTED, manager.cancel(job.getJobId()).outcome());
+        assertEquals(ReasoningJob.Status.PROCESSING, manager.getJob(job.getJobId()).getStatus());
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.CANCELLED_RUNNING, manager.cancel(job.getJobId()).outcome());
+        assertEquals(ReasoningJob.Status.FAILED, manager.getJob(job.getJobId()).getStatus());
+    }
+
+    @Test
+    void cancellingAFinishedSharedJobChangesNothing() {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        QueueTestSupport.enqueue(manager, "P1");
+        manager.dequeue();
+        manager.markCompleted(job, Map.of("success", true), 5);
+
+        assertEquals(ReasoningQueueManager.CancelOutcome.ALREADY_FINISHED, manager.cancel(job.getJobId()).outcome());
+        assertEquals(ReasoningJob.Status.COMPLETED, manager.getJob(job.getJobId()).getStatus());
     }
 
     @Test

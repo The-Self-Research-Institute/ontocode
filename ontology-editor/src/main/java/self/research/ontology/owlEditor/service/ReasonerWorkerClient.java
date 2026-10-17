@@ -21,6 +21,7 @@ import java.util.Map;
 public class ReasonerWorkerClient {
 
     private final org.springframework.web.client.RestTemplate restTemplate;
+    private final org.springframework.web.client.RestTemplate shortRestTemplate;
     private final String workerUrl;
     private final String internalToken;
 
@@ -33,6 +34,11 @@ public class ReasonerWorkerClient {
         factory.setConnectTimeout(10_000);
         factory.setReadTimeout(30_000);
         this.restTemplate = new org.springframework.web.client.RestTemplate(factory);
+        org.springframework.http.client.SimpleClientHttpRequestFactory shortFactory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        shortFactory.setConnectTimeout(2_000);
+        shortFactory.setReadTimeout(5_000);
+        this.shortRestTemplate = new org.springframework.web.client.RestTemplate(shortFactory);
     }
 
     public Map<String, Object> submitJob(String jobType,
@@ -110,6 +116,29 @@ public class ReasonerWorkerClient {
             return result;
         } catch (Exception e) {
             return Map.of("success", false, "error", ReasoningFriendlyErrors.forUser(e.getMessage()));
+        }
+    }
+
+    public Map<String, Object> cancelJob(String jobId) {
+        try {
+            ResponseEntity<Map> response = shortRestTemplate.exchange(
+                    workerUrl + "/api/reasoning/jobs/" + jobId,
+                    HttpMethod.DELETE,
+                    new HttpEntity<>(internalHeaders()),
+                    Map.class);
+            Map<?, ?> body = response.getBody();
+            boolean cancelled = body != null && Boolean.TRUE.equals(body.get("cancelled"));
+            log.info("Cancel requested for worker job {}: cancelled={}", jobId, cancelled);
+            return Map.of("success", true, "cancelled", cancelled);
+        } catch (HttpClientErrorException.NotFound e) {
+            return Map.of("success", true, "cancelled", false);
+        } catch (Exception e) {
+            log.warn("Failed to cancel worker job {}: {}", jobId, e.getMessage());
+            return Map.of(
+                    "success", false,
+                    "cancelled", false,
+                    "error", ReasoningFriendlyErrors.forUser(e.getMessage())
+            );
         }
     }
 
