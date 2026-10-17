@@ -93,8 +93,10 @@ import {
   snapshotObjectPropertyTree,
   snapshotToConsistencyResult,
   snapshotToReasonerResults,
+  watchReasonerSnapshotInvalidation,
   withReasonerSnapshot,
 } from "../services/reasonerSnapshotUse";
+import { createAutoSyncSettleTimer, type AutoSyncSettleTimer } from "../services/reasonerAutoSync";
 import { pageReasonerSnapshotScope } from "../services/reasonerSnapshotScope";
 import {
   anySignal,
@@ -1668,11 +1670,16 @@ const Dashboard: React.FC<DashboardProps> = ({
   const draftCopyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoSyncReasonerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSyncReasonerAbortRef = useRef<AbortController | null>(null);
   const reasonerJobAbortRef = useRef(new AbortController());
   const autoSyncReasonerRequestRef = useRef<{ runId: number; projectId: string } | null>(null);
   const runAutoSyncReasonerRef = useRef<() => Promise<void>>(async () => {});
+  const autoSyncSettleRef = useRef<AutoSyncSettleTimer | null>(null);
+  if (!autoSyncSettleRef.current) {
+    autoSyncSettleRef.current = createAutoSyncSettleTimer(() => {
+      void runAutoSyncReasonerRef.current();
+    });
+  }
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
   const [showPullPreview, setShowPullPreview] = useState(false);
   const [openPRCount, setOpenPRCount] = useState(0);
@@ -3328,10 +3335,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   }
 
   const clearAutoSyncReasoner = useCallback(() => {
-    if (autoSyncReasonerTimerRef.current) {
-      clearTimeout(autoSyncReasonerTimerRef.current);
-      autoSyncReasonerTimerRef.current = null;
-    }
+    autoSyncSettleRef.current?.cancel();
     autoSyncReasonerAbortRef.current?.abort();
     autoSyncReasonerAbortRef.current = null;
     autoSyncReasonerRequestRef.current = null;
@@ -3568,6 +3572,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     inferredClassHierarchyAttemptedKeyRef.current = null;
     clearAutoSyncReasoner();
     cancelReasonerJobs();
+    invalidateReasonerSnapshots();
     explanationDismissedRef.current = true;
     setIsReasonerRunning(false);
     setIsReasonerLoading(false);
@@ -3603,6 +3608,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSelectReasoner = useCallback(
     (reasoner: string) => {
       clearAutoSyncReasoner();
+      invalidateReasonerSnapshots(projectId ? { projectId } : undefined);
       // Stop current reasoner if running
       if (isReasonerRunning) {
         reasonerRunIdRef.current += 1;
@@ -3625,7 +3631,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       notificationService.info("Reasoner Selected", descriptions[reasoner] || `${reasoner} reasoner is now active`);
     },
-    [isReasonerRunning, clearAutoSyncReasoner],
+    [isReasonerRunning, clearAutoSyncReasoner, projectId],
   );
 
   const runAutoSyncReasoner = async () => {
@@ -6911,13 +6917,16 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
       reasonerRunIdRef.current += 1;
       autoSyncReasonerAbortRef.current?.abort();
       cancelReasonerSnapshots();
+      invalidateReasonerSnapshots();
       reasonerJobAbortRef.current.abort();
       if (autoDraftPollRef.current) clearInterval(autoDraftPollRef.current);
       if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
       if (conflictCheckTimerRef.current) clearTimeout(conflictCheckTimerRef.current);
-      if (autoSyncReasonerTimerRef.current) clearTimeout(autoSyncReasonerTimerRef.current);
+      autoSyncSettleRef.current?.cancel();
     };
   }, []);
+
+  useEffect(() => watchReasonerSnapshotInvalidation(window), []);
 
   const getLocalName = (iri?: string) => {
     if (!iri) return "";
@@ -9665,12 +9674,9 @@ const updateItemInState = useCallback(
     // Auto-sync reasoner if enabled
     if (isReasonerSynced && isReasonerRunning && projectId) {
       console.log("[DEBUG] Auto-sync: Re-running reasoner after ontology change");
-      if (autoSyncReasonerTimerRef.current) clearTimeout(autoSyncReasonerTimerRef.current);
+      autoSyncReasonerAbortRef.current?.abort();
       autoSyncReasonerRequestRef.current = { runId: reasonerRunIdRef.current, projectId };
-      autoSyncReasonerTimerRef.current = setTimeout(() => {
-        autoSyncReasonerTimerRef.current = null;
-        void runAutoSyncReasonerRef.current();
-      }, 2000);
+      autoSyncSettleRef.current?.noteEdit();
     }
   }, [updateDraftCount, isReasonerSynced, isReasonerRunning, projectId, user]);
 
