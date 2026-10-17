@@ -16,6 +16,7 @@ import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
+import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
 
@@ -67,7 +68,8 @@ public class OntologyCrudController {
     @PostMapping("/mutations/{projectId}")
     public ResponseEntity<?> mutate(@PathVariable String projectId,
                                     @RequestBody MutationRequest request,
-                                    @RequestParam(required = false, defaultValue = "true") boolean draft) {
+                                    @RequestParam(required = false, defaultValue = "true") boolean draft,
+                                    jakarta.servlet.http.HttpServletRequest httpRequest) {
 
         java.util.Optional<String> badIri = self.research.ontology.owlEditor.service.MutationIriGuard.firstProblem(request.ops());
         if (badIri.isPresent()) {
@@ -82,7 +84,7 @@ public class OntologyCrudController {
         // Enforce requireDraftForMembers: silently redirect public mutations to draft if the
         // project owner has turned on draft-only mode and this user is not the owner.
         if (!draft && !desktopMode) {
-            String userId = request.userId() != null ? request.userId() : "anonymous";
+            String userId = RequestActor.of(httpRequest, request.userId(), request.username()).userId();
             if (metadataService.isRequireDraftForMembers(projectId)) {
                 String ownerEmail = metadataService.getOwnerEmail(projectId).orElse(null);
                 if (!userId.equals(ownerEmail)) {
@@ -97,7 +99,10 @@ public class OntologyCrudController {
             log.info("[MUTATION] Applying {} operations to draft graph for project {}",
                 request.ops().size(), projectId);
 
-            String userId = request.userId() != null ? request.userId() : "anonymous";
+            String userId = RequestActor.userIdOr(httpRequest, request.userId());
+            if (userId == null) {
+                userId = "anonymous";
+            }
             if (desktopMode) {
                 userId = DESKTOP_USER_ID;
             }
@@ -146,11 +151,12 @@ public class OntologyCrudController {
                 log.info("[MUTATION] Applying {} operations directly to GraphDB for project {}",
                     request.ops().size(), projectId);
 
-                String userId = request.userId() != null ? request.userId() : "anonymous";
+                RequestActor actor = RequestActor.of(httpRequest, request.userId(), request.username());
+                String userId = actor.userId();
                 if (desktopMode) {
                     userId = DESKTOP_USER_ID;
                 }
-                String username = request.username() != null ? request.username() : "Anonymous";
+                String username = request.username() != null ? request.username() : actor.username();
 
                 final String finalUserId = userId;
                 final String finalUsername = username;

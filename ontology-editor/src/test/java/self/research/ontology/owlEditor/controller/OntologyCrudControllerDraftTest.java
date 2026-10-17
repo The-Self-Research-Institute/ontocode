@@ -35,7 +35,7 @@ class OntologyCrudControllerDraftTest {
 
         ResponseEntity<?> response = controller.mutate("proj--file", new OntologyCrudController.MutationRequest(
                 List.of(new OntologyMutationService.MutationOp("createClass", "http://x/A", "A", null, null, null, null,
-                        null, null, null, null, null, null, null, null)), "u1", "User", "s1"), true);
+                        null, null, null, null, null, null, null, null)), "u1", "User", "s1"), true, null);
 
         assertEquals(409, response.getStatusCode().value());
         Map<String, Object> body = (Map<String, Object>) response.getBody();
