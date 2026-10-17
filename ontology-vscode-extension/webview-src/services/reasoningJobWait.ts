@@ -55,6 +55,23 @@ export async function cancelReasoningJob(projectId: string, jobId: string, url?:
   }
 }
 
+export function anySignal(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const present = signals.filter((signal): signal is AbortSignal => !!signal);
+  if (present.length <= 1) {
+    return present[0];
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  present.forEach((signal) => {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener("abort", abort, { once: true });
+    }
+  });
+  return controller.signal;
+}
+
 export interface WaitForReasoningJobOptions {
   signal?: AbortSignal;
   isStale?: () => boolean;
@@ -65,12 +82,8 @@ export interface WaitForReasoningJobOptions {
   fetchJob?: () => Promise<any>;
   acceptPushResult?: boolean;
   push?: boolean;
+  cancelUrl?: string;
 }
-
-const isTerminal = (status: unknown) => {
-  const value = String(status ?? "").toUpperCase();
-  return value === "COMPLETED" || value === "FAILED";
-};
 
 export async function waitForReasoningJob(
   projectId: string,
@@ -91,6 +104,12 @@ export async function waitForReasoningJob(
   if (cancelled()) {
     throw new ReasoningJobCancelledError();
   }
+  const cancelOnAbort = () => {
+    if (options.cancelUrl) {
+      void cancelReasoningJob(projectId, jobId, options.cancelUrl);
+    }
+  };
+  signal?.addEventListener("abort", cancelOnAbort);
 
   let pushed: any = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -112,7 +131,7 @@ export async function waitForReasoningJob(
 
   const unsubscribe = push
     ? subscribeReasoningJob(jobId, (payload) => {
-      if (isTerminal(payload?.status)) {
+      if (/^(COMPLETED|FAILED)$/i.test(String(payload?.status ?? ""))) {
         pushed = payload;
         wakeUp();
       }
@@ -189,5 +208,6 @@ export async function waitForReasoningJob(
     unsubscribe();
     offState();
     signal?.removeEventListener("abort", wakeUp);
+    signal?.removeEventListener("abort", cancelOnAbort);
   }
 }

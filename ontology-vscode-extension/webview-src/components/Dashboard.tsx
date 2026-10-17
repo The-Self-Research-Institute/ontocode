@@ -78,7 +78,12 @@ import type {
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { cancelOntologyExport } from "../services/exportService";
-import { invalidateReasonerSnapshots, ReasonerSnapshotError, type ReasonerSnapshot } from "../services/reasonerSnapshot";
+import {
+  cancelReasonerSnapshots,
+  invalidateReasonerSnapshots,
+  ReasonerSnapshotError,
+  type ReasonerSnapshot,
+} from "../services/reasonerSnapshot";
 import {
   inferredChildrenFromSnapshot,
   snapshotClassTree,
@@ -92,9 +97,11 @@ import {
 } from "../services/reasonerSnapshotUse";
 import { pageReasonerSnapshotScope } from "../services/reasonerSnapshotScope";
 import {
+  anySignal,
   dlQueryJobUrl,
   isReasoningJobCancelled,
   ReasoningJobFailedError,
+  reasonerJobUrl,
   ReasoningJobTimeoutError,
   waitForReasoningJob,
 } from "../services/reasoningJobWait";
@@ -1662,8 +1669,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conflictCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSyncReasonerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoSyncReasonerInFlightRef = useRef(false);
-  const autoSyncReasonerPendingRef = useRef(false);
+  const autoSyncReasonerAbortRef = useRef<AbortController | null>(null);
+  const reasonerJobAbortRef = useRef(new AbortController());
   const autoSyncReasonerRequestRef = useRef<{ runId: number; projectId: string } | null>(null);
   const runAutoSyncReasonerRef = useRef<() => Promise<void>>(async () => {});
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
@@ -2717,7 +2724,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [searchQuery, filteredData]);
 
   const fetchReasonerBundle = useCallback(
-    async (reasonerType: string, shouldStop?: () => boolean) => {
+    async (reasonerType: string, shouldStop?: () => boolean, signal?: AbortSignal) => {
       if (!projectId) {
         throw new Error("No ontology loaded");
       }
@@ -2744,6 +2751,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             return await waitForReasoningJob(startedProjectId, taskId, {
               maxWaitMs: MAX_POLL_TIME,
               push: startData?.async === true,
+              signal: anySignal(reasonerJobAbortRef.current.signal, signal),
+              cancelUrl: startData?.async === true ? dlQueryJobUrl(taskId) : undefined,
               isStale: () =>
                 shouldStop?.() === true || !isMountedRef.current || currentProjectIdRef.current !== startedProjectId,
               fetchJob: async () => {
@@ -2808,6 +2817,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       return await waitForReasoningJob(targetProjectId, jobId, {
         maxWaitMs,
         fallbackIntervalMs: intervalMs,
+        signal: reasonerJobAbortRef.current.signal,
+        cancelUrl: reasonerJobUrl(targetProjectId, jobId),
         isStale: () => currentProjectIdRef.current !== targetProjectId || isStale?.() === true || !isMountedRef.current,
       });
     } catch (error) {
@@ -2873,6 +2884,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     try {
       return await waitForReasoningJob(targetProjectId, jobId, {
         maxWaitMs: timeoutMs,
+        signal: reasonerJobAbortRef.current.signal,
+        cancelUrl: dlQueryJobUrl(jobId),
         isStale: () => currentProjectIdRef.current !== targetProjectId || !isMountedRef.current,
         fetchJob: async () => extractResponseData(await apiClient.get(dlQueryJobUrl(jobId))),
       });
@@ -3319,8 +3332,15 @@ const Dashboard: React.FC<DashboardProps> = ({
       clearTimeout(autoSyncReasonerTimerRef.current);
       autoSyncReasonerTimerRef.current = null;
     }
-    autoSyncReasonerPendingRef.current = false;
+    autoSyncReasonerAbortRef.current?.abort();
+    autoSyncReasonerAbortRef.current = null;
     autoSyncReasonerRequestRef.current = null;
+  }, []);
+
+  const cancelReasonerJobs = useCallback(() => {
+    cancelReasonerSnapshots();
+    reasonerJobAbortRef.current.abort();
+    reasonerJobAbortRef.current = new AbortController();
   }, []);
 
   const clearInferredReasonerState = useCallback(() => {
@@ -3528,6 +3548,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     reasonerRunIdRef.current += 1;
     inferredClassHierarchyAttemptedKeyRef.current = null;
     clearAutoSyncReasoner();
+    cancelReasonerJobs();
     if (projectId) {
       try {
         await apiClient.post(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/stop`, {});
@@ -3540,12 +3561,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     setIsReasonerLoading(false);
     setReasonerResults(null);
     notificationService.success("Reasoner Stopped", "Reasoner session has been disposed");
-  }, [projectId, clearAutoSyncReasoner]);
+  }, [projectId, clearAutoSyncReasoner, cancelReasonerJobs]);
 
   const resetReasonerState = useCallback(() => {
     reasonerRunIdRef.current += 1;
     inferredClassHierarchyAttemptedKeyRef.current = null;
     clearAutoSyncReasoner();
+    cancelReasonerJobs();
     explanationDismissedRef.current = true;
     setIsReasonerRunning(false);
     setIsReasonerLoading(false);
@@ -3558,7 +3580,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         ? Object.fromEntries(Object.keys(prev).map((key) => [key, "asserted" as const]))
         : prev,
     );
-  }, [clearInferredReasonerState, clearAutoSyncReasoner]);
+  }, [clearInferredReasonerState, clearAutoSyncReasoner, cancelReasonerJobs]);
 
   // Reasoner state belongs to a single project and draft/public scope — reset when either
   // changes so the Start button isn't left permanently disabled by a stale isReasonerRunning flag.
@@ -3617,18 +3639,17 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!isReasonerSynced || !isReasonerRunning || isReasonerLoading || projectId !== request.projectId || isStale()) {
       return;
     }
-    if (autoSyncReasonerInFlightRef.current) {
-      autoSyncReasonerPendingRef.current = true;
-      return;
-    }
-    autoSyncReasonerInFlightRef.current = true;
+    autoSyncReasonerAbortRef.current?.abort();
+    const controller = new AbortController();
+    autoSyncReasonerAbortRef.current = controller;
+    const isRunStale = () => controller.signal.aborted || isStale();
     try {
-      const snapshot = await loadReasonerSnapshot();
-      if (isStale()) return;
+      const snapshot = await loadReasonerSnapshot({ signal: controller.signal });
+      if (isRunStale()) return;
       const results = snapshot
         ? combineReasonerResults(snapshotToReasonerResults(snapshot))
-        : await fetchReasonerBundle(normalizeReasonerType(selectedReasoner), isStale);
-      if (isStale()) return;
+        : await fetchReasonerBundle(normalizeReasonerType(selectedReasoner), isRunStale, controller.signal);
+      if (isRunStale()) return;
       setReasonerResults(results);
 
       if ((results as any)?.inconsistent === true) {
@@ -3673,17 +3694,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     } catch (error: any) {
       if (isReasoningJobCancelled(error)) return;
       console.error("[DEBUG] Auto-sync: Reasoner update failed", error);
-      if (!isStale()) {
+      if (!isRunStale()) {
         notificationService.warning(
           "Auto-sync Failed",
           error?.message || "The reasoner could not refresh after your last change.",
         );
       }
     } finally {
-      autoSyncReasonerInFlightRef.current = false;
-      if (autoSyncReasonerPendingRef.current) {
-        autoSyncReasonerPendingRef.current = false;
-        void runAutoSyncReasonerRef.current();
+      if (autoSyncReasonerAbortRef.current === controller) {
+        autoSyncReasonerAbortRef.current = null;
       }
     }
   };
@@ -6890,6 +6909,9 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
     return () => {
       isMountedRef.current = false;
       reasonerRunIdRef.current += 1;
+      autoSyncReasonerAbortRef.current?.abort();
+      cancelReasonerSnapshots();
+      reasonerJobAbortRef.current.abort();
       if (autoDraftPollRef.current) clearInterval(autoDraftPollRef.current);
       if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
       if (conflictCheckTimerRef.current) clearTimeout(conflictCheckTimerRef.current);

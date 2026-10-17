@@ -14,11 +14,12 @@ import {
   resetReasoningTopicState,
   subscribeReasoningJob,
 } from "../services/reasoningJobTopic";
-import { ReasoningJobCancelledError, waitForReasoningJob } from "../services/reasoningJobWait";
+import { anySignal, dlQueryJobUrl, ReasoningJobCancelledError, waitForReasoningJob } from "../services/reasoningJobWait";
 import { subscribeGlobalTopics } from "../utils/collabGlobalTopics";
 import { createForbiddenFilter } from "../utils/collabSocketPolicy";
 
 const get = apiClient.get as unknown as ReturnType<typeof vi.fn>;
+const del = apiClient.delete as unknown as ReturnType<typeof vi.fn>;
 
 const fakeSocket = () => {
   const open = new Map<string, (payload: any) => void>();
@@ -32,6 +33,8 @@ const fakeSocket = () => {
 beforeEach(() => {
   resetReasoningTopicState();
   get.mockReset();
+  del.mockReset();
+  del.mockResolvedValue({ success: true, cancelled: true });
 });
 
 afterEach(() => {
@@ -120,5 +123,41 @@ describe("reasoning job topic", () => {
     });
     handlers.get("/user/queue/errors")?.({ body: JSON.stringify({ code: "WS_FORBIDDEN", destination: "/topic/reasoning/j5" }) });
     expect(onForbidden).toHaveBeenCalledWith("/topic/reasoning/j5");
+  });
+});
+
+describe("cancelling reasoning job waits", () => {
+  it("sends the cancel for a job when its wait is aborted", async () => {
+    vi.useFakeTimers();
+    const stop = new AbortController();
+    const pending = waitForReasoningJob("p1", "j6", { signal: stop.signal, cancelUrl: dlQueryJobUrl("j6") });
+    const assertion = expect(pending).rejects.toBeInstanceOf(ReasoningJobCancelledError);
+    await vi.advanceTimersByTimeAsync(10);
+    stop.abort();
+    await assertion;
+    expect(del).toHaveBeenCalledWith("/api/dl-query/jobs/j6");
+  });
+
+  it("does not send a cancel when the wait only went stale", async () => {
+    vi.useFakeTimers();
+    let stale = false;
+    const pending = waitForReasoningJob("p1", "j7", { isStale: () => stale, cancelUrl: dlQueryJobUrl("j7") });
+    const assertion = expect(pending).rejects.toBeInstanceOf(ReasoningJobCancelledError);
+    stale = true;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+    expect(del).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("aborts a combined signal when any part aborts", () => {
+    const stop = new AbortController();
+    const replaced = new AbortController();
+    const combined = anySignal(stop.signal, replaced.signal);
+    expect(combined?.aborted).toBe(false);
+    replaced.abort();
+    expect(combined?.aborted).toBe(true);
+    expect(anySignal(stop.signal)).toBe(stop.signal);
+    expect(anySignal(undefined)).toBeUndefined();
   });
 });
