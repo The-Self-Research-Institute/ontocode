@@ -37,7 +37,9 @@ public class ReasonerService {
 
     private static final int INFERRED_AXIOM_COUNT_MAX_CLASSES = 2000;
 
-    private final Set<CompletableFuture<OWLReasoner>> classHierarchyOnlyBuilds =
+    private enum Warmup { ALL, CLASS_HIERARCHY, NONE }
+
+    private final Set<CompletableFuture<OWLReasoner>> partialWarmupBuilds =
         java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Caffeine cache: max 5 reasoners, evict after 30 min idle, dispose on removal
@@ -47,7 +49,7 @@ public class ReasonerService {
         .expireAfterAccess(15, TimeUnit.MINUTES)
         .removalListener((String key, CompletableFuture<OWLReasoner> future, com.github.benmanes.caffeine.cache.RemovalCause cause) -> {
             if (future != null) {
-                classHierarchyOnlyBuilds.remove(future);
+                partialWarmupBuilds.remove(future);
                 future.thenAccept(reasoner -> {
                     log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
                     try { reasoner.dispose(); } catch (Exception ignored) {}
@@ -107,18 +109,22 @@ public class ReasonerService {
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
-        return obtainReasoner(ontology, type, true);
+        return obtainReasoner(ontology, type, Warmup.ALL);
     }
 
     public OWLReasoner getClassHierarchyReasoner(OWLOntology ontology, ReasonerType type) {
-        return obtainReasoner(ontology, type, false);
+        return obtainReasoner(ontology, type, Warmup.CLASS_HIERARCHY);
     }
 
-    private OWLReasoner obtainReasoner(OWLOntology ontology, ReasonerType type, boolean withClassAssertions) {
+    public OWLReasoner getUnwarmedReasoner(OWLOntology ontology, ReasonerType type) {
+        return obtainReasoner(ontology, type, Warmup.NONE);
+    }
+
+    private OWLReasoner obtainReasoner(OWLOntology ontology, ReasonerType type, Warmup warmup) {
         String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
 
         CompletableFuture<OWLReasoner> future = reasonerCache.get(cacheKey,
-                k -> submitReasonerBuild(ontology, type, withClassAssertions));
+                k -> submitReasonerBuild(ontology, type, warmup));
         OWLReasoner reasoner;
         try {
             reasoner = future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
@@ -136,7 +142,7 @@ public class ReasonerService {
             throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
         }
 
-        if (withClassAssertions && classHierarchyOnlyBuilds.remove(future)) {
+        if (warmup == Warmup.ALL && partialWarmupBuilds.remove(future)) {
             precomputeAll(reasoner, type);
         }
 
@@ -149,17 +155,19 @@ public class ReasonerService {
     }
 
     private CompletableFuture<OWLReasoner> submitReasonerBuild(OWLOntology ontology, ReasonerType type,
-                                                               boolean withClassAssertions) {
+                                                               Warmup warmup) {
         CompletableFuture<OWLReasoner> future = new CompletableFuture<>();
-        if (!withClassAssertions) {
-            classHierarchyOnlyBuilds.add(future);
+        if (warmup != Warmup.ALL) {
+            partialWarmupBuilds.add(future);
         }
         try {
             reasonerBuildExecutor.execute(() -> {
                 try {
-                    future.complete(withClassAssertions
-                            ? buildReasonerWithPrecompute(ontology, type)
-                            : buildClassHierarchyReasoner(ontology, type));
+                    future.complete(switch (warmup) {
+                        case ALL -> buildReasonerWithPrecompute(ontology, type);
+                        case CLASS_HIERARCHY -> buildClassHierarchyReasoner(ontology, type);
+                        case NONE -> createReasoner(ontology, type);
+                    });
                 } catch (Throwable t) {
                     future.completeExceptionally(t);
                 }

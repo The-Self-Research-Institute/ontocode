@@ -21,7 +21,10 @@ import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
+import self.research.ontology.owlEditor.service.MainGraphRevisionService;
 import self.research.ontology.owlEditor.model.DLQueryJob;
+import self.research.ontology.common.ReasoningSnapshot;
+import java.util.concurrent.atomic.AtomicReference;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.common.ReasoningFriendlyErrors;
@@ -90,6 +93,59 @@ public class ReasonerController {
     // Ontologies above this triple count are rejected before export to prevent OOM
     @Value("${ontocode.reasoner.max-triples:5000000}")
     private long maxReasonerTriples;
+
+    @Value("${ontocode.reasoner.operation-timeout-ms:45000}")
+    private long snapshotTimeoutMs = 45_000L;
+
+    @Autowired(required = false)
+    private MainGraphRevisionService mainGraphRevisionService;
+
+    static final String SNAPSHOT_JOB_TYPE = "REASONER_SNAPSHOT";
+
+    private static final Set<String> WORKER_JOB_KEYS = Set.of(
+            "async", "jobId", "jobType", "projectId", "status", "queuePosition",
+            "estimatedWaitTimeMs", "executionTimeMs", "error", "rateLimited");
+
+    private static final class LocalSnapshotRun {
+        final CompletableFuture<Map<String, Object>> result = new CompletableFuture<>();
+        final AtomicReference<Future<?>> task = new AtomicReference<>();
+        private final List<OWLReasoner> reasoners = new ArrayList<>();
+        private boolean stopped;
+
+        synchronized void attach(OWLReasoner reasoner) {
+            reasoners.add(reasoner);
+            if (stopped) {
+                reasoner.interrupt();
+            }
+        }
+
+        synchronized void stop() {
+            stopped = true;
+            Future<?> running = task.get();
+            if (running != null) {
+                running.cancel(true);
+            }
+            for (OWLReasoner reasoner : reasoners) {
+                try {
+                    reasoner.interrupt();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        synchronized boolean isStopped() {
+            return stopped;
+        }
+    }
+
+    private final ConcurrentHashMap<String, LocalSnapshotRun> snapshotsInFlight = new ConcurrentHashMap<>();
+
+    private final ExecutorService snapshotExecutor = new ThreadPoolExecutor(2, 2, 60, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(10), r -> {
+                Thread t = new Thread(r, "reasoner-snapshot-worker");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.AbortPolicy());
 
     /**
      * Load ontology from Fuseki/TDB2 (via temp-file stream) or GridFS fallback.
@@ -288,9 +344,278 @@ public class ReasonerController {
         if (job == null) {
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
         }
-        Map<String, Object> response = new HashMap<>(job);
+        Map<String, Object> response = new HashMap<>(withNestedSnapshotResult(job));
         response.put("projectId", projectId);
         return ResponseEntity.ok(response);
+    }
+
+    static Map<String, Object> withNestedSnapshotResult(Map<String, Object> job) {
+        if (!SNAPSHOT_JOB_TYPE.equals(job.get("jobType")) || !"COMPLETED".equals(job.get("status"))
+                || job.get("result") instanceof Map) {
+            return job;
+        }
+        Map<String, Object> response = new HashMap<>();
+        response.put("result", snapshotPart(job));
+        job.forEach((key, value) -> {
+            if (WORKER_JOB_KEYS.contains(key)) {
+                response.put(key, value);
+            }
+        });
+        return response;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> snapshotPart(Map<String, Object> job) {
+        if (job.get("result") instanceof Map<?, ?> nested) {
+            return new LinkedHashMap<>((Map<String, Object>) nested);
+        }
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        job.forEach((key, value) -> {
+            if (!WORKER_JOB_KEYS.contains(key) && !"success".equals(key)) {
+                snapshot.put(key, value);
+            }
+        });
+        snapshot.put("success", true);
+        return snapshot;
+    }
+
+    @GetMapping("/{projectId}/reasoner/snapshot")
+    public ResponseEntity<Map<String, Object>> getReasonerSnapshot(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
+    ) {
+        try {
+            String requested = reasonerType.trim().toUpperCase(Locale.ROOT);
+            ReasonerType requestedType = ReasonerType.valueOf(requested);
+            String resolvedUserId = resolveUserId(projectId, userId, request);
+            boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
+            if (!isDraft && reasonerWorkerEnabled && reasonerWorkerClient != null) {
+                ResponseEntity<Map<String, Object>> fromWorker = snapshotFromWorker(projectId, requested);
+                if (fromWorker != null) {
+                    return fromWorker;
+                }
+            }
+            return localSnapshot(projectId, requestedType, isDraft ? resolvedUserId : null);
+        } catch (WorkerQueueFullException e) {
+            return queueFull(projectId, e);
+        } catch (Exception e) {
+            log.error("Error building reasoner snapshot for project {}", projectId, e);
+            return ResponseEntity.ok(snapshotError(projectId, e));
+        }
+    }
+
+    private ResponseEntity<Map<String, Object>> snapshotFromWorker(String projectId, String requested) {
+        Map<String, Object> submitted = reasonerWorkerClient.submitJob(SNAPSHOT_JOB_TYPE, projectId, null, null, requested, null);
+        if (Boolean.TRUE.equals(submitted.get("rateLimited"))) {
+            throw new WorkerQueueFullException(String.valueOf(submitted.get("error")));
+        }
+        Object jobId = submitted.get("jobId");
+        if (Boolean.FALSE.equals(submitted.get("success")) || jobId == null) {
+            log.warn("Worker did not take the snapshot job for {} ({}); building it in the editor",
+                    projectId, submitted.get("error"));
+            return null;
+        }
+        String status = String.valueOf(submitted.getOrDefault("status", "QUEUED"));
+        if ("COMPLETED".equals(status)) {
+            Map<String, Object> body = new LinkedHashMap<>(snapshotPart(submitted));
+            body.put("success", true);
+            body.put("projectId", projectId);
+            body.put("async", false);
+            return ResponseEntity.ok(body);
+        }
+        if ("FAILED".equals(status)) {
+            Map<String, Object> body = new HashMap<>();
+            body.put("success", false);
+            body.put("projectId", projectId);
+            body.put("error", ReasoningFriendlyErrors.forUser(String.valueOf(submitted.get("error"))));
+            return ResponseEntity.ok(body);
+        }
+        if (reasoningJobRelayService != null) {
+            reasoningJobRelayService.rememberSubmittedJob(String.valueOf(jobId), projectId, null, SNAPSHOT_JOB_TYPE, submitted);
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", true);
+        body.put("projectId", projectId);
+        body.put("async", true);
+        body.put("jobId", String.valueOf(jobId));
+        body.put("status", status);
+        if (submitted.get("queuePosition") != null) {
+            body.put("queuePosition", submitted.get("queuePosition"));
+        }
+        if (submitted.get("estimatedWaitTimeMs") != null) {
+            body.put("estimatedWaitTimeMs", submitted.get("estimatedWaitTimeMs"));
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    private ResponseEntity<Map<String, Object>> localSnapshot(String projectId, ReasonerType requestedType,
+                                                              String draftUserId) throws Exception {
+        boolean isDraft = draftUserId != null;
+        long draftVersion = isDraft ? draftGraphVersion(projectId, draftUserId) : 0L;
+        long draftWriteStamp = isDraft ? datasetService.getDraftWriteStamp(projectId, draftUserId) : 0L;
+        long revision = isDraft ? -1L : mainGraphRevision(projectId);
+        String cacheKey = isDraft
+                ? EditorReasonerCacheService.draftSnapshotKey(projectId, requestedType.name(), draftUserId,
+                        draftVersion + "." + draftWriteStamp)
+                : EditorReasonerCacheService.snapshotKey(projectId, requestedType.name(), revision);
+
+        Optional<Map<String, Object>> cached = editorReasonerCache.getSnapshot(cacheKey);
+        if (cached.isPresent()) {
+            return ResponseEntity.ok(snapshotBody(projectId, cached.get(), true));
+        }
+
+        LocalSnapshotRun run = snapshotsInFlight.computeIfAbsent(cacheKey, key -> startLocalSnapshot(
+                projectId, requestedType, draftUserId, draftVersion, revision, key));
+        run.result.whenComplete((snapshot, error) -> snapshotsInFlight.remove(cacheKey, run));
+        try {
+            Map<String, Object> snapshot = run.result.get(snapshotTimeoutMs, TimeUnit.MILLISECONDS);
+            return ResponseEntity.ok(snapshotBody(projectId, snapshot, false));
+        } catch (TimeoutException e) {
+            run.stop();
+            snapshotsInFlight.remove(cacheKey, run);
+            throw new TimeoutException("Reasoning timed out after " + (snapshotTimeoutMs / 1000)
+                    + "s — the ontology may be too large or complex for this reasoner.");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw cause instanceof Exception ex ? ex : new RuntimeException(cause);
+        } catch (CancellationException e) {
+            throw new TimeoutException("Reasoning was stopped before it finished.");
+        }
+    }
+
+    private LocalSnapshotRun startLocalSnapshot(String projectId, ReasonerType requestedType, String draftUserId,
+                                                long draftVersion, long revision, String cacheKey) {
+        LocalSnapshotRun run = new LocalSnapshotRun();
+        try {
+            run.task.set(snapshotExecutor.submit(() -> {
+                try {
+                    Map<String, Object> snapshot = computeSnapshot(projectId, requestedType, draftUserId,
+                            draftVersion, revision, run);
+                    editorReasonerCache.putSnapshot(cacheKey, snapshot);
+                    run.result.complete(snapshot);
+                } catch (Throwable t) {
+                    run.result.completeExceptionally(t);
+                }
+            }));
+        } catch (RejectedExecutionException e) {
+            run.result.completeExceptionally(
+                    new RuntimeException("Too many reasoning requests in progress — please try again shortly."));
+        }
+        return run;
+    }
+
+    private Map<String, Object> computeSnapshot(String projectId, ReasonerType requestedType, String draftUserId,
+                                                long draftVersion, long revision, LocalSnapshotRun run) throws Exception {
+        boolean isDraft = draftUserId != null;
+        OWLOntology ontology = isDraft
+                ? datasetService.loadDraftAsOntology(projectId, draftUserId, draftVersion)
+                : loadOntology(projectId);
+
+        ReasonerType classType = requestedType;
+        String downgradedWarning = null;
+        int axiomCount = ontology.getAxiomCount();
+        if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
+                && classType != ReasonerType.ELK && classType != ReasonerType.STRUCTURAL) {
+            classType = ReasonerType.ELK;
+            downgradedWarning = String.format("This ontology has %,d axioms, so ELK was used instead of %s "
+                    + "to keep reasoning fast.", axiomCount, requestedType.getDisplayName());
+        }
+        if (axiomCount > LARGE_ONTOLOGY_AXIOM_THRESHOLD && classType != ReasonerType.STRUCTURAL) {
+            classType = ReasonerType.STRUCTURAL;
+            downgradedWarning = String.format("This ontology has %,d axioms, so only the asserted (structural) "
+                    + "hierarchy is shown instead of %s.", axiomCount, requestedType.getDisplayName());
+        }
+
+        OWLReasoner classReasoner;
+        try {
+            classReasoner = reasonerService.getClassHierarchyReasoner(ontology, classType);
+        } catch (RuntimeException e) {
+            if (classType != ReasonerType.HERMIT || !isLinkageFailure(e)) {
+                throw e;
+            }
+            log.warn("HermiT could not be started for project {}; using Openllet instead", projectId, e);
+            classType = ReasonerType.OPENLLET;
+            downgradedWarning = "HermiT could not be started here, so Openllet was used instead.";
+            classReasoner = reasonerService.getClassHierarchyReasoner(ontology, classType);
+        }
+        run.attach(classReasoner);
+        ReasonerType propertyType = classType == ReasonerType.ELK ? ReasonerType.OPENLLET : classType;
+        OWLReasoner propertyReasoner = null;
+        if (propertyType != classType) {
+            propertyReasoner = reasonerService.getUnwarmedReasoner(ontology, propertyType);
+            run.attach(propertyReasoner);
+        }
+
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("success", true);
+        try {
+            snapshot.putAll(ReasoningSnapshot.build(ontology, classReasoner, propertyReasoner));
+        } catch (RuntimeException e) {
+            if (run.isStopped()) {
+                reasonerService.disposeReasoner(ontology, classType);
+                if (propertyReasoner != null) {
+                    reasonerService.disposeReasoner(ontology, propertyType);
+                }
+            }
+            throw e;
+        }
+        snapshot.put("reasonerType", classType.getDisplayName());
+        snapshot.put("propertyReasonerType", propertyType.getDisplayName());
+        snapshot.put("requestedReasoner", requestedType.name());
+        snapshot.put("ontologyRevision", revision);
+        snapshot.put("draft", isDraft);
+        if (downgradedWarning != null) {
+            snapshot.put("downgradedWarning", downgradedWarning);
+        }
+        return snapshot;
+    }
+
+    private static Map<String, Object> snapshotBody(String projectId, Map<String, Object> snapshot, boolean cached) {
+        Map<String, Object> body = new LinkedHashMap<>(snapshot);
+        body.put("success", true);
+        body.put("projectId", projectId);
+        body.put("async", false);
+        body.put("cached", cached);
+        return body;
+    }
+
+    private static boolean isLinkageFailure(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof LinkageError) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private long mainGraphRevision(String projectId) {
+        if (mainGraphRevisionService == null) {
+            return -1L;
+        }
+        try {
+            return mainGraphRevisionService.getRevision(projectId);
+        } catch (Exception e) {
+            log.debug("Could not read the main graph revision for {}: {}", projectId, e.getMessage());
+            return -1L;
+        }
+    }
+
+    private Map<String, Object> snapshotError(String projectId, Exception e) {
+        Map<String, Object> body = friendlyError(e);
+        body.put("projectId", projectId);
+        body.put("error", body.get("message"));
+        StringBuilder detail = new StringBuilder(e.getClass().getName());
+        if (e.getMessage() != null) {
+            detail.append(": ").append(e.getMessage());
+        }
+        body.put("technicalDetail", detail.toString());
+        if (e instanceof TimeoutException) {
+            body.put("timeout", true);
+        }
+        return body;
     }
 
     @DeleteMapping("/{projectId}/reasoner/jobs/{jobId}")
