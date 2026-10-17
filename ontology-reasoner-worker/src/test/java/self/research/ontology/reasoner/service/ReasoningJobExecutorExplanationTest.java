@@ -63,7 +63,7 @@ class ReasoningJobExecutorExplanationTest {
         when(sessions.openSession(eq("P1"), any(), any())).thenReturn(new OntologySessionService.ReasoningSession(
                 manager, ontology, reasoner, ReasonerType.HERMIT, null, false, null, 3));
 
-        ReasoningJobExecutor executor = new ReasoningJobExecutor(sessions);
+        ReasoningJobExecutor executor = new ReasoningJobExecutor(sessions, new ReasoningSnapshotService(sessions, 6, 120, 1.0));
         ReflectionTestUtils.setField(executor, "justificationTimeoutMs", 15_000L);
         ReflectionTestUtils.setField(executor, "defaultMaxJustifications", 5);
 

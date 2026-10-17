@@ -21,7 +21,8 @@ public class ReasoningJob {
         REASONER_HIERARCHY,
         REASONER_OBJ_PROP_HIERARCHY,
         REASONER_DATA_PROP_HIERARCHY,
-        REASONER_EXPLAIN_INCONSISTENCY
+        REASONER_EXPLAIN_INCONSISTENCY,
+        REASONER_SNAPSHOT
     }
 
     public enum Status {

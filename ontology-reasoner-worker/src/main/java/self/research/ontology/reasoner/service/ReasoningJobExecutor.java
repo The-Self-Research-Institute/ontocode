@@ -36,6 +36,7 @@ public class ReasoningJobExecutor {
     private static final Logger log = LoggerFactory.getLogger(ReasoningJobExecutor.class);
 
     private final OntologySessionService sessionService;
+    private final ReasoningSnapshotService snapshotService;
     private final OWLReasonerFactory dlReasonerFactory;
 
     private static final OWLDataFactory EXPLANATION_DATA_FACTORY =
@@ -50,8 +51,9 @@ public class ReasoningJobExecutor {
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int defaultMaxJustifications;
 
-    public ReasoningJobExecutor(OntologySessionService sessionService) {
+    public ReasoningJobExecutor(OntologySessionService sessionService, ReasoningSnapshotService snapshotService) {
         this.sessionService = sessionService;
+        this.snapshotService = snapshotService;
         OWLReasonerFactory factory = null;
         try {
             factory = openllet.owlapi.OpenlletReasonerFactory.getInstance();
@@ -73,6 +75,7 @@ public class ReasoningJobExecutor {
             case REASONER_RUN -> executeFullRun(job);
             case REASONER_INFERRED_AXIOMS -> executeInferredAxioms(job);
             case REASONER_EXPLAIN_INCONSISTENCY -> executeExplainInconsistency(job);
+            case REASONER_SNAPSHOT -> snapshotService.snapshot(job.getProjectId(), job.getReasonerType(), job.getOwnerEmail());
         };
     }
 
@@ -1132,15 +1135,7 @@ public class ReasoningJobExecutor {
     }
 
     private ReasonerType parseReasonerType(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return ReasonerType.OPENLLET;
-        }
-        try {
-            return ReasonerType.valueOf(raw.toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            log.warn("Unknown reasoner type '{}', falling back to OPENLLET", raw);
-            return ReasonerType.OPENLLET;
-        }
+        return ReasonerType.fromRequest(raw);
     }
 
     private OWLClassExpression parseClassExpression(OWLOntology ontology, String expression) {
