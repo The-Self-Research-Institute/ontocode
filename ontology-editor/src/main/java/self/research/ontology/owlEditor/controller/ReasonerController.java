@@ -519,13 +519,13 @@ public class ReasonerController {
         ReasonerType classType = requestedType;
         String downgradedWarning = null;
         int axiomCount = ontology.getAxiomCount();
-        if (axiomCount > MEDIUM_ONTOLOGY_THRESHOLD && axiomCount <= LARGE_ONTOLOGY_AXIOM_THRESHOLD
+        if (axiomCount > Limit.REASONER_ELK_ABOVE_AXIOMS.value() && axiomCount <= Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value()
                 && classType != ReasonerType.ELK && classType != ReasonerType.STRUCTURAL) {
             classType = ReasonerType.ELK;
             downgradedWarning = String.format("This ontology has %,d axioms, so ELK was used instead of %s "
                     + "to keep reasoning fast.", axiomCount, requestedType.getDisplayName());
         }
-        if (axiomCount > LARGE_ONTOLOGY_AXIOM_THRESHOLD && classType != ReasonerType.STRUCTURAL) {
+        if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && classType != ReasonerType.STRUCTURAL) {
             classType = ReasonerType.STRUCTURAL;
             downgradedWarning = String.format("This ontology has %,d axioms, so only the asserted (structural) "
                     + "hierarchy is shown instead of %s.", axiomCount, requestedType.getDisplayName());
