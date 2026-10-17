@@ -534,12 +534,13 @@ public class ReasonerController {
         try {
             classReasoner = reasonerService.getClassHierarchyReasoner(ontology, classType);
         } catch (RuntimeException e) {
-            if (classType != ReasonerType.HERMIT || !isLinkageFailure(e)) {
+            if (classType != ReasonerType.HERMIT || run.isStopped() || isStopFailure(e)) {
                 throw e;
             }
             log.warn("HermiT could not be started for project {}; using Openllet instead", projectId, e);
             classType = ReasonerType.OPENLLET;
-            downgradedWarning = "HermiT could not be started here, so Openllet was used instead.";
+            downgradedWarning = "HermiT could not be started for this ontology (" + rootMessage(e)
+                    + "), so Openllet was used instead.";
             classReasoner = reasonerService.getClassHierarchyReasoner(ontology, classType);
         }
         run.attach(classReasoner);
@@ -583,13 +584,28 @@ public class ReasonerController {
         return body;
     }
 
-    private static boolean isLinkageFailure(Throwable error) {
+    private static boolean isStopFailure(Throwable error) {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
         for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
-            if (t instanceof LinkageError) {
+            if (t instanceof InterruptedException
+                    || t instanceof java.util.concurrent.TimeoutException
+                    || t instanceof java.util.concurrent.CancellationException
+                    || t instanceof org.semanticweb.owlapi.reasoner.ReasonerInterruptedException
+                    || t instanceof org.semanticweb.owlapi.reasoner.TimeOutException) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable root = error;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        return root.getMessage() != null ? root.getMessage() : root.getClass().getSimpleName();
     }
 
     private long mainGraphRevision(String projectId) {

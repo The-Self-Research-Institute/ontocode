@@ -260,6 +260,39 @@ class ReasonerControllerSnapshotTest {
     }
 
     @Test
+    void hermitThatCannotHandleSwrlBuiltInsFallsBackToOpenllet() throws Exception {
+        OWLOntology draftOntology = smallOntology();
+        OWLOntologyManager manager = draftOntology.getOWLOntologyManager();
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLClass dog = df.getOWLClass(IRI.create(NS + "Dog"));
+        OWLClass oldDog = df.getOWLClass(IRI.create(NS + "OldDog"));
+        org.semanticweb.owlapi.model.OWLDataProperty age = df.getOWLDataProperty(IRI.create(NS + "age"));
+        org.semanticweb.owlapi.model.SWRLVariable x = df.getSWRLVariable(IRI.create(NS + "x"));
+        org.semanticweb.owlapi.model.SWRLVariable a = df.getSWRLVariable(IRI.create(NS + "a"));
+        manager.addAxiom(draftOntology, df.getSWRLRule(
+                java.util.Set.of(
+                        df.getSWRLClassAtom(dog, x),
+                        df.getSWRLDataPropertyAtom(age, x, a),
+                        df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#greaterThan"),
+                                List.of(a, df.getSWRLLiteralArgument(df.getOWLLiteral(10))))),
+                java.util.Set.of(df.getSWRLClassAtom(oldDog, x))));
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.getDraftWriteStamp("proj-1", "user-1")).thenReturn(9L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenReturn(draftOntology);
+
+        Map<String, Object> body = snapshot("HERMIT", "user-1", true);
+
+        assertEquals(true, body.get("success"));
+        assertEquals("Openllet", body.get("reasonerType"));
+        assertEquals("HERMIT", body.get("requestedReasoner"));
+        assertTrue(String.valueOf(body.get("downgradedWarning")).startsWith("HermiT could not be started"));
+        assertEquals(true, body.get("consistent"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> unsatisfiable = (List<Map<String, Object>>) body.get("unsatisfiableClasses");
+        assertEquals(NS + "RobotDog", unsatisfiable.get(0).get("iri"));
+    }
+
+    @Test
     void repeatOnTheSameDraftVersionIsServedFromCacheAndADraftWriteClearsIt() throws Exception {
         OWLOntology draftOntology = smallOntology();
         when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
