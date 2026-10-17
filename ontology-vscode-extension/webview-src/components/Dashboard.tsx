@@ -80,6 +80,7 @@ import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilen
 import { cancelOntologyExport } from "../services/exportService";
 import { invalidateReasonerSnapshots, ReasonerSnapshotError, type ReasonerSnapshot } from "../services/reasonerSnapshot";
 import {
+  inferredChildrenFromSnapshot,
   snapshotClassTree,
   snapshotDataPropertyTree,
   snapshotInconsistencyMessage,
@@ -2048,6 +2049,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isDatatypesLoading, setIsDatatypesLoading] = useState(false);
   const [inferredClassHierarchy, setInferredClassHierarchy] = useState<TreeNode[]>([]);
   const inferredClassHierarchyAttemptedKeyRef = useRef<string | null>(null);
+  const inferredClassSnapshotRef = useRef<ReasonerSnapshot | null>(null);
   const [objectProperties, setObjectProperties] = useState<Property[]>([]);
   const [objectPropertyHierarchy, setObjectPropertyHierarchy] = useState<any[]>([]);
   const [inferredObjectPropertyHierarchy, setInferredObjectPropertyHierarchy] = useState<TreeNode[]>([]);
@@ -2929,7 +2931,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       return resolveHierarchyPayload(projectId, payload, isStale);
     };
 
-    const applyPayload = (payload: any, timedOut = false) => {
+    const applyPayload = (payload: any, timedOut = false, snapshot: ReasonerSnapshot | null = null) => {
       if (isStale()) return false;
       const hierarchy = payload?.hierarchy || [];
       if (timedOut || !Array.isArray(hierarchy) || hierarchy.length === 0) {
@@ -2937,6 +2939,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return false;
       }
       const normalized = applyInstanceCountsToTree(hierarchy.map(normalizeHierarchyNode), classInstanceCounts);
+      inferredClassSnapshotRef.current = snapshot;
       setInferredClassHierarchy(normalized);
       inferredClassHierarchyAttemptedKeyRef.current = `${startedProjectId}::${selectedReasoner}`;
       return true;
@@ -2951,7 +2954,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           showNotification(snapshotInconsistencyMessage(snapshot), "error");
           return;
         }
-        applyPayload({ hierarchy: snapshotClassTree(snapshot) });
+        applyPayload({ hierarchy: snapshotClassTree(snapshot) }, false, snapshot);
         return;
       }
 
@@ -3341,6 +3344,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, []);
 
   const clearInferredReasonerState = useCallback(() => {
+    inferredClassSnapshotRef.current = null;
     setInferredClassHierarchy([]);
     setInferredObjectPropertyHierarchy([]);
     setInferredDataPropertyHierarchy([]);
@@ -3416,6 +3420,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         { id: "http://www.w3.org/2002/07/owl#topDataProperty", label: "owl:topDataProperty" },
       );
       if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
+        inferredClassSnapshotRef.current = snapshot;
         setInferredClassHierarchy(bundleClassHierarchy);
       }
       if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
@@ -3672,6 +3677,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         { id: "http://www.w3.org/2002/07/owl#topDataProperty", label: "owl:topDataProperty" },
       );
       if (Array.isArray(bundleClassHierarchy) && bundleClassHierarchy.length > 0) {
+        inferredClassSnapshotRef.current = snapshot;
         setInferredClassHierarchy(bundleClassHierarchy);
       }
       if (Array.isArray(bundleObjectPropertyHierarchy) && bundleObjectPropertyHierarchy.length > 0) {
@@ -8029,7 +8035,8 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
   const loadInferredChildren = useCallback(
     async (nodeId: string) => {
       if (!projectId) return;
-      const inferred = await fetchInferredChildren(nodeId);
+      const inferred = inferredChildrenFromSnapshot(inferredClassSnapshotRef.current, nodeId)
+        ?? await fetchInferredChildren(nodeId);
       const nothingIri = "http://www.w3.org/2002/07/owl#Nothing";
       const mappedChildren: TreeNode[] = inferred
         .filter((item: any) => {
@@ -8043,6 +8050,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           children: [],
           hasChildren: item.hasChildren !== undefined ? item.hasChildren : true,
           isUnsatisfiable: nodeId === nothingIri || item.isUnsatisfiable === true,
+          ...(Array.isArray(item.equivalentClasses) ? { equivalentClasses: item.equivalentClasses } : {}),
           subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: getLocalName(nodeId) || "Thing" }],
         }));
 
@@ -16117,6 +16125,7 @@ const updateItemInState = useCallback(
                     // the plugin's onInferredHierarchyChange prop) is what actually
                     // makes those results show up in the Entities tab's "Inferred"
                     // toggle too, by updating the same state that toggle reads.
+                    inferredClassSnapshotRef.current = null;
                     setInferredClassHierarchy(data.classHierarchy);
                     setInferredObjectPropertyHierarchy(data.objectPropertyHierarchy);
                     setInferredDataPropertyHierarchy(data.dataPropertyHierarchy);
