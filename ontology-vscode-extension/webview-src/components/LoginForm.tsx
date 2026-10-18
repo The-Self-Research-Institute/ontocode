@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
 import { Loader2, Eye, EyeOff, ArrowLeft, Bug, RefreshCw } from 'lucide-react';
-import ReportIssueModal from './ReportIssueModal';
+import { openFeedbackPage } from "../utils/feedback";
 import { AppVersionBadge } from './AppVersionBadge';
 import { OntoCodeLogo } from './OntoCodeLogo';
 import { DeploymentModePill } from './DeploymentModePill';
@@ -32,7 +32,6 @@ const LoginForm = ({
   const [error, setError] = useState("");
   const [resendMessage, setResendMessage] = useState("");
   const [resendError, setResendError] = useState("");
-  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
   const { login, resendVerification, sessionExpiredMessage } = useAuth();
   const showResendVerification = error.toLowerCase().includes("account not verified");
 
@@ -220,7 +219,7 @@ const LoginForm = ({
 
       {/* Report Issue floating button */}
       <button
-        onClick={() => setIsReportIssueModalOpen(true)}
+        onClick={() => openFeedbackPage("bug")}
         className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
         title="Report an issue"
       >
@@ -229,9 +228,6 @@ const LoginForm = ({
         <span className="hidden sm:inline">Report Issue</span>
       </button>
 
-      {isReportIssueModalOpen && (
-        <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
-      )}
     </div>
   );
 };

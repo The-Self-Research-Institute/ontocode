@@ -113,7 +113,7 @@ import ToastNotification from "./ToastNotification";
 import { CollaborativeCursors } from "./CollaborativeCursor";
 import ShareDialog from "./ShareDialog";
 import MergeWizard from "./MergeWizard";
-import { ReportIssueModal } from "./ReportIssueModal";
+import { openFeedbackPage } from "../utils/feedback";
 import { useProjectRecovery } from "../hooks/useCodeAssistantRecovery";
 import { UserGuideModal } from "./UserGuideModal";
 import { OpenSourceLicensesModal } from "./OpenSourceLicensesModal";
@@ -1904,8 +1904,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [isCurrentFileShared, setIsCurrentFileShared] = useState(false);
   const [isMergeWizardOpen, setMergeWizardOpen] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
-  const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
-  const [reportIssueType, setReportIssueType] = useState<"Bug" | "Task">("Bug");
   const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false);
@@ -16938,14 +16936,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onOpenPluginMarketplace={() => setShowPluginMarketplace(true)}
           hasPluginUpdates={hasPluginUpdates}
           onOpenHistory={() => setIsHistoryPanelOpen(true)}
-           onReportBug={() => {
-            setReportIssueType("Bug");
-            setIsReportIssueModalOpen(true);
-          }}
-          onRequestFeature={() => {
-            setReportIssueType("Task");
-            setIsReportIssueModalOpen(true);
-          }}
+           onReportBug={() => openFeedbackPage("bug", { projectName: projectId || undefined, projectId: projectId || undefined, ontologyFilePath: activeFileName || undefined })}
+          onRequestFeature={() => openFeedbackPage("feature", { projectName: projectId || undefined, projectId: projectId || undefined, ontologyFilePath: activeFileName || undefined })}
           onOpenUserGuide={() => setIsUserGuideOpen(true)}
           onOpenReleaseNotes={() => setIsReleaseNotesOpen(true)}
           onOpenLicenses={() => setIsLicensesOpen(true)}
@@ -17916,15 +17908,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         }}
       />
 
-      {isReportIssueModalOpen && (
-        <ReportIssueModal
-          projectName={projectId || undefined}
-          projectId={projectId || undefined}
-          ontologyFilePath={activeFileName || undefined}
-          initialIssueType={reportIssueType}
-          onClose={() => setIsReportIssueModalOpen(false)}
-        />
-      )}
 
       <ReleaseNotesModal
         isOpen={isReleaseNotesOpen}

@@ -5,7 +5,7 @@
 A **VS Code extension** for ontology development, providing a full **visual ontology editor** through a React-based webview: SPARQL/DL querying, an AI-assisted change review workflow, an OWL reasoner, D3-powered graph visualization, real-time team collaboration, and a plugin marketplace.
 This extension is part of the larger [Ontology Platform](../README.md) but can be built and run independently.
 
-[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red)](https://github.com/sponsors/The-Self-Research-Institute) [![Donate](https://img.shields.io/badge/Donate-selfresearch.org-blueviolet)](https://selfresearch.org/donate)
+[![Report a bug](https://img.shields.io/badge/Report%20a%20bug-d73a4a)](https://ontocode.selfresearch.org/report-bug) [![Request a feature](https://img.shields.io/badge/Request%20a%20feature-0e8a16)](https://ontocode.selfresearch.org/request-feature) [![Changelog](https://img.shields.io/badge/Changelog-what's%20new-blue)](./CHANGELOG.md) [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red)](https://github.com/sponsors/The-Self-Research-Institute) [![Donate](https://img.shields.io/badge/Donate-selfresearch.org-blueviolet)](https://selfresearch.org/donate)
 
 ![OntoCode ontology graph visualization with AI insights](https://raw.githubusercontent.com/The-Self-Research-Institute/links/main/ontocode/gifs/graph-visualization.gif)
 
@@ -23,6 +23,22 @@ This extension is part of the larger [Ontology Platform](../README.md) but can b
 - **Sci2Code editor integration** — the `Ctrl+Shift+C` / **Insert Citation** editor command is powered by [Sci2Code](https://github.com/The-Self-Research-Institute/Sci2Code-extension-for-vscode), inserting a citation at your cursor in any open file (VS Code only).
 - **Plugin Marketplace** — install community and first-party plugins (SWRL Rule Editor, Fuzzy Ontology, additional graph visualizations, and more).
 - **Desktop app** — an Electron-based desktop build for working outside VS Code.
+
+---
+
+## 💻 Download the desktop app
+
+Prefer not to use VS Code? The desktop app is the same editor with its own built-in local backend. No VS Code and no setup needed. Downloads are several hundred MB. All options are on the [download page](https://ontocode.selfresearch.org/download).
+
+| Your computer | Download | How to install |
+|---------------|----------|----------------|
+| Windows 10 or later (64-bit) | [Windows installer (.exe)](https://ontocodeapi.selfresearch.org/api/downloads/windows-x64) | Run the installer. |
+| Linux, any distribution | [AppImage](https://ontocodeapi.selfresearch.org/api/downloads/linux-x64) | `chmod +x OntoCode*.AppImage && ./OntoCode*.AppImage` |
+| Debian or Ubuntu | [.deb package](https://ontocodeapi.selfresearch.org/api/downloads/linux-deb) | `sudo apt install ./ontocode-desktop_*_amd64.deb` |
+| Linux on ARM64 | [AppImage](https://ontocodeapi.selfresearch.org/api/downloads/linux-arm64) or [.deb](https://ontocodeapi.selfresearch.org/api/downloads/linux-deb-arm64) | Same as above. |
+| Flatpak | [Flatpak package](https://ontocodeapi.selfresearch.org/api/downloads/linux-flatpak) | Open the downloaded file with your software center, or install it with `flatpak`. |
+
+Or open it in your browser: [ontocode.selfresearch.org/login](https://ontocode.selfresearch.org/login). A macOS build is on the way.
 
 ---
 
@@ -79,6 +95,7 @@ Explore the ontology as an interactive graph (tree, network, or VOWL notation), 
 
 ## 📚 Table of Contents
 - [Features](#-features)
+- [Download the desktop app](#-download-the-desktop-app)
 - [Screenshots](#-screenshots)
 - [Overview](#overview)
 - [Folder Structure](#folder-structure)
@@ -282,7 +299,7 @@ npm run lint
 
 ## 🤝 Contributing
 
-Contributions are welcome — see the [GitHub repository](https://github.com/The-Self-Research-Institute/ontocode) for source, and open an [issue](https://github.com/The-Self-Research-Institute/ontocode/issues) to report a bug or request a feature.
+Contributions are welcome — see the [GitHub repository](https://github.com/The-Self-Research-Institute/ontocode) for source, and use [Report a bug](https://ontocode.selfresearch.org/report-bug) or [Request a feature](https://ontocode.selfresearch.org/request-feature) to tell us what to fix or add.
 
 ---
 

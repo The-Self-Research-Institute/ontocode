@@ -666,17 +666,6 @@
     },
     {
       "rule": "section-3-file-size",
-      "file": "ontology-vscode-extension/webview-src/components/ReportIssueModal.tsx",
-      "category": "react-component",
-      "measuredNonblankLines": 835,
-      "reviewThreshold": 300,
-      "blobSha": "36cc204b328cc7449527b8060ca3b0d6b270f536",
-      "reason": "Pre-existing file already over the section 3 review threshold when this baseline was captured; not touched by the change that introduced this registry.",
-      "owner": "unassigned",
-      "removalCondition": "Remove this entry once the file is refactored/split to a nonblank line count at or below reviewThreshold, or replace with an explicit reviewer-approved exception entry."
-    },
-    {
-      "rule": "section-3-file-size",
       "file": "ontology-vscode-extension/webview-src/components/SettingsModal.tsx",
       "category": "react-component",
       "measuredNonblankLines": 832,

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
 import { Loader2, Eye, EyeOff, ArrowLeft, Bug } from 'lucide-react';
-import ReportIssueModal from './ReportIssueModal';
+import { openFeedbackPage } from "../utils/feedback";
 import { AppVersionBadge } from './AppVersionBadge';
 import { OntoCodeLogo } from './OntoCodeLogo';
 import { TermsAndConditionsModal } from './TermsAndConditionsModal';
@@ -31,7 +31,6 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, deployment
     const [agreedToTerms, setAgreedToTerms] = useState(false);
     const [isTnCOpen, setIsTnCOpen] = useState(false);
     const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
-    const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
     const { signup } = useAuth();
 
     const validatePassword = (pwd: string): string | null => {
@@ -250,7 +249,7 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, deployment
 
         {/* Report Issue floating button */}
         <button
-          onClick={() => setIsReportIssueModalOpen(true)}
+          onClick={() => openFeedbackPage("bug")}
           className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
           title="Report an issue"
         >
@@ -258,9 +257,6 @@ const SignupForm = ({ onToggleForm, prefillEmail, onBackToInvitation, deployment
           Report Issue
         </button>
 
-        {isReportIssueModalOpen && (
-          <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
-        )}
 
         <TermsAndConditionsModal isOpen={isTnCOpen} onClose={() => setIsTnCOpen(false)} />
         <PrivacyPolicyModal isOpen={isPrivacyOpen} onClose={() => setIsPrivacyOpen(false)} />
