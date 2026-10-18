@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Check, X, Sparkles, Zap, Crown, ArrowRight, LogOut, Bug, Star, Shield, Gift } from 'lucide-react';
-import ReportIssueModal from './ReportIssueModal';
+import { openFeedbackPage } from "../utils/feedback";
 import { usePlanPricing } from '../hooks/usePlanPricing';
 import { isInheritedPlanFeature, orderPlanFeatures } from '../utils/planFeatures';
 
@@ -125,7 +125,6 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
     const normalizedCurrentPlanId = currentPlanId.toUpperCase();
     const [selectedPlan, setSelectedPlan] = useState<string>(normalizedCurrentPlanId);
     const [billingInterval, setBillingInterval] = useState<BillingInterval>('monthly');
-    const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
 
     const { getPricing, trialPeriodDays } = usePlanPricing();
@@ -559,16 +558,13 @@ const SubscriptionPlanSelection: React.FC<SubscriptionPlanSelectionProps> = ({
 
             {/* Report Issue */}
             <button
-                onClick={() => setIsReportIssueModalOpen(true)}
+                onClick={() => openFeedbackPage("bug")}
                 className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-slate-400 hover:text-white transition-colors backdrop-blur-sm z-50"
             >
                 <Bug size={13} />
                 Report Issue
             </button>
 
-            {isReportIssueModalOpen && (
-                <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
-            )}
         </div>
     );
 };

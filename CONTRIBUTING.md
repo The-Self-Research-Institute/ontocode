@@ -104,3 +104,143 @@ On a public repo, strangers can still **fork and open PRs**. That is expected. P
 - [ ] Ruleset on `main`: PR required, 1+ approvals, conversation resolution, no force-push/delete, Code Owners required
 - [ ] Status checks required (when CI is green and stable)
 - [ ] No casual Write invites; request-to-contribute process documented above
+
+## Developing the VS Code extension
+
+Build, run and debug the extension from source. All paths are inside `ontology-vscode-extension/`.
+
+### Overview
+
+The Ontology VS Code Extension allows users to:
+- Edit and visualize OWL ontologies directly in VS Code.
+- Use a custom web-based editor (built with React).
+- Interact with backend ontology services (Auth, Gateway, OWL Editor, SWRL).
+
+It provides an integrated development environment for ontology engineers and knowledge graph developers.
+
+---
+
+### 📁 Folder Structure
+
+```
+ontology-vscode-extension/
+├── src/
+│   ├── extension.ts          # Entry point for the extension (desktop)
+│   ├── extension.web.ts      # Entry point for the web extension (vscode.dev / vscode-test-web)
+│   ├── collaboration/        # Real-time collaboration (CRDT sync, presence)
+│   ├── features/             # Citation insertion and other feature modules
+│   ├── services/             # Citation lookup, issue reporting, sci2Code, etc.
+│   ├── config/                # Deployment/environment configuration
+│   ├── resources/             # Static resources bundled with the extension
+│   └── utils/                 # Helper utilities
+├── webview-src/               # React-based webview UI (Vite)
+│   ├── App.tsx
+│   ├── components/
+│   ├── contexts/
+│   ├── services/
+│   ├── hooks/
+│   ├── assets/
+│   ├── dist/                  # Build output consumed by the extension (git-ignored, built by build:vscode)
+│   ├── package.json
+│   └── vite.config.ts
+├── images/
+│   ├── icon.png                # Extension marketplace icon
+│   ├── screenshots/            # Static feature screenshots used in this README
+│   └── gifs/                   # Feature walkthrough GIFs used in this README
+├── package.json               # Extension metadata, contributes, and build scripts
+├── tsconfig.json               # TypeScript configuration
+└── README.md                  # This file
+```
+
+---
+
+### ⚙️ Setup
+
+#### Prerequisites
+- **Node.js 18+**
+- **npm**
+- **VS Code**
+- **Ontology Platform backend services** running (optional for UI testing)
+
+---
+
+#### Install Dependencies
+
+From the `ontology-vscode-extension` directory:
+
+```bash
+npm install
+```
+
+---
+
+### 🏗️ Build
+
+#### 1. Build the Webview (React App)
+
+From the root of `ontology-vscode-extension`:
+
+```bash
+npm run build-webview
+```
+
+This runs `vite build --base ./` inside `webview-src` and compiles the React webview into `webview-src/dist/`, used by the extension.
+
+> ⚠️ Do **not** run `cd webview-src && npm run build` directly for the VS Code extension. That script builds with an absolute `/` base path intended for the standalone cloud webapp deployment (`Dockerfile.webapp`) and will break asset loading (e.g. the logo will fail to render) inside the VS Code webview. Use `npm run build-webview` (or `webview-src`'s own `npm run build:vscode`) instead. `npm run build:electron` is the equivalent for the Electron desktop app.
+
+---
+
+#### 2. Build the Extension (TypeScript → JavaScript)
+
+From the root of `ontology-vscode-extension`:
+
+```bash
+npm run compile
+```
+
+---
+
+### 🚀 Run and Debug
+
+#### Launch the Extension in VS Code
+
+1. Open the `ontology-vscode-extension` directory in **VS Code**.
+2. Open `extension.ts`.
+3. Press **F5** or go to **Run → Start Debugging**.
+
+A new **Extension Development Host** window will open.
+
+---
+
+### 🧰 Development Notes
+
+- The webview communicates with the backend via REST APIs through the **Gateway service**.
+- During local development, you can configure the backend URL via `webview-src/.env` (see `.env.production`, `.env.selfhosted-test`, `.env.cloud-test` for other targets).
+- Make sure to rebuild (`npm run build-webview`) the React webview after making UI changes, then reload the Extension Development Host (`Ctrl+R` / `Cmd+R` in the host window) or use **Developer: Reload Window**.
+- `npm run dev-webview` starts the Vite dev server (`http://localhost:3001`) with HMR for faster UI iteration.
+
+---
+
+### 🧱 Common Commands
+
+```bash
+# Build the React webview for the VS Code extension (relative asset paths)
+npm run build-webview
+
+# Build + package everything (webview, extension host bundle, web bundle)
+npm run bundle:all
+
+# Compile the extension host TypeScript
+npm run compile
+
+# Package a .vsix
+npm run package
+
+# Run in debug mode
+code .
+
+# Lint and check
+npm run lint
+```
+
+---

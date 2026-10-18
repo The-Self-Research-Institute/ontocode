@@ -7,16 +7,20 @@ import { AppVersionBadge } from "./AppVersionBadge";
 
 const RELEASE_BASE = `${getGatewayUrl()}/api/downloads`;
 
-type PlatformKey = "windows-x64" | "linux-x64";
+type PlatformKey = "windows-x64" | "linux-x64" | "mac-arm64" | "mac-x64";
 
 const PLATFORM_META: Record<PlatformKey, { label: string; icon: typeof Monitor; os: string }> = {
   "windows-x64": { label: "Windows", icon: Monitor, os: "Windows 10 or later (64-bit x64 or ARM64)" },
   "linux-x64": { label: "Linux", icon: Terminal, os: "Ubuntu 20.04+ or equivalent (AppImage — runs on most distros)" },
+  "mac-arm64": { label: "macOS (Apple Silicon)", icon: Monitor, os: "Macs with an M1, M2, M3 or M4 chip" },
+  "mac-x64": { label: "macOS (Intel)", icon: Monitor, os: "Macs with an Intel processor (sold before about 2021)" },
 };
 
-/** Best default platform guess before /info tells us what's actually available. */
 function defaultPlatform(): PlatformKey {
-  return detectClientOs() === "linux" ? "linux-x64" : "windows-x64";
+  const os = detectClientOs();
+  if (os === "linux") return "linux-x64";
+  if (os === "macos") return "mac-arm64";
+  return "windows-x64";
 }
 
 type ReleaseInfo = {
@@ -240,7 +244,9 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             Import, edit, reason and query ontologies up to millions of triples.
           </p>
           <p className="text-sm text-white/40 mt-3">
-            macOS builds are coming soon. Windows and Linux are available now.
+            {availablePlatforms.some((p) => p.startsWith("mac-"))
+              ? "Available for Windows, Linux and macOS."
+              : "macOS builds are coming soon. Windows and Linux are available now."}
           </p>
 
           {availablePlatforms.length > 1 && (
@@ -342,9 +348,20 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             </button>
           )}
 
+          {platform.startsWith("mac-") && (
+            <p className="text-xs text-white/50 mt-3 text-center">
+              Not sure which Mac you have? Apple menu → About This Mac: "Chip: Apple M…" means Apple Silicon, "Processor: Intel…" means Intel.
+              The app is not yet signed by Apple, so the first time right-click it and choose Open.
+            </p>
+          )}
+
           <p className="text-xs text-white/30 mt-4 text-center">
             No sign-up required · Free to use ·{" "}
-            {platform === "windows-x64" ? "Uninstall via Windows Settings → Apps" : "Uninstall by removing the AppImage / package"}
+            {platform === "windows-x64"
+              ? "Uninstall via Windows Settings → Apps"
+              : platform.startsWith("mac-")
+                ? "Uninstall by dragging the app from Applications to the Bin"
+                : "Uninstall by removing the AppImage / package"}
           </p>
         </div>
 

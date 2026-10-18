@@ -675,18 +675,25 @@ upload_one() {
   local platform="$1" file="$2"
   local mb=$(( $(wc -c <"$file" | tr -d ' ') / 1024 / 1024 ))
   local attempt
+  local body http curl_rc
+  body=$(mktemp)
   for attempt in 1 2 3; do
     echo "[progress] uploading $(basename "$file") (${mb} MiB) -> $platform (attempt $attempt/3)"
-    if curl -f --connect-timeout 30 --max-time 1800 -X POST "$API_BASE/api/downloads/upload" \
+    http=$(curl -sS --connect-timeout 30 --max-time 1800 -o "$body" -w '%{http_code}' -X POST "$API_BASE/api/downloads/upload" \
         -H "Authorization: Bearer $TOKEN" \
-        -F "platform=$platform" -F "filename=$(basename "$file")" -F "version=$VERSION" -F "file=@$file"; then
-      echo ""
+        -F "platform=$platform" -F "filename=$(basename "$file")" -F "version=$VERSION" -F "file=@$file")
+    curl_rc=$?
+    if [[ $curl_rc -eq 0 && "$http" == 2* ]]; then
+      cat "$body"; echo ""
+      rm -f "$body"
+      sleep 15
       return 0
     fi
     echo ""
-    echo "WARNING: upload of $(basename "$file") failed (attempt $attempt/3)" >&2
-    [[ $attempt -lt 3 ]] && sleep 10
+    echo "WARNING: upload of $(basename "$file") failed (attempt $attempt/3): http=${http:-none} curl_rc=$curl_rc server said: $(head -c 400 "$body" | tr '\n' ' ')" >&2
+    [[ $attempt -lt 3 ]] && sleep 30
   done
+  rm -f "$body"
   echo "ERROR: upload of $(basename "$file") failed after 3 attempts" >&2
   return 1
 }
