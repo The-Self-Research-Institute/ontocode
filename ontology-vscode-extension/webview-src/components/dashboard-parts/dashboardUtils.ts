@@ -47,7 +47,21 @@ export const REASONER_ID_MAP: Record<string, string> = {
 
 export const REASONER_OPTIONS = Object.keys(REASONER_ID_MAP);
 
-export const normalizeReasonerType = (label: string): string => REASONER_ID_MAP[label] || "HERMIT";
+export const normalizeReasonerType = (label: string): string => {
+  const upper = String(label || "").toUpperCase();
+  return REASONER_ID_MAP[label] || (Object.values(REASONER_ID_MAP).includes(upper) ? upper : "HERMIT");
+};
+
+export const isTerminalPollError = (error: any): boolean => {
+  const status = Number(error?.status ?? error?.response?.status);
+  return status >= 400 && status < 500 && status !== 408;
+};
+
+export const pollErrorMessage = (error: any, fallback: string): string => {
+  const body = error?.data ?? error?.response?.data;
+  const bodyMessage = body && typeof body === "object" ? body.error || body.message : undefined;
+  return bodyMessage || error?.message || fallback;
+};
 
 export function extractDeclarationCountsPatch(countsRes: any): Record<string, number> | null {
   const data = countsRes?.data ?? countsRes;
@@ -290,7 +304,7 @@ export const combineReasonerResults = (classificationPayload: any, statsPayload?
       ...existingStats,
       unsatisfiableClassesRaw: unsatRaw,
       classHierarchyNodes: statsData.classCount ?? existingStats.classHierarchyNodes ?? 0,
-      objectPropertyNodes: statsData.propertyCount ?? existingStats.objectPropertyNodes ?? 0,
+      objectPropertyNodes: statsData.objectPropertyCount ?? existingStats.objectPropertyNodes ?? 0,
       dataPropertyNodes: statsData.dataPropertyCount ?? existingStats.dataPropertyNodes ?? 0,
       individuals: statsData.individualCount ?? existingStats.individuals ?? 0,
       satisfiableClasses: statsData.satisfiableClasses ?? existingStats.satisfiableClasses ?? 0,

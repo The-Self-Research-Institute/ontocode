@@ -11,14 +11,27 @@ import uk.ac.manchester.cs.jfact.JFactFactory;
 import org.semanticweb.owl.explanation.api.Explanation;
 import org.semanticweb.owl.explanation.api.ExplanationGenerator;
 import org.semanticweb.owl.explanation.api.ExplanationGeneratorFactory;
-import org.semanticweb.owl.explanation.api.NullExplanationProgressMonitor;
+import org.semanticweb.owl.explanation.api.ExplanationProgressMonitor;
+import org.semanticweb.owl.explanation.impl.blackbox.Configuration;
+import org.semanticweb.owl.explanation.impl.blackbox.ContractionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.DivideAndConquerContractionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.EntailmentCheckerFactory;
+import org.semanticweb.owl.explanation.impl.blackbox.EntailmentChecker;
+import org.semanticweb.owl.explanation.impl.blackbox.ExpansionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.InitialEntailmentCheckStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.StructuralTypePriorityExpansionStrategy;
 import org.semanticweb.owl.explanation.impl.laconic.LaconicExplanationGeneratorFactory;
+import org.semanticweb.owl.explanation.impl.blackbox.checker.BlackBoxExplanationGeneratorFactory;
 import org.semanticweb.owl.explanation.impl.blackbox.checker.InconsistentOntologyExplanationGeneratorFactory;
+import org.semanticweb.owl.explanation.impl.blackbox.checker.SatisfiabilityEntailmentCheckerFactory;
+import org.semanticweb.owl.explanation.impl.blackbox.checker.SatisfiabilityEntailmentChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.JustificationRendering;
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -46,7 +59,7 @@ public class ReasonerService {
 
     // ConcurrentHashMap: read/written from request threads, the classify
     // executor, and the controller's LRU-eviction path concurrently.
-    private final Map<String, OWLReasoner> reasonerCache = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<OWLReasoner>> reasonerCache = new ConcurrentHashMap<>();
 
     // HermiT's InstanceManager.getTypes() does O(n) LinkedList scans internally,
     // which blows up to O(n^2) against the class count on large ontologies (e.g.
@@ -70,71 +83,129 @@ public class ReasonerService {
         return t;
     });
 
-    @Value("${ontocode.reasoner.justification-timeout-ms:15000}")
+    @Value("${ontocode.reasoner.justification-pool-size:2}")
+    private int justificationPoolSize;
+    private ExecutorService justificationExecutor;
+
+    @jakarta.annotation.PostConstruct
+    private void initJustificationExecutor() {
+        justificationExecutor = Executors.newFixedThreadPool(justificationPoolSize, r -> {
+            Thread t = new Thread(r, "reasoner-justification-worker");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @Value("${ontocode.reasoner.justification-timeout-ms:55000}")
     private long JUSTIFICATION_TIMEOUT_MS;
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int MAX_JUSTIFICATIONS;
+    @Value("${ontocode.reasoner.operation-timeout-ms:45000}")
+    private long reasonerOperationTimeoutMs;
+    private final ExecutorService reasonerBuildExecutor = new java.util.concurrent.ThreadPoolExecutor(
+            4, 4, 60, TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(20), r -> {
+                Thread t = new Thread(r, "reasoner-build-worker");
+                t.setDaemon(true);
+                return t;
+            }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+
     /**
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
         String cacheKey = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
-
-        if (reasonerCache.containsKey(cacheKey)) {
-            OWLReasoner cached = reasonerCache.get(cacheKey);
-            if (cached != null) {
-                return cached;
+        CompletableFuture<OWLReasoner> future = reasonerCache.computeIfAbsent(cacheKey, k -> submitReasonerBuild(ontology, type));
+        try {
+            return future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            if (reasonerCache.remove(cacheKey, future)) {
+                disposeWhenBuilt(future);
             }
+            throw new RuntimeException(type.getDisplayName() + " reasoning timed out after "
+                    + (reasonerOperationTimeoutMs / 1000) + "s — the ontology may be too large or complex "
+                    + "for this reasoner. Try a different reasoner or a smaller scope.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(type.getDisplayName() + " reasoning was interrupted", e);
+        } catch (Exception e) {
+            reasonerCache.remove(cacheKey, future);
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
         }
+    }
 
-        OWLReasoner reasoner = createReasoner(ontology, type);
-        reasonerCache.put(cacheKey, reasoner);
-        return reasoner;
+    private static void disposeWhenBuilt(CompletableFuture<OWLReasoner> future) {
+        future.thenAccept(reasoner -> {
+            try {
+                if (reasoner != null) {
+                    reasoner.dispose();
+                }
+            } catch (Exception e) {
+                log.warn("Error disposing abandoned reasoner", e);
+            }
+        });
+    }
+
+    private CompletableFuture<OWLReasoner> submitReasonerBuild(OWLOntology ontology, ReasonerType type) {
+        CompletableFuture<OWLReasoner> future = new CompletableFuture<>();
+        try {
+            reasonerBuildExecutor.execute(() -> {
+                try {
+                    future.complete(createReasoner(ontology, type));
+                } catch (Throwable t) {
+                    future.completeExceptionally(t);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            future.completeExceptionally(
+                    new RuntimeException("Too many reasoning requests in progress — please try again shortly."));
+        }
+        return future;
     }
 
     /**
      * Create a new reasoner instance
      */
     private OWLReasoner createReasoner(OWLOntology ontology, ReasonerType type) {
-        log.info("Creating {} reasoner for ontology: {}", 
-            type.getDisplayName(), 
+        log.info("Creating {} reasoner for ontology: {}",
+            type.getDisplayName(),
             ontology.getOntologyID().getOntologyIRI().orElse(null));
 
-        OWLReasonerConfiguration config = new SimpleConfiguration();
-        
-        try {
-            switch (type) {
-                case HERMIT:
-                    // HermiT - Hypertableau-based reasoner, best for complex ontologies
-                    log.info("Using HermiT (Hypertableau) reasoner");
-                    return new ReasonerFactory().createReasoner(ontology, config);
-                    
-                case PELLET:
-                case OPENLLET:
-                    // Use Openllet (OWLAPI 5.x compatible reasoner)
-                    log.info("Using Pellet/Openllet reasoner");
-                    return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
-                    
-                case FACTPLUSPLUS:
-                    // FaCT++ (via JFact - Java port)
-                    log.info("Using FaCT++ (JFact) reasoner");
-                    return new JFactFactory().createReasoner(ontology, config);
-                    
-                case ELK:
-                    // ELK - Fast EL++ reasoner; best choice for large biomedical ontologies
-                    // (MONDO, GO, HP, etc.) that conform to the OWL EL profile.
-                    // Note: ELK only supports EL profile of OWL 2, not full OWL 2 DL.
-                    log.info("Using ELK (Consequence-based EL++) reasoner");
-                    return new ElkReasonerFactory().createReasoner(ontology, config);
+        OWLReasonerConfiguration config = new SimpleConfiguration(reasonerOperationTimeoutMs);
 
-                case STRUCTURAL:
-                default:
-                    log.info("Using Structural reasoner (basic)");
-                    return new StructuralReasonerFactory().createReasoner(ontology, config);
-            }
+        try {
+            return getReasonerFactory(type).createReasoner(ontology, config);
         } catch (Exception e) {
-            log.error("Failed to create {} reasoner, falling back to Structural", type, e);
-            return new StructuralReasonerFactory().createReasoner(ontology, config);
+            log.error("Failed to create {} reasoner", type, e);
+            throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
+        }
+    }
+
+
+    private OWLReasonerFactory getReasonerFactory(ReasonerType type) {
+        switch (type) {
+            case HERMIT:
+                // HermiT - Hypertableau-based reasoner, best for complex ontologies
+                return new ReasonerFactory();
+
+            case PELLET:
+            case OPENLLET:
+                // Use Openllet (OWLAPI 5.x compatible reasoner)
+                return OpenlletReasonerFactory.getInstance();
+
+            case FACTPLUSPLUS:
+                // FaCT++ (via JFact - Java port)
+                return new JFactFactory();
+
+            case ELK:
+                // ELK - Fast EL++ reasoner; best choice for large biomedical ontologies
+                // (MONDO, GO, HP, etc.) that conform to the OWL EL profile.
+                // Note: ELK only supports EL profile of OWL 2, not full OWL 2 DL.
+                return new ElkReasonerFactory();
+
+            case STRUCTURAL:
+            default:
+                return new StructuralReasonerFactory();
         }
     }
 
@@ -438,8 +509,19 @@ public class ReasonerService {
             results.put("dataPropertyHierarchy", dataPropertyHierarchy);
             
             // Total counts
-            results.put("totalClasses", ontology.getClassesInSignature().size());
-            
+            int totalClasses = ontology.getClassesInSignature().size();
+            results.put("totalClasses", totalClasses);
+
+            Map<String, Object> stats = new HashMap<>();
+            stats.put("classHierarchyNodes", totalClasses);
+            stats.put("objectPropertyNodes", ontology.getObjectPropertiesInSignature().size());
+            stats.put("dataPropertyNodes", ontology.getDataPropertiesInSignature().size());
+            stats.put("individuals", ontology.getIndividualsInSignature().size());
+            stats.put("satisfiableClasses", isConsistent ? Math.max(0, totalClasses - unsatisfiableList.size()) : -1);
+            stats.put("unsatisfiableClasses", isConsistent ? unsatisfiableList.size() : -1);
+            stats.put("isConsistent", isConsistent);
+            results.put("stats", stats);
+
             // Add ELK profile warning if ELK reasoner is used
             if (type == ReasonerType.ELK) {
                 String elkWarning = "ELK reasoner uses EL profile - complex OWL 2 DL constructs may not be classified correctly. " +
@@ -471,7 +553,7 @@ public class ReasonerService {
                 "equivalentClasses", new ArrayList<>(),
                 "unsatisfiableClasses", new ArrayList<>(),
                 "totalClasses", ontology.getClassesInSignature().size(),
-                "error", e.getMessage()
+                "error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()
             );
         }
     }
@@ -485,23 +567,24 @@ public class ReasonerService {
             return;
         }
         processedClasses.add(parentClass);
-        
-        // Get direct subclasses
+
+
         for (Node<OWLClass> node : reasoner.getSubClasses(parentClass, true)) {
+            if (node.isBottomNode()) {
+                continue;
+            }
             for (OWLClass subClass : node.getEntities()) {
-                if (subClass.isOWLNothing()) {
-                    continue;
-                }
-                
                 Map<String, Object> classNode = new HashMap<>();
                 classNode.put("iri", subClass.getIRI().toString());
                 classNode.put("label", getLabel(subClass, ontology));
                 classNode.put("depth", depth);
-                
+
                 // Get children count
                 int childrenCount = (int) reasoner.getSubClasses(subClass, true)
-                    .entities()
-                    .filter(c -> !c.isOWLNothing())
+                    .getNodes()
+                    .stream()
+                    .filter(n -> !n.isBottomNode())
+                    .flatMap(n -> n.getEntities().stream())
                     .count();
                 classNode.put("childrenCount", childrenCount);
                 
@@ -611,15 +694,238 @@ public class ReasonerService {
             : iri;
     }
     
-     private List<Map<String, Object>> findJustifications(OWLOntology ontology, int limit) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
-        InconsistentOntologyExplanationGeneratorFactory factory =
-            new InconsistentOntologyExplanationGeneratorFactory(
-                new ReasonerFactory(), DATA_FACTORY, OWLManager::createOWLOntologyManager, JUSTIFICATION_TIMEOUT_MS);
-        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology);
-        OWLAxiom entailment = DATA_FACTORY.getOWLSubClassOfAxiom(DATA_FACTORY.getOWLThing(), DATA_FACTORY.getOWLNothing());
-        Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
+    private static class DatatypeAwareSatisfiabilityChecker extends SatisfiabilityEntailmentChecker {
+        private final Set<OWLAxiom> datatypeDefinitions;
 
+        DatatypeAwareSatisfiabilityChecker(OWLReasonerFactory reasonerFactory, OWLAxiom entailment,
+                Supplier<OWLOntologyManager> m, Set<OWLAxiom> datatypeDefinitions) {
+            super(reasonerFactory, entailment, m);
+            this.datatypeDefinitions = datatypeDefinitions;
+        }
+
+        @Override
+        public boolean isEntailed(Set<OWLAxiom> axioms) {
+            Set<OWLAxiom> augmented = new HashSet<>(axioms);
+            augmented.addAll(datatypeDefinitions);
+            return super.isEntailed(augmented);
+        }
+    }
+
+    private static class DatatypeAwareSatisfiabilityCheckerFactory implements EntailmentCheckerFactory<OWLAxiom> {
+        private final OWLReasonerFactory reasonerFactory;
+        private final Supplier<OWLOntologyManager> m;
+        private final Set<OWLAxiom> datatypeDefinitions;
+
+        DatatypeAwareSatisfiabilityCheckerFactory(OWLReasonerFactory reasonerFactory, Supplier<OWLOntologyManager> m,
+                Set<OWLAxiom> datatypeDefinitions) {
+            this.reasonerFactory = reasonerFactory;
+            this.m = m;
+            this.datatypeDefinitions = datatypeDefinitions;
+        }
+
+        @Override
+        public EntailmentChecker<OWLAxiom> createEntailementChecker(OWLAxiom entailment) {
+            return new DatatypeAwareSatisfiabilityChecker(reasonerFactory, entailment, m, datatypeDefinitions);
+        }
+    }
+
+
+    private static final class CancellableExplanationProgressMonitor<E> implements ExplanationProgressMonitor<E> {
+        private volatile boolean cancelled = false;
+
+        void cancel() {
+            cancelled = true;
+        }
+
+        @Override
+        public void foundExplanation(ExplanationGenerator<E> generator, Explanation<E> explanation, Set<Explanation<E>> allFoundExplanations) {
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled;
+        }
+    }
+
+    public List<Map<String, Object>> findEntailmentJustifications(
+            OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode) {
+        return findEntailmentJustifications(ontology, entailment, type, limit, mode, JUSTIFICATION_TIMEOUT_MS);
+    }
+
+    private List<Map<String, Object>> findEntailmentJustifications(
+            OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode, long timeoutMs) {
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
+        OWLReasonerFactory reasonerFactory = getReasonerFactory(type);
+        Supplier<OWLOntologyManager> ontologyManagerSupplier = OWLManager::createOWLOntologyManager;
+
+        Set<OWLAxiom> datatypeDefinitions = reasoningOntology.axioms(AxiomType.DATATYPE_DEFINITION)
+            .collect(Collectors.toSet());
+        EntailmentCheckerFactory<OWLAxiom> checkerFactory = datatypeDefinitions.isEmpty()
+            ? new SatisfiabilityEntailmentCheckerFactory(reasonerFactory, ontologyManagerSupplier)
+            : new DatatypeAwareSatisfiabilityCheckerFactory(reasonerFactory, ontologyManagerSupplier, datatypeDefinitions);
+        ExpansionStrategy<OWLAxiom> expansionStrategy =
+            new StructuralTypePriorityExpansionStrategy<>(InitialEntailmentCheckStrategy.PERFORM, ontologyManagerSupplier);
+        ContractionStrategy<OWLAxiom> contractionStrategy = new DivideAndConquerContractionStrategy<>();
+        Configuration<OWLAxiom> configuration =
+            new Configuration<>(checkerFactory, expansionStrategy, contractionStrategy, ontologyManagerSupplier);
+        ExplanationGeneratorFactory<OWLAxiom> baseFactory = new BlackBoxExplanationGeneratorFactory<>(configuration);
+
+        ExplanationGeneratorFactory<OWLAxiom> factory = "laconic".equals(mode)
+            ? new LaconicExplanationGeneratorFactory<>(baseFactory, ontologyManagerSupplier)
+            : baseFactory;
+
+        CancellableExplanationProgressMonitor<OWLAxiom> monitor = new CancellableExplanationProgressMonitor<>();
+        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology, monitor);
+        Set<Explanation<OWLAxiom>> explanations =
+            runWithTimeout(() -> generator.getExplanations(entailment, limit), monitor, timeoutMs);
+        return buildJustificationsResult(explanations, ontology);
+    }
+
+
+    public record EquivalentJustificationsResult(List<Map<String, Object>> justifications, List<String> warnings) {}
+
+    public EquivalentJustificationsResult findEquivalentClassesJustifications(
+            OWLOntology ontology, String subjectIri, String targetIri, ReasonerType type, int limit, String mode) {
+        OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+        OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+        String subjectLabel = getLabel(subject, ontology);
+        String targetLabel = getLabel(target, ontology);
+
+        int forwardLimit = (limit + 1) / 2;
+        int backwardLimit = limit - forwardLimit;
+        long deadline = System.currentTimeMillis() + JUSTIFICATION_TIMEOUT_MS;
+        List<String> warnings = new ArrayList<>();
+
+        List<Map<String, Object>> forward = safeFindEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, target), type, forwardLimit, mode, deadline,
+            warnings, subjectLabel + " ⊑ " + targetLabel);
+        List<Map<String, Object>> backward = safeFindEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(target, subject), type, backwardLimit, mode, deadline,
+            warnings, targetLabel + " ⊑ " + subjectLabel);
+
+        List<Map<String, Object>> combined = new ArrayList<>();
+        combined.addAll(prefixLabels(forward, subjectLabel + " ⊑ " + targetLabel));
+        combined.addAll(prefixLabels(backward, targetLabel + " ⊑ " + subjectLabel));
+        return new EquivalentJustificationsResult(combined, warnings);
+    }
+
+    private List<Map<String, Object>> safeFindEntailmentJustifications(
+            OWLOntology ontology, OWLAxiom entailment, ReasonerType type, int limit, String mode, long deadline,
+            List<String> warnings, String directionLabel) {
+        long remaining = deadline - System.currentTimeMillis();
+        if (remaining <= 0) {
+            warnings.add(directionLabel + " could not be checked — the shared time budget ran out before this direction started.");
+            return Collections.emptyList();
+        }
+        try {
+            return findEntailmentJustifications(ontology, entailment, type, limit, mode, remaining);
+        } catch (RuntimeException e) {
+            warnings.add(directionLabel + " failed: " + (e.getMessage() != null ? e.getMessage() : "unknown error"));
+            return Collections.emptyList();
+        }
+    }
+
+    private List<Map<String, Object>> prefixLabels(List<Map<String, Object>> justifications, String prefix) {
+        for (Map<String, Object> justification : justifications) {
+            justification.put("label", prefix + " — " + justification.get("label"));
+        }
+        return justifications;
+    }
+
+    public EquivalentJustificationsResult findEquivalentRestrictionJustifications(
+            OWLOntology ontology, String subjectIri, String propertyIri, String fillerIri,
+            boolean isDataProperty, String literalValue, ReasonerType type, int limit, String mode) {
+        OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+        OWLClassExpression restriction = buildEquivalentRestrictionExpression(propertyIri, fillerIri, isDataProperty, literalValue);
+
+        String subjectLabel = getLabel(subject, ontology);
+        int forwardLimit = (limit + 1) / 2;
+        int backwardLimit = limit - forwardLimit;
+        long deadline = System.currentTimeMillis() + JUSTIFICATION_TIMEOUT_MS;
+        List<String> warnings = new ArrayList<>();
+
+        List<Map<String, Object>> forward = safeFindEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction), type, forwardLimit, mode, deadline,
+            warnings, subjectLabel + " ⊑ restriction");
+        List<Map<String, Object>> backward = safeFindEntailmentJustifications(
+            ontology, DATA_FACTORY.getOWLSubClassOfAxiom(restriction, subject), type, backwardLimit, mode, deadline,
+            warnings, "restriction ⊑ " + subjectLabel);
+
+        List<Map<String, Object>> combined = new ArrayList<>();
+        combined.addAll(prefixLabels(forward, subjectLabel + " ⊑ restriction"));
+        combined.addAll(prefixLabels(backward, "restriction ⊑ " + subjectLabel));
+        return new EquivalentJustificationsResult(combined, warnings);
+    }
+
+    private OWLClassExpression buildEquivalentRestrictionExpression(
+            String propertyIri, String fillerIri, boolean isDataProperty, String literalValue) {
+        if (isDataProperty) {
+            OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri));
+            OWLDatatype filler = DATA_FACTORY.getOWLDatatype(IRI.create(fillerIri));
+            return "only".equals(literalValue)
+                ? DATA_FACTORY.getOWLDataAllValuesFrom(property, filler)
+                : DATA_FACTORY.getOWLDataSomeValuesFrom(property, filler);
+        }
+        OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
+        OWLClass filler = DATA_FACTORY.getOWLClass(IRI.create(fillerIri));
+        if ("some".equals(literalValue) || "only".equals(literalValue)) {
+            return "only".equals(literalValue)
+                ? DATA_FACTORY.getOWLObjectAllValuesFrom(property, filler)
+                : DATA_FACTORY.getOWLObjectSomeValuesFrom(property, filler);
+        }
+        return buildObjectCardinalityRestriction(property, filler, literalValue);
+    }
+
+    public List<Map<String, Object>> findInconsistencyJustifications(
+            OWLOntology ontology, ReasonerType type, int limit, String mode) {
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
+        OWLReasonerFactory reasonerFactory = getReasonerFactory(type);
+        Supplier<OWLOntologyManager> ontologyManagerSupplier = OWLManager::createOWLOntologyManager;
+        OWLAxiom inconsistencyEntailment = DATA_FACTORY.getOWLSubClassOfAxiom(
+            DATA_FACTORY.getOWLThing(), DATA_FACTORY.getOWLNothing());
+
+        ExplanationGeneratorFactory<OWLAxiom> baseFactory = new InconsistentOntologyExplanationGeneratorFactory(
+            reasonerFactory, DATA_FACTORY, ontologyManagerSupplier, JUSTIFICATION_TIMEOUT_MS);
+        ExplanationGeneratorFactory<OWLAxiom> factory = "laconic".equals(mode)
+            ? new LaconicExplanationGeneratorFactory<>(baseFactory, ontologyManagerSupplier)
+            : baseFactory;
+
+        CancellableExplanationProgressMonitor<OWLAxiom> monitor = new CancellableExplanationProgressMonitor<>();
+        ExplanationGenerator<OWLAxiom> generator = factory.createExplanationGenerator(reasoningOntology, monitor);
+        Set<Explanation<OWLAxiom>> explanations =
+            runWithTimeout(() -> generator.getExplanations(inconsistencyEntailment, limit), monitor, JUSTIFICATION_TIMEOUT_MS);
+        return buildJustificationsResult(explanations, ontology);
+    }
+
+    private Set<Explanation<OWLAxiom>> runWithTimeout(
+            Supplier<Set<Explanation<OWLAxiom>>> search,
+            CancellableExplanationProgressMonitor<OWLAxiom> monitor,
+            long timeoutMs) {
+        java.util.concurrent.Future<Set<Explanation<OWLAxiom>>> future =
+            justificationExecutor.submit(search::get);
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            monitor.cancel();
+            future.cancel(true);
+            throw new RuntimeException(
+                "Justification search timed out after " + timeoutMs
+                    + "ms — the reasoner may still be warming up on its first request; try again.",
+                te);
+        } catch (RuntimeException | java.util.concurrent.ExecutionException e) {
+            monitor.cancel();
+            throw new RuntimeException("Justification search failed: "
+                + (e.getMessage() != null ? e.getMessage() : e.toString()), e);
+        } catch (InterruptedException ie) {
+            monitor.cancel();
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Justification search was interrupted", ie);
+        }
+    }
+
+    private List<Map<String, Object>> buildJustificationsResult(
+            Set<Explanation<OWLAxiom>> explanations, OWLOntology ontology) {
         if (explanations.isEmpty()) {
             return Collections.emptyList();
         }
@@ -641,57 +947,13 @@ public class ReasonerService {
                     .count();
 
                 Map<String, Object> entry = new HashMap<>();
-                entry.put("text", renderAxiom(axiom, ontology));
+                entry.put("text", JustificationRendering.renderAxiom(axiom, ontology, this::getLabel));
                 entry.put("membershipNote",
                     membershipCount == allAxiomSets.size() ? "In ALL other justifications"
                     : membershipCount == 1 ? "In NO other justifications"
                     : "In " + (membershipCount - 1) + " other justifications");
-                axiomEntries.add(entry);
-            }
-            justification.put("axioms", axiomEntries);
-            justifications.add(justification);
-        }
-        return justifications;
-    }
-          private List<Map<String, Object>> findLaconicJustifications(OWLOntology ontology, int limit) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
-
-        InconsistentOntologyExplanationGeneratorFactory baseFactory =
-            new InconsistentOntologyExplanationGeneratorFactory(
-                new ReasonerFactory(), DATA_FACTORY, OWLManager::createOWLOntologyManager, JUSTIFICATION_TIMEOUT_MS);
-
-        ExplanationGeneratorFactory<OWLAxiom> laconicFactory =
-            new LaconicExplanationGeneratorFactory<OWLAxiom>(baseFactory, OWLManager::createOWLOntologyManager);
-
-        ExplanationGenerator<OWLAxiom> generator = laconicFactory.createExplanationGenerator(reasoningOntology);
-        OWLAxiom entailment = DATA_FACTORY.getOWLSubClassOfAxiom(DATA_FACTORY.getOWLThing(), DATA_FACTORY.getOWLNothing());
-        Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
-
-        if (explanations.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        List<Set<OWLAxiom>> allAxiomSets = explanations.stream()
-            .map(Explanation::getAxioms)
-            .collect(Collectors.toList());
-
-        List<Map<String, Object>> justifications = new ArrayList<>();
-        int i = 1;
-        for (Explanation<OWLAxiom> explanation : explanations) {
-            Map<String, Object> justification = new HashMap<>();
-            justification.put("label", "Explanation " + i++);
-
-            List<Map<String, Object>> axiomEntries = new ArrayList<>();
-            for (OWLAxiom axiom : explanation.getAxioms()) {
-                long membershipCount = allAxiomSets.stream()
-                    .filter(set -> set.contains(axiom))
-                    .count();
-                Map<String, Object> entry = new HashMap<>();
-                entry.put("text", renderAxiom(axiom, ontology));
-                entry.put("membershipNote",
-                    membershipCount == allAxiomSets.size() ? "In ALL other justifications"
-                    : membershipCount == 1 ? "In NO other justifications"
-                    : "In " + (membershipCount - 1) + " other justifications");
+                entry.put("entities", JustificationRendering.extractEntities(axiom, ontology, this::getLabel));
+                entry.put("role", JustificationRendering.isConflictAxiom(axiom) ? "CONFLICT" : "CONTRIBUTING");
                 axiomEntries.add(entry);
             }
             justification.put("axioms", axiomEntries);
@@ -700,84 +962,159 @@ public class ReasonerService {
         return justifications;
     }
 
-private OWLOntology stripSwrlRules(OWLOntology ontology) {
-    Set<OWLAxiom> axioms = ontology.getAxioms().stream()
-        .filter(ax -> ax.getAxiomType() != AxiomType.SWRL_RULE)
-        .collect(Collectors.toSet());
-    try {
-        OWLOntologyManager mgr = OWLManager.createOWLOntologyManager();
-        return mgr.createOntology(axioms);
-    } catch (OWLOntologyCreationException e) {
-        log.warn("Failed to strip SWRL rules, falling back to original ontology", e);
-        return ontology;
+    private OWLClassExpression buildObjectCardinalityRestriction(
+            OWLObjectProperty property, OWLClass filler, String literalValue) {
+        String[] parts = literalValue != null ? literalValue.split(":", 2) : new String[0];
+        String kind = parts.length > 0 ? parts[0] : "min";
+        int cardinality = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+        switch (kind) {
+            case "max":
+                return DATA_FACTORY.getOWLObjectMaxCardinality(cardinality, property, filler);
+            case "exactly":
+                return DATA_FACTORY.getOWLObjectExactCardinality(cardinality, property, filler);
+            case "min":
+            default:
+                return DATA_FACTORY.getOWLObjectMinCardinality(cardinality, property, filler);
+        }
     }
-}
 
-    private String renderAxiom(OWLAxiom axiom, OWLOntology ontology) {
-        if (axiom instanceof OWLClassAssertionAxiom) {
-            OWLClassAssertionAxiom ax = (OWLClassAssertionAxiom) axiom;
-            if (!ax.getIndividual().isAnonymous() && !ax.getClassExpression().isAnonymous()) {
-                return getLabel(ax.getIndividual().asOWLNamedIndividual(), ontology) + " Type "
-                    + getLabel(ax.getClassExpression().asOWLClass(), ontology);
+    public OWLAxiom buildEntailmentAxiom(String entailmentType, String subjectIri, String targetIri,
+            String propertyIri, String literalValue) {
+        switch (entailmentType) {
+            case "SUBCLASS_OF": {
+                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, target);
             }
-        } else if (axiom instanceof OWLSubClassOfAxiom) {
-            OWLSubClassOfAxiom ax = (OWLSubClassOfAxiom) axiom;
-            if (!ax.getSubClass().isAnonymous() && !ax.getSuperClass().isAnonymous()) {
-                return getLabel(ax.getSubClass().asOWLClass(), ontology) + " SubClassOf "
-                    + getLabel(ax.getSuperClass().asOWLClass(), ontology);
+            case "INTERSECTION_SUBCLASS_OF": {
+                OWLClass memberA = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLClass memberB = DATA_FACTORY.getOWLClass(IRI.create(propertyIri));
+                OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                OWLClassExpression intersection = DATA_FACTORY.getOWLObjectIntersectionOf(memberA, memberB);
+                return DATA_FACTORY.getOWLSubClassOfAxiom(intersection, target);
             }
-        } else if (axiom instanceof OWLDisjointClassesAxiom) {
-            String names = ((OWLDisjointClassesAxiom) axiom).getClassesInSignature().stream()
-                .map(c -> getLabel(c, ontology))
-                .collect(Collectors.joining(", "));
-            return "DisjointClasses: " + names;
-        } else if (axiom instanceof OWLDisjointUnionAxiom) {
-            OWLDisjointUnionAxiom ax = (OWLDisjointUnionAxiom) axiom;
-            String disjuncts = ax.getClassExpressions().stream()
-                .filter(ce -> !ce.isAnonymous())
-                .map(ce -> getLabel(ce.asOWLClass(), ontology))
-                .collect(Collectors.joining(", "));
-            return getLabel(ax.getOWLClass(), ontology) + " DisjointUnionOf " + disjuncts;
-        } else if (axiom instanceof OWLEquivalentClassesAxiom) {
-            String names = ((OWLEquivalentClassesAxiom) axiom).getClassExpressions().stream()
-                .filter(ce -> !ce.isAnonymous())
-                .map(ce -> getLabel(ce.asOWLClass(), ontology))
-                .collect(Collectors.joining(" ≡ "));
-            return "EquivalentClasses: " + names;
-        } else if (axiom instanceof OWLObjectPropertyAssertionAxiom) {
-            OWLObjectPropertyAssertionAxiom ax = (OWLObjectPropertyAssertionAxiom) axiom;
-            if (!ax.getSubject().isAnonymous() && !ax.getObject().isAnonymous()) {
-                return getLabel(ax.getSubject().asOWLNamedIndividual(), ontology) + " "
-                    + getLabel(ax.getProperty().getNamedProperty(), ontology) + " "
-                    + getLabel(ax.getObject().asOWLNamedIndividual(), ontology);
+            case "SUBCLASS_OF_OBJECT_RESTRICTION": {
+                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
+                OWLClass filler = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                OWLClassExpression restriction = "only".equals(literalValue)
+                    ? DATA_FACTORY.getOWLObjectAllValuesFrom(property, filler)
+                    : DATA_FACTORY.getOWLObjectSomeValuesFrom(property, filler);
+                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction);
             }
-        } else if (axiom instanceof OWLDifferentIndividualsAxiom) {
-            String names = ((OWLDifferentIndividualsAxiom) axiom).getIndividualsInSignature().stream()
-                .map(i -> getLabel(i, ontology))
-                .collect(Collectors.joining(", "));
-            return "DifferentIndividuals: " + names;
-        } else if (axiom instanceof OWLSameIndividualAxiom) {
-            String names = ((OWLSameIndividualAxiom) axiom).getIndividualsInSignature().stream()
-                .map(i -> getLabel(i, ontology))
-                .collect(Collectors.joining(" = "));
-            return "SameIndividual: " + names;
-        } else if (axiom instanceof OWLFunctionalObjectPropertyAxiom) {
-            return "FunctionalObjectProperty: " + getLabel(
-                ((OWLFunctionalObjectPropertyAxiom) axiom).getProperty().getNamedProperty(), ontology);
-        } else if (axiom instanceof OWLInverseFunctionalObjectPropertyAxiom) {
-            return "InverseFunctionalObjectProperty: " + getLabel(
-                ((OWLInverseFunctionalObjectPropertyAxiom) axiom).getProperty().getNamedProperty(), ontology);
+            case "SUBCLASS_OF_OBJECT_CARDINALITY": {
+                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
+                OWLClass filler = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, buildObjectCardinalityRestriction(property, filler, literalValue));
+            }
+            case "SUBCLASS_OF_DATA_RESTRICTION": {
+                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri));
+                OWLDatatype filler = DATA_FACTORY.getOWLDatatype(IRI.create(targetIri));
+                OWLClassExpression restriction = "only".equals(literalValue)
+                    ? DATA_FACTORY.getOWLDataAllValuesFrom(property, filler)
+                    : DATA_FACTORY.getOWLDataSomeValuesFrom(property, filler);
+                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction);
+            }
+            case "UNSATISFIABLE_CLASS": {
+                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, DATA_FACTORY.getOWLNothing());
+            }
+            case "CLASS_ASSERTION": {
+                OWLNamedIndividual individual = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLClassAssertionAxiom(target, individual);
+            }
+            case "OBJECT_PROPERTY_ASSERTION": {
+                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLNamedIndividual object = DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
+                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
+                return DATA_FACTORY.getOWLObjectPropertyAssertionAxiom(property, subject, object);
+            }
+            case "DATA_PROPERTY_ASSERTION": {
+                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri));
+                OWLLiteral literal = DATA_FACTORY.getOWLLiteral(literalValue);
+                return DATA_FACTORY.getOWLDataPropertyAssertionAxiom(property, subject, literal);
+            }
+            case "DISJOINT_CLASSES": {
+                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDisjointClassesAxiom(subject, target);
+            }
+            case "SUB_OBJECT_PROPERTY_OF": {
+                OWLObjectProperty sub = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty sup = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLSubObjectPropertyOfAxiom(sub, sup);
+            }
+            case "SUB_DATA_PROPERTY_OF": {
+                OWLDataProperty sub = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDataProperty sup = DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLSubDataPropertyOfAxiom(sub, sup);
+            }
+            case "INVERSE_OBJECT_PROPERTIES": {
+                OWLObjectProperty propA = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty propB = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLInverseObjectPropertiesAxiom(propA, propB);
+            }
+            case "OBJECT_PROPERTY_DOMAIN": {
+                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLClass domain = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLObjectPropertyDomainAxiom(property, domain);
+            }
+            case "OBJECT_PROPERTY_RANGE": {
+                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLClass range = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLObjectPropertyRangeAxiom(property, range);
+            }
+            case "DATA_PROPERTY_DOMAIN": {
+                OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLClass domain = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDataPropertyDomainAxiom(property, domain);
+            }
+            case "DATA_PROPERTY_RANGE": {
+                OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDatatype range = DATA_FACTORY.getOWLDatatype(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDataPropertyRangeAxiom(property, range);
+            }
+            case "SAME_INDIVIDUAL": {
+                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLNamedIndividual target = DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLSameIndividualAxiom(subject, target);
+            }
+            case "DIFFERENT_INDIVIDUALS": {
+                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLNamedIndividual target = DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDifferentIndividualsAxiom(subject, target);
+            }
+            case "EQUIVALENT_OBJECT_PROPERTIES": {
+                OWLObjectProperty subject = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty target = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLEquivalentObjectPropertiesAxiom(subject, target);
+            }
+            case "EQUIVALENT_DATA_PROPERTIES": {
+                OWLDataProperty subject = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDataProperty target = DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLEquivalentDataPropertiesAxiom(subject, target);
+            }
+            case "DISJOINT_OBJECT_PROPERTIES": {
+                OWLObjectProperty subject = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty target = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDisjointObjectPropertiesAxiom(subject, target);
+            }
+            case "DISJOINT_DATA_PROPERTIES": {
+                OWLDataProperty subject = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDataProperty target = DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
+                return DATA_FACTORY.getOWLDisjointDataPropertiesAxiom(subject, target);
+            }
+            default:
+                throw new IllegalArgumentException("Unsupported entailment type: " + entailmentType);
         }
+    }
 
-        String rendered = axiom.toString();
-        for (OWLEntity entity : axiom.getSignature()) {
-            String label = getLabel(entity, ontology);
-            String iri = entity.getIRI().toString();
-            if (label != null && !label.isBlank() && !label.equals(iri)) {
-                rendered = rendered.replace("<" + iri + ">", label);
-            }
-        }
-        return rendered;
+    public Map<String, Object> describeEntailment(OWLAxiom axiom) {
+        return JustificationRendering.describeEntailment(axiom);
     }
 
     /**
@@ -840,7 +1177,8 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
      */
     private void evictInterruptedReasoner(OWLReasoner reasoner) {
         reasonerCache.entrySet().removeIf(entry -> {
-            if (entry.getValue() != reasoner) {
+            CompletableFuture<OWLReasoner> future = entry.getValue();
+            if (!future.isDone() || future.isCompletedExceptionally() || future.join() != reasoner) {
                 return false;
             }
             try {
@@ -952,7 +1290,7 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
                 "instances", new ArrayList<>(),
                 "totalInstances", 0,
                 "totalIndividuals", ontology.getIndividualsInSignature().size(),
-                "error", e.getMessage()
+                "error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()
             );
         }
     }
@@ -1128,7 +1466,7 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
      * Returns detailed information about contradictions and problematic axioms
      */
     public Map<String, Object> explainInconsistency(OWLOntology ontology, ReasonerType type, int maxJustifications, String mode) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
         OWLReasoner reasoner = createReasoner(reasoningOntology, type);
         Map<String, Object> explanation = new HashMap<>();
         
@@ -1196,9 +1534,8 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
             }
 
             try {
-                List<Map<String, Object>> justifications = "laconic".equals(mode)
-                    ? findLaconicJustifications(ontology, maxJustifications)
-                    : findJustifications(ontology, maxJustifications);
+                List<Map<String, Object>> justifications =
+                    findInconsistencyJustifications(ontology, type, maxJustifications, mode);
                 if (!justifications.isEmpty()) {
                     Map<String, Object> cause = new HashMap<>();
                     cause.put("type", "JUSTIFICATIONS");
@@ -1215,7 +1552,7 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
                     cause.put("justifications", justifications);
                     causes.add(cause);
                 }
-                
+
             } catch (Exception e) {
                 log.error("Error running justification search", e);
             }
@@ -1656,18 +1993,13 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
      */
     public void clearCache() {
         log.info("Clearing reasoner cache ({} entries)", reasonerCache.size());
-        
-        reasonerCache.values().forEach(reasoner -> {
-            try {
-                if (reasoner != null) {
-                    reasoner.dispose();
-                }
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner", e);
-            }
-        });
-        
-        reasonerCache.clear();
+
+        Iterator<Map.Entry<String, CompletableFuture<OWLReasoner>>> it = reasonerCache.entrySet().iterator();
+        while (it.hasNext()) {
+            CompletableFuture<OWLReasoner> future = it.next().getValue();
+            it.remove();
+            disposeWhenBuilt(future);
+        }
     }
 
     /**
@@ -1677,21 +2009,15 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
      */
     public void disposeReasoners(OWLOntology ontology) {
         String keyPrefix = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-";
-        Iterator<Map.Entry<String, OWLReasoner>> it = reasonerCache.entrySet().iterator();
+        Iterator<Map.Entry<String, CompletableFuture<OWLReasoner>>> it = reasonerCache.entrySet().iterator();
         while (it.hasNext()) {
-            Map.Entry<String, OWLReasoner> entry = it.next();
+            Map.Entry<String, CompletableFuture<OWLReasoner>> entry = it.next();
             if (!entry.getKey().startsWith(keyPrefix)) {
                 continue;
             }
             it.remove();
-            try {
-                if (entry.getValue() != null) {
-                    entry.getValue().dispose();
-                }
-                log.info("Disposed reasoner {} for evicted ontology", entry.getKey());
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner {}", entry.getKey(), e);
-            }
+            disposeWhenBuilt(entry.getValue());
+            log.info("Disposed reasoner {} for evicted ontology", entry.getKey());
         }
     }
 
@@ -1700,15 +2026,11 @@ private OWLOntology stripSwrlRules(OWLOntology ontology) {
      */
     public void disposeReasoner(String ontologyId, ReasonerType type) {
         String cacheKey = ontologyId + "-" + type.name();
-        OWLReasoner reasoner = reasonerCache.remove(cacheKey);
-        
-        if (reasoner != null) {
-            try {
-                reasoner.dispose();
-                log.info("Disposed {} reasoner for ontology {}", type.getDisplayName(), ontologyId);
-            } catch (Exception e) {
-                log.warn("Error disposing reasoner", e);
-            }
+        CompletableFuture<OWLReasoner> future = reasonerCache.remove(cacheKey);
+
+        if (future != null) {
+            disposeWhenBuilt(future);
+            log.info("Disposed {} reasoner for ontology {}", type.getDisplayName(), ontologyId);
         }
     }
 }
