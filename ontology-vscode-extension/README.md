@@ -3,7 +3,7 @@
 **Edit, query, reason over, and visualize OWL/RDF ontologies — collaboratively, right inside VS Code.**
 
 A **VS Code extension** for ontology development, providing a full **visual ontology editor** through a React-based webview: SPARQL/DL querying, an AI-assisted change review workflow, an OWL reasoner, D3-powered graph visualization, real-time team collaboration, and a plugin marketplace.
-This extension is part of the larger [Ontology Platform](../README.md) but can be built and run independently.
+Part of the [OntoCode Studio platform](https://github.com/The-Self-Research-Institute/ontocode). Free plan, no credit card needed.
 
 [![Report a bug](https://img.shields.io/badge/Report%20a%20bug-d73a4a)](https://ontocode.selfresearch.org/report-bug) [![Request a feature](https://img.shields.io/badge/Request%20a%20feature-0e8a16)](https://ontocode.selfresearch.org/request-feature) [![Changelog](https://img.shields.io/badge/Changelog-what's%20new-blue)](./CHANGELOG.md) [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red)](https://github.com/sponsors/The-Self-Research-Institute) [![Donate](https://img.shields.io/badge/Donate-selfresearch.org-blueviolet)](https://selfresearch.org/donate)
 
@@ -11,8 +11,21 @@ This extension is part of the larger [Ontology Platform](../README.md) but can b
 
 ---
 
+## ⚡ Get started in 60 seconds
+
+1. Install the extension, then click the **OntoCode Studio** icon in the Activity Bar (the vertical strip of icons on the left edge of VS Code).
+2. Click **Open OntoCode Editor** and create an account. The Free plan needs no credit card.
+3. Create a project or open an ontology file (`.owl`, `.ttl`, `.rdf`) and start editing.
+
+Want to try it without an account or without VS Code? Use the [desktop app](#-download-the-desktop-app), which works offline with no sign-up, or open [ontocode.selfresearch.org](https://ontocode.selfresearch.org/login) in your browser.
+
+---
+
+
 ## 🚀 Features
 
+- **AI Code View assistant** — ask questions about your ontology, or let the AI propose edits in Code View (Turtle, RDF/XML, OWL/XML, Manchester, Functional). Review each change before it is applied. Works with your own OpenAI, Gemini or Claude key, or your organization's provider.
+- **Undo and Redo** — `Ctrl+Z` / `Ctrl+Shift+Z` reverse creating, deleting and renaming entities, axiom edits and more. In shared projects, Undo only reverses your own changes.
 - **Ontology editing across formats** — the Code View editor reads *and writes* the same ontology as Turtle, RDF/XML, N-Triples, OWL/XML, Manchester, Functional, or JSON-LD. Switch formats and keep editing — it's not a one-way export.
 - **SPARQL / DL Query Workbench** — run SPARQL queries against your active ontology and browse results as a table or JSON.
 - **Change Assistant** — every edit is tracked as a reviewable change (drafts, saved, conflicts, timeline, rollback) with per-author attribution.
@@ -25,6 +38,18 @@ This extension is part of the larger [Ontology Platform](../README.md) but can b
 - **Desktop app** — an Electron-based desktop build for working outside VS Code.
 
 ---
+
+## 🧭 New to VS Code?
+
+- **Install:** open the Extensions view (`Ctrl+Shift+X`, or `Cmd+Shift+X` on a Mac), search for **OntoCode Studio** and click **Install**.
+- **Find the icon:** it sits in the Activity Bar on the left. If the bar is hidden, choose **View → Appearance → Activity Bar**.
+- **Command Palette:** press `Ctrl+Shift+P` (`Cmd+Shift+P` on a Mac) and type `OntoCode` to see every command.
+- **Open an ontology file:** choose **File → Open File**, pick your `.owl`, `.ttl` or `.rdf` file, right-click inside it and choose **OntoCode: Edit Ontology File**. The editor opens as a new tab next to your file.
+- **Undo and redo:** `Ctrl+Z` and `Ctrl+Shift+Z` (`Cmd+Z` and `Cmd+Shift+Z` on a Mac) work inside the OntoCode tab.
+- **Sign out:** run **OntoCode: Logout** from the Command Palette.
+
+---
+
 
 ## 💻 Download the desktop app
 
@@ -93,127 +118,6 @@ Explore the ontology as an interactive graph (tree, network, or VOWL notation), 
 
 ---
 
-## 📚 Table of Contents
-- [Features](#-features)
-- [Download the desktop app](#-download-the-desktop-app)
-- [Screenshots](#-screenshots)
-- [Overview](#overview)
-- [Folder Structure](#folder-structure)
-- [Setup](#setup)
-- [Build](#build)
-- [Run and Debug](#run-and-debug)
-- [Usage](#usage)
-- [Commands](#commands)
-- [Settings](#️-settings)
-- [Development Notes](#development-notes)
-- [Contributing](#-contributing)
-- [License](#license)
-
----
-
-## 🧠 Overview
-
-The Ontology VS Code Extension allows users to:
-- Edit and visualize OWL ontologies directly in VS Code.
-- Use a custom web-based editor (built with React).
-- Interact with backend ontology services (Auth, Gateway, OWL Editor, SWRL).
-
-It provides an integrated development environment for ontology engineers and knowledge graph developers.
-
----
-
-## 📁 Folder Structure
-
-```
-ontology-vscode-extension/
-├── src/
-│   ├── extension.ts          # Entry point for the extension (desktop)
-│   ├── extension.web.ts      # Entry point for the web extension (vscode.dev / vscode-test-web)
-│   ├── collaboration/        # Real-time collaboration (CRDT sync, presence)
-│   ├── features/             # Citation insertion and other feature modules
-│   ├── services/             # Citation lookup, issue reporting, sci2Code, etc.
-│   ├── config/                # Deployment/environment configuration
-│   ├── resources/             # Static resources bundled with the extension
-│   └── utils/                 # Helper utilities
-├── webview-src/               # React-based webview UI (Vite)
-│   ├── App.tsx
-│   ├── components/
-│   ├── contexts/
-│   ├── services/
-│   ├── hooks/
-│   ├── assets/
-│   ├── dist/                  # Build output consumed by the extension (git-ignored, built by build:vscode)
-│   ├── package.json
-│   └── vite.config.ts
-├── images/
-│   ├── icon.png                # Extension marketplace icon
-│   ├── screenshots/            # Static feature screenshots used in this README
-│   └── gifs/                   # Feature walkthrough GIFs used in this README
-├── package.json               # Extension metadata, contributes, and build scripts
-├── tsconfig.json               # TypeScript configuration
-└── README.md                  # This file
-```
-
----
-
-## ⚙️ Setup
-
-### Prerequisites
-- **Node.js 18+**
-- **npm**
-- **VS Code**
-- **Ontology Platform backend services** running (optional for UI testing)
-
----
-
-### Install Dependencies
-
-From the `ontology-vscode-extension` directory:
-
-```bash
-npm install
-```
-
----
-
-## 🏗️ Build
-
-### 1. Build the Webview (React App)
-
-From the root of `ontology-vscode-extension`:
-
-```bash
-npm run build-webview
-```
-
-This runs `vite build --base ./` inside `webview-src` and compiles the React webview into `webview-src/dist/`, used by the extension.
-
-> ⚠️ Do **not** run `cd webview-src && npm run build` directly for the VS Code extension. That script builds with an absolute `/` base path intended for the standalone cloud webapp deployment (`Dockerfile.webapp`) and will break asset loading (e.g. the logo will fail to render) inside the VS Code webview. Use `npm run build-webview` (or `webview-src`'s own `npm run build:vscode`) instead. `npm run build:electron` is the equivalent for the Electron desktop app.
-
----
-
-### 2. Build the Extension (TypeScript → JavaScript)
-
-From the root of `ontology-vscode-extension`:
-
-```bash
-npm run compile
-```
-
----
-
-## 🚀 Run and Debug
-
-### Launch the Extension in VS Code
-
-1. Open the `ontology-vscode-extension` directory in **VS Code**.
-2. Open `extension.ts`.
-3. Press **F5** or go to **Run → Start Debugging**.
-
-A new **Extension Development Host** window will open.
-
----
-
 ## 🧩 Usage
 
 **Starting from scratch (no ontology file open yet):**
@@ -264,42 +168,9 @@ See `contributes.configuration` in [package.json](./package.json) for the author
 
 ---
 
-## 🧰 Development Notes
-
-- The webview communicates with the backend via REST APIs through the **Gateway service**.
-- During local development, you can configure the backend URL via `webview-src/.env` (see `.env.production`, `.env.selfhosted-test`, `.env.cloud-test` for other targets).
-- Make sure to rebuild (`npm run build-webview`) the React webview after making UI changes, then reload the Extension Development Host (`Ctrl+R` / `Cmd+R` in the host window) or use **Developer: Reload Window**.
-- `npm run dev-webview` starts the Vite dev server (`http://localhost:3001`) with HMR for faster UI iteration.
-
----
-
-## 🧱 Common Commands
-
-```bash
-# Build the React webview for the VS Code extension (relative asset paths)
-npm run build-webview
-
-# Build + package everything (webview, extension host bundle, web bundle)
-npm run bundle:all
-
-# Compile the extension host TypeScript
-npm run compile
-
-# Package a .vsix
-npm run package
-
-# Run in debug mode
-code .
-
-# Lint and check
-npm run lint
-```
-
----
-
 ## 🤝 Contributing
 
-Contributions are welcome — see the [GitHub repository](https://github.com/The-Self-Research-Institute/ontocode) for source, and use [Report a bug](https://ontocode.selfresearch.org/report-bug) or [Request a feature](https://ontocode.selfresearch.org/request-feature) to tell us what to fix or add.
+To build and run the extension yourself, see [Developing the VS Code extension](https://github.com/The-Self-Research-Institute/ontocode/blob/main/CONTRIBUTING.md#developing-the-vs-code-extension). Contributions are welcome — see the [GitHub repository](https://github.com/The-Self-Research-Institute/ontocode) for source, and use [Report a bug](https://ontocode.selfresearch.org/report-bug) or [Request a feature](https://ontocode.selfresearch.org/request-feature) to tell us what to fix or add.
 
 ---
 

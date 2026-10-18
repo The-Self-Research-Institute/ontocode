@@ -1,24 +1,38 @@
 {
   "name": "ontocode-studio",
   "displayName": "OntoCode Studio",
-  "description": "Edit OWL files with authentication and web-based interface",
+  "description": "Edit, query and reason over OWL/RDF ontologies: SPARQL, reasoner, graph view, AI-assisted edits with undo and team collaboration. Free plan, no card.",
   "version": "1.2.6",
   "publisher": "SelfResearchInstitute",
   "license": "AGPL-3.0-only",
   "icon": "images/icon.png",
+  "homepage": "https://ontocode.selfresearch.org",
+  "bugs": {
+    "url": "https://ontocode.selfresearch.org/report-bug"
+  },
+  "galleryBanner": {
+    "color": "#1e1b4b",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
-    "Other",
-    "Languages",
-    "Formatters"
+    "Programming Languages",
+    "Visualization",
+    "Data Science",
+    "Other"
   ],
   "keywords": [
     "owl",
     "ontology",
-    "semantic web",
     "rdf",
+    "turtle",
+    "sparql",
+    "reasoner",
+    "hermit",
+    "swrl",
+    "semantic web",
     "knowledge graph"
   ],
   "activationEvents": [
