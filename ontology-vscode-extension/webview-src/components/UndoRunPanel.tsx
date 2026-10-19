@@ -3,6 +3,13 @@ import type { UndoRunStatus } from "../hooks/useUndoRunStatus";
 import type { UndoMenu } from "../hooks/useOntologyUndoRedo";
 import UndoActionButton from "./UndoActionButton";
 import { plainUndoReason } from "../utils/undoReason";
+import { dispatchCollaborationNavigate } from "../utils/collaborationNavigation";
+
+const DETAIL_ROWS: Array<["source" | "affected" | "restoring", string]> = [
+  ["source", "Source"],
+  ["affected", "Affected"],
+  ["restoring", "Restoring"],
+];
 
 export default function UndoRunPanel({ status, menu }: { status: UndoRunStatus; menu: UndoMenu }) {
   const verb = status.kind === "undo" ? "Undoing" : "Redoing";
@@ -19,6 +26,27 @@ export default function UndoRunPanel({ status, menu }: { status: UndoRunStatus; 
           <span className="opacity-60">{verb} </span>
           <b>{status.current}</b>
         </div>
+      )}
+      {status.currentDetail && (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 m-0">
+          {DETAIL_ROWS.map(([key, title]) =>
+            status.currentDetail?.[key] ? (
+              <React.Fragment key={key}>
+                <dt className="opacity-60">{title}</dt>
+                <dd className="m-0">{status.currentDetail[key]}</dd>
+              </React.Fragment>
+            ) : null,
+          )}
+        </dl>
+      )}
+      {status.currentDetail?.entityIRI && (
+        <button
+          type="button"
+          onClick={() => dispatchCollaborationNavigate({ entityIRI: status.currentDetail?.entityIRI as string, entityLabel: status.currentDetail?.affected })}
+          className="font-semibold text-purple-600 cursor-pointer"
+        >
+          View affected item
+        </button>
       )}
       {status.phase === "paused" && status.message && <div className="text-red-600">{plainUndoReason(status.message)}</div>}
       {status.phase === "checking" && <div>Waiting for the server to confirm the last change.</div>}

@@ -57,6 +57,23 @@ describe('undoQueue', () => {
     expect(queue.getSnapshot().summary).toBe('3 change sets undone · 6 changes');
   });
 
+  it('exposes the running step detail and keeps it while paused', async () => {
+    const detailed = step('a', { source: 'Entities → Classes', affected: 'Dog', restoring: 'A → B', entityIRI: 'http://x#Dog' });
+    const { queue, outcomes } = setup([detailed]);
+    outcomes.push(new Promise<StepOutcome>(() => undefined));
+    void queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().currentDetail).toEqual({ source: 'Entities → Classes', affected: 'Dog', restoring: 'A → B', entityIRI: 'http://x#Dog' });
+  });
+
+  it('has no detail when the server sent none', async () => {
+    const { queue, outcomes } = setup([step('a')]);
+    outcomes.push(new Promise<StepOutcome>(() => undefined));
+    void queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().currentDetail).toBeUndefined();
+  });
+
   it('clears the finished summary after a few seconds', async () => {
     const { queue } = setup([step('a')]);
     await queue.press('p', 'undo', { available: true, direction: 'UNDO', changeId: 'a', dependents: [] });

@@ -44,6 +44,9 @@ export interface QueueStep {
   changeCount?: number;
   sourceView?: string;
   available?: boolean;
+  source?: string;
+  affected?: string;
+  restoring?: string;
 }
 
 export interface QueueBlock {
