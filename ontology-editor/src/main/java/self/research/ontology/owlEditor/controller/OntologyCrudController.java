@@ -99,7 +99,7 @@ public class OntologyCrudController {
             log.info("[MUTATION] Applying {} operations to draft graph for project {}",
                 request.ops().size(), projectId);
 
-            String userId = RequestActor.userIdOr(httpRequest, request.userId());
+            String userId = RequestActor.forScope(httpRequest, request.userId(), true);
             if (userId == null) {
                 userId = "anonymous";
             }

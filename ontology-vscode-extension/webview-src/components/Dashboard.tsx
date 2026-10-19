@@ -14787,7 +14787,6 @@ const updateItemInState = useCallback(
                 <PluginComponent
                   projectId={projectId || ""}
                   apiBaseUrl={getBaseUrl()}
-                  draftMode={!isDesktop() && syncMode === "private"}
                   draftUserId={isDraftScopeActive() ? (resolveMutationActor().userId || undefined) : undefined}
                   selectedReasoner={selectedReasoner}
                   isReasonerRunning={isReasonerRunning}

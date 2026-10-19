@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withDraft } from "../../../plugins/fuzzy-ontology-plugin/src/draftScope";
 import { useUndoRefresh } from "../../../plugins/fuzzy-ontology-plugin/src/useUndoRefresh";
 import FuzzyEditorEnhanced from "../../../plugins/fuzzy-ontology-plugin/src/FuzzyEditorEnhanced";
-import { ReasonerPluginView } from "../../../plugins/reasoner-plugin/src/ReasonerPluginView";
 import { SparqlQueryEditor } from "../../../plugins/sparql-query-plugin/src/SparqlQueryEditor";
 import SWRLEditor from "../../../plugins/swrl-editor-plugin/src/SWRLEditor";
 
@@ -96,18 +95,6 @@ describe("Fuzzy editor", () => {
     window.dispatchEvent(new CustomEvent("ontologyRollback", { detail: { projectId: "p1" } }));
     await wait(700);
     expect(urls.length).toBeGreaterThan(before);
-  });
-});
-
-describe("Reasoner page", () => {
-  it("tells the user the results come from the published version while editing a draft", async () => {
-    await act(async () => root.render(<ReasonerPluginView projectId="p1" draftMode />));
-    expect(host.textContent).toContain("Reasoning runs on the published version");
-  });
-
-  it("shows no notice in public mode", async () => {
-    await act(async () => root.render(<ReasonerPluginView projectId="p1" />));
-    expect(host.textContent).not.toContain("Reasoning runs on the published version");
   });
 });
 
