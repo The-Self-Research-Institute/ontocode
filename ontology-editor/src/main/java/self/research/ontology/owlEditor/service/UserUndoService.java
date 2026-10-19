@@ -187,9 +187,28 @@ public class UserUndoService {
         if (!isBlank(entry.getEntityLabel())) {
             return entry.getEntityLabel();
         }
+        String named = nameFromOperation(entry);
+        if (named != null) {
+            return named;
+        }
         if (!isBlank(entry.getDescription())) {
             return entry.getDescription();
         }
         return isBlank(entry.getEntityIRI()) ? "a change" : entry.getEntityIRI();
+    }
+
+    private static String nameFromOperation(HistoryChange entry) {
+        String iri = entry.getEntityIRI();
+        String operation = entry.getOperationType();
+        if (isBlank(iri) || isBlank(operation) || iri.startsWith("urn:")) {
+            return null;
+        }
+        int cut = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
+        String name = cut >= 0 ? iri.substring(cut + 1) : iri;
+        if (name.isBlank()) {
+            return null;
+        }
+        String words = operation.replaceAll("([a-z0-9])([A-Z])", "$1 $2").toLowerCase(java.util.Locale.ROOT);
+        return Character.toUpperCase(words.charAt(0)) + words.substring(1) + " " + name;
     }
 }

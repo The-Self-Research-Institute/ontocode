@@ -28,7 +28,7 @@ public record RequestActor(String userId, String username) {
             return recordedId(request, given, false);
         }
         boolean placeholder = blank(given) || "anonymous".equalsIgnoreCase(given);
-        return placeholder && request != null ? JwtIdentityExtractor.extractEmail(request).orElse(given) : given;
+        return placeholder && request != null ? JwtIdentityExtractor.extractUserId(request).orElse(given) : given;
     }
 
     private static boolean blank(String value) {

@@ -135,8 +135,6 @@ function renderLinkedAxiomText(
 interface ReasonerPluginProps {
   projectId: string;
   apiBaseUrl?: string;
-  draftMode?: boolean;
-
   draftUserId?: string;
   selectedReasoner?: string;
   isReasonerRunning?: boolean;
@@ -312,7 +310,6 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
 export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   projectId,
   apiBaseUrl = '',
-  draftMode = false,
   draftUserId,
   selectedReasoner: dashboardSelectedReasoner,
   isReasonerRunning: dashboardIsRunning,
@@ -1366,11 +1363,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
   return (
     <div className={`flex flex-col h-full ${isDark ? 'bg-gray-900 text-gray-100' : 'bg-white text-gray-900'}`}>
-      {draftMode && (
-        <div role="status" className={`px-3 py-2 text-xs border-b flex-shrink-0 ${isDark ? 'bg-amber-900/40 border-amber-700 text-amber-100' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
-          You are editing a private draft. Reasoning runs on the published version, so your draft changes are not included in these results.
-        </div>
-      )}
       <div className={`flex items-center gap-2 px-3 py-2 border-b flex-shrink-0 ${
         isDark ? 'border-gray-700 bg-gray-800' : 'border-gray-300 bg-gray-50'
       }`}>

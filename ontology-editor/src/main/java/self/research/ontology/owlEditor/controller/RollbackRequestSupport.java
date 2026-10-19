@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.config.JwtClaimUtils;
@@ -19,6 +20,9 @@ public class RollbackRequestSupport {
 
     private final WorkspaceOwnershipService workspaceOwnershipService;
 
+    @Value("${ontocode.desktop.mode:false}")
+    private boolean desktopMode;
+
     public RollbackRequestSupport(WorkspaceOwnershipService workspaceOwnershipService) {
         this.workspaceOwnershipService = workspaceOwnershipService;
     }
@@ -35,6 +39,9 @@ public class RollbackRequestSupport {
         if (email != null || claimUserId != null) {
             String userId = email != null ? email : claimUserId;
             return new ChangeRollbackService.Actor(userId, userId, opId);
+        }
+        if (desktopMode) {
+            return new ChangeRollbackService.Actor(JwtIdentityExtractor.DESKTOP_USER, "Desktop User", opId);
         }
         String userId = body != null && body.get("userId") instanceof String s && !s.isBlank() ? s : "system";
         String username = body != null && body.get("username") instanceof String s && !s.isBlank() ? s : "System";

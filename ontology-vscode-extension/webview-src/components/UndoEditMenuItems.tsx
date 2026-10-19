@@ -1,10 +1,13 @@
-import React from "react";
+import React, { useEffect } from "react";
 import type { UndoMenu } from "../hooks/useOntologyUndoRedo";
 import { currentTextTarget, undoTextEdit } from "../utils/textEditTarget";
 
 const ITEM = "ontocode-top-menu-item w-full text-left px-4 py-2 text-xs flex items-center justify-between disabled:opacity-50 disabled:cursor-not-allowed";
 
 export default function UndoEditMenuItems({ menu, onClose }: { menu?: UndoMenu; onClose: () => void }) {
+  useEffect(() => {
+    menu?.refresh?.();
+  }, []);
   const textReady = !!currentTextTarget();
   const run = (action?: () => void) => () => {
     onClose();
