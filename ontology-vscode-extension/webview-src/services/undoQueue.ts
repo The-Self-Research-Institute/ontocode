@@ -1,5 +1,5 @@
 import { CHECK_DELAY_MS, FINISHED_VISIBLE_MS, INFLIGHT_WAIT_MS, MAX_CHECKS, MAX_FINISHED_ITEMS, MAX_WAITING, REQUEST_TIMEOUT_MS } from './undoQueueSupport';
-import { TIMED_OUT, defaultQueueApi, newOpId, pause, revalidate, stepFromHint, summaryOf, withTimeout } from './undoQueueSupport';
+import { TIMED_OUT, defaultQueueApi, detailOf, newOpId, pause, revalidate, stepFromHint, summaryOf, withTimeout } from './undoQueueSupport';
 import type { Entry, FinishedItem, PauseReason, PressResult, QueueApi, UndoKind, UndoRunPhase, UndoRunSnapshot } from './undoQueueSupport';
 import type { QueueResponse, QueueStep, StepOutcome, UndoState, UndoStep } from './undoRedoService';
 
@@ -43,6 +43,7 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
     running: !!current && phase !== 'paused',
     pending: entries.length + binding + redoWaiting,
     current: current?.label,
+    currentDetail: detailOf((current ?? (phase === 'paused' ? entries[0] : undefined))?.step),
     reason,
     message,
     item,

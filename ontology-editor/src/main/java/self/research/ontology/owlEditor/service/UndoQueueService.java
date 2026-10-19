@@ -18,7 +18,8 @@ public class UndoQueueService {
     public static final int MAX_COUNT = 25;
 
     public record Step(String changeId, String changeSetId, String entityIRI, String label, int changeCount,
-                       String sourceView, boolean available) {}
+                       String sourceView, boolean available, String source, String affected,
+                       String restoring) {}
 
     public record Blocked(String changeId, String changeSetId, String label, String reason,
                           List<Dependent> dependents) {}
@@ -77,6 +78,8 @@ public class UndoQueueService {
             changes += RollbackWorkSupport.entryItems(entry).size();
         }
         String label = group.size() == 1 ? UserUndoService.labelOf(head) : changes + " changes";
-        return new Step(head.getId(), head.getChangeSetId(), head.getEntityIRI(), label, changes, null, true);
+        UndoStepDetail.Detail detail = UndoStepDetail.of(group);
+        return new Step(head.getId(), head.getChangeSetId(), head.getEntityIRI(), label, changes, null, true,
+                detail.source(), detail.affected(), detail.restoring());
     }
 }

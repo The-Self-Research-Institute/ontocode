@@ -4,7 +4,7 @@ export const MAX_WAITING = 25;
 export const REQUEST_TIMEOUT_MS = 30000;
 export const CHECK_DELAY_MS = 3000;
 export const MAX_CHECKS = 10;
-export const FINISHED_VISIBLE_MS = 10000;
+export const FINISHED_VISIBLE_MS = 5000;
 export const INFLIGHT_WAIT_MS = 1000;
 export const MAX_FINISHED_ITEMS = 5;
 
@@ -27,12 +27,25 @@ export interface UndoRunSnapshot {
   running: boolean;
   pending: number;
   current?: string;
+  currentDetail?: StepDetail;
   reason?: PauseReason;
   message?: string;
   item?: string;
   summary?: string;
   finishedItems: FinishedItem[];
   lastState?: UndoState;
+}
+
+export interface StepDetail {
+  source?: string;
+  affected?: string;
+  restoring?: string;
+  entityIRI?: string;
+}
+
+export function detailOf(step: QueueStep | undefined): StepDetail | undefined {
+  if (!step || !(step.source || step.affected || step.restoring)) return undefined;
+  return { source: step.source, affected: step.affected, restoring: step.restoring, entityIRI: step.entityIRI };
 }
 
 export interface PressResult {
