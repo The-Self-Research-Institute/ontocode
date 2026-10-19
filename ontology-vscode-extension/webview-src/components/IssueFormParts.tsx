@@ -1,5 +1,5 @@
 import React from "react";
-import { Bug, ListOrdered, Mail, X } from "lucide-react";
+import { ArrowLeft, Bug, ListOrdered, Mail } from "lucide-react";
 import type { FeedbackType } from "../utils/feedback";
 
 export const INPUT_CLASS =
@@ -14,6 +14,11 @@ export const PRIORITIES = [
   { value: "Lowest", label: "⚪ Lowest" },
 ];
 
+const tabClass = (active: boolean) =>
+  `px-4 py-2 text-sm font-semibold rounded-md transition-colors ${
+    active ? "bg-purple-600 text-white shadow" : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+  }`;
+
 interface HeaderProps {
   kind: FeedbackType;
   projectName?: string;
@@ -26,35 +31,80 @@ export const IssueFormHeader: React.FC<HeaderProps> = ({ kind, projectName, busy
   const isFeature = kind === "feature";
   const Icon = isFeature ? ListOrdered : Bug;
   return (
-    <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-5 flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <div className="bg-white bg-opacity-20 p-2 rounded-lg">
-          <Icon className="text-white" size={28} />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-white">{isFeature ? "Request a Feature" : "Report a Bug"}</h1>
-          {projectName && <p className="text-purple-100 text-sm mt-1">Project: {projectName}</p>}
-        </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onSwitchKind}
-          disabled={busy}
-          className="hidden sm:inline text-sm text-purple-100 hover:text-white underline underline-offset-2"
-        >
-          {isFeature ? "Found a bug instead?" : "Want a feature instead?"}
-        </button>
+    <header className="sticky top-0 z-10 bg-white border-b border-gray-200">
+      <div className="w-full max-w-6xl mx-auto px-6 py-3 flex flex-wrap items-center gap-4">
         <button
           onClick={onBack}
           disabled={busy}
-          title="Back"
-          aria-label="Back"
-          className="text-white hover:bg-white hover:bg-opacity-20 p-2 rounded-lg transition-colors"
+          className="flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-purple-700 disabled:opacity-50"
         >
-          <X size={24} />
+          <ArrowLeft size={18} />
+          Back to app
         </button>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="bg-gradient-to-br from-purple-600 to-indigo-600 p-2 rounded-lg">
+            <Icon className="text-white" size={20} />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold text-gray-900 leading-tight">{isFeature ? "Request a Feature" : "Report a Bug"}</h1>
+            {projectName && <p className="text-xs text-gray-500 truncate">Project: {projectName}</p>}
+          </div>
+        </div>
+        <div className="ml-auto flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1" role="tablist">
+          <button role="tab" aria-selected={!isFeature} disabled={busy} onClick={isFeature ? onSwitchKind : undefined} className={tabClass(!isFeature)}>
+            Report a Bug
+          </button>
+          <button role="tab" aria-selected={isFeature} disabled={busy} onClick={isFeature ? undefined : onSwitchKind} className={tabClass(isFeature)}>
+            Request a Feature
+          </button>
+        </div>
       </div>
-    </div>
+    </header>
+  );
+};
+
+interface SidebarProps {
+  kind: FeedbackType;
+  projectName?: string;
+  ontologyFilePath?: string;
+  children?: React.ReactNode;
+}
+
+export const IssueSidebar: React.FC<SidebarProps> = ({ kind, projectName, ontologyFilePath, children }) => {
+  const tips =
+    kind === "feature"
+      ? ["Describe the problem you are trying to solve", "Say who needs it and how often", "Mention anything you do today instead"]
+      : ["Say what you expected and what happened", "List the steps so we can repeat it", "Attach a screenshot or the log file if you can"];
+  return (
+    <aside className="space-y-4 lg:sticky lg:top-24 self-start">
+      <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
+        {children}
+        {(projectName || ontologyFilePath) && (
+          <dl className="space-y-2 text-sm">
+            {projectName && (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-gray-500">Project</dt>
+                <dd className="font-medium text-gray-800 break-words">{projectName}</dd>
+              </div>
+            )}
+            {ontologyFilePath && (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-gray-500">File</dt>
+                <dd className="font-medium text-gray-800 break-all">{ontologyFilePath}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+      </div>
+      <div className="rounded-xl border border-purple-200 bg-purple-50 p-5">
+        <p className="text-sm font-semibold text-purple-900 mb-2">A good report has</p>
+        <ul className="space-y-1.5 text-sm text-purple-900 list-disc pl-5">
+          {tips.map((tip) => (
+            <li key={tip}>{tip}</li>
+          ))}
+        </ul>
+      </div>
+    </aside>
   );
 };
 
@@ -72,8 +122,10 @@ export const IssueEmailField: React.FC<EmailProps> = ({ signedIn, signedInEmail,
   if (signedIn) {
     return (
       <p className="text-sm text-gray-600 flex items-center gap-2">
-        <Mail size={16} className="text-purple-600" />
-        Reporting as <span className="font-semibold text-gray-800">{signedInEmail}</span>
+        <Mail size={16} className="text-purple-600 flex-shrink-0" />
+        <span className="min-w-0 break-all">
+          Reporting as <span className="font-semibold text-gray-800">{signedInEmail}</span>
+        </span>
       </p>
     );
   }
@@ -111,37 +163,40 @@ export const IssueFormFooter: React.FC<FooterProps> = ({ kind, submitting, block
   const isFeature = kind === "feature";
   const Icon = isFeature ? ListOrdered : Bug;
   return (
-    <div className="border-t-2 border-gray-200 bg-gray-50 px-6 py-5 flex justify-between items-center">
-      <p className="text-xs text-gray-600">
-        <span className="text-red-500">*</span> Required fields
-      </p>
-      <div className="flex gap-3">
-        <button
-          onClick={onBack}
-          disabled={submitting}
-          className="px-6 py-2.5 text-sm font-semibold text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 disabled:opacity-50 transition-all"
-        >
-          Back
-        </button>
-        <button
-          onClick={onSubmit}
-          disabled={submitting || !!blockReason}
-          title={blockReason}
-          className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg hover:shadow-xl transition-all"
-        >
-          {submitting ? (
-            <>
-              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-              <span>Submitting...</span>
-            </>
-          ) : (
-            <>
-              <Icon size={18} />
-              <span>{isFeature ? "Submit Feature Request" : "Submit Bug Report"}</span>
-            </>
-          )}
-        </button>
+    <footer className="sticky bottom-0 z-10 border-t border-gray-200 bg-white">
+      <div className="w-full max-w-6xl mx-auto px-6 py-4 flex flex-wrap justify-between items-center gap-3">
+        <p className="text-xs text-gray-600">
+          <span className="text-red-500">*</span> Required fields
+          {blockReason && <span className="ml-3 text-gray-500">{blockReason}</span>}
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={onBack}
+            disabled={submitting}
+            className="px-6 py-2.5 text-sm font-semibold text-gray-700 bg-white border-2 border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 disabled:opacity-50 transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={submitting || !!blockReason}
+            title={blockReason}
+            className="px-6 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-purple-600 to-indigo-600 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg hover:shadow-xl transition-all"
+          >
+            {submitting ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                <span>Submitting...</span>
+              </>
+            ) : (
+              <>
+                <Icon size={18} />
+                <span>{isFeature ? "Submit Feature Request" : "Submit Bug Report"}</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
-    </div>
+    </footer>
   );
 };

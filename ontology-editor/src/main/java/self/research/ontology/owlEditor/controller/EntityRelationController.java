@@ -53,7 +53,8 @@ public class EntityRelationController {
     public ResponseEntity<?> editRelation(
             @PathVariable String projectId,
             @RequestBody RelationRequest req,
-            @RequestParam(required = false, defaultValue = "true") boolean draft) {
+            @RequestParam(required = false, defaultValue = "true") boolean draft,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
 
         log.info("[RELATION] op={} entity={} rel={} old={} new={}", req.operation(), req.entityIri(),
                 req.relationshipType(), req.oldTargetIri(), req.targetIri());
@@ -63,8 +64,8 @@ public class EntityRelationController {
             if (ops.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("success", false, "message", "No operations generated for request"));
             }
-            String userId = resolveUserId(req);
-            String username = req.username() != null ? req.username() : "Anonymous";
+            String userId = resolveUserId(req, httpRequest, draft);
+            String username = req.username() != null ? req.username() : userId;
             String changeSetId = lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, draft,
                     userId, username, ops, () -> {
                         if (draft) {
@@ -244,8 +245,9 @@ public class EntityRelationController {
         };
     }
 
-    private String resolveUserId(RelationRequest req) {
-        String userId = req.userId() != null ? req.userId() : "anonymous";
+    private String resolveUserId(RelationRequest req, jakarta.servlet.http.HttpServletRequest httpRequest, boolean draft) {
+        String userId = self.research.ontology.owlEditor.service.RequestActor.forScope(
+                httpRequest, req.userId() != null ? req.userId() : "anonymous", draft);
         return desktopMode ? DESKTOP_USER_ID : userId;
     }
 

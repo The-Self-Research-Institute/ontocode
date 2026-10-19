@@ -211,11 +211,14 @@ public class OntologyCrudController {
                                                   @RequestBody MakeSiblingsDisjointRequest request,
                                                   @RequestParam(required = false, defaultValue = "anonymous") String userId,
                                                   @RequestParam(required = false, defaultValue = "Anonymous") String username,
-                                                  @RequestParam(required = false, defaultValue = "false") boolean draft) {
+                                                  @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                                  jakarta.servlet.http.HttpServletRequest httpRequest) {
         try {
-            lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, draft, userId, username,
+            final String actorId = RequestActor.forScope(httpRequest, userId, draft);
+            final String actorName = "Anonymous".equals(username) ? actorId : username;
+            lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, draft, actorId, actorName,
                     pairwiseDisjointOps(request.classIds()),
-                    () -> mutationService.makeSiblingsDisjoint(projectId, request.classIds(), draft, userId)));
+                    () -> mutationService.makeSiblingsDisjoint(projectId, request.classIds(), draft, actorId)));
         } catch (Exception e) {
             log.error("[MUTATION] Failed to make siblings disjoint for project {}: {}", projectId, e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of("success", false, "message", "Failed to make siblings disjoint"));
@@ -246,7 +249,8 @@ public class OntologyCrudController {
                     null, // datatype
                     null  // ancestorIri
                 );
-                collaborativeEditService.broadcastMutation(projectId, disjointOp, userId, username);
+                String broadcastId = RequestActor.forScope(httpRequest, userId, draft);
+                collaborativeEditService.broadcastMutation(projectId, disjointOp, broadcastId, "Anonymous".equals(username) ? broadcastId : username);
             }
         }
         

@@ -14543,6 +14543,7 @@ const updateItemInState = useCallback(
               <div className="flex-1 min-h-0">
                 <SparqlPluginComponent
                   projectId={projectId}
+                  draftMode={!isDesktop() && syncMode === "private"}
                   prefixes={(metadata as any)?.prefixes || []}
                   context={{
                     apiClient,
@@ -14586,12 +14587,16 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
+          const graphActor = resolveMutationActor(user?.userId || user?.email, user?.username);
           return (
             <PluginComponent
               projectId={projectId}
               context={{
                 projectId,
                 apiBaseUrl: getBaseUrl(),
+                draftMode: !isDesktop() && syncMode === "private",
+                userId: graphActor.userId,
+                username: graphActor.username,
                 permissions: {
                   canEdit: !readonlyMode,
                   canDelete: !readonlyMode,
@@ -14666,7 +14671,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={!isDesktop() && syncMode === "private"} />;
         }
 
         return (
@@ -14782,6 +14787,7 @@ const updateItemInState = useCallback(
                 <PluginComponent
                   projectId={projectId || ""}
                   apiBaseUrl={getBaseUrl()}
+                  draftMode={!isDesktop() && syncMode === "private"}
                   draftUserId={isDraftScopeActive() ? (resolveMutationActor().userId || undefined) : undefined}
                   selectedReasoner={selectedReasoner}
                   isReasonerRunning={isReasonerRunning}
