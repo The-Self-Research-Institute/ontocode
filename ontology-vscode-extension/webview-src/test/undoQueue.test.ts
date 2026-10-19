@@ -234,6 +234,75 @@ describe('undoQueue', () => {
     expect(queue.getSnapshot().summary).toBe('1 change set redone · 1 change');
   });
 
+  describe('redo bursts', () => {
+    const redoHint = (id: string) => ({ available: true, direction: 'REDO' as const, changeId: id, auditId: `au${id}`, label: `R${id}`, dependents: [] });
+    const unavailable = { available: false, direction: 'REDO' as const, dependents: [] };
+
+    function chain(ids: string[]) {
+      const { api, sends, queue } = setup([]);
+      let sent = 0;
+      vi.mocked(api.send).mockImplementation((_p, _k, s, opId) => {
+        sends.push({ id: s.changeId, opId });
+        sent += 1;
+        const next = ids[sent];
+        return Promise.resolve({
+          kind: 'done',
+          auditId: `done${sent}`,
+          state: { undo: unavailable, redo: next ? redoHint(next) : unavailable },
+        } as StepOutcome);
+      });
+      return { api, sends, queue };
+    }
+
+    it('runs every extra redo press in order, taking each next step from the server reply', async () => {
+      const { queue, sends } = chain(['a', 'b', 'c', 'd']);
+      const presses = [queue.press('p', 'redo', redoHint('a'))];
+      for (let i = 0; i < 3; i += 1) presses.push(queue.press('p', 'redo', redoHint('a')));
+      await vi.runAllTimersAsync();
+      expect((await Promise.all(presses)).every((p) => p.accepted)).toBe(true);
+      expect(sends.map((s) => s.id)).toEqual(['a', 'b', 'c', 'd']);
+      expect(new Set(sends.map((s) => s.opId)).size).toBe(4);
+      expect(queue.getSnapshot().summary).toBe('4 change sets redone · 4 changes');
+      expect(queue.getSnapshot().pending).toBe(0);
+    });
+
+    it('drops presses beyond the available redos and still finishes', async () => {
+      const { queue, sends } = chain(['a', 'b']);
+      for (let i = 0; i < 6; i += 1) void queue.press('p', 'redo', redoHint('a'));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(sends.map((s) => s.id)).toEqual(['a', 'b']);
+      expect(queue.getSnapshot().phase).toBe('finished');
+      expect(queue.getSnapshot().pending).toBe(0);
+    });
+
+    it('shows extra redo presses as pending and clears them on stop', async () => {
+      const { queue, api } = chain(['a', 'b', 'c']);
+      vi.mocked(api.send).mockImplementationOnce(() => new Promise<StepOutcome>(() => undefined));
+      void queue.press('p', 'redo', redoHint('a'));
+      void queue.press('p', 'redo', redoHint('a'));
+      void queue.press('p', 'redo', redoHint('a'));
+      await vi.advanceTimersByTimeAsync(5);
+      expect(queue.getSnapshot().pending).toBe(2);
+      queue.stopPending();
+      expect(queue.getSnapshot().pending).toBe(0);
+    });
+
+    it('still limits how many redos can wait', async () => {
+      const { queue } = chain(['a']);
+      const results = [];
+      for (let i = 0; i < MAX_WAITING + 3; i += 1) results.push(queue.press('p', 'redo', redoHint('a')));
+      const settled = await Promise.all(results);
+      expect(settled.filter((r) => !r.accepted).length).toBeGreaterThan(0);
+    });
+
+    it('does not accept an undo while a redo run is active', async () => {
+      const { queue, api } = chain(['a', 'b']);
+      vi.mocked(api.send).mockImplementationOnce(() => new Promise<StepOutcome>(() => undefined));
+      void queue.press('p', 'redo', redoHint('a'));
+      expect((await queue.press('p', 'undo')).accepted).toBe(false);
+    });
+  });
+
   it('only builds steps from available hints', () => {
     expect(stepFromHint(undefined, 'undo')).toBeUndefined();
     expect(stepFromHint({ available: false, direction: 'UNDO', changeId: 'a', dependents: [] }, 'undo')).toBeUndefined();
