@@ -13,6 +13,7 @@ import { useCommentDialog } from './assistant/hooks/useCommentDialog';
 import { useConflictResolution } from './assistant/hooks/useConflictResolution';
 import { useLiveActivity } from './assistant/hooks/useLiveActivity';
 import { useNotification } from './assistant/hooks/useNotification';
+import { useRequestedTab } from './assistant/hooks/useRequestedTab';
 import { AssistantTab, OntologyChange } from './assistant/types';
 
 interface ChangeAssistantProps {
@@ -21,6 +22,7 @@ interface ChangeAssistantProps {
 
 const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const [activeTab, setActiveTab] = useState<AssistantTab>('live');
+  useRequestedTab(setActiveTab);
   const [selectedChange, setSelectedChange] = useState<OntologyChange | null>(null);
   const { notification, showNotification } = useNotification();
   const [serverQuery, setServerQuery] = useState('');

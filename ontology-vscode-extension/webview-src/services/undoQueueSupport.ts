@@ -4,7 +4,7 @@ export const MAX_WAITING = 25;
 export const REQUEST_TIMEOUT_MS = 30000;
 export const CHECK_DELAY_MS = 3000;
 export const MAX_CHECKS = 10;
-export const FINISHED_VISIBLE_MS = 4000;
+export const FINISHED_VISIBLE_MS = 10000;
 export const INFLIGHT_WAIT_MS = 1000;
 export const MAX_FINISHED_ITEMS = 5;
 

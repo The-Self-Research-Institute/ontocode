@@ -162,4 +162,28 @@ class UserUndoServiceTest {
         when(rollback.entriesForUndo(P, "au1")).thenReturn(List.of(change("a", "Me@x.com", "e:A", T0)));
         assertFalse(service.nextRedo(P, false, me).available());
     }
+
+    @Test
+    void anUnlabelledChangeIsNamedFromItsOperationAndEntity() {
+        HistoryChange change = new HistoryChange();
+        change.setOperationType("createClass");
+        change.setEntityIRI("http://example.org/onto#DskDiag2");
+        change.setDescription("createClass operation");
+        assertEquals("Create class DskDiag2", UserUndoService.labelOf(change));
+    }
+
+    @Test
+    void aLabelledChangeKeepsItsLabelAndInternalIrisFallBackToTheDescription() {
+        HistoryChange labelled = new HistoryChange();
+        labelled.setEntityLabel("Pizza");
+        labelled.setOperationType("createClass");
+        labelled.setEntityIRI("http://example.org/onto#Pizza");
+        assertEquals("Pizza", UserUndoService.labelOf(labelled));
+
+        HistoryChange merge = new HistoryChange();
+        merge.setOperationType("ontologyMerge");
+        merge.setEntityIRI("urn:ontocode:merge:abc");
+        merge.setDescription("Merged ontology: 3 added");
+        assertEquals("Merged ontology: 3 added", UserUndoService.labelOf(merge));
+    }
 }

@@ -206,6 +206,7 @@ import {
 } from "./dashboard-parts/codeViewPaging";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
 import { buildEntityIri, isBulkChangeIri } from "../utils/entityIri";
+import { requestChangeAssistantTab } from "../utils/changeAssistantNav";
 import { clearChildrenOf, keepPendingChildren } from "../utils/treeChildren";
 import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
 import { DRAFT_COPY_MAX_MISSING, DRAFT_COPY_MAX_WAIT_MS, ROLLBACK_REFRESH_DELAY_MS } from "../utils/refreshTiming";
@@ -11623,7 +11624,13 @@ const updateItemInState = useCallback(
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
 
-  const ontologyUndoRedo = useOntologyUndoRedo({ projectId, onOpenHistory: () => setMainTab("Changes") });
+  const ontologyUndoRedo = useOntologyUndoRedo({
+    projectId,
+    onOpenHistory: () => {
+      requestChangeAssistantTab("changes");
+      setMainTab("Changes");
+    },
+  });
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);

@@ -6,6 +6,7 @@ import { isRealVSCode } from '../utils/desktop';
 import { isTextElement } from '../utils/textEditTarget';
 import { useVsCodeUndoRouting } from './useVsCodeUndoRouting';
 import { hasDesktopUndoMenu, useDesktopUndoRouting } from './useDesktopUndoRouting';
+import { useCommittedChangeRefresh } from './useCommittedChangeRefresh';
 
 interface Options {
   projectId: string | null | undefined;
@@ -23,6 +24,7 @@ export interface UndoMenu {
   stopPending: () => void;
   resume: () => void;
   openHistory: () => void;
+  refresh?: () => void;
 }
 
 function redoHintFor(phase: string): string | undefined {
@@ -77,8 +79,14 @@ export function useOntologyUndoRedo({ projectId, onOpenHistory }: Options) {
     apply(undefined);
     void refresh();
     window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
+    window.addEventListener('ontologyChangesSaved', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('ontologyChangesSaved', refresh);
+    };
   }, [projectId, apply, refresh]);
+
+  useCommittedChangeRefresh(projectId ?? undefined, () => void refresh(), ['APPLY', 'UNDO', 'REDO']);
 
   useEffect(() => {
     if (snap.lastState) apply(snap.lastState);
@@ -143,6 +151,7 @@ export function useOntologyUndoRedo({ projectId, onOpenHistory }: Options) {
     stopPending: undoQueue.stopPending,
     resume: () => void undoQueue.resume(),
     openHistory: () => historyRef.current?.(),
+    refresh: () => void refresh(),
   };
 
   return { ...menu, menu, busy: !settled, state, refresh };
