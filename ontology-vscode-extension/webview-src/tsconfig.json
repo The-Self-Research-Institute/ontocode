@@ -28,6 +28,7 @@
   },
   "exclude": [
     "node_modules",
-    "components/Login.tsx"
+    "components/Login.tsx",
+    "test/pluginDraftScope.test.tsx"
   ]
 }

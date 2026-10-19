@@ -23,6 +23,14 @@ public record RequestActor(String userId, String username) {
         return draft || request == null ? given : JwtIdentityExtractor.extractEmail(request).orElse(given);
     }
 
+    public static String forScope(HttpServletRequest request, String given, boolean draft) {
+        if (!draft) {
+            return recordedId(request, given, false);
+        }
+        boolean placeholder = blank(given) || "anonymous".equalsIgnoreCase(given);
+        return placeholder && request != null ? JwtIdentityExtractor.extractEmail(request).orElse(given) : given;
+    }
+
     private static boolean blank(String value) {
         return value == null || value.isBlank();
     }
