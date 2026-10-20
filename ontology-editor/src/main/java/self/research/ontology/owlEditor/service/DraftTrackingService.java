@@ -11,7 +11,6 @@ import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.delta.DeltaCapture;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
-import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportDraftSupport;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -303,7 +302,7 @@ public class DraftTrackingService {
             }
             reconcileCommit(projectId, userId, committed);
             draftChangeHistory.markPublished(projectId, userId);
-            promoteSpreadsheetImports(projectId, userId);
+            draftDocuments.promote(projectId, userId);
 
             try {
                 mainGraphRevisionService.incrementRevision(projectId);
@@ -337,23 +336,11 @@ public class DraftTrackingService {
         }
     }
 
-    private SpreadsheetImportDraftSupport spreadsheetImportDrafts;
+    private DraftDocuments draftDocuments = DraftDocuments.none();
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
-    void setSpreadsheetImportDrafts(SpreadsheetImportDraftSupport spreadsheetImportDrafts) {
-        this.spreadsheetImportDrafts = spreadsheetImportDrafts;
-    }
-
-    private void promoteSpreadsheetImports(String projectId, String userId) {
-        if (spreadsheetImportDrafts == null) {
-            return;
-        }
-        try {
-            spreadsheetImportDrafts.promoteDraftImports(projectId, userId);
-        } catch (Exception e) {
-            log.warn("[DRAFT] Could not mark spreadsheet imports as published for project {} user {}: {}",
-                    projectId, userId, e.getMessage());
-        }
+    void setDraftDocuments(DraftDocuments draftDocuments) {
+        this.draftDocuments = draftDocuments;
     }
 
     private int finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
@@ -409,7 +396,7 @@ public class DraftTrackingService {
         }
         reconcileCommit(projectId, userId, committed);
         draftChangeHistory.markPublished(projectId, userId);
-        promoteSpreadsheetImports(projectId, userId);
+        draftDocuments.promote(projectId, userId);
 
         try {
             mainGraphRevisionService.incrementRevision(projectId);
@@ -481,6 +468,7 @@ public class DraftTrackingService {
         if (userId != null && !userId.isBlank()) {
             datasetService.clearDraftGraph(projectId, userId);
             draftPublishService.clearBaseline(projectId, userId);
+            draftDocuments.discard(projectId, userId);
         } else {
             unappliedDrafts.stream()
                     .map(DraftChange::getUserId)
@@ -489,6 +477,7 @@ public class DraftTrackingService {
                     .forEach(id -> {
                         datasetService.clearDraftGraph(projectId, id);
                         draftPublishService.clearBaseline(projectId, id);
+                        draftDocuments.discard(projectId, id);
                     });
         }
 
