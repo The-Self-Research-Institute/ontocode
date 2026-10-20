@@ -387,6 +387,16 @@ class DeltaRoundTripTest {
     }
 
     @Test
+    void aTextValueContainingTheWordUsingSurvivesUndoAndRedo() throws Exception {
+        String update = """
+                INSERT { <http://ex/C> rdfs:subClassOf _:r . _:r a owl:Restriction ; owl:onProperty <http://ex/p> ;
+                owl:someValuesFrom <http://ex/B> ; rdfs:comment "measured using a probe" . } WHERE { }
+                """;
+        ExactDelta delta = roundTrip(BASE, update, List.of(op("x", ex("C"), null, null, null)));
+        assertTrue(ExactDelta.write(delta.inserted()).contains("using a probe"));
+    }
+
+    @Test
     void anOperationThatChangesNothingProducesNoDelta() throws Exception {
         load(BASE);
         DeltaCapture capture = DeltaCapture.begin(repo, G, List.of(ex("A"))).orElseThrow();

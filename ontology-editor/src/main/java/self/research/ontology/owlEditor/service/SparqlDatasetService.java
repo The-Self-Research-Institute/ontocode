@@ -35,6 +35,7 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.model.ImportOptions;
+import self.research.ontology.owlEditor.util.SparqlText;
 
 import jakarta.annotation.PreDestroy;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -1060,9 +1061,8 @@ public class SparqlDatasetService {
         }
         try (RepositoryConnection conn = memRepo.getConnection()) {
             String finalQuery = sparqlQuery;
-            // Match SPARQL FROM clause: "FROM <" — avoids false positive on owl:someValuesFrom etc.
-            if (!finalQuery.matches("(?si).*\\bFROM\\s+<.*")) {
-                finalQuery = finalQuery.replaceFirst("(?i)WHERE",
+            if (!SparqlText.hasFromClause(finalQuery)) {
+                finalQuery = SparqlText.replaceFirstKeyword(finalQuery, "WHERE",
                         buildFromClause(conn, projectId) + " WHERE");
             }
             String queryType = extractQueryType(finalQuery);
@@ -1131,12 +1131,9 @@ public class SparqlDatasetService {
             long connMs = (System.nanoTime() - totalStart) / 1_000_000;
 
             // Scope query to this project's graph only — strip user-supplied FROM <> to prevent cross-project reads.
-            // Use regex to avoid false positive on owl:someValuesFrom / owl:allValuesFrom etc.
-            if (sparqlQuery.matches("(?si).*\\bFROM\\s+<.*")) {
-                sparqlQuery = sparqlQuery.replaceAll("(?i)\\bFROM\\s+<[^>]+>", " ");
-            }
-            if (!sparqlQuery.matches("(?si).*\\bFROM\\s+<.*")) {
-                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
+            sparqlQuery = SparqlText.removeFromClauses(sparqlQuery);
+            if (!SparqlText.hasFromClause(sparqlQuery)) {
+                sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE",
                     buildFromClause(conn, projectId) + " WHERE");
             }
 
@@ -1239,7 +1236,7 @@ public class SparqlDatasetService {
 
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
-                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
+                sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE",
                     buildFromClause(conn, projectId) + " WHERE");
             }
 
@@ -1286,11 +1283,15 @@ public class SparqlDatasetService {
                 String fromClause = forceGraphUri != null
                         ? "FROM <" + forceGraphUri + ">"
                         : buildFromClause(conn, projectId);
-                if (sparqlQuery.toUpperCase().contains("WHERE")) {
-                    sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", fromClause + " WHERE");
+                if (SparqlText.hasKeyword(sparqlQuery, "WHERE")) {
+                    sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE", fromClause + " WHERE");
                 } else {
                     // ASK { ... } without WHERE — insert FROM <graph> WHERE before the body brace
-                    sparqlQuery = sparqlQuery.replaceFirst("(?i)(ASK\\s*)\\{", "$1" + fromClause + " WHERE {");
+                    int ask = SparqlText.indexOfKeyword(sparqlQuery, "ASK");
+                    int body = ask < 0 ? -1 : SparqlText.indexOfOpenBrace(sparqlQuery, ask);
+                    if (body >= 0) {
+                        sparqlQuery = sparqlQuery.substring(0, body) + fromClause + " WHERE " + sparqlQuery.substring(body);
+                    }
                 }
             }
 
@@ -1706,7 +1707,7 @@ public class SparqlDatasetService {
         // Check if this is INSERT { ... } WHERE { ... } with Turtle syntax (contains blank nodes or semicolons within braces)
         // Don't split by semicolon in this case as it's part of Turtle syntax
         if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
-            if (operationsStr.toUpperCase().contains("USING ")) {
+            if (SparqlText.hasKeyword(operationsStr, "USING")) {
                 operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\}\\s*)(WHERE)",
                         "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
                 log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
@@ -1746,7 +1747,7 @@ public class SparqlDatasetService {
             }
             // For DELETE { ... } WHERE { ... }, add WITH clause (or GRAPH if USING is present)
             else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().toUpperCase().startsWith("WITH")) {
-                if (stmt.toUpperCase().contains("USING ")) {
+                if (SparqlText.hasKeyword(stmt, "USING")) {
                     // Draft update: USING already present; wrap DELETE/INSERT templates with GRAPH
                     // instead of WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
                     stmt = stmt.replaceFirst("(?is)(DELETE\\s*\\{)(.*?)(\\})",
@@ -1779,34 +1780,7 @@ public class SparqlDatasetService {
      * Split UPDATE statements by semicolon, but only at top level (not inside braces)
      */
     private String[] splitUpdateStatements(String operations) {
-        List<String> statements = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        int braceDepth = 0;
-
-        for (int i = 0; i < operations.length(); i++) {
-            char c = operations.charAt(i);
-
-            if (c == '{') {
-                braceDepth++;
-                current.append(c);
-            } else if (c == '}') {
-                braceDepth--;
-                current.append(c);
-            } else if (c == ';' && braceDepth == 0) {
-                // Top-level semicolon - this is a statement separator
-                statements.add(current.toString().trim());
-                current = new StringBuilder();
-            } else {
-                current.append(c);
-            }
-        }
-
-        // Add the last statement
-        if (current.length() > 0) {
-            statements.add(current.toString().trim());
-        }
-
-        return statements.toArray(new String[0]);
+        return SparqlText.splitStatements(operations).toArray(new String[0]);
     }
 
     /**
