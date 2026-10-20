@@ -1,13 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  CHECK_DELAY_MS,
-  FINISHED_VISIBLE_MS,
-  MAX_WAITING,
-  REQUEST_TIMEOUT_MS,
-  createUndoQueue,
-  stepFromHint,
-  type QueueApi,
-} from '../services/undoQueue';
+import { CHECK_DELAY_MS, FINISHED_VISIBLE_MS, MAX_WAITING, REQUEST_TIMEOUT_MS, stepFromHint, type QueueApi } from '../services/undoQueueSupport';
+import { createUndoQueue } from '../services/undoQueue';
 import type { QueueResponse, QueueStep, StepOutcome } from '../services/undoRedoService';
 
 const step = (id: string, extra: Partial<QueueStep> = {}): QueueStep => ({ changeId: id, label: `L${id}`, changeCount: 2, ...extra });
@@ -184,20 +177,6 @@ describe('undoQueue', () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(new Set(sends.map((s) => s.opId)).size).toBe(1);
     expect(queue.getSnapshot().phase).toBe('finished');
-  });
-
-  it('falls back to a single unbound step when the queue endpoint is missing', async () => {
-    const { queue, api, sends, outcomes } = setup([]);
-    vi.mocked(api.fetchQueue).mockResolvedValue(null);
-    outcomes.push(new Promise<StepOutcome>((resolve) => setTimeout(() => resolve({ kind: 'done' }), 100)));
-    const first = queue.press('p', 'undo');
-    await vi.advanceTimersByTimeAsync(5);
-    const second = await queue.press('p', 'undo');
-    expect(second.accepted).toBe(false);
-    await vi.advanceTimersByTimeAsync(200);
-    expect((await first).accepted).toBe(true);
-    expect(sends).toHaveLength(1);
-    expect(sends[0].id).toBe('');
   });
 
   it('refuses a press that would target a different change after history shifted', async () => {

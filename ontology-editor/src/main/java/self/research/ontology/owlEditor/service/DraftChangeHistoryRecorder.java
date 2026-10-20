@@ -49,7 +49,8 @@ public class DraftChangeHistoryRecorder {
 
     public int record(String projectId, List<DraftChange> drafts) {
         List<DraftChange> tracked = drafts.stream()
-                .filter(draft -> !SpreadsheetImportDraftSupport.isImportSession(draft.getSessionId()))
+                .filter(draft -> !SpreadsheetImportDraftSupport.isImportSession(draft.getSessionId())
+                        && !DraftMergeApplier.isMergeSession(draft.getSessionId()))
                 .toList();
         int failures = 0;
         for (DraftChange draft : tracked) {

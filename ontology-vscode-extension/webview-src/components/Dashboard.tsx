@@ -18284,6 +18284,19 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
 
             console.log("[Dashboard] Current projectId:", projectId);
 
+            if (targetProjectId === projectId && isDraftScopeActive()) {
+              try {
+                await fetchData(targetProjectId, true, undefined, true);
+                await refreshClassHierarchy();
+                await updateDraftCount();
+                notificationService.success("Merge Complete", "The file was merged into your private draft.");
+              } catch (draftRefreshError) {
+                console.error("[Dashboard] Failed to refresh after a draft merge:", draftRefreshError);
+                notificationService.error("Refresh Failed", "The merge was applied to your draft. Refresh to see it.");
+              }
+              return;
+            }
+
             if (targetProjectId === projectId) {
               console.log("[Dashboard] ✅ Refreshing current file data after merge");
 

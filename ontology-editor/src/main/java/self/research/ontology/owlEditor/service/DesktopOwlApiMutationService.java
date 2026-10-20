@@ -53,6 +53,21 @@ public class DesktopOwlApiMutationService {
         return owlApiFirst && ontologyCache.has(projectId);
     }
 
+    public boolean exportLiveModel(String projectId, java.nio.file.Path target) {
+        if (!isAuthoritative(projectId)) {
+            return false;
+        }
+        return ontologyCache.get(projectId).map(entry -> {
+            try (java.io.OutputStream out = java.nio.file.Files.newOutputStream(target)) {
+                entry.manager().saveOntology(entry.ontology(), new org.semanticweb.owlapi.formats.RDFXMLDocumentFormat(), out);
+                return true;
+            } catch (Exception e) {
+                log.warn("[OwlApiDesktop] Could not export the live model for {}: {}", projectId, e.getMessage());
+                return false;
+            }
+        }).orElse(false);
+    }
+
     public java.util.Optional<Boolean> declaresEntity(String projectId, String iri) {
         if (!isAuthoritative(projectId)) {
             return java.util.Optional.empty();

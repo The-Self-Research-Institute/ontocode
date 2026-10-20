@@ -53,10 +53,6 @@ public record ExactDelta(Model deleted, Model inserted) {
         return deleted.size() + inserted.size() > Limit.MAX_DELTA_TRIPLES.value();
     }
 
-    public boolean isLargerThan(int triples) {
-        return deleted.size() + inserted.size() > triples;
-    }
-
     public static String write(Model model) {
         StringWriter out = new StringWriter();
         Rio.write(model, out, RDFFormat.NTRIPLES);

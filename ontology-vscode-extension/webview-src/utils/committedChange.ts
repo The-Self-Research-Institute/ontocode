@@ -1,3 +1,4 @@
+import { newOpId } from './opId';
 export const COMMITTED_CHANGE_EVENT = 'ontocode:committed-change';
 
 export type CommittedDirection = 'APPLY' | 'UNDO' | 'REDO';
@@ -22,11 +23,6 @@ export type CommittedChangeInput = Omit<CommittedChange, 'opId' | 'at' | 'entity
 
 const MAX_REMEMBERED = 200;
 const seen: string[] = [];
-
-function newOpId(): string {
-  const api = typeof crypto !== 'undefined' ? crypto : undefined;
-  return api?.randomUUID ? api.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
 
 function remember(opId: string): boolean {
   if (seen.includes(opId)) {

@@ -7,6 +7,7 @@ import org.semanticweb.owlapi.io.StringDocumentSource;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.util.OWLEntityRenamer;
 import org.semanticweb.owlapi.vocab.OWLRDFVocabulary;
+import self.research.ontology.owlEditor.service.delta.ExactDelta;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -54,6 +55,13 @@ public class OntologyMergeService {
     private final ProjectMetadataService metadataService;
     private final OntologyHistoryService historyService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private MergeLiveSource liveSource;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private DraftMergeApplier draftApplier;
+
     @Value("${auth.service.url:http://localhost:8086}")
     private String authServiceUrl;
 
@@ -82,6 +90,13 @@ public class OntologyMergeService {
     public MergeAnalysisResult analyzeOntologies(String sourceProjectId, Path sourceFile,
                                                   String targetProjectId,
                                                   String targetFileName) throws OWLOntologyCreationException {
+        return analyzeOntologies(sourceProjectId, sourceFile, targetProjectId, targetFileName, null);
+    }
+
+    public MergeAnalysisResult analyzeOntologies(String sourceProjectId, Path sourceFile,
+                                                  String targetProjectId,
+                                                  String targetFileName,
+                                                  String draftUserId) throws OWLOntologyCreationException {
         log.info("[MERGE] Analyzing ontologies for conflicts");
         log.info("[MERGE] Source: {}, Target project: {}", sourceFile, targetProjectId);
 
@@ -105,10 +120,7 @@ public class OntologyMergeService {
         } catch (Exception e) {
             throw new OWLOntologyCreationException(e.getMessage(), e);
         }
-        OWLOntology targetOntology = manager.loadOntologyFromOntologyDocument(
-            new FileDocumentSource(targetFile.toFile()),
-            config
-        );
+        OWLOntology targetOntology = loadTarget(manager, config, targetProjectId, targetFile, draftUserId).ontology();
 
         MergeAnalysisResult result = new MergeAnalysisResult();
 
@@ -310,6 +322,18 @@ public class OntologyMergeService {
                                       MergeOptions options,
                                       String userId,
                                       String username) throws Exception {
+        return mergeOntologies(sourceProjectId, sourceFile, targetProjectId, targetFileName, outputFileName, options,
+                userId, username, false);
+    }
+
+    public MergeResult mergeOntologies(String sourceProjectId, Path sourceFile,
+                                      String targetProjectId,
+                                      String targetFileName,
+                                      String outputFileName,
+                                      MergeOptions options,
+                                      String userId,
+                                      String username,
+                                      boolean draft) throws Exception {
         log.info("[MERGE] Starting merge operation");
         log.info("[MERGE] Source: {}, Target: {}", sourceFile, targetProjectId);
         log.info("[MERGE] Strategy: {}", options.getStrategy());
@@ -328,10 +352,8 @@ public class OntologyMergeService {
         OWLOntology sourceOntology = cloneAsAnonymousOntology(manager, loadedSourceOntology);
         manager.removeOntology(loadedSourceOntology);
         Path targetFile = resolveTargetOntologyFile(targetProjectId, targetFileName);
-        OWLOntology targetOntology = manager.loadOntologyFromOntologyDocument(
-            new FileDocumentSource(targetFile.toFile()),
-            config
-        );
+        LoadedTarget loaded = loadTarget(manager, config, targetProjectId, targetFile, draft ? userId : null);
+        OWLOntology targetOntology = loaded.ontology();
 
         MergeResult result = new MergeResult();
         result.setTargetProjectId(targetProjectId);
@@ -358,6 +380,16 @@ public class OntologyMergeService {
                     
                 default:
                     throw new IllegalArgumentException("Unknown merge strategy: " + options.getStrategy());
+            }
+
+            if (draft && intoExisting) {
+                ExactDelta delta = AxiomDelta.between(manager, axiomsBefore, targetOntology, Limit.MERGE_DELTA_MAX_TRIPLES.value())
+                        .orElseThrow(DraftMergeTooLargeException::new);
+                draftApplier.apply(targetProjectId, userId, username, delta, mergeSummary(result));
+                result.setSuccess(true);
+                result.setMessage("Merge completed successfully");
+                log.info("[MERGE] Merge applied to the draft of user {}", userId);
+                return result;
             }
 
             // Save merged ontology either back to selected target file or to a new file/project.
@@ -400,7 +432,11 @@ public class OntologyMergeService {
 
             File outputFile = outputPath.toFile();
             try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                manager.saveOntology(targetOntology, fos);
+                if (loaded.live()) {
+                    manager.saveOntology(targetOntology, MergeLiveSource.formatFor(targetFile), fos);
+                } else {
+                    manager.saveOntology(targetOntology, fos);
+                }
             }
             if (checkpointId != null) {
                 checkpointId = saveCheckpointAfter(importProjectId, checkpointId, outputPath);
@@ -418,10 +454,7 @@ public class OntologyMergeService {
             result.setMessage("Merge completed successfully");
 
             if (historyService != null) {
-                String summary = "Merged ontology: " + result.getAxiomsAdded() + " added, "
-                        + result.getAxiomsReplaced() + " replaced, " + result.getAxiomsRemoved() + " removed, "
-                        + result.getEntitiesRenamed() + " renamed, " + result.getConflictsResolved()
-                        + " conflicts resolved";
+                String summary = mergeSummary(result);
                 if (isNewFile) {
                     historyService.recordEdit(importProjectId, userId, username, MERGE_OPERATION, null, null,
                             null, null, summary);
@@ -586,6 +619,46 @@ public class OntologyMergeService {
         // 3 hours — aligned with ingress; 200MB+ multipart can take a long time on shared links
         factory.setReadTimeout(3 * 60 * 60 * 1000);
         return new RestTemplate(factory);
+    }
+
+    private record LoadedTarget(OWLOntology ontology, boolean live) {}
+
+    private static String mergeSummary(MergeResult result) {
+        return "Merged ontology: " + result.getAxiomsAdded() + " added, "
+                + result.getAxiomsReplaced() + " replaced, " + result.getAxiomsRemoved() + " removed, "
+                + result.getEntitiesRenamed() + " renamed, " + result.getConflictsResolved()
+                + " conflicts resolved";
+    }
+
+    private LoadedTarget loadTarget(OWLOntologyManager manager, OWLOntologyLoaderConfiguration config,
+                                    String projectId, Path targetFile, String draftUserId) throws OWLOntologyCreationException {
+        Path live = null;
+        if (draftUserId != null && draftApplier != null) {
+            draftApplier.requireReady(projectId, draftUserId);
+        }
+        if (liveSource != null) {
+            try {
+                live = draftUserId != null ? liveSource.exportDraft(projectId, draftUserId)
+                        : liveSource.export(projectId).orElse(null);
+            } catch (Exception e) {
+                log.warn("[MERGE] Could not read the live ontology for project '{}', using the stored file: {}", projectId, e.getMessage());
+            }
+        }
+        Path source = live != null ? live : targetFile;
+        log.info("[MERGE] Merge target for project '{}' is the {} ({})", projectId,
+                live != null ? "live ontology" : "stored file", source.getFileName());
+        try {
+            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(new FileDocumentSource(source.toFile()), config);
+            return new LoadedTarget(ontology, live != null);
+        } finally {
+            if (live != null) {
+                try {
+                    Files.deleteIfExists(live);
+                } catch (IOException e) {
+                    log.debug("[MERGE] Could not remove the temporary live copy {}", live);
+                }
+            }
+        }
     }
 
     private Path resolveTargetOntologyFile(String targetProjectId, String targetFileName) throws Exception {
