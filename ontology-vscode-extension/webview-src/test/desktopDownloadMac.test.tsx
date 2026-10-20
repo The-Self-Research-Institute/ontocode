@@ -57,8 +57,8 @@ describe('download page Mac tab', () => {
     await act(async () => { byText('Mac')!.click(); });
     expect(byText('Apple Silicon')).toBeTruthy();
     expect(byText('Intel')).toBeTruthy();
-    expect(host.textContent).toContain('Download for macOS (Apple Silicon)');
+    expect(host.textContent).toContain('Download for Mac (Apple Silicon)');
     await act(async () => { byText('Intel')!.click(); });
-    expect(host.textContent).toContain('Download for macOS (Intel)');
+    expect(host.textContent).toContain('Download for Mac (Intel)');
   });
 });

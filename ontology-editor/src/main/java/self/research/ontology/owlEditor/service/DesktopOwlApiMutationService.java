@@ -53,6 +53,14 @@ public class DesktopOwlApiMutationService {
         return owlApiFirst && ontologyCache.has(projectId);
     }
 
+    public java.util.Optional<Boolean> declaresEntity(String projectId, String iri) {
+        if (!isAuthoritative(projectId)) {
+            return java.util.Optional.empty();
+        }
+        return ontologyCache.get(projectId).map(entry -> entry.ontology().containsEntityInSignature(
+                org.semanticweb.owlapi.model.IRI.create(iri), org.semanticweb.owlapi.model.parameters.Imports.INCLUDED));
+    }
+
     public boolean tryApply(String projectId, List<OntologyMutationService.MutationOp> ops, String sparqlUpdate) {
         if (!owlApiFirst || ops == null || ops.isEmpty() || !ontologyCache.has(projectId)) {
             return false;
