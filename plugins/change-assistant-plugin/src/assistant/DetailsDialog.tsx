@@ -2,8 +2,10 @@ import React from 'react';
 import { FileText, RefreshCw, X } from 'lucide-react';
 import DetailsComments from './DetailsComments';
 import { ChangeInfo, ValueChanges } from './DetailsSummary';
+import ImportedItems, { isSpreadsheetImport } from './ImportedItems';
 
 interface DetailsDialogProps {
+  projectId: string;
   loading: boolean;
   details: any;
   newComment: string;
@@ -12,7 +14,7 @@ interface DetailsDialogProps {
   onClose: () => void;
 }
 
-const DetailsBody: React.FC<Omit<DetailsDialogProps, 'loading' | 'onClose'>> = ({ details, newComment, setNewComment, onAddComment }) => (
+const DetailsBody: React.FC<Omit<DetailsDialogProps, 'loading' | 'onClose'>> = ({ projectId, details, newComment, setNewComment, onAddComment }) => (
   <div className="flex-1 overflow-auto space-y-4">
     <ChangeInfo details={details} />
     {(details.oldValue || details.newValue) && <ValueChanges details={details} />}
@@ -22,6 +24,7 @@ const DetailsBody: React.FC<Omit<DetailsDialogProps, 'loading' | 'onClose'>> = (
         <p className="text-sm text-gray-600">{details.description}</p>
       </div>
     )}
+    {isSpreadsheetImport(details) && <ImportedItems projectId={projectId} details={details} />}
     <DetailsComments details={details} newComment={newComment} setNewComment={setNewComment} onAdd={onAddComment} />
   </div>
 );

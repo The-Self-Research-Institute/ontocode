@@ -486,7 +486,7 @@ public class OntologyMutationService {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> a owl:Class .\n"
                 + optionalLabel(op.iri(), op.label()) + "\n"
-                + "<" + op.iri() + "> rdfs:subClassOf <" + op.parent() + "> .\n"
+                + (isRealParentClass(op.parent()) ? "<" + op.iri() + "> rdfs:subClassOf <" + op.parent() + "> .\n" : "")
                 + "}";
         } else if (type.equals("updateClassLabel")) {
             return "DELETE { <" + op.iri() + "> rdfs:label ?o }\n"
@@ -976,6 +976,11 @@ public class OntologyMutationService {
 
     private boolean isBlankNodeRef(String target) {
         return target == null || !(target.startsWith("http://") || target.startsWith("https://"));
+    }
+
+    public static boolean isRealParentClass(String parent) {
+        return parent != null && !parent.isBlank()
+            && !"http://www.w3.org/2002/07/owl#Thing".equals(parent) && !"owl:Thing".equals(parent);
     }
 
     private String optionalLabel(String iri, String label) {

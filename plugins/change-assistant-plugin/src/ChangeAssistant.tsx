@@ -83,6 +83,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       {notification && <NotificationToast notification={notification} />}
       {details.showDetailsDialog && (
         <DetailsDialog
+          projectId={projectId}
           loading={details.detailsLoading} details={details.changeDetails}
           newComment={comments.newComment} setNewComment={comments.setNewComment}
           onAddComment={details.addCommentToChange} onClose={details.closeDetails}

@@ -8,6 +8,7 @@ import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler;
 import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.InMemorySparqlOntologyMutator;
+import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.StorageManager;
 
@@ -31,6 +32,7 @@ class SpreadsheetImportDesktopWriterTest {
     private final DesktopOntologyLoader loader = mock(DesktopOntologyLoader.class);
     private final ProjectImportService imports = mock(ProjectImportService.class);
     private final DesktopFusekiSyncScheduler scheduler = mock(DesktopFusekiSyncScheduler.class);
+    private final OntologyMutationService mutations = mock(OntologyMutationService.class);
     private final StorageManager storage = mock(StorageManager.class);
     private SpreadsheetImportDesktopWriter writer;
 
@@ -44,7 +46,7 @@ class SpreadsheetImportDesktopWriterTest {
     @BeforeEach
     void setUp() {
         writer = new SpreadsheetImportDesktopWriter(provider(cache), provider(mutator), provider(loader),
-            provider(imports), provider(scheduler), storage);
+            provider(imports), provider(scheduler), provider(mutations), storage);
         ReflectionTestUtils.setField(writer, "desktopMode", true);
         ReflectionTestUtils.setField(writer, "owlApiFirst", true);
         when(cache.has(P)).thenReturn(true);
@@ -70,6 +72,9 @@ class SpreadsheetImportDesktopWriterTest {
         verify(loader, never()).saveProject(anyString());
         verify(imports).markFusekiSyncPendingPublic(P);
         verify(scheduler).scheduleAfterMutation(P);
+        verify(mutations).invalidateEntityCaches(P, null, false);
+        verify(mutations).bumpMainGraphRevision(P);
+        verify(mutations).invalidateReasonerCaches(P);
     }
 
     @Test
