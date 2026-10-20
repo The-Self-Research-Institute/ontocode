@@ -61,6 +61,15 @@ public class ReasonerService {
     // executor, and the controller's LRU-eviction path concurrently.
     private final Map<String, CompletableFuture<OWLReasoner>> reasonerCache = new ConcurrentHashMap<>();
 
+    private final Map<OWLOntology, Long> ontologyIdentitySequence = new IdentityHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong nextOntologyIdentitySequence = new java.util.concurrent.atomic.AtomicLong(1);
+
+    private long identityKeyFor(OWLOntology ontology) {
+        synchronized (ontologyIdentitySequence) {
+            return ontologyIdentitySequence.computeIfAbsent(ontology, o -> nextOntologyIdentitySequence.getAndIncrement());
+        }
+    }
+
     // HermiT's InstanceManager.getTypes() does O(n) LinkedList scans internally,
     // which blows up to O(n^2) against the class count on large ontologies (e.g.
     // FoodOn's 39k+ classes) and can run for hours on a single individual. That
@@ -89,15 +98,19 @@ public class ReasonerService {
 
     @jakarta.annotation.PostConstruct
     private void initJustificationExecutor() {
-        justificationExecutor = Executors.newFixedThreadPool(justificationPoolSize, r -> {
-            Thread t = new Thread(r, "reasoner-justification-worker");
-            t.setDaemon(true);
-            return t;
-        });
+        justificationExecutor = new java.util.concurrent.ThreadPoolExecutor(
+                justificationPoolSize, justificationPoolSize, 60, TimeUnit.SECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(20), r -> {
+                    Thread t = new Thread(r, "reasoner-justification-worker");
+                    t.setDaemon(true);
+                    return t;
+                }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
     }
 
     @Value("${ontocode.reasoner.justification-timeout-ms:55000}")
     private long JUSTIFICATION_TIMEOUT_MS;
+    @Value("${ontocode.reasoner.justification-queue-wait-ms:30000}")
+    private long JUSTIFICATION_QUEUE_WAIT_MS;
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int MAX_JUSTIFICATIONS;
     @Value("${ontocode.reasoner.operation-timeout-ms:45000}")
@@ -113,7 +126,7 @@ public class ReasonerService {
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
-        String cacheKey = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
+        String cacheKey = identityKeyFor(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
         CompletableFuture<OWLReasoner> future = reasonerCache.computeIfAbsent(cacheKey, k -> submitReasonerBuild(ontology, type));
         try {
             return future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
@@ -175,7 +188,7 @@ public class ReasonerService {
 
         try {
             return getReasonerFactory(type).createReasoner(ontology, config);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.error("Failed to create {} reasoner", type, e);
             throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
         }
@@ -348,11 +361,16 @@ public class ReasonerService {
             
             // Find equivalent classes
             List<Map<String, Object>> equivalentClasses = new ArrayList<>();
+            Set<OWLClass> processedEquivalents = new HashSet<>();
             try {
                 for (OWLClass cls : ontology.getClassesInSignature()) {
                     try {
+                        if (processedEquivalents.contains(cls)) {
+                            continue;
+                        }
                         Set<OWLClass> equivalents = reasoner.getEquivalentClasses(cls).getEntities();
                         if (equivalents.size() > 1) {
+                            processedEquivalents.addAll(equivalents);
                             Map<String, Object> eqGroup = new HashMap<>();
                             eqGroup.put("classes", equivalents.stream()
                                 .map(c -> Map.of(
@@ -901,8 +919,30 @@ public class ReasonerService {
             Supplier<Set<Explanation<OWLAxiom>>> search,
             CancellableExplanationProgressMonitor<OWLAxiom> monitor,
             long timeoutMs) {
-        java.util.concurrent.Future<Set<Explanation<OWLAxiom>>> future =
-            justificationExecutor.submit(search::get);
+        CompletableFuture<Void> started = new CompletableFuture<>();
+        java.util.concurrent.Future<Set<Explanation<OWLAxiom>>> future;
+        try {
+            future = justificationExecutor.submit(() -> {
+                started.complete(null);
+                return search.get();
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            throw new RuntimeException("Too many reasoning requests in progress — please try again shortly.");
+        }
+        try {
+            started.get(JUSTIFICATION_QUEUE_WAIT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            future.cancel(true);
+            throw new RuntimeException("Too many reasoning requests in progress — please try again shortly.");
+        } catch (InterruptedException ie) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Justification search was interrupted", ie);
+        } catch (Exception e) {
+            future.cancel(true);
+            throw new RuntimeException("Justification search failed to start: "
+                + (e.getMessage() != null ? e.getMessage() : e.toString()), e);
+        }
         try {
             return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException te) {
@@ -2008,7 +2048,14 @@ public class ReasonerService {
      * reload cannot be served a reasoner built on the evicted ontology.
      */
     public void disposeReasoners(OWLOntology ontology) {
-        String keyPrefix = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-";
+        Long identity;
+        synchronized (ontologyIdentitySequence) {
+            identity = ontologyIdentitySequence.remove(ontology);
+        }
+        if (identity == null) {
+            return;
+        }
+        String keyPrefix = identity + "-" + ontology.getOntologyID() + "-";
         Iterator<Map.Entry<String, CompletableFuture<OWLReasoner>>> it = reasonerCache.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<String, CompletableFuture<OWLReasoner>> entry = it.next();

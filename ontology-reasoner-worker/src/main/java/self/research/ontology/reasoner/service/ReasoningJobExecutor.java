@@ -4,7 +4,16 @@ import org.semanticweb.owl.explanation.api.Explanation;
 import org.semanticweb.owl.explanation.api.ExplanationGenerator;
 import org.semanticweb.owl.explanation.api.ExplanationGeneratorFactory;
 import org.semanticweb.owl.explanation.api.ExplanationProgressMonitor;
+import org.semanticweb.owl.explanation.impl.blackbox.Configuration;
+import org.semanticweb.owl.explanation.impl.blackbox.ContractionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.DivideAndConquerContractionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.EntailmentCheckerFactory;
+import org.semanticweb.owl.explanation.impl.blackbox.ExpansionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.InitialEntailmentCheckStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.StructuralTypePriorityExpansionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.checker.BlackBoxExplanationGeneratorFactory;
 import org.semanticweb.owl.explanation.impl.blackbox.checker.InconsistentOntologyExplanationGeneratorFactory;
+import org.semanticweb.owl.explanation.impl.blackbox.checker.SatisfiabilityEntailmentCheckerFactory;
 import org.semanticweb.owl.explanation.impl.laconic.LaconicExplanationGeneratorFactory;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.expression.OWLEntityChecker;
@@ -29,6 +38,7 @@ import self.research.ontology.common.JustificationRendering;
 import self.research.ontology.reasoner.model.ReasoningJob;
 
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
@@ -76,6 +86,7 @@ public class ReasoningJobExecutor {
             case REASONER_RUN -> executeFullRun(job);
             case REASONER_INFERRED_AXIOMS -> executeInferredAxioms(job);
             case REASONER_EXPLAIN_INCONSISTENCY -> executeExplainInconsistency(job);
+            case REASONER_EXPLAIN_ENTAILMENT -> executeExplainEntailment(job);
             case REASONER_SNAPSHOT -> snapshotService.snapshot(job.getProjectId(), job.getReasonerType(), job.getOwnerEmail());
         };
     }
@@ -308,6 +319,218 @@ public class ReasoningJobExecutor {
             explanation.put("success", false);
             explanation.put("error", e.getMessage());
             return explanation;
+        }
+    }
+
+    private Map<String, Object> executeExplainEntailment(ReasoningJob job) {
+        ReasonerType requestedType = parseReasonerType(job.getReasonerType());
+        ReasonerType type = (requestedType == ReasonerType.ELK || requestedType == ReasonerType.STRUCTURAL)
+                ? ReasonerType.HERMIT
+                : requestedType;
+
+        Map<String, Object> result = new HashMap<>();
+        try (OntologySessionService.ReasoningSession session =
+                     sessionService.openSession(job.getProjectId(), type, job.getOwnerEmail())) {
+            ReasonerType effective = session.actualReasonerType() != null ? session.actualReasonerType() : type;
+            OWLOntology ontology = session.ontology();
+            int maxJustifications = job.getMaxJustifications() != null ? job.getMaxJustifications() : defaultMaxJustifications;
+            String mode = job.getExplanationMode() != null && !job.getExplanationMode().isBlank()
+                    ? job.getExplanationMode() : "regular";
+
+            OWLAxiom entailment = buildEntailmentAxiom(job.getEntailmentType(), job.getSubjectIri(),
+                    job.getTargetIri(), job.getPropertyIri(), job.getLiteralValue());
+            List<Map<String, Object>> justifications = findEntailmentJustifications(ontology, entailment, maxJustifications, mode);
+
+            result.put("success", true);
+            result.put("usedReasoner", effective.getDisplayName());
+            if (requestedType != effective) {
+                result.put("reasonerUpgraded", true);
+            }
+            result.put("justifications", justifications);
+            attachSessionMetadata(result, session);
+            return result;
+        } catch (Exception e) {
+            rethrowIfInterrupted(e);
+            log.error("Error explaining entailment for project {}", job.getProjectId(), e);
+            result.put("success", false);
+            result.put("error", e.getMessage());
+            return result;
+        }
+    }
+
+    private List<Map<String, Object>> findEntailmentJustifications(
+            OWLOntology ontology, OWLAxiom entailment, int limit, String mode) {
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
+        Supplier<OWLOntologyManager> ontologyManagerSupplier = OWLManager::createOWLOntologyManager;
+
+        EntailmentCheckerFactory<OWLAxiom> checkerFactory =
+                new SatisfiabilityEntailmentCheckerFactory(new LenientHermitReasonerFactory(), ontologyManagerSupplier);
+        ExpansionStrategy<OWLAxiom> expansionStrategy =
+                new StructuralTypePriorityExpansionStrategy<>(InitialEntailmentCheckStrategy.PERFORM, ontologyManagerSupplier);
+        ContractionStrategy<OWLAxiom> contractionStrategy = new DivideAndConquerContractionStrategy<>();
+        Configuration<OWLAxiom> configuration =
+                new Configuration<>(checkerFactory, expansionStrategy, contractionStrategy, ontologyManagerSupplier);
+        ExplanationGeneratorFactory<OWLAxiom> baseFactory = new BlackBoxExplanationGeneratorFactory<>(configuration);
+
+        ExplanationGeneratorFactory<OWLAxiom> factory = "laconic".equals(mode)
+                ? new LaconicExplanationGeneratorFactory<>(baseFactory, ontologyManagerSupplier)
+                : baseFactory;
+
+        ExplanationGenerator<OWLAxiom> generator =
+                factory.createExplanationGenerator(reasoningOntology, new StopWhenThreadInterrupted());
+        Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
+        return renderJustifications(explanations, ontology);
+    }
+
+    private OWLAxiom buildEntailmentAxiom(String entailmentType, String subjectIri, String targetIri,
+            String propertyIri, String literalValue) {
+        switch (entailmentType) {
+            case "SUBCLASS_OF": {
+                OWLClass subject = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLClass target = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(subject, target);
+            }
+            case "INTERSECTION_SUBCLASS_OF": {
+                OWLClass memberA = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLClass memberB = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(propertyIri));
+                OWLClass target = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                OWLClassExpression intersection = EXPLANATION_DATA_FACTORY.getOWLObjectIntersectionOf(memberA, memberB);
+                return EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(intersection, target);
+            }
+            case "SUBCLASS_OF_OBJECT_RESTRICTION": {
+                OWLClass subject = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLObjectProperty property = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
+                OWLClass filler = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                OWLClassExpression restriction = "only".equals(literalValue)
+                        ? EXPLANATION_DATA_FACTORY.getOWLObjectAllValuesFrom(property, filler)
+                        : EXPLANATION_DATA_FACTORY.getOWLObjectSomeValuesFrom(property, filler);
+                return EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction);
+            }
+            case "SUBCLASS_OF_OBJECT_CARDINALITY": {
+                OWLClass subject = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLObjectProperty property = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
+                OWLClass filler = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(subject,
+                        buildObjectCardinalityRestriction(property, filler, literalValue));
+            }
+            case "SUBCLASS_OF_DATA_RESTRICTION": {
+                OWLClass subject = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLDataProperty property = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri));
+                OWLDatatype filler = EXPLANATION_DATA_FACTORY.getOWLDatatype(IRI.create(targetIri));
+                OWLClassExpression restriction = "only".equals(literalValue)
+                        ? EXPLANATION_DATA_FACTORY.getOWLDataAllValuesFrom(property, filler)
+                        : EXPLANATION_DATA_FACTORY.getOWLDataSomeValuesFrom(property, filler);
+                return EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction);
+            }
+            case "UNSATISFIABLE_CLASS": {
+                OWLClass subject = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                return EXPLANATION_DATA_FACTORY.getOWLSubClassOfAxiom(subject, EXPLANATION_DATA_FACTORY.getOWLNothing());
+            }
+            case "CLASS_ASSERTION": {
+                OWLNamedIndividual individual = EXPLANATION_DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLClass target = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLClassAssertionAxiom(target, individual);
+            }
+            case "OBJECT_PROPERTY_ASSERTION": {
+                OWLNamedIndividual subject = EXPLANATION_DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLNamedIndividual object = EXPLANATION_DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
+                OWLObjectProperty property = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
+                return EXPLANATION_DATA_FACTORY.getOWLObjectPropertyAssertionAxiom(property, subject, object);
+            }
+            case "DATA_PROPERTY_ASSERTION": {
+                OWLNamedIndividual subject = EXPLANATION_DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLDataProperty property = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri));
+                OWLLiteral literal = EXPLANATION_DATA_FACTORY.getOWLLiteral(literalValue);
+                return EXPLANATION_DATA_FACTORY.getOWLDataPropertyAssertionAxiom(property, subject, literal);
+            }
+            case "DISJOINT_CLASSES": {
+                OWLClass subject = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
+                OWLClass target = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLDisjointClassesAxiom(subject, target);
+            }
+            case "SUB_OBJECT_PROPERTY_OF": {
+                OWLObjectProperty sub = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty sup = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLSubObjectPropertyOfAxiom(sub, sup);
+            }
+            case "SUB_DATA_PROPERTY_OF": {
+                OWLDataProperty sub = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDataProperty sup = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLSubDataPropertyOfAxiom(sub, sup);
+            }
+            case "INVERSE_OBJECT_PROPERTIES": {
+                OWLObjectProperty propA = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty propB = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLInverseObjectPropertiesAxiom(propA, propB);
+            }
+            case "OBJECT_PROPERTY_DOMAIN": {
+                OWLObjectProperty property = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLClass domain = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLObjectPropertyDomainAxiom(property, domain);
+            }
+            case "OBJECT_PROPERTY_RANGE": {
+                OWLObjectProperty property = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLClass range = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLObjectPropertyRangeAxiom(property, range);
+            }
+            case "DATA_PROPERTY_DOMAIN": {
+                OWLDataProperty property = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLClass domain = EXPLANATION_DATA_FACTORY.getOWLClass(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLDataPropertyDomainAxiom(property, domain);
+            }
+            case "DATA_PROPERTY_RANGE": {
+                OWLDataProperty property = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDatatype range = EXPLANATION_DATA_FACTORY.getOWLDatatype(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLDataPropertyRangeAxiom(property, range);
+            }
+            case "SAME_INDIVIDUAL": {
+                OWLNamedIndividual subject = EXPLANATION_DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLNamedIndividual target = EXPLANATION_DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLSameIndividualAxiom(subject, target);
+            }
+            case "DIFFERENT_INDIVIDUALS": {
+                OWLNamedIndividual subject = EXPLANATION_DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
+                OWLNamedIndividual target = EXPLANATION_DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLDifferentIndividualsAxiom(subject, target);
+            }
+            case "EQUIVALENT_OBJECT_PROPERTIES": {
+                OWLObjectProperty subject = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty target = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLEquivalentObjectPropertiesAxiom(subject, target);
+            }
+            case "EQUIVALENT_DATA_PROPERTIES": {
+                OWLDataProperty subject = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDataProperty target = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLEquivalentDataPropertiesAxiom(subject, target);
+            }
+            case "DISJOINT_OBJECT_PROPERTIES": {
+                OWLObjectProperty subject = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
+                OWLObjectProperty target = EXPLANATION_DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLDisjointObjectPropertiesAxiom(subject, target);
+            }
+            case "DISJOINT_DATA_PROPERTIES": {
+                OWLDataProperty subject = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
+                OWLDataProperty target = EXPLANATION_DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
+                return EXPLANATION_DATA_FACTORY.getOWLDisjointDataPropertiesAxiom(subject, target);
+            }
+            default:
+                throw new IllegalArgumentException("Unsupported entailment type: " + entailmentType);
+        }
+    }
+
+    private OWLClassExpression buildObjectCardinalityRestriction(
+            OWLObjectProperty property, OWLClass filler, String literalValue) {
+        String[] parts = literalValue != null ? literalValue.split(":", 2) : new String[0];
+        String kind = parts.length > 0 ? parts[0] : "min";
+        int cardinality = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+        switch (kind) {
+            case "max":
+                return EXPLANATION_DATA_FACTORY.getOWLObjectMaxCardinality(cardinality, property, filler);
+            case "exactly":
+                return EXPLANATION_DATA_FACTORY.getOWLObjectExactCardinality(cardinality, property, filler);
+            case "min":
+            default:
+                return EXPLANATION_DATA_FACTORY.getOWLObjectMinCardinality(cardinality, property, filler);
         }
     }
 

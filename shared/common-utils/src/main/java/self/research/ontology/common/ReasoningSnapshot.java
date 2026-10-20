@@ -26,7 +26,6 @@ public final class ReasoningSnapshot {
 
     public static final int DEFAULT_TREE_DEPTH = 3;
     public static final int DEFAULT_MAX_MAPPED_CLASSES = 200_000;
-    public static final int DEFAULT_INFERRED_AXIOM_LIMIT = 100;
 
     private final OWLOntology ontology;
     private final OWLDataFactory df;
@@ -42,14 +41,13 @@ public final class ReasoningSnapshot {
     }
 
     public static Map<String, Object> build(OWLOntology ontology, OWLReasoner classReasoner, OWLReasoner propertyReasoner) {
-        return build(ontology, classReasoner, propertyReasoner,
-                DEFAULT_TREE_DEPTH, DEFAULT_MAX_MAPPED_CLASSES, DEFAULT_INFERRED_AXIOM_LIMIT);
+        return build(ontology, classReasoner, propertyReasoner, DEFAULT_TREE_DEPTH, DEFAULT_MAX_MAPPED_CLASSES);
     }
 
     public static Map<String, Object> build(OWLOntology ontology, OWLReasoner classReasoner, OWLReasoner propertyReasoner,
-                                            int treeDepth, int maxMappedClasses, int inferredAxiomLimit) {
+                                            int treeDepth, int maxMappedClasses) {
         return new ReasoningSnapshot(ontology, classReasoner, propertyReasoner)
-                .compute(treeDepth, maxMappedClasses, inferredAxiomLimit);
+                .compute(treeDepth, maxMappedClasses);
     }
 
     public static Map<String, Object> analyzeInconsistency(OWLOntology ontology) {
@@ -82,7 +80,7 @@ public final class ReasoningSnapshot {
         }
     }
 
-    private Map<String, Object> compute(int treeDepth, int maxMappedClasses, int inferredAxiomLimit) {
+    private Map<String, Object> compute(int treeDepth, int maxMappedClasses) {
         long start = System.currentTimeMillis();
         Map<String, Object> snapshot = new LinkedHashMap<>();
         int totalClasses = ontology.getClassesInSignature().size();
@@ -148,7 +146,7 @@ public final class ReasoningSnapshot {
         stats.put("isConsistent", true);
         snapshot.put("stats", stats);
 
-        snapshot.put("inferredAxioms", inferredAxioms(inferredAxiomLimit));
+        snapshot.put("inferredAxioms", inferredAxioms());
         snapshot.put("durationMs", System.currentTimeMillis() - start);
         return snapshot;
     }
@@ -570,19 +568,14 @@ public final class ReasoningSnapshot {
         return node;
     }
 
-    private Map<String, Object> inferredAxioms(int limit) {
+    private Map<String, Object> inferredAxioms() {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             classReasoner.precomputeInferences(InferenceType.CLASS_ASSERTIONS);
             Set<OWLAxiom> inferred = new LinkedHashSet<>();
-            boolean stoppedEarly = false;
             for (OWLClass owlClass : ontology.getClassesInSignature()) {
                 throwIfStopped();
-                if (inferred.size() > limit) {
-                    stoppedEarly = true;
-                    break;
-                }
                 if (owlClass.isOWLThing() || owlClass.isOWLNothing()) {
                     continue;
                 }
@@ -595,9 +588,7 @@ public final class ReasoningSnapshot {
                     inferred.add(df.getOWLClassAssertionAxiom(owlClass, individual));
                 }
             }
-            boolean truncated = inferred.size() > limit;
             List<Map<String, Object>> axioms = inferred.stream()
-                    .limit(limit)
                     .map(axiom -> {
                         Map<String, Object> entry = new HashMap<>();
                         entry.put("axiomType", axiom.getAxiomType().getName());
@@ -613,15 +604,7 @@ public final class ReasoningSnapshot {
 
             result.put("totalInferredAxioms", inferred.size());
             result.put("axioms", axioms);
-            if (stoppedEarly) {
-                result.put("totalIsPartial", true);
-                result.put("message", "Showing the first " + axioms.size() + " of at least " + inferred.size()
-                        + " inferred axioms (the search stopped early, so there may be more)");
-            } else if (truncated) {
-                result.put("message", "Showing the first " + axioms.size() + " of " + inferred.size() + " inferred axioms");
-            } else {
-                result.put("message", "Showing all " + inferred.size() + " inferred axioms");
-            }
+            result.put("message", "Showing all " + inferred.size() + " inferred axioms");
         } catch (Exception e) {
             rethrowIfStopped(e);
             result.put("error", e.getMessage() != null ? e.getMessage() : String.valueOf(e));
