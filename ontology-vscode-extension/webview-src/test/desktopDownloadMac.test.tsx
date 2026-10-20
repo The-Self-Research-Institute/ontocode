@@ -45,17 +45,16 @@ describe('download page Mac tab', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows one macOS tab, not one per processor', async () => {
+  it('shows one Mac tab, named like the Windows and Linux tabs, not one per processor', async () => {
     await mount();
-    expect(buttons().filter((b) => /^macOS/.test(b.textContent?.trim() || '')).map((b) => b.textContent?.trim())
-      .filter((t) => t === 'macOS' || t === 'macOS (Apple Silicon)' || t === 'macOS (Intel)')).toEqual(['macOS']);
+    expect(buttons().filter((b) => /^(Mac|macOS)/.test(b.textContent?.trim() || '')).map((b) => b.textContent?.trim())).toEqual(['Mac']);
     expect(byText('Windows')).toBeTruthy();
     expect(byText('Linux')).toBeTruthy();
   });
 
-  it('picks the processor inside the macOS tab', async () => {
+  it('picks the processor inside the Mac tab', async () => {
     await mount();
-    await act(async () => { byText('macOS')!.click(); });
+    await act(async () => { byText('Mac')!.click(); });
     expect(byText('Apple Silicon')).toBeTruthy();
     expect(byText('Intel')).toBeTruthy();
     expect(host.textContent).toContain('Download for macOS (Apple Silicon)');
