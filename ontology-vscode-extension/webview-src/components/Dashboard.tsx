@@ -115,7 +115,8 @@ import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
-import { isPostCompletionProgress } from "../utils/importProgress";
+import codeViewCacheService from "../services/codeViewCacheService";
+import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { toFriendlyErrorMessage } from "./codeAssistantPanelHelpers";
@@ -7273,17 +7274,40 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
 
   useEffect(() => {
     const activeProjectId = pendingImportProjectId || projectId;
-    if (!activeProjectId || (!showLoadingChoice && !isExpectingFileReady)) {
+    if (!activeProjectId || (!showLoadingChoice && !isExpectingFileReady && !backgroundImportActive)) {
       return;
     }
+
+    let settledPolls = 0;
+
+    const settleImportWait = () => {
+      userLoadingChoice.current = null;
+      pendingImportProjectIdRef.current = null;
+      setPendingImportProjectId(null);
+      setShowLoadingChoice(false);
+      setIsExpectingFileReady(false);
+      setBackgroundImportActive(false);
+      setBackgroundImportProgress(undefined);
+      setShowQueueStatus(false);
+      setInImportQueue(false);
+      setQueuePosition(undefined);
+      setTotalInQueue(undefined);
+      setEstimatedWaitTimeMs(undefined);
+    };
 
     const pollQueue = async () => {
       try {
         const positionData: any = await apiClient.get(`/api/import-queue/position/${activeProjectId}`);
         if (!positionData?.inQueue) {
           setInImportQueue(false);
+          const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(activeProjectId)}`);
+          settledPolls = isProjectStatusCompleted(statusRes) ? settledPolls + 1 : 0;
+          if (settledPolls >= IMPORT_SETTLE_POLLS) {
+            settleImportWait();
+          }
           return;
         }
+        settledPolls = 0;
         setInImportQueue(true);
         setQueuePosition(positionData.position ?? 0);
         setTotalInQueue(positionData.totalInQueue ?? 0);
@@ -7299,7 +7323,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
     pollQueue();
     const intervalId = setInterval(pollQueue, 3000);
     return () => clearInterval(intervalId);
-  }, [showLoadingChoice, isExpectingFileReady, projectId, pendingImportProjectId]);
+  }, [showLoadingChoice, isExpectingFileReady, backgroundImportActive, projectId, pendingImportProjectId]);
 
   const loadChildren = useCallback(
     async (nodeId: string, pendingChildren?: TreeNode[]) => {
@@ -11678,7 +11702,7 @@ const updateItemInState = useCallback(
       if (forceRefresh) {
         console.log("[Dashboard] Force refresh - clearing code view cache");
         try {
-          await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
+          await codeViewCacheService.clear(projectId);
           console.log("[Dashboard] Code view cache cleared");
         } catch (cacheError) {
           console.warn("[Dashboard] Failed to clear code view cache:", cacheError);
@@ -13100,7 +13124,7 @@ const updateItemInState = useCallback(
 
         const citationUrn = `urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}`;
         try {
-          await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+          await codeViewCacheService.store(projectId, {
             content: modifiedContent,
             format: codeViewFormat,
             citationUrn: citationUrn,
@@ -13397,7 +13421,7 @@ const updateItemInState = useCallback(
               });
               const jsonLdBase = fmtContent || JSON.stringify({ "@context": DEFAULT_JSONLD_CONTEXT, "@graph": [] });
               const fmtModifiedContent = insertCitationNodeIntoJsonLd(jsonLdBase, jsonLdCitationNode);
-              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              await codeViewCacheService.store(projectId, {
                 content: fmtModifiedContent,
                 format: fmt,
                 citationUrn: citationUrn,
@@ -13519,7 +13543,7 @@ const updateItemInState = useCallback(
               fmtLines.splice(fmtInsertIndex, 0, ...fmtCitationLines);
 
               const fmtModifiedContent = fmtLines.join("\n");
-              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              await codeViewCacheService.store(projectId, {
                 content: fmtModifiedContent,
                 format: fmt,
                 citationUrn: citationUrn,
@@ -13600,7 +13624,7 @@ const updateItemInState = useCallback(
           if (fmt === "jsonld") {
             const result = removeCitationNodeFromJsonLd(response.content, citationUri);
             if (result.removed) {
-              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              await codeViewCacheService.store(projectId, {
                 content: result.content,
                 format: fmt,
               });
@@ -13708,7 +13732,7 @@ const updateItemInState = useCallback(
           }
 
           const fmtModifiedContent = newFmtLines.join("\n");
-          await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+          await codeViewCacheService.store(projectId, {
             content: fmtModifiedContent,
             format: fmt,
           });
@@ -13799,7 +13823,7 @@ const updateItemInState = useCallback(
               setHasLocalCodeViewChanges(true);
 
               try {
-                await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                await codeViewCacheService.store(projectId, {
                   content: modifiedContent,
                   format: "jsonld",
                 });
@@ -14021,7 +14045,7 @@ const updateItemInState = useCallback(
             console.log("[Dashboard] hasLocalCodeViewChanges set to true");
 
             try {
-              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              await codeViewCacheService.store(projectId, {
                 content: modifiedContent,
                 format: codeViewFormat,
               });
