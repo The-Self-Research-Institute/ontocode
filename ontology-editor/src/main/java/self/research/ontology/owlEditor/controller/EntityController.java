@@ -34,14 +34,15 @@ public class EntityController {
                                           @RequestBody RenameEntityRequest request,
                                           @RequestParam(required = false, defaultValue = "true") boolean draft,
                                           @RequestParam(required = false) String userId,
-                                          @RequestParam(required = false) String username) {
+                                          @RequestParam(required = false) String username,
+                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
         if (request == null || isBlank(request.oldIri) || isBlank(request.newIri)) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "error", "oldIri and newIri are required"));
         }
         String effectiveUserId = desktopMode ? DESKTOP_USER_ID : (userId != null ? userId : "anonymous");
-        String effectiveUsername = username != null ? username : "Anonymous";
+        String effectiveUsername = self.research.ontology.owlEditor.service.RequestActor.displayName(httpRequest, username);
         try {
             if (draft) {
                 renameService.renameEntityDraft(projectId, effectiveUserId, effectiveUsername, request.oldIri.trim(), request.newIri.trim());

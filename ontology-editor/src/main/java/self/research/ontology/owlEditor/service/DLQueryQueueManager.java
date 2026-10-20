@@ -51,7 +51,15 @@ public class DLQueryQueueManager {
                                              String expression,
                                              List<String> queryTypes,
                                              String ownerEmail) {
-        DLQueryJob existing = findActiveOrQueuedJob(projectId, expression);
+        return enqueue(projectId, expression, queryTypes, ownerEmail, null);
+    }
+
+    public synchronized DLQueryJob enqueue(String projectId,
+                                             String expression,
+                                             List<String> queryTypes,
+                                             String ownerEmail,
+                                             String draftUserId) {
+        DLQueryJob existing = findActiveOrQueuedJob(projectId, expression, draftUserId);
         if (existing != null) {
             log.info("[DLQuery] Reusing job {} for project {}", existing.getJobId(), projectId);
             notifyJob(existing);
@@ -71,6 +79,7 @@ public class DLQueryQueueManager {
                 .estimatedWaitTimeMs(0)
                 .queuedAt(Instant.now())
                 .ownerEmail(ownerEmail)
+                .draftUserId(draftUserId)
                 .tripleCount(tripleCount)
                 .slotWeight(slotWeight)
                 .build();
@@ -187,16 +196,18 @@ public class DLQueryQueueManager {
         }
     }
 
-    private DLQueryJob findActiveOrQueuedJob(String projectId, String expression) {
+    private DLQueryJob findActiveOrQueuedJob(String projectId, String expression, String draftUserId) {
         for (DLQueryJob job : activeJobs.values()) {
             if (projectId.equals(job.getProjectId())
                     && expression.equals(job.getExpression())
+                    && java.util.Objects.equals(draftUserId, job.getDraftUserId())
                     && job.getStatus() != DLQueryJob.Status.FAILED) {
                 return job;
             }
         }
         return queue.stream()
-                .filter(job -> projectId.equals(job.getProjectId()) && expression.equals(job.getExpression()))
+                .filter(job -> projectId.equals(job.getProjectId()) && expression.equals(job.getExpression())
+                        && java.util.Objects.equals(draftUserId, job.getDraftUserId()))
                 .findFirst()
                 .orElse(null);
     }

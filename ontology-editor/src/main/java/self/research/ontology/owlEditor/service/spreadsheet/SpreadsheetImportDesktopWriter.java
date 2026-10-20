@@ -9,6 +9,7 @@ import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler;
 import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.InMemorySparqlOntologyMutator;
+import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.StorageManager;
 
@@ -25,6 +26,7 @@ public class SpreadsheetImportDesktopWriter {
     private final ObjectProvider<DesktopOntologyLoader> loader;
     private final ObjectProvider<ProjectImportService> projectImports;
     private final ObjectProvider<DesktopFusekiSyncScheduler> syncScheduler;
+    private final ObjectProvider<OntologyMutationService> mutations;
     private final StorageManager storageManager;
 
     @Value("${ontocode.desktop.mode:false}")
@@ -38,12 +40,14 @@ public class SpreadsheetImportDesktopWriter {
                                           ObjectProvider<DesktopOntologyLoader> loader,
                                           ObjectProvider<ProjectImportService> projectImports,
                                           ObjectProvider<DesktopFusekiSyncScheduler> syncScheduler,
+                                          ObjectProvider<OntologyMutationService> mutations,
                                           StorageManager storageManager) {
         this.cache = cache;
         this.mutator = mutator;
         this.loader = loader;
         this.projectImports = projectImports;
         this.syncScheduler = syncScheduler;
+        this.mutations = mutations;
         this.storageManager = storageManager;
     }
 
@@ -76,6 +80,12 @@ public class SpreadsheetImportDesktopWriter {
             scheduler.scheduleAfterMutation(projectId);
         }
         storageManager.clearCodeViewCache(projectId);
+        OntologyMutationService mutationService = mutations.getIfAvailable();
+        if (mutationService != null) {
+            mutationService.invalidateEntityCaches(projectId, null, false);
+            mutationService.bumpMainGraphRevision(projectId);
+            mutationService.invalidateReasonerCaches(projectId);
+        }
         log.info("[SpreadsheetImport] Applied import undo/redo to the desktop ontology for {} ({} update(s))",
             projectId, updates.size());
         return true;

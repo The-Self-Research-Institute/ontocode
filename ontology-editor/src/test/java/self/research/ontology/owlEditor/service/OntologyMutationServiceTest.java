@@ -241,4 +241,24 @@ class OntologyMutationServiceTest {
         verify(reasonerCache).invalidateOntology("proj-1");
         verify(reasonerCache, org.mockito.Mockito.never()).invalidateDraft(anyString(), org.mockito.ArgumentMatchers.any());
     }
+
+    @Test
+    void deletingAClassDoesNotAddExtraHistoryRowsForItsStatements() {
+        List<String> names = List.of("p", "o");
+        org.eclipse.rdf4j.query.BindingSet parent = new org.eclipse.rdf4j.query.impl.ListBindingSet(names,
+                VF.createIRI("http://www.w3.org/2000/01/rdf-schema#subClassOf"), VF.createIRI("http://ex.org/PizzaBase"));
+        org.eclipse.rdf4j.query.BindingSet label = new org.eclipse.rdf4j.query.impl.ListBindingSet(names,
+                VF.createIRI("http://www.w3.org/2000/01/rdf-schema#label"), VF.createLiteral("Thin crust"));
+        when(datasetService.execSelect(anyString(), anyString())).thenAnswer(inv ->
+                new org.eclipse.rdf4j.query.impl.IteratingTupleQueryResult(names, List.of(parent, label)));
+        OntologyMutationService.MutationOp delete = new OntologyMutationService.MutationOp("deleteClass",
+                "http://ex.org/ThinCrust", "Thin crust", null, null, null, null, null, null, null, null, null, null, null, null);
+
+        service.apply("proj-1", List.of(delete));
+
+        org.mockito.Mockito.verify(historyService, org.mockito.Mockito.never()).recordEdit(anyString(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), anyString(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
 }

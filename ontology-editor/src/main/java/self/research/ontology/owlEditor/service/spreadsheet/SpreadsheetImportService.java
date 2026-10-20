@@ -9,6 +9,7 @@ import self.research.ontology.owlEditor.model.SpreadsheetImportRecord;
 import self.research.ontology.owlEditor.repository.SpreadsheetImportRecordRepository;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
+import self.research.ontology.owlEditor.service.OntologyIndexService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -77,6 +79,29 @@ public class SpreadsheetImportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setDesktopWriter(SpreadsheetImportDesktopWriter desktopWriter) {
         this.desktopWriter = desktopWriter;
+    }
+
+    private OntologyIndexService indexService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setIndexService(OntologyIndexService indexService) {
+        this.indexService = indexService;
+    }
+
+    private void refreshPublicSummary(String projectId) {
+        if (desktopMode || indexService == null) {
+            return;
+        }
+        long start = System.nanoTime();
+        try {
+            Map<String, Object> meta = indexService.computeMetadata(projectId);
+            metadataService.writeMeta(projectId, meta);
+            log.info("[SpreadsheetImport] Refreshed the ontology summary for project {} in {} ms",
+                projectId, (System.nanoTime() - start) / 1_000_000);
+        } catch (RuntimeException e) {
+            log.warn("[SpreadsheetImport] Could not refresh the ontology summary for project {}; "
+                + "the background update will correct it: {}", projectId, e.getMessage());
+        }
     }
 
     public boolean applyOnDesktop(String projectId, List<String> updates) {
@@ -186,6 +211,9 @@ public class SpreadsheetImportService {
         log.info("[SpreadsheetImport] Committed import {} to project {} ({}): {} axioms, {} triples added, {} already present, {} ms",
             record.getId(), projectId, toDraft ? "draft" : "main", result.axioms().size(), added.size(),
             alreadyPresent.size(), (System.nanoTime() - start) / 1_000_000);
+        if (!toDraft) {
+            refreshPublicSummary(projectId);
+        }
         return new CommitResult(record.getId(), result.axioms().size(), added.size(), alreadyPresent.size(), toDraft);
     }
 
@@ -297,6 +325,9 @@ public class SpreadsheetImportService {
                     draftSupport.restoreDraftChanges(projectId, record.getUserId(), record.getDraftSessionId());
                 }
             }
+            if (!record.isDraft()) {
+                refreshPublicSummary(projectId);
+            }
         });
     }
 
@@ -311,6 +342,24 @@ public class SpreadsheetImportService {
         }
         markUndone(projectId, entityIri, true, actingUser);
         return new RollbackResult(record.getFileName(), record.getAddedTriples().size(), record.getAxiomCount());
+    }
+
+    public record ImportedItems(String fileName, int axiomCount, boolean draft, boolean rolledBack,
+                                Map<String, ImportItemsSummary.Group> groups) {
+    }
+
+    public Optional<ImportedItems> importedItems(String projectId, String importId, String callerUserId, int limit) {
+        return findRecord(projectId, ENTITY_IRI_PREFIX + importId)
+            .filter(r -> !r.isDraft() || callerUserId == null || callerUserId.equals(r.getUserId()))
+            .map(r -> new ImportedItems(r.getFileName(), r.getAxiomCount(), r.isDraft(), r.isRolledBack(),
+                ImportItemsSummary.of(r.getAddedTriples(), limit)));
+    }
+
+    public Optional<ImportItemsSummary.Group> importedItemsPage(String projectId, String importId, String callerUserId,
+                                                                 String group, int offset, int limit) {
+        return findRecord(projectId, ENTITY_IRI_PREFIX + importId)
+            .filter(r -> !r.isDraft() || callerUserId == null || callerUserId.equals(r.getUserId()))
+            .map(r -> ImportItemsSummary.page(r.getAddedTriples(), group, offset, limit));
     }
 
     private Optional<SpreadsheetImportRecord> findRecord(String projectId, String entityIri) {

@@ -42,6 +42,10 @@ private ExactChangeRecorder exactRecorder;
 @org.springframework.lang.Nullable
 private ProjectWriteLockRegistry lockRegistry;
 
+@org.springframework.beans.factory.annotation.Autowired(required = false)
+@org.springframework.lang.Nullable
+private DesktopOwlApiMutationService desktopMutation;
+
 public EntityRenameService(StorageManager storageManager,
                            OntologyMutationService ontologyMutationService,
                            DraftCopyService draftCopyService,
@@ -106,6 +110,12 @@ private static String runAndRecord(Runnable apply, java.util.function.Supplier<S
 }
 
 private boolean isDeclaredEntity(String projectId, String iri) {
+    if (desktopMutation != null) {
+        java.util.Optional<Boolean> inMemory = desktopMutation.declaresEntity(projectId, iri);
+        if (inMemory.isPresent()) {
+            return inMemory.get();
+        }
+    }
     String ask = "ASK { <" + iri + "> a ?t . FILTER(?t IN ("
             + "<http://www.w3.org/2002/07/owl#Class>, "
             + "<http://www.w3.org/2002/07/owl#ObjectProperty>, "

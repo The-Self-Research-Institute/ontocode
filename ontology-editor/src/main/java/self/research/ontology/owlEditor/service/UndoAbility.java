@@ -3,6 +3,7 @@ package self.research.ontology.owlEditor.service;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Kind;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Plan;
+import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportService;
 
 public final class UndoAbility {
 
@@ -22,6 +23,9 @@ public final class UndoAbility {
         }
         if (change.getUndoBlockedReason() != null) {
             return new Result(false, change.getUndoBlockedReason());
+        }
+        if (SpreadsheetImportService.isImportEntry(change.getOperationType())) {
+            return new Result(true, null);
         }
         Kind kind = RollbackMutationPlanner.kindOf(change);
         if (kind == Kind.EXACT || kind == Kind.DOCUMENT || kind == Kind.MERGE) {

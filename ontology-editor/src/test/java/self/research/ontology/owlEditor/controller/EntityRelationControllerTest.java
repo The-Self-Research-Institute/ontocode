@@ -48,7 +48,7 @@ class EntityRelationControllerTest {
                 "add", "http://ex.org/Pizza", "domain", "http://ex.org/Topping", null,
                 "u1", "User One", null, null, null, null);
 
-        controller.editRelation("proj-1", req, true);
+        controller.editRelation("proj-1", req, true, null);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<MutationOp>> opsCaptor = ArgumentCaptor.forClass(List.class);
@@ -64,7 +64,7 @@ class EntityRelationControllerTest {
                 "add", "http://ex.org/Pizza", "domain", "http://ex.org/Topping", null,
                 "u1", "User One", null, null, null, null);
 
-        controller.editRelation("proj-1", req, false);
+        controller.editRelation("proj-1", req, false, null);
 
         verify(historyService).recordGroupedMutations(
                 anyString(), anyString(), anyString(), anyList(), org.mockito.ArgumentMatchers.eq(false));

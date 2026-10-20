@@ -73,12 +73,17 @@ public class DLQueryService {
 
     public Map<String, Object> executeQuery(String projectId, String expression, List<String> queryTypes)
             throws Exception {
+        return executeQuery(projectId, expression, queryTypes, null);
+    }
+
+    public Map<String, Object> executeQuery(String projectId, String expression, List<String> queryTypes,
+                                            String draftUserId) throws Exception {
         long startTime = System.currentTimeMillis();
         List<String> resolvedTypes = queryTypes == null || queryTypes.isEmpty()
                 ? Arrays.asList("subclasses", "instances")
                 : queryTypes;
 
-        try (QuerySession session = openSession(projectId)) {
+        try (QuerySession session = openSession(projectId, draftUserId)) {
             OWLOntology ontology = session.ontology();
             OWLReasoner reasoner = session.reasoner();
 
@@ -125,7 +130,7 @@ public class DLQueryService {
     }
 
     public OWLOntology loadOntologyForParse(String projectId) throws Exception {
-        LoadedOntology loaded = loadOntology(projectId);
+        LoadedOntology loaded = loadOntology(projectId, null);
         return loaded.ontology();
     }
 
@@ -165,17 +170,17 @@ public class DLQueryService {
         }
     }
 
-    private QuerySession openSession(String projectId) throws Exception {
+    private QuerySession openSession(String projectId, String draftUserId) throws Exception {
         if (reasonerFactory == null) {
             throw new IllegalStateException("No DL reasoner available on this server");
         }
-        LoadedOntology loaded = loadOntology(projectId);
+        LoadedOntology loaded = loadOntology(projectId, draftUserId);
         OWLReasoner reasoner = reasonerFactory.createReasoner(loaded.ontology());
 
         return new QuerySession(loaded.manager(), loaded.ontology(), reasoner);
     }
 
-    private LoadedOntology loadOntology(String projectId) throws Exception {
+    private LoadedOntology loadOntology(String projectId, String draftUserId) throws Exception {
 
         importService.syncProjectToFuseki(projectId);
         try {
@@ -195,7 +200,7 @@ public class DLQueryService {
         try {
             tempFile = Files.createTempFile("dlquery-" + projectId + "-", ".ttl");
             try (OutputStream out = Files.newOutputStream(tempFile)) {
-                datasetService.exportDatasetToStream(projectId, RDFFormat.TURTLE, out);
+                exportForQuery(projectId, draftUserId, out);
             }
             if (Files.size(tempFile) > 0) {
                 OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
@@ -229,6 +234,23 @@ public class DLQueryService {
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
             return new LoadedOntology(manager, ontology);
+        }
+    }
+
+    private void exportForQuery(String projectId, String draftUserId, OutputStream out) {
+        if (draftUserId == null || draftUserId.isBlank()) {
+            datasetService.exportDatasetToStream(projectId, RDFFormat.TURTLE, out);
+            return;
+        }
+        String previousUser = SparqlQueryContext.getUserId();
+        boolean previousDraft = SparqlQueryContext.wantsDraft();
+        SparqlQueryContext.setUserId(draftUserId);
+        SparqlQueryContext.setWantsDraft(true);
+        try {
+            datasetService.exportDatasetToStream(projectId, draftUserId, RDFFormat.TURTLE, out);
+        } finally {
+            SparqlQueryContext.setUserId(previousUser);
+            SparqlQueryContext.setWantsDraft(previousDraft);
         }
     }
 

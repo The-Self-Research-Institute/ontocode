@@ -1,13 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  CHECK_DELAY_MS,
-  FINISHED_VISIBLE_MS,
-  MAX_WAITING,
-  REQUEST_TIMEOUT_MS,
-  createUndoQueue,
-  stepFromHint,
-  type QueueApi,
-} from '../services/undoQueue';
+import { CHECK_DELAY_MS, FINISHED_VISIBLE_MS, MAX_WAITING, REQUEST_TIMEOUT_MS, stepFromHint, type QueueApi } from '../services/undoQueueSupport';
+import { createUndoQueue } from '../services/undoQueue';
 import type { QueueResponse, QueueStep, StepOutcome } from '../services/undoRedoService';
 
 const step = (id: string, extra: Partial<QueueStep> = {}): QueueStep => ({ changeId: id, label: `L${id}`, changeCount: 2, ...extra });
@@ -55,6 +48,23 @@ describe('undoQueue', () => {
     expect(api.announce).toHaveBeenCalledTimes(3);
     expect(queue.getSnapshot().phase).toBe('finished');
     expect(queue.getSnapshot().summary).toBe('3 change sets undone · 6 changes');
+  });
+
+  it('exposes the running step detail and keeps it while paused', async () => {
+    const detailed = step('a', { source: 'Entities → Classes', affected: 'Dog', restoring: 'A → B', entityIRI: 'http://x#Dog' });
+    const { queue, outcomes } = setup([detailed]);
+    outcomes.push(new Promise<StepOutcome>(() => undefined));
+    void queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().currentDetail).toEqual({ source: 'Entities → Classes', affected: 'Dog', restoring: 'A → B', entityIRI: 'http://x#Dog' });
+  });
+
+  it('has no detail when the server sent none', async () => {
+    const { queue, outcomes } = setup([step('a')]);
+    outcomes.push(new Promise<StepOutcome>(() => undefined));
+    void queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().currentDetail).toBeUndefined();
   });
 
   it('clears the finished summary after a few seconds', async () => {
@@ -169,20 +179,6 @@ describe('undoQueue', () => {
     expect(queue.getSnapshot().phase).toBe('finished');
   });
 
-  it('falls back to a single unbound step when the queue endpoint is missing', async () => {
-    const { queue, api, sends, outcomes } = setup([]);
-    vi.mocked(api.fetchQueue).mockResolvedValue(null);
-    outcomes.push(new Promise<StepOutcome>((resolve) => setTimeout(() => resolve({ kind: 'done' }), 100)));
-    const first = queue.press('p', 'undo');
-    await vi.advanceTimersByTimeAsync(5);
-    const second = await queue.press('p', 'undo');
-    expect(second.accepted).toBe(false);
-    await vi.advanceTimersByTimeAsync(200);
-    expect((await first).accepted).toBe(true);
-    expect(sends).toHaveLength(1);
-    expect(sends[0].id).toBe('');
-  });
-
   it('refuses a press that would target a different change after history shifted', async () => {
     const live = [step('a'), step('b')];
     const { queue, outcomes } = setup(live);
@@ -232,6 +228,75 @@ describe('undoQueue', () => {
     expect(api.fetchQueue).not.toHaveBeenCalled();
     expect(sends[0].id).toBe('c');
     expect(queue.getSnapshot().summary).toBe('1 change set redone · 1 change');
+  });
+
+  describe('redo bursts', () => {
+    const redoHint = (id: string) => ({ available: true, direction: 'REDO' as const, changeId: id, auditId: `au${id}`, label: `R${id}`, dependents: [] });
+    const unavailable = { available: false, direction: 'REDO' as const, dependents: [] };
+
+    function chain(ids: string[]) {
+      const { api, sends, queue } = setup([]);
+      let sent = 0;
+      vi.mocked(api.send).mockImplementation((_p, _k, s, opId) => {
+        sends.push({ id: s.changeId, opId });
+        sent += 1;
+        const next = ids[sent];
+        return Promise.resolve({
+          kind: 'done',
+          auditId: `done${sent}`,
+          state: { undo: unavailable, redo: next ? redoHint(next) : unavailable },
+        } as StepOutcome);
+      });
+      return { api, sends, queue };
+    }
+
+    it('runs every extra redo press in order, taking each next step from the server reply', async () => {
+      const { queue, sends } = chain(['a', 'b', 'c', 'd']);
+      const presses = [queue.press('p', 'redo', redoHint('a'))];
+      for (let i = 0; i < 3; i += 1) presses.push(queue.press('p', 'redo', redoHint('a')));
+      await vi.runAllTimersAsync();
+      expect((await Promise.all(presses)).every((p) => p.accepted)).toBe(true);
+      expect(sends.map((s) => s.id)).toEqual(['a', 'b', 'c', 'd']);
+      expect(new Set(sends.map((s) => s.opId)).size).toBe(4);
+      expect(queue.getSnapshot().summary).toBe('4 change sets redone · 4 changes');
+      expect(queue.getSnapshot().pending).toBe(0);
+    });
+
+    it('drops presses beyond the available redos and still finishes', async () => {
+      const { queue, sends } = chain(['a', 'b']);
+      for (let i = 0; i < 6; i += 1) void queue.press('p', 'redo', redoHint('a'));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(sends.map((s) => s.id)).toEqual(['a', 'b']);
+      expect(queue.getSnapshot().phase).toBe('finished');
+      expect(queue.getSnapshot().pending).toBe(0);
+    });
+
+    it('shows extra redo presses as pending and clears them on stop', async () => {
+      const { queue, api } = chain(['a', 'b', 'c']);
+      vi.mocked(api.send).mockImplementationOnce(() => new Promise<StepOutcome>(() => undefined));
+      void queue.press('p', 'redo', redoHint('a'));
+      void queue.press('p', 'redo', redoHint('a'));
+      void queue.press('p', 'redo', redoHint('a'));
+      await vi.advanceTimersByTimeAsync(5);
+      expect(queue.getSnapshot().pending).toBe(2);
+      queue.stopPending();
+      expect(queue.getSnapshot().pending).toBe(0);
+    });
+
+    it('still limits how many redos can wait', async () => {
+      const { queue } = chain(['a']);
+      const results = [];
+      for (let i = 0; i < MAX_WAITING + 3; i += 1) results.push(queue.press('p', 'redo', redoHint('a')));
+      const settled = await Promise.all(results);
+      expect(settled.filter((r) => !r.accepted).length).toBeGreaterThan(0);
+    });
+
+    it('does not accept an undo while a redo run is active', async () => {
+      const { queue, api } = chain(['a', 'b']);
+      vi.mocked(api.send).mockImplementationOnce(() => new Promise<StepOutcome>(() => undefined));
+      void queue.press('p', 'redo', redoHint('a'));
+      expect((await queue.press('p', 'undo')).accepted).toBe(false);
+    });
   });
 
   it('only builds steps from available hints', () => {

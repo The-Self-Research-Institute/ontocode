@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -54,6 +55,25 @@ public class SpreadsheetImportController {
         this.parserService = parserService;
         this.importService = importService;
         this.objectMapper = objectMapper;
+    }
+
+    @GetMapping("/{projectId}/imports/{importId}/items")
+    public ResponseEntity<?> importedItems(@PathVariable String projectId,
+                                           @PathVariable String importId,
+                                           @RequestParam(defaultValue = "20") int limit,
+                                           @RequestParam(required = false) String group,
+                                           @RequestParam(defaultValue = "0") int offset,
+                                           HttpServletRequest request) {
+        String caller = SpreadsheetImportCaller.resolve(request, null, null).userId();
+        int capped = Math.max(1, Math.min(limit, 200));
+        if (group != null && !group.isBlank()) {
+            return importService.importedItemsPage(projectId, importId, caller, group, Math.max(0, offset), capped)
+                .<ResponseEntity<?>>map(page -> ResponseEntity.ok(Map.of("success", true, "data", page)))
+                .orElseGet(() -> ResponseEntity.status(404).body(Map.of("success", false, "error", "Import or group not found")));
+        }
+        return importService.importedItems(projectId, importId, caller, capped)
+            .<ResponseEntity<?>>map(items -> ResponseEntity.ok(Map.of("success", true, "data", items)))
+            .orElseGet(() -> ResponseEntity.status(404).body(Map.of("success", false, "error", "Import not found")));
     }
 
     @PostMapping("/{projectId}/preview")

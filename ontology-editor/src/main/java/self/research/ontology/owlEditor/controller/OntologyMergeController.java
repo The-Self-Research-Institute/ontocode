@@ -11,6 +11,8 @@ import org.springframework.web.multipart.MultipartFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import self.research.ontology.owlEditor.model.merge.*;
+import self.research.ontology.owlEditor.service.DraftMergeTooLargeException;
+import self.research.ontology.owlEditor.service.DraftNotReadyException;
 import self.research.ontology.owlEditor.service.OntologyMergeService;
 import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
@@ -44,8 +46,15 @@ public class OntologyMergeController {
         this.metadataService = metadataService;
     }
 
-    private String effectiveUserId(HttpServletRequest request, String userId) {
-        return desktopMode ? DESKTOP_USER_ID : RequestActor.of(request, userId, null).userId();
+    private String effectiveUserId(HttpServletRequest request, String userId, boolean draft) {
+        if (desktopMode) {
+            return DESKTOP_USER_ID;
+        }
+        return draft ? RequestActor.forScope(request, userId, true) : RequestActor.of(request, userId, null).userId();
+    }
+
+    private ResponseEntity<?> draftMergeRefusal(RuntimeException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
 
     private String effectiveUsername(HttpServletRequest request, String userId, String username) {
@@ -66,7 +75,10 @@ public class OntologyMergeController {
             @PathVariable String projectId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "targetProjectId", required = false) String targetProjectId,
-            @RequestParam(value = "targetFileName", required = false) String targetFileName) {
+            @RequestParam(value = "targetFileName", required = false) String targetFileName,
+            @RequestParam(value = "draft", defaultValue = "false") boolean draft,
+            @RequestParam(value = "userId", required = false) String userId,
+            HttpServletRequest httpRequest) {
         
         log.info("[MERGE] Analyzing merge for project {}, file: {}", projectId, file.getOriginalFilename());
         
@@ -89,7 +101,8 @@ public class OntologyMergeController {
                 projectId + "_source",  // source project ID (not used, just for logging)
                 tempFile,
                 effectiveTargetProjectId,
-                targetFileName
+                targetFileName,
+                draft ? effectiveUserId(httpRequest, userId, true) : null
             );
             
             log.info("[MERGE] Analysis complete: {} conflicts found", result.getTotalConflicts());
@@ -151,6 +164,7 @@ public class OntologyMergeController {
             @RequestParam(value = "conflictResolutions", required = false) String conflictResolutionsJson,
             @RequestParam(value = "userId", required = false) String userId,
             @RequestParam(value = "username", required = false) String username,
+            @RequestParam(value = "draft", defaultValue = "false") boolean draft,
             HttpServletRequest httpRequest) {
 
         log.info("[MERGE] Executing merge for project {}", projectId);
@@ -185,8 +199,9 @@ public class OntologyMergeController {
                 targetFileName,
                 outputFileName,
                 options,
-                effectiveUserId(httpRequest, userId),
-                effectiveUsername(httpRequest, userId, username)
+                effectiveUserId(httpRequest, userId, draft),
+                effectiveUsername(httpRequest, userId, username),
+                draft
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);
@@ -206,6 +221,8 @@ public class OntologyMergeController {
             
             return ResponseEntity.ok(result);
             
+        } catch (DraftNotReadyException | DraftMergeTooLargeException e) {
+            return draftMergeRefusal(e);
         } catch (StackOverflowError soe) {
             log.error("[MERGE] Stack overflow during merge — ontology may be too large or circular", soe);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -252,7 +269,7 @@ public class OntologyMergeController {
                 targetFileName,
                 outputFileName,
                 options,
-                effectiveUserId(httpRequest, userId),
+                effectiveUserId(httpRequest, userId, false),
                 effectiveUsername(httpRequest, userId, username)
             );
             long duration = System.currentTimeMillis() - startTime;

@@ -49,7 +49,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .addPathPatterns("/api/**")
                 .order(0);
         registry.addInterceptor(sparqlQueryContextInterceptor)
-                .addPathPatterns("/api/ontology/**")
+                .addPathPatterns("/api/ontology/**", "/api/sparql/query/**")
                 .order(1);
         registry.addInterceptor(performanceLoggingInterceptor)
                 .addPathPatterns("/api/**");

@@ -4,7 +4,7 @@ export const MAX_WAITING = 25;
 export const REQUEST_TIMEOUT_MS = 30000;
 export const CHECK_DELAY_MS = 3000;
 export const MAX_CHECKS = 10;
-export const FINISHED_VISIBLE_MS = 4000;
+export const FINISHED_VISIBLE_MS = 5000;
 export const INFLIGHT_WAIT_MS = 1000;
 export const MAX_FINISHED_ITEMS = 5;
 
@@ -27,6 +27,7 @@ export interface UndoRunSnapshot {
   running: boolean;
   pending: number;
   current?: string;
+  currentDetail?: StepDetail;
   reason?: PauseReason;
   message?: string;
   item?: string;
@@ -35,13 +36,25 @@ export interface UndoRunSnapshot {
   lastState?: UndoState;
 }
 
+export interface StepDetail {
+  source?: string;
+  affected?: string;
+  restoring?: string;
+  entityIRI?: string;
+}
+
+export function detailOf(step: QueueStep | undefined): StepDetail | undefined {
+  if (!step || !(step.source || step.affected || step.restoring)) return undefined;
+  return { source: step.source, affected: step.affected, restoring: step.restoring, entityIRI: step.entityIRI };
+}
+
 export interface PressResult {
   accepted: boolean;
   message?: string;
 }
 
 export interface QueueApi {
-  fetchQueue(projectId: string, count: number): Promise<QueueResponse | null>;
+  fetchQueue(projectId: string, count: number): Promise<QueueResponse>;
   send(projectId: string, kind: UndoKind, step: QueueStep, opId: string): Promise<StepOutcome>;
   announce(projectId: string, step: QueueStep, kind: UndoKind, auditId?: string): void;
   refused(projectId: string): void;
@@ -55,11 +68,6 @@ export interface Entry {
 }
 
 export const TIMED_OUT = Symbol('timed-out');
-
-export function newOpId(): string {
-  const cryptoApi = typeof crypto !== 'undefined' ? crypto : undefined;
-  return cryptoApi?.randomUUID ? cryptoApi.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
 
 export function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
   return new Promise((resolve) => {
@@ -107,7 +115,7 @@ export function stepFromHint(hint: UndoStep | undefined, kind: UndoKind): QueueS
 }
 
 
-function blockedText(blocked: QueueResponse['blocked']): string {
+export function blockedText(blocked: QueueResponse['blocked']): string {
   return blocked
     ? `Can't undo ${blocked.label || 'the next change'}: ${blocked.reason || 'it was built on'}`
     : 'Some of these changes can no longer be undone.';
@@ -117,14 +125,13 @@ export async function revalidate(
   api: QueueApi,
   projectId: string,
   entries: Entry[],
-): Promise<{ legacy?: boolean; message?: string; item?: string }> {
-  let response: QueueResponse | null;
+): Promise<{ message?: string; item?: string }> {
+  let response: QueueResponse;
   try {
     response = await api.fetchQueue(projectId, entries.length);
   } catch {
     return { message: 'Could not revalidate. Check your connection and try again.' };
   }
-  if (response === null) return { legacy: true };
   if (response.steps.length < entries.length) {
     return { message: blockedText(response.blocked), item: response.blocked?.label };
   }

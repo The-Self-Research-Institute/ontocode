@@ -180,6 +180,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
       setReviewingPrId(null);
       setReviewNote("");
       await fetchPRs();
+      window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: ["draftPrApproved"] } }));
       onPRApproved?.();
     } catch (e: any) {
       const msg = e?.response?.data?.error || e?.message || "Failed to approve pull request";

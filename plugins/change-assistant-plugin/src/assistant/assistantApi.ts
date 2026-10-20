@@ -46,6 +46,22 @@ export async function fetchChangeDetails(projectId: string, changeId: string): P
   return response.json();
 }
 
+export async function fetchImportedItems(
+  projectId: string,
+  importId: string,
+  page?: { group: string; offset: number; limit: number },
+): Promise<any | null> {
+  const query = page
+    ? `?group=${encodeURIComponent(page.group)}&offset=${page.offset}&limit=${page.limit}`
+    : '';
+  const response = await authFetch(
+    `${apiBase()}/api/ontology/spreadsheet-import/${encodeURIComponent(projectId)}/imports/${encodeURIComponent(importId)}/items${query}`,
+  );
+  if (!response.ok) return null;
+  const body = await response.json();
+  return body?.success ? body.data : null;
+}
+
 export function postComment(projectId: string, changeId: string, body: object): Promise<Response> {
   return postJson(changeUrl(projectId, changeId, 'comments'), body);
 }

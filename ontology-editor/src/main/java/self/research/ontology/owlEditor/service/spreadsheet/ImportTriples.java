@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service.spreadsheet;
 
+import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 
 import java.util.ArrayList;
@@ -23,7 +24,7 @@ final class ImportTriples {
             case "createClass" -> {
                 t.add(s + " " + RDF_TYPE + " " + iri(OWL + "Class"));
                 label(t, s, op.label());
-                if (op.parent() != null) {
+                if (OntologyMutationService.isRealParentClass(op.parent())) {
                     t.add(s + " " + iri(RDFS + "subClassOf") + " " + iri(op.parent()));
                 }
             }

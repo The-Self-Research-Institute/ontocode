@@ -8,7 +8,7 @@ import { submitIssueReport, SubmitResult } from "../utils/issueSubmit";
 import type { FeedbackType } from "../utils/feedback";
 import IssueAttachmentPicker from "./IssueAttachmentPicker";
 import IssueSubmitBanner from "./IssueSubmitBanner";
-import { INPUT_CLASS, IssueEmailField, IssueFormFooter, IssueFormHeader, LABEL_CLASS, PRIORITIES } from "./IssueFormParts";
+import { INPUT_CLASS, IssueEmailField, IssueFormFooter, IssueFormHeader, IssueSidebar, LABEL_CLASS, PRIORITIES } from "./IssueFormParts";
 
 const DESKTOP_PLACEHOLDER_EMAIL = "local@ontocode.desktop";
 
@@ -103,25 +103,90 @@ export const IssueReportForm: React.FC<IssueReportFormProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-white z-50 flex flex-col">
-      <div className="flex-1 w-full max-w-5xl mx-auto overflow-hidden flex flex-col">
-        <IssueFormHeader kind={kind} projectName={projectName} busy={submitting} onBack={onBack} onSwitchKind={onSwitchKind} />
+    <div className="min-h-full bg-gray-50 flex flex-col">
+      <IssueFormHeader kind={kind} projectName={projectName} busy={submitting} onBack={onBack} onSwitchKind={onSwitchKind} />
 
-        {!online && (
-          <div className="mx-6 mt-4 px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm flex items-start gap-2">
-            <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
-            <span>
-              <strong>Offline.</strong> Reports are sent to our servers when you are online.
-              {desktop ? " Your ontology work continues locally." : " Reconnect, then submit."}
-            </span>
+      <main className="flex-1 w-full max-w-6xl mx-auto px-6 py-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-6 min-w-0">
+          {!online && (
+            <div className="px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm flex items-start gap-2">
+              <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+              <span>
+                <strong>Offline.</strong> Reports are sent to our servers when you are online.
+                {desktop ? " Your ontology work continues locally." : " Reconnect, then submit."}
+              </span>
+            </div>
+          )}
+
+          {submitResult && <IssueSubmitBanner result={submitResult} kind={kind} priority={priority} />}
+
+          <div className="rounded-xl border border-gray-200 bg-white p-6 space-y-6">
+            <div className="space-y-2">
+              <label className={LABEL_CLASS}>
+                <FileText size={16} className="text-purple-600" />
+                Title <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={isFeature ? "Brief summary of the feature" : "Brief summary of the issue"}
+                maxLength={200}
+                className={INPUT_CLASS}
+                disabled={submitting}
+              />
+              <div className="flex justify-between items-center">
+                <p className="text-xs text-gray-500">Provide a clear, concise summary</p>
+                <p className={`text-xs font-medium ${title.length > 180 ? "text-orange-600" : "text-gray-500"}`}>{title.length}/200</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className={LABEL_CLASS}>
+                <FileCode size={16} className="text-purple-600" />
+                {isFeature ? "What problem would this solve?" : "Description"} <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={8}
+                placeholder={
+                  isFeature
+                    ? "Describe what you are trying to do, what is hard today, and how you would like it to work..."
+                    : "Describe the issue in detail. Include what you expected vs. what actually happened..."
+                }
+                className={`${INPUT_CLASS} resize-y`}
+                disabled={submitting}
+              />
+            </div>
+
+            {!isFeature && (
+              <div className="space-y-2">
+                <label className={LABEL_CLASS}>
+                  <ListOrdered size={16} className="text-purple-600" />
+                  Steps to Reproduce
+                  <span className="text-xs font-normal text-gray-500">(Optional)</span>
+                </label>
+                <textarea
+                  value={stepsToReproduce}
+                  onChange={(e) => setStepsToReproduce(e.target.value)}
+                  rows={6}
+                  placeholder={"1. Go to...\n2. Click on...\n3. See error..."}
+                  className={`${INPUT_CLASS} resize-y`}
+                  disabled={submitting}
+                />
+              </div>
+            )}
           </div>
-        )}
 
-        {submitResult && <IssueSubmitBanner result={submitResult} kind={kind} priority={priority} />}
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <IssueAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={submitting} />
+          </div>
+        </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        <IssueSidebar kind={kind} projectName={projectName} ontologyFilePath={ontologyFilePath}>
           {!isFeature && (
-            <div className="space-y-2 max-w-xs">
+            <div className="space-y-2">
               <label className={LABEL_CLASS}>
                 <Flag size={16} className="text-purple-600" />
                 Priority <span className="text-red-500">*</span>
@@ -133,7 +198,6 @@ export const IssueReportForm: React.FC<IssueReportFormProps> = ({
               </select>
             </div>
           )}
-
           <IssueEmailField
             signedIn={signedIn}
             signedInEmail={user?.email}
@@ -143,69 +207,10 @@ export const IssueReportForm: React.FC<IssueReportFormProps> = ({
             onChange={setEmail}
             onBlur={() => setEmailTouched(true)}
           />
+        </IssueSidebar>
+      </main>
 
-          <div className="space-y-2">
-            <label className={LABEL_CLASS}>
-              <FileText size={16} className="text-purple-600" />
-              Title <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder={isFeature ? "Brief summary of the feature" : "Brief summary of the issue"}
-              maxLength={200}
-              className={INPUT_CLASS}
-              disabled={submitting}
-            />
-            <div className="flex justify-between items-center">
-              <p className="text-xs text-gray-500">Provide a clear, concise summary</p>
-              <p className={`text-xs font-medium ${title.length > 180 ? "text-orange-600" : "text-gray-500"}`}>{title.length}/200</p>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className={LABEL_CLASS}>
-              <FileCode size={16} className="text-purple-600" />
-              {isFeature ? "What problem would this solve?" : "Description"} <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={5}
-              placeholder={
-                isFeature
-                  ? "Describe what you are trying to do, what is hard today, and how you would like it to work..."
-                  : "Describe the issue in detail. Include what you expected vs. what actually happened..."
-              }
-              className={`${INPUT_CLASS} resize-none`}
-              disabled={submitting}
-            />
-          </div>
-
-          {!isFeature && (
-            <div className="space-y-2">
-              <label className={LABEL_CLASS}>
-                <ListOrdered size={16} className="text-purple-600" />
-                Steps to Reproduce
-                <span className="text-xs font-normal text-gray-500">(Optional)</span>
-              </label>
-              <textarea
-                value={stepsToReproduce}
-                onChange={(e) => setStepsToReproduce(e.target.value)}
-                rows={4}
-                placeholder={"1. Go to...\n2. Click on...\n3. See error..."}
-                className={`${INPUT_CLASS} resize-none`}
-                disabled={submitting}
-              />
-            </div>
-          )}
-
-          <IssueAttachmentPicker attachments={attachments} onChange={setAttachments} disabled={submitting} />
-        </div>
-
-        <IssueFormFooter kind={kind} submitting={submitting} blockReason={blockReason} onBack={onBack} onSubmit={handleSubmit} />
-      </div>
+      <IssueFormFooter kind={kind} submitting={submitting} blockReason={blockReason} onBack={onBack} onSubmit={handleSubmit} />
     </div>
   );
 };

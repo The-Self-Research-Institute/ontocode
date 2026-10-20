@@ -1,3 +1,4 @@
+import { newOpId } from './opId';
 export const COMMITTED_CHANGE_EVENT = 'ontocode:committed-change';
 
 export type CommittedDirection = 'APPLY' | 'UNDO' | 'REDO';
@@ -22,11 +23,6 @@ export type CommittedChangeInput = Omit<CommittedChange, 'opId' | 'at' | 'entity
 
 const MAX_REMEMBERED = 200;
 const seen: string[] = [];
-
-function newOpId(): string {
-  const api = typeof crypto !== 'undefined' ? crypto : undefined;
-  return api?.randomUUID ? api.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
 
 function remember(opId: string): boolean {
   if (seen.includes(opId)) {
@@ -57,6 +53,34 @@ export function emitCommittedChange(input: CommittedChangeInput): CommittedChang
     return null;
   }
   return change;
+}
+
+export type EntityList = 'classes' | 'properties' | 'annotationProperties' | 'individuals' | 'datatypes';
+
+const WHOLE_ONTOLOGY_OPS = ['ontologyMerge', 'draftPublish', 'draftPull'];
+
+const OPS_BY_LIST: Record<EntityList, string[]> = {
+  classes: ['createClass', 'deleteClass', 'addSubClassOf', 'deleteSubClassOf', 'updateSubClassOf', 'updateClassLabel', ...WHOLE_ONTOLOGY_OPS],
+  properties: [
+    'createObjectProperty',
+    'createDataProperty',
+    'deleteObjectProperty',
+    'deleteDataProperty',
+    'addSubPropertyOf',
+    'deleteSubPropertyOf',
+    'updateSubPropertyOf',
+    ...WHOLE_ONTOLOGY_OPS,
+  ],
+  annotationProperties: ['createAnnotationProperty', 'deleteAnnotationProperty', ...WHOLE_ONTOLOGY_OPS],
+  individuals: ['createIndividual', 'deleteIndividual', 'addClassAssertion', 'removeClassAssertion', ...WHOLE_ONTOLOGY_OPS],
+  datatypes: ['createDatatype', 'deleteDatatype', ...WHOLE_ONTOLOGY_OPS],
+};
+
+export function affectedLists(change: CommittedChange): EntityList[] {
+  if (change.direction !== 'APPLY') return [];
+  return (Object.keys(OPS_BY_LIST) as EntityList[]).filter((list) =>
+    change.opTypes.some((type) => OPS_BY_LIST[list].includes(type)),
+  );
 }
 
 export function subscribeCommittedChange(handler: (change: CommittedChange) => void): () => void {

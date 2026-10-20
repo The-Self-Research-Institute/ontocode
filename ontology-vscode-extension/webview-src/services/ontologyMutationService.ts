@@ -254,6 +254,21 @@ export const ontologyMutationService = {
     }], undefined, userId, username); // Apply immediately with user info
   },
 
+  async moveSubClassOf(projectId: string, classIri: string, oldParentIri: string | null, newParentIri: string,
+                       userId?: string, username?: string): Promise<void> {
+    const owlThing = 'http://www.w3.org/2002/07/owl#Thing';
+    const ops: MutationOp[] = [];
+    if (oldParentIri && oldParentIri !== newParentIri) {
+      ops.push({ type: 'deleteSubClassOf', iri: classIri, target: oldParentIri });
+    }
+    if (newParentIri !== owlThing) {
+      ops.push({ type: 'addSubClassOf', iri: classIri, target: newParentIri });
+    }
+    if (ops.length) {
+      await this.applyMutations(projectId, ops, undefined, userId, username);
+    }
+  },
+
   /**
    * Update SubClassOf axiom (replaces old target with new target in a single transaction)
    */

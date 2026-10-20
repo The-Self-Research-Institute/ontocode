@@ -92,7 +92,8 @@ function CardBody({ set, onUndo, onDetails }: Pick<Props, 'set' | 'onUndo' | 'on
   const hidden = set.entities.length - visible.length;
   return (
     <div className="cs-guide">
-      {visible.map(entity => <ChangeSetEntityRow key={entity.entry.id} entity={entity} onUndo={onUndo} onDetails={onDetails} />)}
+      {visible.map(entity => <ChangeSetEntityRow key={entity.entry.id} entity={entity} onUndo={onUndo} onDetails={onDetails}
+        showDetails={set.entries.length !== 1} />)}
       {hidden > 0 && <button type="button" className="cs-link" onClick={() => setShowAll(true)}>Show {hidden} more</button>}
     </div>
   );

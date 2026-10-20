@@ -111,7 +111,8 @@ import {
   ReasoningJobTimeoutError,
   waitForReasoningJob,
 } from "../services/reasoningJobWait";
-import { resolveMutationActor } from "../utils/mutationActor";
+import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
+import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
@@ -205,7 +206,8 @@ import {
   type CodeViewPageWindow,
 } from "./dashboard-parts/codeViewPaging";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
-import { buildEntityIri, isBulkChangeIri } from "../utils/entityIri";
+import { buildEntityIri, isBulkChangeIri, labelForNewEntity } from "../utils/entityIri";
+import { requestChangeAssistantTab } from "../utils/changeAssistantNav";
 import { clearChildrenOf, keepPendingChildren } from "../utils/treeChildren";
 import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
 import { DRAFT_COPY_MAX_MISSING, DRAFT_COPY_MAX_WAIT_MS, ROLLBACK_REFRESH_DELAY_MS } from "../utils/refreshTiming";
@@ -499,7 +501,7 @@ const TopMenuBar = ({
             </button>
             {openMenu === item && (
               <div
-                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" ? "w-[min(360px,calc(100vw-1rem))]" : "w-48 max-w-[calc(100vw-1rem)]"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
+                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" || item === "Edit" ? "w-[min(360px,calc(100vw-1rem))]" : "w-48 max-w-[calc(100vw-1rem)]"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
                 style={{ borderColor: "var(--color-border)" }}
               >
                 {item === "Tools" ? (
@@ -1670,6 +1672,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
     notificationService.success("Pull Complete", "Public changes were merged into your draft.");
     fetchData(projectId, false);
+    announceMutationApplied(projectId, [{ type: "draftPull" }], undefined, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
   }, [projectId]);
 
@@ -7613,6 +7616,7 @@ const updateItemInState = useCallback(
     }
   }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree, shouldDeferHierarchyDuringFileOpen, user]);
 
+
   useEffect(() => {
     setHierarchyAnnotationProperties(
       annotationProperties.map((p) => ({ id: p.id, label: p.label }))
@@ -8023,7 +8027,7 @@ const updateItemInState = useCallback(
           const classId = (edit as any).nodeId || (edit as any).iri || (edit as any).id;
           if (classId) {
             console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
-            const userId = user?.email || user?.userId;
+            const userId = readerUserId(user);
             const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
             setTimeout(() => {
               apiClient
@@ -8928,6 +8932,7 @@ const updateItemInState = useCallback(
         );
 
         await fetchData(projectId, false, undefined, true);
+        announceMutationApplied(projectId, [{ type: "draftPublish" }], undefined, false);
         void fetchCodeViewContent(codeViewFormat, false, true);
         collaborationPanelRef.current?.refreshChanges();
       } else {
@@ -10205,7 +10210,7 @@ const updateItemInState = useCallback(
         await ontologyMutationService.createClass(
           projectId,
           newIri,
-           '',
+          labelForNewEntity(name || "NewClass"),
           parentIri,
           user?.email || "anonymous",
           user?.username || "Anonymous",
@@ -10482,7 +10487,7 @@ const updateItemInState = useCallback(
           await ontologyMutationService.createClass(
             projectId,
             newIri,
-             '',
+            labelForNewEntity(name),
             parentIri,
             user?.email || "anonymous",
             user?.username || "Anonymous",
@@ -11266,24 +11271,14 @@ const updateItemInState = useCallback(
 
       try {
         const currentParent = findParentNode(classHierarchy, classId);
-        if (currentParent && currentParent.id !== newParentId) {
-          await ontologyMutationService.deleteSubClassOf(
-            projectId,
-            classId,
-            currentParent.id,
-            user?.email,
-            user?.username || user?.email,
-          );
-        }
-        if (newParentId !== owlThing) {
-          await ontologyMutationService.addSubClassOf(
-            projectId,
-            classId,
-            newParentId,
-            user?.email,
-            user?.username || user?.email,
-          );
-        }
+        await ontologyMutationService.moveSubClassOf(
+          projectId,
+          classId,
+          currentParent?.id ?? null,
+          newParentId,
+          user?.email,
+          user?.username || user?.email,
+        );
         await refreshClassHierarchy();
         setExpandedNodes((prev) => (prev.includes(newParentId) ? prev : [...prev, newParentId]));
         markAsUnsaved();
@@ -11623,7 +11618,13 @@ const updateItemInState = useCallback(
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mainTab, entitiesTab, handleAddItem, handleDeleteItem, selectedItem]);
 
-  const ontologyUndoRedo = useOntologyUndoRedo({ projectId, onOpenHistory: () => setMainTab("Changes") });
+  const ontologyUndoRedo = useOntologyUndoRedo({
+    projectId,
+    onOpenHistory: () => {
+      requestChangeAssistantTab("changes");
+      setMainTab("Changes");
+    },
+  });
 
   const handleExecuteDlQuery = () => {
     setIsDlQueryLoading(true);
@@ -11849,6 +11850,43 @@ const updateItemInState = useCallback(
 
   const refreshAfterBulkWriteRef = useRef(refreshAfterBulkWrite);
   refreshAfterBulkWriteRef.current = refreshAfterBulkWrite;
+
+  const entityRefreshersRef = useRef<Record<EntityList, () => unknown>>({
+    classes: refreshClassHierarchy,
+    properties: refreshProperties,
+    annotationProperties: handleRefreshAnnotationProperties,
+    individuals: handleRefreshIndividuals,
+    datatypes: handleRefreshDatatypes,
+  });
+  entityRefreshersRef.current = {
+    classes: refreshClassHierarchy,
+    properties: refreshProperties,
+    annotationProperties: handleRefreshAnnotationProperties,
+    individuals: handleRefreshIndividuals,
+    datatypes: handleRefreshDatatypes,
+  };
+
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const pending = new Set<EntityList>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = subscribeCommittedChange((change) => {
+      if (change.projectId !== projectId) return;
+      const lists = affectedLists(change);
+      if (!lists.length) return;
+      lists.forEach((list) => pending.add(list));
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const due = Array.from(pending);
+        pending.clear();
+        due.forEach((list) => void entityRefreshersRef.current[list]());
+      }, 400);
+    });
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+    };
+  }, [projectId]);
 
   const recovery = useProjectRecovery(projectId || undefined, user?.token, {
     onRecoveryChanged: () => setRecoveryVersion((v) => v + 1),
@@ -14543,6 +14581,7 @@ const updateItemInState = useCallback(
               <div className="flex-1 min-h-0">
                 <SparqlPluginComponent
                   projectId={projectId}
+                  draftMode={!isDesktop() && syncMode === "private"}
                   prefixes={(metadata as any)?.prefixes || []}
                   context={{
                     apiClient,
@@ -14586,12 +14625,16 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
+          const graphActor = resolveMutationActor(user?.userId || user?.email, user?.username);
           return (
             <PluginComponent
               projectId={projectId}
               context={{
                 projectId,
                 apiBaseUrl: getBaseUrl(),
+                draftMode: !isDesktop() && syncMode === "private",
+                userId: graphActor.userId,
+                username: graphActor.username,
                 permissions: {
                   canEdit: !readonlyMode,
                   canDelete: !readonlyMode,
@@ -14666,7 +14709,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={!isDesktop() && syncMode === "private"} />;
         }
 
         return (
@@ -14709,6 +14752,8 @@ const updateItemInState = useCallback(
               onImported={() => {
                 codeViewDirtyRef.current = true;
                 refreshAfterBulkWriteRef.current("spreadsheetImport");
+                if (metadataRefreshTimerRef.current) clearTimeout(metadataRefreshTimerRef.current);
+                metadataRefreshTimerRef.current = setTimeout(() => silentRefreshMetadata(), 1500);
               }}
             />
           );
@@ -18281,6 +18326,20 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
             }
 
             console.log("[Dashboard] Current projectId:", projectId);
+            announceMutationApplied(targetProjectId, [{ type: "ontologyMerge" }], undefined, isDraftScopeActive());
+
+            if (targetProjectId === projectId && isDraftScopeActive()) {
+              try {
+                await fetchData(targetProjectId, true, undefined, true);
+                await refreshClassHierarchy();
+                await updateDraftCount();
+                notificationService.success("Merge Complete", "The file was merged into your private draft.");
+              } catch (draftRefreshError) {
+                console.error("[Dashboard] Failed to refresh after a draft merge:", draftRefreshError);
+                notificationService.error("Refresh Failed", "The merge was applied to your draft. Refresh to see it.");
+              }
+              return;
+            }
 
             if (targetProjectId === projectId) {
               console.log("[Dashboard] ✅ Refreshing current file data after merge");

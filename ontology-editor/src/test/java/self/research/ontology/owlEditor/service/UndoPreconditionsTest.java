@@ -54,6 +54,22 @@ class UndoPreconditionsTest {
     }
 
     @Test
+    void allowsASpreadsheetImportWhoseIdIsNotAnEntity() {
+        when(facts.entityExists(eq(P), anyString(), anyBoolean(), any())).thenReturn(false);
+        HistoryChange imported = created("import-1");
+        imported.setOperationType("SPREADSHEET_IMPORT");
+        assertEquals(Optional.empty(), guard.violation(P, List.of(imported)));
+    }
+
+    @Test
+    void stillRefusesAnAlreadyUndoneSpreadsheetImport() {
+        HistoryChange imported = created("import-1");
+        imported.setOperationType("SPREADSHEET_IMPORT");
+        imported.setReverted(true);
+        assertTrue(guard.violation(P, List.of(imported)).isPresent());
+    }
+
+    @Test
     void allowsAnUntouchedCreation() {
         assertEquals(Optional.empty(), guard.violation(P, List.of(created(A))));
     }

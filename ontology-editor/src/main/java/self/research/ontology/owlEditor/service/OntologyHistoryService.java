@@ -186,6 +186,7 @@ public class OntologyHistoryService {
     private static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
     private static final String RDFS_SUBPROPERTYOF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
     private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    private static final String OWL_DISJOINT_WITH = "http://www.w3.org/2002/07/owl#disjointWith";
 
     private static final java.util.Set<String> ENTITY_LEVEL_OP_TYPES = java.util.Set.of(
             "createClass", "deleteClass",
@@ -226,9 +227,9 @@ public class OntologyHistoryService {
                 if (op == primary) {
                     continue;
                 }
-                Map<String, String> sc = mutationOpToSubChange(op);
-                if (sc != null) {
-                    subChanges.add(sc);
+                List<Map<String, String>> scs = mutationOpToSubChanges(op);
+                if (!scs.isEmpty()) {
+                    subChanges.addAll(scs);
                 } else {
                     unsupported.add(op);
                 }
@@ -247,9 +248,11 @@ public class OntologyHistoryService {
             } else if (!subChanges.isEmpty()) {
                 Map<String, String> first = subChanges.get(0);
                 boolean firstIsAddition = "true".equals(first.get("addition"));
+                boolean firstIsUpdate = subChanges.stream().anyMatch(sc -> "true".equals(sc.get("addition")) && subChanges.stream()
+                        .anyMatch(other -> "false".equals(other.get("addition")) && java.util.Objects.equals(other.get("predicate"), sc.get("predicate"))));
                 primaryOpType = RDFS_SUBCLASSOF.equals(first.get("predicate"))
-                        ? (firstIsAddition ? "addSubClassOf" : "removeSubClassOf")
-                        : (firstIsAddition ? "addStatement" : "removeStatement");
+                        ? (firstIsUpdate ? "updateSubClassOf" : firstIsAddition ? "addSubClassOf" : "removeSubClassOf")
+                        : (firstIsUpdate ? "updateStatement" : firstIsAddition ? "addStatement" : "removeStatement");
                 label = group.get(0).label();
                 description = "Modified " + subChanges.size() + " propert"
                         + (subChanges.size() == 1 ? "y" : "ies") + " (" + describeSubChanges(subChanges) + ")";
@@ -271,6 +274,28 @@ public class OntologyHistoryService {
         return origin.changeSetId();
     }
 
+    private List<Map<String, String>> mutationOpToSubChanges(
+            self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op) {
+        String type = op.type();
+        if ("updateSubClassOf".equals(type) || "updateDisjointWith".equals(type)) {
+            String predicate = "updateSubClassOf".equals(type) ? RDFS_SUBCLASSOF : OWL_DISJOINT_WITH;
+            String category = determineEntityType(type);
+            Map<String, String> removed = new HashMap<>();
+            removed.put("predicate", predicate);
+            removed.put("oldValue", op.value());
+            removed.put("addition", "false");
+            removed.put("category", category);
+            Map<String, String> added = new HashMap<>();
+            added.put("predicate", predicate);
+            added.put("newValue", op.target());
+            added.put("addition", "true");
+            added.put("category", category);
+            return List.of(removed, added);
+        }
+        Map<String, String> single = mutationOpToSubChange(op);
+        return single == null ? List.of() : List.of(single);
+    }
+
     private Map<String, String> mutationOpToSubChange(
             self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op) {
         String type = op.type();
@@ -280,6 +305,10 @@ public class OntologyHistoryService {
         boolean addition = type.startsWith("add") || type.startsWith("create");
         Map<String, String> sc = new HashMap<>();
         switch (type) {
+            case "addDisjointWith", "deleteDisjointWith" -> {
+                sc.put("predicate", OWL_DISJOINT_WITH);
+                sc.put(addition ? "newValue" : "oldValue", op.target());
+            }
             case "addSubClassOf", "deleteSubClassOf" -> {
                 sc.put("predicate", RDFS_SUBCLASSOF);
                 sc.put(addition ? "newValue" : "oldValue", op.target());

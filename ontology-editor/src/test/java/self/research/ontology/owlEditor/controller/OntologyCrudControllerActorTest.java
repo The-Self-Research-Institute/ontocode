@@ -34,7 +34,7 @@ class OntologyCrudControllerActorTest {
     private static MockHttpServletRequest signedIn(String email) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                ("{\"email\":\"" + email + "\"}").getBytes(StandardCharsets.UTF_8));
+                ("{\"email\":\"" + email + "\",\"userId\":\"mongo-1\"}").getBytes(StandardCharsets.UTF_8));
         request.addHeader("Authorization", "Bearer h." + payload + ".s");
         return request;
     }
@@ -57,7 +57,49 @@ class OntologyCrudControllerActorTest {
     }
 
     @Test
+    void aDraftEditWithoutAUserIdGoesToTheSignedInUsersDraft() {
+        ExactChangeRecorder recorder = mock(ExactChangeRecorder.class);
+        when(recorder.recordGrouped(anyString(), anyBoolean(), anyString(), anyString(), any(), any())).thenReturn("cs");
+        OntologyCrudController controller = new OntologyCrudController(mock(OntologyMutationService.class),
+                mock(DraftTrackingService.class), mock(CollaborativeEditService.class), mock(ProjectMetadataService.class),
+                new ProjectWriteLockRegistry(), recorder);
+        controller.mutate("proj", request(null), true, signedIn("real@x.org"));
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(recorder).recordGrouped(eq("proj"), eq(true), user.capture(), anyString(), any(), any());
+        assertEquals("mongo-1", user.getValue());
+    }
+
+    @Test
     void withoutASignedInUserTheClientsIdIsKept() {
         assertEquals("u1", publicEditIsRecordedFor("u1", new MockHttpServletRequest()).getValue());
+    }
+
+    private String draftEditName(String sentName, MockHttpServletRequest http) {
+        ExactChangeRecorder recorder = mock(ExactChangeRecorder.class);
+        when(recorder.recordGrouped(anyString(), anyBoolean(), anyString(), anyString(), any(), any())).thenReturn("cs");
+        OntologyCrudController controller = new OntologyCrudController(mock(OntologyMutationService.class),
+                mock(DraftTrackingService.class), mock(CollaborativeEditService.class), mock(ProjectMetadataService.class),
+                new ProjectWriteLockRegistry(), recorder);
+        controller.mutate("proj", new OntologyCrudController.MutationRequest(request(null).ops(), null, sentName, "s1"), true, http);
+        ArgumentCaptor<String> name = ArgumentCaptor.forClass(String.class);
+        verify(recorder).recordGrouped(eq("proj"), eq(true), anyString(), name.capture(), any(), any());
+        return name.getValue();
+    }
+
+    @Test
+    void aDraftEditIsNamedAfterTheSignedInUserWhenTheClientSentAPlaceholder() {
+        assertEquals("real@x.org", draftEditName("Anonymous", signedIn("real@x.org")));
+        assertEquals("real@x.org", draftEditName(null, signedIn("real@x.org")));
+        assertEquals("real@x.org", draftEditName("", signedIn("real@x.org")));
+    }
+
+    @Test
+    void aDraftEditKeepsARealNameTheClientSent() {
+        assertEquals("Sam Lee", draftEditName("Sam Lee", signedIn("real@x.org")));
+    }
+
+    @Test
+    void aDraftEditWithNobodySignedInIsStillAnonymous() {
+        assertEquals("Anonymous", draftEditName(null, new MockHttpServletRequest()));
     }
 }

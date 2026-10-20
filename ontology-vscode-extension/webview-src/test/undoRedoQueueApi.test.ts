@@ -25,9 +25,7 @@ describe('undo queue api', () => {
     expect(result?.steps[0].changeId).toBe('a');
   });
 
-  it('treats a missing endpoint as unsupported and rethrows other failures', async () => {
-    get.mockRejectedValueOnce(httpError(404));
-    expect(await undoRedoService.fetchQueue('p', 1)).toBeNull();
+  it('lets a failed queue request reach the caller', async () => {
     get.mockRejectedValueOnce(httpError(500));
     await expect(undoRedoService.fetchQueue('p', 1)).rejects.toBeTruthy();
   });

@@ -97,4 +97,38 @@ class EntityRenameServiceTest {
                 anyString(), anyString(), anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any(),
                 anyString(), anyString(), anyString());
     }
+
+    @Test
+    void renameChecksTheInMemoryModelOnDesktopSoAJustCreatedClassCanBeRenamed() throws Exception {
+        DesktopOwlApiMutationService desktop = org.mockito.Mockito.mock(DesktopOwlApiMutationService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "desktopMutation", desktop);
+        when(desktop.declaresEntity("proj-1", OLD_IRI)).thenReturn(java.util.Optional.of(true));
+        when(desktop.declaresEntity("proj-1", NEW_IRI)).thenReturn(java.util.Optional.of(false));
+
+        service.renameEntity("proj-1", OLD_IRI, NEW_IRI, "u1", "User One");
+
+        verify(ontologyMutationService).applyRawUpdate(eq("proj-1"), anyString(), eq(false), isNull());
+        org.mockito.Mockito.verifyNoInteractions(datasetService);
+    }
+
+    @Test
+    void renameRefusesAnUnknownClassOnDesktop() {
+        DesktopOwlApiMutationService desktop = org.mockito.Mockito.mock(DesktopOwlApiMutationService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "desktopMutation", desktop);
+        when(desktop.declaresEntity("proj-1", OLD_IRI)).thenReturn(java.util.Optional.of(false));
+
+        assertThrows(IllegalArgumentException.class, () -> service.renameEntity("proj-1", OLD_IRI, NEW_IRI, "u1", "User One"));
+    }
+
+    @Test
+    void renameFallsBackToTheSearchIndexWhenTheModelIsNotInMemory() throws Exception {
+        DesktopOwlApiMutationService desktop = org.mockito.Mockito.mock(DesktopOwlApiMutationService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "desktopMutation", desktop);
+        when(desktop.declaresEntity(anyString(), anyString())).thenReturn(java.util.Optional.empty());
+        when(datasetService.execAsk(eq("proj-1"), anyString())).thenReturn(true, false);
+
+        service.renameEntity("proj-1", OLD_IRI, NEW_IRI, "u1", "User One");
+
+        verify(ontologyMutationService).applyRawUpdate(eq("proj-1"), anyString(), eq(false), isNull());
+    }
 }

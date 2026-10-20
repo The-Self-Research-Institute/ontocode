@@ -10,6 +10,12 @@ export function sanitizeIriFragment(name: string): string {
   return name.trim().replace(/\s+/g, '_');
 }
 
+export function labelForNewEntity(rawName: string): string {
+  const trimmed = rawName.trim();
+  if (!trimmed || isFullIriString(trimmed)) return '';
+  return sanitizeIriFragment(trimmed) === trimmed ? '' : trimmed;
+}
+
 export function buildEntityIri(ontologyBaseIri: string | undefined, rawName: string): string {
   const trimmed = rawName.trim();
   if (!trimmed) return '';
