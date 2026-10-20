@@ -55,6 +55,34 @@ export function emitCommittedChange(input: CommittedChangeInput): CommittedChang
   return change;
 }
 
+export type EntityList = 'classes' | 'properties' | 'annotationProperties' | 'individuals' | 'datatypes';
+
+const WHOLE_ONTOLOGY_OPS = ['ontologyMerge', 'draftPublish', 'draftPull'];
+
+const OPS_BY_LIST: Record<EntityList, string[]> = {
+  classes: ['createClass', 'deleteClass', 'addSubClassOf', 'deleteSubClassOf', 'updateSubClassOf', 'updateClassLabel', ...WHOLE_ONTOLOGY_OPS],
+  properties: [
+    'createObjectProperty',
+    'createDataProperty',
+    'deleteObjectProperty',
+    'deleteDataProperty',
+    'addSubPropertyOf',
+    'deleteSubPropertyOf',
+    'updateSubPropertyOf',
+    ...WHOLE_ONTOLOGY_OPS,
+  ],
+  annotationProperties: ['createAnnotationProperty', 'deleteAnnotationProperty', ...WHOLE_ONTOLOGY_OPS],
+  individuals: ['createIndividual', 'deleteIndividual', 'addClassAssertion', 'removeClassAssertion', ...WHOLE_ONTOLOGY_OPS],
+  datatypes: ['createDatatype', 'deleteDatatype', ...WHOLE_ONTOLOGY_OPS],
+};
+
+export function affectedLists(change: CommittedChange): EntityList[] {
+  if (change.direction !== 'APPLY') return [];
+  return (Object.keys(OPS_BY_LIST) as EntityList[]).filter((list) =>
+    change.opTypes.some((type) => OPS_BY_LIST[list].includes(type)),
+  );
+}
+
 export function subscribeCommittedChange(handler: (change: CommittedChange) => void): () => void {
   const listener = (event: Event) => handler((event as CustomEvent<CommittedChange>).detail);
   window.addEventListener(COMMITTED_CHANGE_EVENT, listener);

@@ -82,6 +82,7 @@ import { applyVowlTransform, isThingIri, vowlOriginalNodeId, buildVowlNeighborho
 import { GraphToolbar, RELATIONSHIP_VISIBILITY_CONTROLS } from './components/GraphToolbar';
 import { WebGLGraphView, buildBenchmarkData, type WebGLCameraHandle } from './renderers/WebGLGraphView';
 import { isWebGLAvailable } from './renderers/graphAdapter';
+import { announceGraphMutation, installGraphCacheInvalidation, subscribeGraphRefresh } from './services/mutationRefresh';
 
 interface D3Node extends OntologyNode, d3.SimulationNodeDatum {
   x?: number;
@@ -202,20 +203,7 @@ const getReadableTextColor = (hex: string): string => {
 };
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('ontology:mutated', ((e: CustomEvent) => {
-    try {
-      const mutatedProjectId = e?.detail?.projectId;
-      if (mutatedProjectId) {
-        sessionStorage.removeItem(`ontocode:graphView:${mutatedProjectId}`);
-        sessionStorage.removeItem(`ontocode:graphView:${mutatedProjectId}:draft`);
-      } else {
-        Object.keys(sessionStorage)
-          .filter((k) => k.startsWith('ontocode:graphView:'))
-          .forEach((k) => sessionStorage.removeItem(k));
-      }
-    } catch {
-    }
-  }) as EventListener);
+  installGraphCacheInvalidation();
 }
 
 const DEFAULT_SETTINGS: GraphSettings = {
@@ -5376,10 +5364,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
     });
 
+    const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      const payload = await response.json().catch(() => null);
       throw new Error(payload?.message || `Ontology mutation failed (${response.status})`);
     }
+    announceGraphMutation(projectId, ops, payload?.changeSetId, draftMode);
   }, [context, projectId]);
 
   const sanitizeLabelFragment = useCallback((label: string) => {
@@ -5523,6 +5512,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
       const result = await response.json();
       console.log('[Graph Dialog] Backend response:', result);
+      announceGraphMutation(projectId, [{ type: 'createClass', iri: newIri }], result?.changeSetId, draftMode);
 
       const newNode: OntologyNode = {
         id: newIri,
@@ -6136,24 +6126,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   useEffect(() => {
     if (!projectId) return;
-    let refetchQueued = false;
-    const handleMutation = () => {
-      if (refetchQueued) return;
-      refetchQueued = true;
-      setTimeout(() => {
-        refetchQueued = false;
-        console.log('[AdvancedGraphView] 🔄 Ontology mutated elsewhere — refetching graph data');
-        fetchGraphData({ bypassCache: true });
-      }, 500);
-    };
-    window.addEventListener('graph-view:class-created', handleMutation as EventListener);
-    window.addEventListener('graph-view:class-deleted', handleMutation as EventListener);
-    window.addEventListener('ontology:mutated', handleMutation as EventListener);
-    return () => {
-      window.removeEventListener('graph-view:class-created', handleMutation as EventListener);
-      window.removeEventListener('graph-view:class-deleted', handleMutation as EventListener);
-      window.removeEventListener('ontology:mutated', handleMutation as EventListener);
-    };
+    return subscribeGraphRefresh(() => {
+      console.log('[AdvancedGraphView] 🔄 Ontology changed elsewhere — refetching graph data');
+      fetchGraphData({ bypassCache: true });
+    });
   }, [projectId, fetchGraphData]);
 
   useEffect(() => {
