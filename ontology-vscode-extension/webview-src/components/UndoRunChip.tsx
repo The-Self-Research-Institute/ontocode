@@ -30,7 +30,7 @@ export default function UndoRunChip({ status, onClick }: { status: UndoRunStatus
       type="button"
       onClick={onClick}
       aria-expanded={status.panelOpen}
-      title="Show undo progress"
+      title={`${chipText(status)} - click for details`}
       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold max-w-[16rem] sm:max-w-none truncate cursor-pointer ${toneOf(status)}`}
     >
       {spinning && (
