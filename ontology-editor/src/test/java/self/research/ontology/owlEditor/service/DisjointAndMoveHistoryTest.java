@@ -61,18 +61,22 @@ class DisjointAndMoveHistoryTest {
     @Test
     void changingAParentRecordsTheOldAndTheNewParent() {
         Map<String, Object> row = record(op("updateSubClassOf", "http://x/Test3", "http://x/old", "http://x/new"));
-        assertEquals(SUBCLASS, subs(row).get(0).get("predicate"));
+        assertEquals(2, subs(row).size());
         assertEquals("http://x/old", subs(row).get(0).get("oldValue"));
-        assertEquals("http://x/new", subs(row).get(0).get("newValue"));
+        assertEquals("false", subs(row).get(0).get("addition"));
+        assertEquals("http://x/new", subs(row).get(1).get("newValue"));
+        assertEquals("true", subs(row).get(1).get("addition"));
+        assertEquals(SUBCLASS, subs(row).get(1).get("predicate"));
         assertEquals("updateSubClassOf", row.get("operationType"));
     }
 
     @Test
     void changingADisjointClassRecordsTheOldAndTheNewClass() {
         Map<String, Object> row = record(op("updateDisjointWith", "http://x/Test1", "http://x/old", "http://x/new"));
+        assertEquals(2, subs(row).size());
         assertEquals(DISJOINT, subs(row).get(0).get("predicate"));
         assertEquals("http://x/old", subs(row).get(0).get("oldValue"));
-        assertEquals("http://x/new", subs(row).get(0).get("newValue"));
+        assertEquals("http://x/new", subs(row).get(1).get("newValue"));
         assertEquals("updateStatement", row.get("operationType"));
     }
 
@@ -90,6 +94,38 @@ class DisjointAndMoveHistoryTest {
         verify(sync).syncChange(eq("proj"), anyString(), data.capture());
         assertEquals("updateSubClassOf", data.getValue().get("operationType"));
         assertEquals(2, subs(data.getValue()).size());
+    }
+
+    private static self.research.ontology.owlEditor.model.HistoryChange.SubChange sub(String id, String predicate, String oldValue, String newValue, boolean addition) {
+        var sc = new self.research.ontology.owlEditor.model.HistoryChange.SubChange();
+        sc.setId(id);
+        sc.setPredicate(predicate);
+        sc.setOldValue(oldValue);
+        sc.setNewValue(newValue);
+        sc.setAddition(addition);
+        return sc;
+    }
+
+    @Test
+    void undoingAParentChangeRestoresTheOldParentAndRemovesTheNewOne() {
+        var change = new self.research.ontology.owlEditor.model.HistoryChange();
+        change.setEntityIRI("http://x/Test3");
+        var plan = new RollbackMutationPlanner().planSubChanges(change, List.of(
+                sub("1", SUBCLASS, "http://x/old", null, false),
+                sub("2", SUBCLASS, null, "http://x/new", true)), true);
+        assertEquals(List.of("addSubClassOf:http://x/old", "deleteSubClassOf:http://x/new"),
+                plan.mutations().stream().map(m -> m.type() + ":" + m.target()).toList());
+    }
+
+    @Test
+    void undoingADisjointAddRemovesIt() {
+        var change = new self.research.ontology.owlEditor.model.HistoryChange();
+        change.setEntityIRI("http://x/Test1");
+        var plan = new RollbackMutationPlanner().planSubChanges(change, List.of(
+                sub("1", DISJOINT, null, "http://x/test4", true)), true);
+        assertEquals(1, plan.rawUpdates().size());
+        assertEquals(true, plan.rawUpdates().get(0).contains("DELETE"));
+        assertEquals(true, plan.unsupported().isEmpty());
     }
 
     @Test

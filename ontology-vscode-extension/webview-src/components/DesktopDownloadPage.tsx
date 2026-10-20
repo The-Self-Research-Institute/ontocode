@@ -266,7 +266,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
                     }`}
                   >
                     {PLATFORM_META[p].icon === Monitor ? <Monitor size={14} /> : <Terminal size={14} />}
-                    {mac ? "macOS" : PLATFORM_META[p].label}
+                    {mac ? "Mac" : PLATFORM_META[p].label}
                   </button>
                 );
               })}
@@ -279,7 +279,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             <div>
               <h2 className="text-xl font-semibold mb-1 flex items-center gap-2">
                 <PlatformIcon size={22} className="text-blue-400" />
-                {platform.startsWith("mac-") ? "macOS" : PLATFORM_META[platform].label}
+                {platform.startsWith("mac-") ? "Mac" : PLATFORM_META[platform].label}
               </h2>
               <p className="text-sm text-white/50">
                 {PLATFORM_META[platform].os}
