@@ -54,9 +54,9 @@ export default function UndoRunPanel({ status, menu }: { status: UndoRunStatus; 
       {status.finishedItems.length > 0 && (
         <ul className="border-t pt-1 space-y-0.5 opacity-80" style={{ borderColor: "var(--color-border)" }}>
           {status.finishedItems.map((entry, index) => (
-            <li key={`${entry.label}-${index}`} className="flex justify-between gap-2">
-              <span className="truncate">{entry.label}</span>
-              <span>done</span>
+            <li key={`${entry.label}-${index}`} className="flex items-start justify-between gap-2">
+              <span className="min-w-0 break-words">{entry.label}</span>
+              <span className="shrink-0">done</span>
             </li>
           ))}
         </ul>
