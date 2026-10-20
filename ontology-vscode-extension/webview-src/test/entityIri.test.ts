@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEntityIri } from "../utils/entityIri";
+import { buildEntityIri, labelForNewEntity } from "../utils/entityIri";
 
 describe("buildEntityIri", () => {
   it("adds a hash after an ontology IRI that has none", () => {
@@ -28,5 +28,26 @@ describe('isBulkChangeIri', () => {
     expect(isBulkChangeIri('urn:ontocode:spreadsheet-import:9')).toBe(true);
     expect(isBulkChangeIri('http://example.org/A')).toBe(false);
     expect(isBulkChangeIri(undefined)).toBe(false);
+  });
+});
+
+describe("labelForNewEntity", () => {
+  it("keeps the typed name as the label when the address had to replace spaces", () => {
+    expect(labelForNewEntity("thick crust")).toBe("thick crust");
+    expect(labelForNewEntity("  Thick   crust ")).toBe("Thick   crust");
+  });
+
+  it("adds no label when the name is already a valid address fragment", () => {
+    expect(labelForNewEntity("ThickCrust")).toBe("");
+    expect(labelForNewEntity("thick_crust")).toBe("");
+  });
+
+  it("adds no label for an empty name or a full address", () => {
+    expect(labelForNewEntity("   ")).toBe("");
+    expect(labelForNewEntity("http://example.org/onto#Crust")).toBe("");
+  });
+
+  it("matches the address that buildEntityIri produces", () => {
+    expect(buildEntityIri("http://example.org/onto", "thick crust")).toBe("http://example.org/onto#thick_crust");
   });
 });

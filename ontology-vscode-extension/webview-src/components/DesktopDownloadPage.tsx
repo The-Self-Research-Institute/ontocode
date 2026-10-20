@@ -12,8 +12,8 @@ type PlatformKey = "windows-x64" | "linux-x64" | "mac-arm64" | "mac-x64";
 const PLATFORM_META: Record<PlatformKey, { label: string; icon: typeof Monitor; os: string }> = {
   "windows-x64": { label: "Windows", icon: Monitor, os: "Windows 10 or later (64-bit x64 or ARM64)" },
   "linux-x64": { label: "Linux", icon: Terminal, os: "Ubuntu 20.04+ or equivalent (AppImage — runs on most distros)" },
-  "mac-arm64": { label: "macOS (Apple Silicon)", icon: Monitor, os: "Macs with an M1, M2, M3 or M4 chip" },
-  "mac-x64": { label: "macOS (Intel)", icon: Monitor, os: "Macs with an Intel processor (sold before about 2021)" },
+  "mac-arm64": { label: "Mac (Apple Silicon)", icon: Monitor, os: "Macs with an M1, M2, M3 or M4 chip" },
+  "mac-x64": { label: "Mac (Intel)", icon: Monitor, os: "Macs with an Intel processor (sold before about 2021)" },
 };
 
 function defaultPlatform(): PlatformKey {
@@ -247,8 +247,8 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           </p>
           <p className="text-sm text-white/40 mt-3">
             {availablePlatforms.some((p) => p.startsWith("mac-"))
-              ? "Available for Windows, Linux and macOS."
-              : "macOS builds are coming soon. Windows and Linux are available now."}
+              ? "Available for Windows, Linux and Mac."
+              : "Mac builds are coming soon. Windows and Linux are available now."}
           </p>
 
           {tabPlatforms.length > 1 && (

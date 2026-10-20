@@ -154,5 +154,5 @@ export function useOntologyUndoRedo({ projectId, onOpenHistory }: Options) {
     refresh: () => void refresh(),
   };
 
-  return { ...menu, menu, busy: !settled, state, refresh };
+  return { menu };
 }

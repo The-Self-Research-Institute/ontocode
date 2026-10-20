@@ -44,14 +44,14 @@ describe("undo menu state", () => {
     const fetchState = vi.spyOn(undoRedoService, "fetchState").mockResolvedValue(nothing);
     await act(async () => root.render(<Probe projectId="p1" />));
     await wait(30);
-    expect(latest?.canUndo).toBe(false);
-    expect(latest?.undoLabel).toBeUndefined();
+    expect(latest?.menu.canUndo).toBe(false);
+    expect(latest?.menu.undoLabel).toBeUndefined();
 
     fetchState.mockResolvedValue(something);
     act(() => { emitCommittedChange({ projectId: "p1", direction: "APPLY", changeSetId: "cs-1", draft: false }); });
     await wait(450);
-    expect(latest?.canUndo).toBe(true);
-    expect(latest?.undoLabel).toBe("Created class Pizza");
+    expect(latest?.menu.canUndo).toBe(true);
+    expect(latest?.menu.undoLabel).toBe("Created class Pizza");
   });
 
   it("ignores edits made in another project", async () => {

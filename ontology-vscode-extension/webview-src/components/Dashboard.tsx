@@ -112,6 +112,7 @@ import {
   waitForReasoningJob,
 } from "../services/reasoningJobWait";
 import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
+import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
@@ -205,7 +206,7 @@ import {
   type CodeViewPageWindow,
 } from "./dashboard-parts/codeViewPaging";
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
-import { buildEntityIri, isBulkChangeIri } from "../utils/entityIri";
+import { buildEntityIri, isBulkChangeIri, labelForNewEntity } from "../utils/entityIri";
 import { requestChangeAssistantTab } from "../utils/changeAssistantNav";
 import { clearChildrenOf, keepPendingChildren } from "../utils/treeChildren";
 import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
@@ -1671,6 +1672,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
     notificationService.success("Pull Complete", "Public changes were merged into your draft.");
     fetchData(projectId, false);
+    announceMutationApplied(projectId, [{ type: "draftPull" }], undefined, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
   }, [projectId]);
 
@@ -7614,6 +7616,7 @@ const updateItemInState = useCallback(
     }
   }, [projectId, loadChildren, classInstanceCounts, applyInstanceCountsToTree, shouldDeferHierarchyDuringFileOpen, user]);
 
+
   useEffect(() => {
     setHierarchyAnnotationProperties(
       annotationProperties.map((p) => ({ id: p.id, label: p.label }))
@@ -8929,6 +8932,7 @@ const updateItemInState = useCallback(
         );
 
         await fetchData(projectId, false, undefined, true);
+        announceMutationApplied(projectId, [{ type: "draftPublish" }], undefined, false);
         void fetchCodeViewContent(codeViewFormat, false, true);
         collaborationPanelRef.current?.refreshChanges();
       } else {
@@ -10206,7 +10210,7 @@ const updateItemInState = useCallback(
         await ontologyMutationService.createClass(
           projectId,
           newIri,
-           '',
+          labelForNewEntity(name || "NewClass"),
           parentIri,
           user?.email || "anonymous",
           user?.username || "Anonymous",
@@ -10483,7 +10487,7 @@ const updateItemInState = useCallback(
           await ontologyMutationService.createClass(
             projectId,
             newIri,
-             '',
+            labelForNewEntity(name),
             parentIri,
             user?.email || "anonymous",
             user?.username || "Anonymous",
@@ -11846,6 +11850,43 @@ const updateItemInState = useCallback(
 
   const refreshAfterBulkWriteRef = useRef(refreshAfterBulkWrite);
   refreshAfterBulkWriteRef.current = refreshAfterBulkWrite;
+
+  const entityRefreshersRef = useRef<Record<EntityList, () => unknown>>({
+    classes: refreshClassHierarchy,
+    properties: refreshProperties,
+    annotationProperties: handleRefreshAnnotationProperties,
+    individuals: handleRefreshIndividuals,
+    datatypes: handleRefreshDatatypes,
+  });
+  entityRefreshersRef.current = {
+    classes: refreshClassHierarchy,
+    properties: refreshProperties,
+    annotationProperties: handleRefreshAnnotationProperties,
+    individuals: handleRefreshIndividuals,
+    datatypes: handleRefreshDatatypes,
+  };
+
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const pending = new Set<EntityList>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = subscribeCommittedChange((change) => {
+      if (change.projectId !== projectId) return;
+      const lists = affectedLists(change);
+      if (!lists.length) return;
+      lists.forEach((list) => pending.add(list));
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const due = Array.from(pending);
+        pending.clear();
+        due.forEach((list) => void entityRefreshersRef.current[list]());
+      }, 400);
+    });
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+    };
+  }, [projectId]);
 
   const recovery = useProjectRecovery(projectId || undefined, user?.token, {
     onRecoveryChanged: () => setRecoveryVersion((v) => v + 1),
@@ -18283,6 +18324,20 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
             }
 
             console.log("[Dashboard] Current projectId:", projectId);
+            announceMutationApplied(targetProjectId, [{ type: "ontologyMerge" }], undefined, isDraftScopeActive());
+
+            if (targetProjectId === projectId && isDraftScopeActive()) {
+              try {
+                await fetchData(targetProjectId, true, undefined, true);
+                await refreshClassHierarchy();
+                await updateDraftCount();
+                notificationService.success("Merge Complete", "The file was merged into your private draft.");
+              } catch (draftRefreshError) {
+                console.error("[Dashboard] Failed to refresh after a draft merge:", draftRefreshError);
+                notificationService.error("Refresh Failed", "The merge was applied to your draft. Refresh to see it.");
+              }
+              return;
+            }
 
             if (targetProjectId === projectId) {
               console.log("[Dashboard] ✅ Refreshing current file data after merge");

@@ -1,9 +1,10 @@
 import { CHECK_DELAY_MS, FINISHED_VISIBLE_MS, INFLIGHT_WAIT_MS, MAX_CHECKS, MAX_FINISHED_ITEMS, MAX_WAITING, REQUEST_TIMEOUT_MS } from './undoQueueSupport';
-import { TIMED_OUT, defaultQueueApi, detailOf, newOpId, pause, revalidate, stepFromHint, summaryOf, withTimeout } from './undoQueueSupport';
+import { TIMED_OUT, blockedText, defaultQueueApi, detailOf, pause, revalidate, stepFromHint, summaryOf, withTimeout } from './undoQueueSupport';
+import { newOpId } from '../utils/opId';
 import type { Entry, FinishedItem, PauseReason, PressResult, QueueApi, UndoKind, UndoRunPhase, UndoRunSnapshot } from './undoQueueSupport';
 import type { QueueResponse, QueueStep, StepOutcome, UndoState, UndoStep } from './undoRedoService';
 
-export * from './undoQueueSupport';
+export type { UndoRunSnapshot } from './undoQueueSupport';
 
 export function createUndoQueue(api: QueueApi = defaultQueueApi) {
   let epoch = 0;
@@ -18,7 +19,6 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
   let binding = 0;
   let redoWaiting = 0;
   let draining = false;
-  let legacy = false;
   let bindChain: Promise<unknown> = Promise.resolve();
   let inFlight: Promise<unknown> | null = null;
   let completed = 0;
@@ -179,26 +179,16 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
   }
 
   async function bind(pid: string, k: UndoKind, hint: UndoStep | undefined, myEpoch: number): Promise<PressResult> {
-    const ahead = [...(current ? [current] : []), ...entries];
     let step: QueueStep | undefined;
     let failure: string | undefined;
     if (k === 'redo') {
       step = stepFromHint(hint, k);
       if (!step) failure = 'Nothing to redo';
-    } else if (legacy) {
-      failure = ahead.length ? 'An undo is still running' : undefined;
-      step = ahead.length ? undefined : { changeId: '' };
     } else {
       try {
         for (let round = 0; round < 2 && !step && !failure; round += 1) {
           const known = [...(current ? [current] : []), ...entries];
           const response = await api.fetchQueue(pid, known.length + 1);
-          if (response === null) {
-            legacy = true;
-            failure = known.length ? 'An undo is still running' : undefined;
-            step = known.length ? undefined : { changeId: '' };
-            break;
-          }
           if (known.some((entry, index) => response.steps[index]?.changeId !== entry.step.changeId)) {
             if (round === 0) {
               if (inFlight) await Promise.race([inFlight, pause(INFLIGHT_WAIT_MS)]);
@@ -208,9 +198,7 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
           } else if (response.steps.length > known.length) {
             step = response.steps[known.length];
           } else {
-            failure = response.blocked
-              ? `Can't undo ${response.blocked.label || 'the next change'}: ${response.blocked.reason || 'it was built on'}`
-              : 'Nothing to undo';
+            failure = response.blocked ? blockedText(response.blocked) : 'Nothing to undo';
           }
         }
       } catch {
@@ -281,11 +269,9 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
     async resume(): Promise<void> {
       if (phase !== 'paused') return;
       const head = entries[0];
-      if (reason === 'Conflict' && !legacy && head) {
+      if (reason === 'Conflict' && head) {
         const verdict = await revalidate(api, projectId, entries);
-        if (verdict.legacy) {
-          legacy = true;
-        } else if (verdict.message) {
+        if (verdict.message) {
           message = verdict.message;
           item = verdict.item || item;
           publish();
@@ -311,7 +297,6 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
       redoWaiting = 0;
       draining = false;
       bindChain = Promise.resolve();
-      legacy = false;
       clearTimeout(finishTimer);
       phase = 'idle';
       reason = undefined;

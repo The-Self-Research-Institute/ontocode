@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { COMMITTED_CHANGE_EVENT, type CommittedChange } from '../utils/committedChange';
+import { subscribeCommittedChange, type CommittedChange } from '../utils/committedChange';
 
 const DEBOUNCE_MS = 250;
 
@@ -17,8 +17,7 @@ export function useCommittedChangeRefresh(
       return undefined;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const onChange = (event: Event) => {
-      const change = (event as CustomEvent<CommittedChange>).detail;
+    const unsubscribe = subscribeCommittedChange((change) => {
       if (!change || change.projectId !== projectId || !wanted.split(',').includes(change.direction)) {
         return;
       }
@@ -26,10 +25,9 @@ export function useCommittedChangeRefresh(
         clearTimeout(timer);
       }
       timer = setTimeout(() => latest.current(), DEBOUNCE_MS);
-    };
-    window.addEventListener(COMMITTED_CHANGE_EVENT, onChange);
+    });
     return () => {
-      window.removeEventListener(COMMITTED_CHANGE_EVENT, onChange);
+      unsubscribe();
       if (timer) {
         clearTimeout(timer);
       }

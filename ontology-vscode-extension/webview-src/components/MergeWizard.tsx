@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { draftBodyFields } from "../utils/draftScope";
 import {
   Upload,
   AlertTriangle,
@@ -206,6 +207,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       if (targetFileName) {
         queryParams.set("targetFileName", targetFileName);
       }
+      Object.entries(draftBodyFields()).forEach(([key, value]) => queryParams.set(key, value));
       let analyzeUrl = `/api/projects/${projectId}/merge/analyze`;
       if (queryParams.toString()) {
         analyzeUrl += `?${queryParams.toString()}`;
@@ -232,6 +234,7 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
       const formData = new FormData();
       formData.append("file", selectedFile);
       formData.append("strategy", mergeStrategy);
+      Object.entries(draftBodyFields()).forEach(([key, value]) => formData.append(key, value));
 
       if (mergeStrategy === "KEEP_BOTH" && renameSuffix) {
         formData.append("renameSuffix", renameSuffix);

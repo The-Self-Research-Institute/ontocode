@@ -204,22 +204,22 @@ public class OntologyMutationService {
     }
 
     public void apply(String projectId, List<MutationOp> ops) {
-        apply(projectId, ops, false, null, false);
+        apply(projectId, ops, false, null);
     }
 
     public void applyDraft(String projectId, String userId, List<MutationOp> ops) {
-        apply(projectId, ops, true, userId, false);
+        apply(projectId, ops, true, userId);
     }
 
     public void applyForRollback(String projectId, List<MutationOp> ops) {
-        apply(projectId, ops, false, null, true);
+        apply(projectId, ops, false, null);
     }
 
     public void applyDraftForRollback(String projectId, String userId, List<MutationOp> ops) {
-        apply(projectId, ops, true, userId, true);
+        apply(projectId, ops, true, userId);
     }
 
-    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId, boolean skipHistorySnapshot) {
+    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId) {
         if (ops == null || ops.isEmpty()) {
             log.warn("[MUTATION] No operations to apply for project: {}", projectId);
             return;
@@ -242,12 +242,6 @@ public class OntologyMutationService {
 
         log.info("[MUTATION] Generated SPARQL (BEFORE graph injection):");
         log.info("[MUTATION] {}", sparql);
-
-        if (!skipHistorySnapshot) {
-            for (MutationOp op : ops) {
-                snapshotAxiomsBeforeDelete(projectId, op, userId, draft);
-            }
-        }
 
         java.util.Set<String> reverseReferenceIris = new java.util.LinkedHashSet<>();
         for (MutationOp op : ops) {
@@ -1942,38 +1936,6 @@ public class OntologyMutationService {
     private boolean isComplexExpression(String expression) {
         if (expression == null) return false;
         return expression.contains(" ") && !expression.trim().startsWith("<") && !expression.trim().startsWith("_:");
-    }
-
-    private void snapshotAxiomsBeforeDelete(String projectId, MutationOp op, String userId, boolean draft) {
-        if (historyService == null || op.iri() == null) return;
-        String type = op.type();
-        if (type == null || !type.startsWith("delete")) return;
-
-        String query = PREFIXES + """
-            SELECT ?p ?o WHERE { <%s> ?p ?o }
-            """.formatted(op.iri());
-        try (TupleQueryResult result = datasetService.execSelect(projectId, query)) {
-            String effectiveUsername = userId != null ? userId : "System";
-            while (result.hasNext()) {
-                BindingSet bs = result.next();
-                String predicate = bs.getValue("p").stringValue();
-                String object = bs.getValue("o").stringValue();
-                if (predicate.equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")) {
-                    continue;
-                }
-                if (predicate.equals("http://www.w3.org/2000/01/rdf-schema#subClassOf")) {
-                    historyService.recordEdit(projectId, userId, effectiveUsername,
-                            "removeSubClassOf", op.iri(), op.label(), object, null,
-                            "subClassOf changed via " + type, null, null, draft);
-                } else {
-                    historyService.recordEdit(projectId, userId, effectiveUsername,
-                            "removeStatement", op.iri(), op.label(), object, null,
-                            "Property assertion changed via " + type + " (" + predicate + ")", predicate, null, draft);
-                }
-            }
-        } catch (Exception e) {
-            log.warn("[MUTATION] Could not snapshot axioms before delete for {}: {}", op.iri(), e.getMessage());
-        }
     }
 
     private java.util.List<String> collectReverseReferenceIris(String projectId, MutationOp op) {
