@@ -5,6 +5,7 @@ import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Kind;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Plan;
 import self.research.ontology.owlEditor.service.delta.ExactReversal;
+import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportService;
 
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +45,9 @@ public class UndoPreconditions {
         }
         if (entry.getUndoBlockedReason() != null) {
             return Optional.of(entry.getUndoBlockedReason());
+        }
+        if (SpreadsheetImportService.isImportEntry(entry.getOperationType())) {
+            return Optional.empty();
         }
         Kind kind = RollbackMutationPlanner.kindOf(entry);
         boolean entityless = entry.getEntityIRI() == null || entry.getEntityIRI().isBlank();
