@@ -133,13 +133,7 @@ public class OntologyQueryService {
     @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
                condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()", sync = true)
     public int topLevelClassCount(String projectId) {
-        String countQuery = PREFIXES + """
-            SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
-              ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
-              FILTER(isIRI(?c))
-              %s
-            }
-            """.formatted(draftEntityHiddenFilter(projectId, "?c"));
+        String countQuery = TopLevelClassSparql.explicitRootCount(PREFIXES);
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, countQuery);
             if (rs.hasNext()) {
@@ -205,15 +199,7 @@ public class OntologyQueryService {
         // disk reads. The old single-query approach used ORDER BY LCASE(?label) which forced
         // TDB2 to load every label from disk before LIMIT could trim anything.
         log.info("[PERF] Top-level classes (phase 1a - IRI scan) for project={}", projectId);
-        String phase1aQuery = PREFIXES + """
-            SELECT ?c WHERE {
-              ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
-              FILTER(isIRI(?c))
-              %s
-            }
-            ORDER BY ?c
-            LIMIT %d
-            """.formatted(draftEntityHiddenFilter(projectId, "?c"), Math.max(1, limit));
+        String phase1aQuery = TopLevelClassSparql.explicitRoots(PREFIXES, limit);
 
         List<String> p1Iris = new java.util.ArrayList<>();
         TupleQueryResult p1aRs = datasetService.execSelect(projectId, phase1aQuery);

@@ -15,6 +15,7 @@ import { useAuth } from '../../custom-hook/useAuth';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
 import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
+import { readerUserId } from '../../utils/mutationActor';
 import { normalizeReasonerType } from '../dashboard-parts/dashboardUtils';
 import { cachedUnsatisfiable } from '../../services/reasonerSnapshotScope';
 
@@ -533,7 +534,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
     (async () => {
       const t1 = performance.now();
       try {
-        const annUserId = user?.email || user?.userId;
+        const annUserId = readerUserId(user);
         const annUserParam = annUserId ? `&userId=${encodeURIComponent(annUserId)}` : '';
         const annResp = await apiClient.get<any>(
           withDraftScope(`/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}${annUserParam}`),
@@ -734,7 +735,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
           await new Promise((resolve) => setTimeout(resolve, 300));
         }
       }
-      const userId = user?.email || user?.userId;
+      const userId = readerUserId(user);
       const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
       let response = await apiClient.get<any>(
         withDraftScope(`/api/ontology/classes/details/${projectId}?classIri=${encodeURIComponent(item.id)}${userParam}&_=${Date.now()}`),
@@ -915,7 +916,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
     if (axiomsLoaded) {
       void loadDescription();
     }
-  });
+  }, ['UNDO', 'REDO', 'APPLY']);
 
   const loadInstances = async (signal?: AbortSignal): Promise<any[]> => {
     try {
@@ -1610,7 +1611,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
       for (const targetIri of classIris) {
         console.log("[ClassEditor] Adding disjoint with:", { classIri: item.id, targetIri });
-        await ontologyMutationService.addDisjointWith(projectId, item.id, targetIri);
+        await ontologyMutationService.addDisjointWith(projectId, item.id, targetIri, user?.email, user?.username || user?.email);
       }
 
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -1964,7 +1965,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       } else if (parsedSub?.expressionType === "union") {
         await ontologyMutationService.addGCAUnion(projectId, superIri, parsedSub.iris);
       } else {
-        const gcaActorId = user?.email || user?.userId;
+        const gcaActorId = readerUserId(user);
         const gcaDraft = ontologyMutationService.resolveUseDraft();
         await apiClient.post(
           `/api/ontology/${encodeURIComponent(projectId)}/expression/add-gca` +

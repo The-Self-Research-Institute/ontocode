@@ -186,6 +186,7 @@ public class OntologyHistoryService {
     private static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
     private static final String RDFS_SUBPROPERTYOF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
     private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    private static final String OWL_DISJOINT_WITH = "http://www.w3.org/2002/07/owl#disjointWith";
 
     private static final java.util.Set<String> ENTITY_LEVEL_OP_TYPES = java.util.Set.of(
             "createClass", "deleteClass",
@@ -247,9 +248,12 @@ public class OntologyHistoryService {
             } else if (!subChanges.isEmpty()) {
                 Map<String, String> first = subChanges.get(0);
                 boolean firstIsAddition = "true".equals(first.get("addition"));
+                boolean replacesParent = subChanges.stream().anyMatch(sc -> RDFS_SUBCLASSOF.equals(sc.get("predicate")) && "true".equals(sc.get("addition")))
+                        && subChanges.stream().anyMatch(sc -> RDFS_SUBCLASSOF.equals(sc.get("predicate")) && "false".equals(sc.get("addition")));
+                boolean firstIsUpdate = replacesParent || (first.get("oldValue") != null && first.get("newValue") != null);
                 primaryOpType = RDFS_SUBCLASSOF.equals(first.get("predicate"))
-                        ? (firstIsAddition ? "addSubClassOf" : "removeSubClassOf")
-                        : (firstIsAddition ? "addStatement" : "removeStatement");
+                        ? (firstIsUpdate ? "updateSubClassOf" : firstIsAddition ? "addSubClassOf" : "removeSubClassOf")
+                        : (firstIsUpdate ? "updateStatement" : firstIsAddition ? "addStatement" : "removeStatement");
                 label = group.get(0).label();
                 description = "Modified " + subChanges.size() + " propert"
                         + (subChanges.size() == 1 ? "y" : "ies") + " (" + describeSubChanges(subChanges) + ")";
@@ -277,9 +281,18 @@ public class OntologyHistoryService {
         if (type == null) {
             return null;
         }
-        boolean addition = type.startsWith("add") || type.startsWith("create");
+        boolean addition = type.startsWith("add") || type.startsWith("create") || type.startsWith("update");
         Map<String, String> sc = new HashMap<>();
         switch (type) {
+            case "addDisjointWith", "deleteDisjointWith" -> {
+                sc.put("predicate", OWL_DISJOINT_WITH);
+                sc.put(addition ? "newValue" : "oldValue", op.target());
+            }
+            case "updateSubClassOf", "updateDisjointWith" -> {
+                sc.put("predicate", "updateSubClassOf".equals(type) ? RDFS_SUBCLASSOF : OWL_DISJOINT_WITH);
+                sc.put("oldValue", op.value());
+                sc.put("newValue", op.target());
+            }
             case "addSubClassOf", "deleteSubClassOf" -> {
                 sc.put("predicate", RDFS_SUBCLASSOF);
                 sc.put(addition ? "newValue" : "oldValue", op.target());

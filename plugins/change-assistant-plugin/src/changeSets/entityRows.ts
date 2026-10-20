@@ -8,9 +8,11 @@ const ENTITY_NOUNS: Record<string, string> = {
   individual: 'individual'
 };
 
+const AXIOM_OPERATION = /subclassof|subpropertyof|disjoint|equivalent|statement|assertion|annotation|domain|range|inverse|characteristic/i;
+
 export function entityBadge(entry: ChangeEntry): string {
   if (entry.operationType === 'SPREADSHEET_IMPORT') return 'Imported';
-  const noun = ENTITY_NOUNS[entry.type];
+  const noun = AXIOM_OPERATION.test(entry.operationType || '') ? undefined : ENTITY_NOUNS[entry.type];
   if (entry.action === 'added') return noun ? `Created ${noun}` : 'Added';
   if (entry.action === 'deleted') return noun ? `Deleted ${noun}` : 'Removed';
   return 'Modified';

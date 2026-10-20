@@ -151,6 +151,8 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   }, []);
 
   const release = releases[platform] ?? null;
+  const macPlatforms = availablePlatforms.filter((p) => p.startsWith("mac-"));
+  const tabPlatforms = availablePlatforms.filter((p) => !p.startsWith("mac-") || p === macPlatforms[0]);
 
   const openExternal = (url: string) => {
     // VS Code webviews are sandboxed iframes — a programmatic window.location.href
@@ -249,21 +251,25 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
               : "macOS builds are coming soon. Windows and Linux are available now."}
           </p>
 
-          {availablePlatforms.length > 1 && (
+          {tabPlatforms.length > 1 && (
             <div className="inline-flex mt-6 bg-white/5 border border-white/10 rounded-full p-1">
-              {availablePlatforms.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPlatform(p)}
-                  className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${
-                    platform === p ? "bg-purple-600 text-white" : "text-white/50 hover:text-white/80"
-                  }`}
-                >
-                  {PLATFORM_META[p].icon === Monitor ? <Monitor size={14} /> : <Terminal size={14} />}
-                  {PLATFORM_META[p].label}
-                </button>
-              ))}
+              {tabPlatforms.map((p) => {
+                const mac = p.startsWith("mac-");
+                const active = mac ? platform.startsWith("mac-") : platform === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPlatform(mac && platform.startsWith("mac-") ? platform : p)}
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${
+                      active ? "bg-purple-600 text-white" : "text-white/50 hover:text-white/80"
+                    }`}
+                  >
+                    {PLATFORM_META[p].icon === Monitor ? <Monitor size={14} /> : <Terminal size={14} />}
+                    {mac ? "macOS" : PLATFORM_META[p].label}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -273,7 +279,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             <div>
               <h2 className="text-xl font-semibold mb-1 flex items-center gap-2">
                 <PlatformIcon size={22} className="text-blue-400" />
-                {PLATFORM_META[platform].label}
+                {platform.startsWith("mac-") ? "macOS" : PLATFORM_META[platform].label}
               </h2>
               <p className="text-sm text-white/50">
                 {PLATFORM_META[platform].os}
@@ -281,6 +287,24 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             </div>
             <PlatformIcon size={32} className="text-white/30" />
           </div>
+
+          {platform.startsWith("mac-") && macPlatforms.length > 1 && (
+            <div className="inline-flex mb-4 bg-white/5 border border-white/10 rounded-full p-1" role="group" aria-label="Mac processor">
+              {macPlatforms.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPlatform(p)}
+                  aria-pressed={platform === p}
+                  className={`px-3 py-1 rounded-full text-xs transition-colors ${
+                    platform === p ? "bg-purple-600 text-white" : "text-white/50 hover:text-white/80"
+                  }`}
+                >
+                  {p === "mac-arm64" ? "Apple Silicon" : "Intel"}
+                </button>
+              ))}
+            </div>
+          )}
 
           <button
             type="button"

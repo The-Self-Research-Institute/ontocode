@@ -48,12 +48,17 @@ final class HistoryClassification {
     }
 
     static String oldValue(MutationOp op) {
+        if (updates(op.type())) {
+            return firstPresent(op.oldValue(), op.value());
+        }
         return removes(op.type()) ? firstPresent(op.oldValue(), op.value(), op.target(), op.classIri()) : op.oldValue();
     }
 
     static String newValue(MutationOp op) {
-        return adds(op.type()) || updates(op.type())
-                ? firstPresent(op.value(), op.target(), op.classIri()) : op.value();
+        if (updates(op.type())) {
+            return firstPresent(op.target(), op.classIri(), op.value());
+        }
+        return adds(op.type()) ? firstPresent(op.value(), op.target(), op.classIri()) : op.value();
     }
 
     private static boolean adds(String type) {

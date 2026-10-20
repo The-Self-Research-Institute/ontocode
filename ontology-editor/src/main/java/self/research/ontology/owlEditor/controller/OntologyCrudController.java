@@ -106,7 +106,7 @@ public class OntologyCrudController {
             if (desktopMode) {
                 userId = DESKTOP_USER_ID;
             }
-            String username = request.username() != null ? request.username() : "Anonymous";
+            String username = RequestActor.displayName(httpRequest, request.username());
             String sessionId = request.sessionId() != null ? request.sessionId() :
                 UUID.randomUUID().toString();
 

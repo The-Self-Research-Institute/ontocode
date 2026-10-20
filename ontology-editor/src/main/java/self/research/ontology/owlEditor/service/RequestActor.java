@@ -8,8 +8,16 @@ public record RequestActor(String userId, String username) {
     public static RequestActor of(HttpServletRequest request, String userIdParam, String usernameParam) {
         String verified = request == null ? null : JwtIdentityExtractor.extractEmail(request).orElse(null);
         String userId = verified != null ? verified : blank(userIdParam) ? "anonymous" : userIdParam;
-        String username = !blank(usernameParam) ? usernameParam : verified != null ? verified : "Anonymous";
+        String username = displayName(request, usernameParam);
         return new RequestActor(userId, username);
+    }
+
+    public static String displayName(HttpServletRequest request, String given) {
+        if (!blank(given) && !"anonymous".equalsIgnoreCase(given.trim())) {
+            return given;
+        }
+        String verified = request == null ? null : JwtIdentityExtractor.extractEmail(request).orElse(null);
+        return verified != null ? verified : "Anonymous";
     }
 
     public static String userIdOr(HttpServletRequest request, String given) {
