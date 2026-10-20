@@ -115,6 +115,7 @@ import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
+import { isPostCompletionProgress } from "../utils/importProgress";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { toFriendlyErrorMessage } from "./codeAssistantPanelHelpers";
@@ -7092,6 +7093,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           if (
             message.status.type === "IMPORT_PROGRESS" &&
             message.status.projectId === projectId &&
+            !isPostCompletionProgress(message.status) &&
             !showLoadingChoice && !showQueueStatus && !backgroundImportActive
           ) {
             setBackgroundImportActive(true);
