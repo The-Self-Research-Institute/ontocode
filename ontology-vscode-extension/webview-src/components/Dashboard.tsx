@@ -111,7 +111,7 @@ import {
   ReasoningJobTimeoutError,
   waitForReasoningJob,
 } from "../services/reasoningJobWait";
-import { resolveMutationActor } from "../utils/mutationActor";
+import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
@@ -500,7 +500,7 @@ const TopMenuBar = ({
             </button>
             {openMenu === item && (
               <div
-                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" ? "w-[min(360px,calc(100vw-1rem))]" : "w-48 max-w-[calc(100vw-1rem)]"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
+                className={`ontocode-top-menu-dropdown absolute left-0 mt-1 ${item === "File" || item === "Edit" ? "w-[min(360px,calc(100vw-1rem))]" : "w-48 max-w-[calc(100vw-1rem)]"} bg-theme-surface border rounded-lg shadow-xl z-20 overflow-hidden`}
                 style={{ borderColor: "var(--color-border)" }}
               >
                 {item === "Tools" ? (
@@ -8024,7 +8024,7 @@ const updateItemInState = useCallback(
           const classId = (edit as any).nodeId || (edit as any).iri || (edit as any).id;
           if (classId) {
             console.log(`[Dashboard] Fetching details for modified class: ${classId}`);
-            const userId = user?.email || user?.userId;
+            const userId = readerUserId(user);
             const userParam = userId ? `&userId=${encodeURIComponent(userId)}` : '';
             setTimeout(() => {
               apiClient
@@ -11267,24 +11267,14 @@ const updateItemInState = useCallback(
 
       try {
         const currentParent = findParentNode(classHierarchy, classId);
-        if (currentParent && currentParent.id !== newParentId) {
-          await ontologyMutationService.deleteSubClassOf(
-            projectId,
-            classId,
-            currentParent.id,
-            user?.email,
-            user?.username || user?.email,
-          );
-        }
-        if (newParentId !== owlThing) {
-          await ontologyMutationService.addSubClassOf(
-            projectId,
-            classId,
-            newParentId,
-            user?.email,
-            user?.username || user?.email,
-          );
-        }
+        await ontologyMutationService.moveSubClassOf(
+          projectId,
+          classId,
+          currentParent?.id ?? null,
+          newParentId,
+          user?.email,
+          user?.username || user?.email,
+        );
         await refreshClassHierarchy();
         setExpandedNodes((prev) => (prev.includes(newParentId) ? prev : [...prev, newParentId]));
         markAsUnsaved();
