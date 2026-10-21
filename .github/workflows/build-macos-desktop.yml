@@ -20,7 +20,6 @@ jobs:
     timeout-minutes: 60
     env:
       NODE_OPTIONS: --max-old-space-size=4096
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
       ONTOCODE_UPDATE_HOST: ontocodeapi.selfresearch.org
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +66,18 @@ jobs:
           done
       - name: Build the dmg
         working-directory: electron-app
-        run: npm run dist:mac -- --${{ matrix.arch }} --publish never
+        run: npm run dist:mac -- --${{ matrix.arch }} --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.gatekeeperAssess=false
+      - name: Check the app is signed
+        working-directory: electron-app
+        run: |
+          set -e
+          dmg=$(ls dist-electron/*.dmg | head -1)
+          mnt=$(mktemp -d)
+          hdiutil attach "$dmg" -mountpoint "$mnt" -nobrowse -readonly
+          app=$(ls -d "$mnt"/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep -E "Signature|Identifier"
+          hdiutil detach "$mnt"
       - uses: actions/upload-artifact@v4
         with:
           name: ontocode-macos-${{ matrix.arch }}
