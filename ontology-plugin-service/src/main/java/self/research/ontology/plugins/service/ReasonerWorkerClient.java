@@ -54,6 +54,41 @@ public class ReasonerWorkerClient {
         if (maxJustifications != null) {
             body.put("maxJustifications", maxJustifications);
         }
+        return postJob(jobType, projectId, body);
+    }
+
+    public Map<String, Object> submitExplainEntailment(String projectId, String reasonerType, String ownerEmail,
+                                                         Integer maxJustifications, String explanationMode,
+                                                         String entailmentType, String subjectIri, String targetIri,
+                                                         String propertyIri, String literalValue) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("jobType", "REASONER_EXPLAIN_ENTAILMENT");
+        body.put("projectId", projectId);
+        body.put("reasonerType", reasonerType);
+        if (ownerEmail != null && !ownerEmail.isBlank()) {
+            body.put("ownerEmail", ownerEmail);
+        }
+        if (maxJustifications != null) {
+            body.put("maxJustifications", maxJustifications);
+        }
+        if (explanationMode != null) {
+            body.put("explanationMode", explanationMode);
+        }
+        body.put("entailmentType", entailmentType);
+        body.put("subjectIri", subjectIri);
+        if (targetIri != null) {
+            body.put("targetIri", targetIri);
+        }
+        if (propertyIri != null) {
+            body.put("propertyIri", propertyIri);
+        }
+        if (literalValue != null) {
+            body.put("literalValue", literalValue);
+        }
+        return postJob("REASONER_EXPLAIN_ENTAILMENT", projectId, body);
+    }
+
+    private Map<String, Object> postJob(String jobType, String projectId, Map<String, Object> body) {
         try {
             ResponseEntity<Map> response = restTemplate.exchange(
                     workerUrl + "/api/reasoning/jobs",

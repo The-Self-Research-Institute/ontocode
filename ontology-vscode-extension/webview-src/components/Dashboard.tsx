@@ -94,6 +94,7 @@ import {
   snapshotDataPropertyTree,
   snapshotInconsistencyMessage,
   snapshotInferredAxioms,
+  snapshotInferredAxiomsTotal,
   snapshotObjectPropertyTree,
   snapshotToConsistencyResult,
   snapshotToReasonerResults,
@@ -1516,6 +1517,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const codeViewDirtyRef = useRef(false);
   const codeViewFetchTokenRef = useRef(0);
   const metadataRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const metadataBackupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const silentRefreshMetadataRef = useRef<() => Promise<void>>(async () => {});
+  const metadataRequestSeqRef = useRef(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -2059,6 +2063,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   isReasonerSyncedRef.current = isReasonerSynced;
   const [reasonerResults, setReasonerResults] = useState<any>(null);
   const [inferredAxioms, setInferredAxioms] = useState<any[]>([]);
+  const [inferredAxiomsTotal, setInferredAxiomsTotal] = useState(0);
   const [isReasonerLoading, setIsReasonerLoading] = useState(false);
   const [isConsistencyLoading, setIsConsistencyLoading] = useState(false);
   const [consistencyResult, setConsistencyResult] = useState<any | null>(null);
@@ -2565,7 +2570,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               maxWaitMs: MAX_POLL_TIME,
               push: startData?.async === true,
               signal: anySignal(reasonerJobAbortRef.current.signal, signal),
-              cancelUrl: startData?.async === true ? dlQueryJobUrl(taskId) : undefined,
+              cancelUrl: startData?.cancelUrl
+                ? `/plugin-service${startData.cancelUrl}`
+                : startData?.async === true
+                  ? dlQueryJobUrl(taskId)
+                  : undefined,
               isStale: () =>
                 shouldStop?.() === true || !isMountedRef.current || currentProjectIdRef.current !== startedProjectId,
               fetchJob: async () => {
@@ -3151,6 +3160,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     setInferredIndividuals([]);
     setInferredDatatypes([]);
     setInferredAxioms([]);
+    setInferredAxiomsTotal(0);
   }, []);
 
   const markReasonerResultInconsistent = useCallback(
@@ -3236,6 +3246,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       if (snapshot) {
         setInferredAxioms(snapshotInferredAxioms(snapshot));
+        setInferredAxiomsTotal(snapshotInferredAxiomsTotal(snapshot));
       } else {
         try {
           const axiomsResponse = await apiClient.get<any>(
@@ -3245,11 +3256,16 @@ const Dashboard: React.FC<DashboardProps> = ({
           const rawAxiomsPayload = axiomsResponse?.data || axiomsResponse;
           const axiomsPayload = await resolveHierarchyPayload(projectId, rawAxiomsPayload, isStaleRun);
           if (isStaleRun()) return;
-          setInferredAxioms(Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : []);
+          const axiomsList = Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : [];
+          setInferredAxioms(axiomsList);
+          setInferredAxiomsTotal(
+            typeof axiomsPayload?.totalInferredAxioms === "number" ? axiomsPayload.totalInferredAxioms : axiomsList.length,
+          );
         } catch (axiomsError) {
           console.warn("[Dashboard] Inferred axioms fetch failed (non-fatal):", axiomsError);
           if (isStaleRun()) return;
           setInferredAxioms([]);
+          setInferredAxiomsTotal(0);
         }
       }
 
@@ -3288,7 +3304,17 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
     } catch (error: any) {
       if (isReasoningJobCancelled(error)) {
+        // A deliberate Stop click already shows its own "Reasoner Stopped" toast from
+        // stopReasoner() before this rejection lands here. But this same branch also
+        // catches an incidental abort racing with a genuine backend timeout (e.g. a
+        // project-switch effect firing mid-request) — that case got no toast at all
+        // and just silently reverted to "No Reasoner Running" with no explanation, so
+        // always surface something here rather than staying silent for that case.
         if (!isStaleRun()) {
+          notificationService.info(
+            "Reasoner Stopped",
+            "The reasoning run was interrupted before it finished.",
+          );
           setIsReasonerRunning(false);
         }
         return;
@@ -3468,6 +3494,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       if (snapshot) {
         setInferredAxioms(snapshotInferredAxioms(snapshot));
+        setInferredAxiomsTotal(snapshotInferredAxiomsTotal(snapshot));
       }
       console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
     } catch (error: any) {
@@ -6863,15 +6890,17 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           console.log(`[Dashboard] 🎯 Status: ${message.status.status} | Progress: ${message.status.progress}%`);
 
           if (message.status.projectId) {
-            setProjectImportStatuses((prev) => ({
-              ...prev,
-              [message.status.projectId]: {
-                type: message.status.type,
-                status: message.status.status,
-                progress: message.status.progress,
-                metadata: message.status.metadata,
-              },
-            }));
+            if (!isPostCompletionProgress(message.status)) {
+              setProjectImportStatuses((prev) => ({
+                ...prev,
+                [message.status.projectId]: {
+                  type: message.status.type,
+                  status: message.status.status,
+                  progress: message.status.progress,
+                  metadata: message.status.metadata,
+                },
+              }));
+            }
 
             if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
               setLoadingStatusMessage(sanitizeImportMessage(message.status.metadata.message as string));
@@ -6889,37 +6918,11 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
               message.status.status === "METADATA_READY" &&
               message.status.projectId === projectId
             ) {
-              const meta = message.status.metadata || {};
-              const classCount = Number(meta.classCount);
-              if (Number.isFinite(classCount) && classCount > 0) {
-                setMetadata((prev) =>
-                  ({
-                    ...(prev || {}),
-                    classCount,
-                    tripleCount: meta.tripleCount ?? (prev as any)?.tripleCount,
-                  }) as OntologyMetadata,
-                );
-              } else {
-                void apiClient
-                  .get<any>(`/api/ontology/metadata/${encodeProjectId(message.status.projectId)}?_t=${Date.now()}`)
-                  .then((res) => {
-                    const data = res?.data || res;
-                    if (!data || typeof data !== "object") return;
-                    setMetadata((prev) =>
-                      ({
-                        ...(prev || {}),
-                        ...data,
-                        classCount:
-                          data.classCount > 0
-                            ? data.classCount
-                            : data.counts?.classes > 0
-                              ? data.counts.classes
-                              : (prev as any)?.classCount ?? 0,
-                      }) as OntologyMetadata,
-                    );
-                  })
-                  .catch((err) => console.warn("[Dashboard] METADATA_READY refresh failed:", err));
+              if (metadataBackupTimerRef.current) {
+                clearTimeout(metadataBackupTimerRef.current);
+                metadataBackupTimerRef.current = null;
               }
+              void silentRefreshMetadataRef.current();
             }
           }
 
@@ -8834,11 +8837,13 @@ const updateItemInState = useCallback(
 
   const silentRefreshMetadata = useCallback(async () => {
     if (!projectId) return;
+    const requestId = ++metadataRequestSeqRef.current;
     try {
       const metaUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       const metaDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}?userId=${encodeURIComponent(metaUserId)}${metaDraftScopeParam}`);
       void refreshPrefixes();
+      if (requestId !== metadataRequestSeqRef.current) return;
       const data = res?.data || res;
       if (data) {
         setMetadata((prev) => prev ? {
@@ -8855,6 +8860,7 @@ const updateItemInState = useCallback(
       console.debug("[Dashboard] Silent metadata refresh failed:", err);
     }
   }, [projectId, user]);
+  silentRefreshMetadataRef.current = silentRefreshMetadata;
 
   const markAsUnsaved = useCallback(() => {
     console.log("[DEBUG] markAsUnsaved called");
@@ -11839,6 +11845,13 @@ const updateItemInState = useCallback(
     handleRefreshIndividuals();
     handleRefreshDatatypes();
     silentRefreshMetadata();
+    if (metadataBackupTimerRef.current) clearTimeout(metadataBackupTimerRef.current);
+    metadataBackupTimerRef.current = !isDesktop() && syncMode !== "private"
+      ? setTimeout(() => {
+          metadataBackupTimerRef.current = null;
+          void silentRefreshMetadata();
+        }, 20000)
+      : null;
     try {
       window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: [op] } }));
     } catch {
@@ -14864,6 +14877,7 @@ const updateItemInState = useCallback(
                   inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
                   inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
                   inferredAxioms={inferredAxioms}
+                  inferredAxiomsTotal={inferredAxiomsTotal}
                   onStartReasoner={startReasoner}
                   onStopReasoner={stopReasoner}
                   onSelectReasoner={handleSelectReasoner}

@@ -266,7 +266,8 @@ public class OntologyQueryService {
         // rdfs:subClassOf owl:Thing children), we MUST run the orphan scan — skipping it
         // returns an empty tree, which is always wrong.
         boolean knownLarge = datasetService.isKnownLargeProject(projectId);
-        if (p1aDuration > 10000 && !phase1.isEmpty()) {
+        boolean mustScan = hasDraft || topLevelCacheService.needsOrphanScan(projectId);
+        if (canSkipOrphanScan(p1aDuration, phase1.isEmpty(), mustScan)) {
             log.info("[PERF] Skipping orphan scan for project={} (p1aDuration={}ms — cold Fuseki, phase1={})",
                      projectId, p1aDuration, phase1.size());
             List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
@@ -275,6 +276,8 @@ public class OntologyQueryService {
             enrichWithEquivalentClasses(projectId, result);
             return result;
         }
+
+        Long orphanScanStamp = hasDraft ? null : topLevelCacheService.orphanScanStarted(projectId);
 
         // Java-side orphan detection with VALUES-bounded complex-expression verification.
         //
@@ -433,6 +436,8 @@ public class OntologyQueryService {
                 n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
         List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
         enrichWithEquivalentClasses(projectId, result);
+
+        topLevelCacheService.orphanScanFinished(projectId, orphanScanStamp);
 
         // Persist fully-enriched result to MongoDB (L2 cache) asynchronously — never blocks response.
         // Skip write if empty: an empty result means the orphan scan is still running or timed out;
@@ -1595,6 +1600,10 @@ public class OntologyQueryService {
         }
         
         return result;
+    }
+
+    static boolean canSkipOrphanScan(long phase1aMillis, boolean phase1Empty, boolean mustScan) {
+        return phase1aMillis > 10000 && !phase1Empty && !mustScan;
     }
 
     private List<OntologyDto.TreeNode> mapTreeNodes(String projectId, String query, String parentIri) {

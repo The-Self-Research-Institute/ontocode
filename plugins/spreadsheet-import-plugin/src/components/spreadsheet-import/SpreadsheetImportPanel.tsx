@@ -40,7 +40,7 @@ import {
   type SavedRuleSet,
   type TransformationRule,
 } from "../../services/spreadsheetImportService";
-import { clearImportWork, loadImportWork, saveImportWork, workKey } from "../../services/importWorkStore";
+import { clearImportWork, loadImportWork, saveImportFile, saveImportRules, workKey } from "../../services/importWorkStore";
 interface SpreadsheetImportPanelProps {
   projectId: string | null;
   userId?: string;
@@ -128,6 +128,12 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
   const fileInput = useRef<HTMLInputElement>(null);
   const ruleFileInput = useRef<HTMLInputElement>(null);
   const hydratedKey = useRef<string | null>(null);
+  const savedFile = useRef<{ key: string | null; file: File | null; workbook: PanelState["workbook"] }>({
+    key: null,
+    file: null,
+    workbook: null,
+  });
+  const [hydrationTick, setHydrationTick] = useState(0);
   const storeKey = workKey(userId, key);
 
   const { file, workbook, activeSheet, rules, ruleSet, ruleSetSnapshot } = state;
@@ -139,7 +145,9 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
     setRestoredAt(null);
     hydratedKey.current = null;
     if (inMemory || !projectId) {
+      savedFile.current = { key: storeKey, file: inMemory?.file ?? null, workbook: inMemory?.workbook ?? null };
       hydratedKey.current = storeKey;
+      setHydrationTick((t) => t + 1);
       return;
     }
     let cancelled = false;
@@ -155,10 +163,12 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
           ruleSetSnapshot: work.ruleSetSnapshot,
         };
         stateByProject.set(key, restored);
+        savedFile.current = { key: storeKey, file: restored.file, workbook: restored.workbook };
         setState(restored);
         setRestoredAt(work.savedAt);
       }
       hydratedKey.current = storeKey;
+      setHydrationTick((t) => t + 1);
     });
     return () => {
       cancelled = true;
@@ -167,25 +177,29 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
 
   useEffect(() => {
     if (!projectId || hydratedKey.current !== storeKey) return;
+    if (savedFile.current.key === storeKey && savedFile.current.file === file && savedFile.current.workbook === workbook) return;
+    savedFile.current = { key: storeKey, file, workbook };
+    if (file && workbook) {
+      void saveImportFile(storeKey, {
+        fileName: file.name,
+        fileType: file.type,
+        file,
+        workbook,
+        savedAt: Date.now(),
+      });
+    } else {
+      void clearImportWork(storeKey);
+    }
+  }, [file, workbook, storeKey, hydrationTick]);
+
+  useEffect(() => {
+    if (!projectId || hydratedKey.current !== storeKey || !file || !workbook) return;
+    if (savedFile.current.key !== storeKey || savedFile.current.file !== file) return;
     const timer = setTimeout(() => {
-      if (state.file && state.workbook) {
-        void saveImportWork(storeKey, {
-          fileName: state.file.name,
-          fileType: state.file.type,
-          file: state.file,
-          workbook: state.workbook,
-          activeSheet: state.activeSheet,
-          rules: state.rules,
-          ruleSet: state.ruleSet,
-          ruleSetSnapshot: state.ruleSetSnapshot,
-          savedAt: Date.now(),
-        });
-      } else {
-        void clearImportWork(storeKey);
-      }
+      void saveImportRules(storeKey, { activeSheet, rules, ruleSet, ruleSetSnapshot, savedAt: Date.now() });
     }, 400);
     return () => clearTimeout(timer);
-  }, [state, storeKey]);
+  }, [activeSheet, rules, ruleSet, ruleSetSnapshot, file, workbook, storeKey, hydrationTick]);
 
   const discardWork = () => {
     void clearImportWork(storeKey);
@@ -345,6 +359,7 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
       setPreview(null);
       setImported({ ...result, fileName: file.name });
       setRestoredAt(null);
+      savedFile.current = { key: storeKey, file: null, workbook: null };
       void clearImportWork(storeKey);
       onImported?.();
     } catch (e: any) {

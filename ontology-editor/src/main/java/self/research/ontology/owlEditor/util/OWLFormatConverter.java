@@ -35,7 +35,7 @@ public class OWLFormatConverter {
      * Create an OWL Ontology Manager configured to ignore missing imports.
      * This prevents failures when imported ontologies are not accessible over the network.
      */
-    private static OWLOntologyManager createManagerWithSilentImports() {
+    public static OWLOntologyManager createManagerWithSilentImports() {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
 
         // Prevent all network access for import resolution - this is the #1 performance killer.
