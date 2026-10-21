@@ -17,16 +17,12 @@ public class SparqlQueryContextInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        String userId = request.getParameter("userId");
+        String userId = CallerIdentity.of(request).userId();
         if (userId == null || userId.isBlank()) {
-            userId = request.getHeader("X-Ontocode-User-Id");
+            userId = request.getParameter("userId");
         }
         if (userId == null || userId.isBlank()) {
-            String auth = request.getHeader("Authorization");
-            String[] planUser = JwtClaimUtils.extractPlanAndUserId(auth);
-            if (planUser != null && planUser.length > 1) {
-                userId = planUser[1];
-            }
+            userId = request.getHeader("X-Ontocode-User-Id");
         }
         if ((userId == null || userId.isBlank()) && desktopMode) {
             userId = DESKTOP_USER_ID;

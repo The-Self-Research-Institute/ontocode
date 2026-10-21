@@ -121,7 +121,6 @@ export async function uploadBlobInChunks(
   baseUrl: string,
   opts: {
     headers?: Record<string, string | undefined>;
-    ownerEmail?: string;
     workspaceId?: string;
     importMode?: string;
     partition?: string;
@@ -163,7 +162,6 @@ export async function uploadBlobInChunks(
         form.append("totalChunks", String(totalChunks));
         form.append("chunkHash", chunkHash);
         form.append("fileName", fileName);
-        if (opts.ownerEmail) form.append("ownerEmail", opts.ownerEmail);
         if (opts.action) form.append("action", opts.action);
         if (opts.importMode) form.append("importMode", opts.importMode);
         if (opts.partition) form.append("partition", opts.partition);

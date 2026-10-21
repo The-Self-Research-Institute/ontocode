@@ -13,6 +13,11 @@ import java.util.Set;
 @Document(collection = "users")
 public class User {
 
+    public boolean isKnownAs(String identifier) {
+        return identifier != null && (identifier.equalsIgnoreCase(username) || identifier.equalsIgnoreCase(email));
+    }
+
+
     @Id
     private String id;
 

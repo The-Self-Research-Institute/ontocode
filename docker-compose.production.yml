@@ -53,7 +53,7 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "3030:3030"
+      - "127.0.0.1:3030:3030"
     environment:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?FUSEKI_ADMIN_PASSWORD is required in production}
       JVM_ARGS: "-Xmx5g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
@@ -81,7 +81,7 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
@@ -249,7 +249,7 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "8084:8084"
+      - "127.0.0.1:8084:8084"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
@@ -283,7 +283,7 @@ services:
     container_name: ontocode-reasoner-worker
     restart: unless-stopped
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
     environment:
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083

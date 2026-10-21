@@ -898,3 +898,5 @@ ontology-vscode-extension/test-invitation-helper.js
 .deploy-app/
 
 __pycache__/
+
+/.env.production

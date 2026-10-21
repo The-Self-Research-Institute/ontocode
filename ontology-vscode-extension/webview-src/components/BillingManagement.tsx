@@ -7,6 +7,7 @@ import { getGatewayUrl } from '../config/deploymentConfig';
 import { usePlanPricing } from '../hooks/usePlanPricing';
 import { isDesktop } from '../utils/desktop';
 import { billingErrorMessage, billingGet, billingPost, billingOriginFallback } from '../utils/billingApi';
+import { safeHref } from '../utils/safeUrl';
 
 function safeGetStorage(key: string): string | null { try { return localStorage.getItem(key); } catch { return null; } }
 
@@ -111,7 +112,6 @@ function formatBillingDate(iso?: string, fallback = 'Not available') {
     });
 }
 
-// ─── Payment method display row ─────────────────────────────────────────────
 
 const PaymentMethodRow: React.FC<{ pm: { last4?: string; brand?: string; expMonth?: number; expYear?: number; type?: string } }> = ({ pm }) => {
     const isLink = pm.type === 'link' || pm.brand?.toLowerCase() === 'link';
@@ -860,7 +860,7 @@ const BillingManagement: React.FC<BillingManagementProps> = ({ workspace, onBack
                                                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{item.status || 'PROCESSED'}</p>
                                                     </div>
                                                     {invoiceLink && (
-                                                        <a href={invoiceLink} target="_blank" rel="noreferrer"
+                                                        <a href={safeHref(invoiceLink)} target="_blank" rel="noreferrer"
                                                             className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-bold text-slate-300 hover:bg-white/20 hover:text-white transition-all flex items-center gap-2">
                                                             Invoice
                                                         </a>

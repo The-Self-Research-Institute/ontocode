@@ -44,9 +44,9 @@ class EndpointActorTest {
     }
 
     @Test
-    void aDraftKeepsItsOwnerAndOnlyFallsBackWhenNoneWasSent() {
+    void aDraftBelongsToTheSignedInUserWhateverIdWasSent() {
         MockHttpServletRequest request = signedIn("real@x.org");
-        assertEquals("owner-id", RequestActor.forScope(request, "owner-id", true));
+        assertEquals("mongo-1", RequestActor.forScope(request, "owner-id", true));
         assertEquals("mongo-1", RequestActor.forScope(request, "anonymous", true));
         assertEquals("real@x.org", RequestActor.forScope(request, "owner-id", false));
         assertEquals("u1", RequestActor.forScope(new MockHttpServletRequest(), "u1", false));

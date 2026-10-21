@@ -77,7 +77,6 @@ public class InvitationController {
 
             User user = userOpt.get();
             
-            // Verify workspace access
             Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(request.workspaceId);
             if (workspaceOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
@@ -232,7 +231,6 @@ public class InvitationController {
 
             User user = userOpt.get();
             
-            // Get invitation details
             Optional<Invitation> invitationOpt = invitationService.getInvitationByToken(token);
             if (invitationOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Invitation not found"));
@@ -240,9 +238,11 @@ public class InvitationController {
             
             Invitation invitation = invitationOpt.get();
             
-            // Check if invitation is still pending
             if (!"PENDING".equals(invitation.getStatus())) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Invitation has already been " + invitation.getStatus().toLowerCase()));
+            }
+            if (!user.getEmail().equalsIgnoreCase(invitation.getInviteeEmail())) {
+                return ResponseEntity.status(403).body(Map.of("error", "This invitation was sent to a different email address"));
             }
             
             // Add user to workspace
@@ -382,7 +382,7 @@ public class InvitationController {
             }
             
             Workspace workspace = workspaceOpt.get();
-            if (!workspace.isMember(user.getId())) {
+            if (!workspace.canManageInvitations(user.getId())) {
                 return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
             }
             
@@ -475,19 +475,18 @@ public class InvitationController {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
             
-            // Get invitation to find workspace
             Optional<Invitation> invitationOpt = invitationService.getInvitationByToken(token);
             if (invitationOpt.isPresent()) {
                 Invitation invitation = invitationOpt.get();
                 
-                // Remove pending member from workspace
                 Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(invitation.getWorkspaceId());
-                if (workspaceOpt.isPresent()) {
-                    Workspace workspace = workspaceOpt.get();
-                    workspace.cancelPendingMember(token);
-                    workspaceRepository.save(workspace);
-                    log.info("Removed pending member for token {} from workspace {}", token.substring(0, Math.min(10, token.length())), workspace.getWorkspaceId());
+                if (workspaceOpt.isEmpty() || !workspaceOpt.get().canManageInvitations(userOpt.get().getId())) {
+                    return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
                 }
+                Workspace workspace = workspaceOpt.get();
+                workspace.cancelPendingMember(token);
+                workspaceRepository.save(workspace);
+                log.info("Removed pending member for token {} from workspace {}", token.substring(0, Math.min(10, token.length())), workspace.getWorkspaceId());
             }
 
             invitationService.cancelInvitation(token);

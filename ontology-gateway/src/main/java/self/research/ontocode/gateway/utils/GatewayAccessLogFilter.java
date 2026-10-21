@@ -1,5 +1,6 @@
 package self.research.ontocode.gateway.utils;
 
+import self.research.ontology.common.logging.LogContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -45,7 +46,6 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
             String resLenStr = resLen >= 0 ? resLen + "B" : "-";
 
             MDC.put("ctx", ids.context());
-            if (ids.userEmail != null) MDC.put("userEmail", ids.userEmail);
             if (ids.workspaceId != null) MDC.put("workspaceId", ids.workspaceId);
             if (ids.projectId != null) MDC.put("projectId", ids.projectId);
             if (ids.fileId != null) MDC.put("fileId", ids.fileId);
@@ -142,9 +142,8 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
         try {
             byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
             JsonNode claims = MAPPER.readTree(decoded);
-            String email = textClaim(claims, "email");
-            if (email == null) email = textClaim(claims, "sub");
-            if (email != null) ids.userEmail = email;
+            String userId = textClaim(claims, "userId");
+            if (userId != null) ids.userId = userId;
             String wsId = textClaim(claims, "workspaceId");
             if (wsId != null) ids.workspaceId = wsId;
         } catch (Exception ignored) {
@@ -168,16 +167,14 @@ public class GatewayAccessLogFilter implements GlobalFilter, Ordered {
     }
 
     private static final class Identifiers {
-        String userEmail;
+        String userId;
         String workspaceId;
         String projectId;
         String fileId;
 
         String context() {
             StringBuilder sb = new StringBuilder();
-            sb.append(userEmail != null && !userEmail.isBlank()
-                    ? "email=" + userEmail
-                    : "(anon)");
+            sb.append(LogContext.userLabel(userId));
             if (fileId != null && !fileId.isBlank()) {
                 sb.append(" file=").append(fileId);
             } else if (projectId != null && !projectId.isBlank()) {

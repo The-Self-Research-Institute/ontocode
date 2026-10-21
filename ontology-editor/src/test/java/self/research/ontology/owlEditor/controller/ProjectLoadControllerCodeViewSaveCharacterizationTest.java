@@ -140,7 +140,8 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
                 mongoTemplate,
                 exportJobService,
                 codeViewReimportPipeline,
-                lockRegistry);
+                lockRegistry,
+                org.mockito.Mockito.mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class));
         ReflectionTestUtils.setField(controller, "codeViewSaveValidator",
                 new self.research.ontology.owlEditor.service.CodeViewSaveValidator(null));
         ReflectionTestUtils.setField(controller, "ontologyCache", ontologyCache);

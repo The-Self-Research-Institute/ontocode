@@ -35,21 +35,7 @@ let browserZoteroLibrarySessionCounter = 0;
 
 // ── Helper: dispatch a synthetic MessageEvent so listener code sees it ──────
 function postToSelf(data: Record<string, any>) {
-    window.dispatchEvent(new MessageEvent('message', { data }));
-}
-
-// ── Helper: extract email from JWT auth token ───────────────────────────────
-function getOwnerEmailFromToken(): string | undefined {
-    try {
-        const token = localStorage.getItem('authToken');
-        if (!token) return undefined;
-        const parts = token.split('.');
-        if (parts.length !== 3) return undefined;
-        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-        return payload.email || undefined;
-    } catch {
-        return undefined;
-    }
+    window.dispatchEvent(new MessageEvent('message', { data, source: window, origin: window.location.origin }));
 }
 
 /** JWT workspaceId — must be duplicated on upload URL query for FREE-plan owner checks (see extension upload URL). */
@@ -752,7 +738,6 @@ function handleBrowserMessage(message: any) {
                 try {
                     const token = localStorage.getItem('authToken');
                     const baseUrl = getGatewayUrl();
-                    const resolvedOwnerEmail = message.ownerEmail || getOwnerEmailFromToken();
                     const resolvedWorkspaceId = message.workspaceId || getWorkspaceIdFromToken();
 
                     // ── FAST PATH: Check if file already exists in GraphDB (skip upload entirely) ──
@@ -785,7 +770,7 @@ function handleBrowserMessage(message: any) {
                     if (!message.skipDuplicateCheck) {
                         console.log('[BrowserBridge] Checking for duplicate file before upload:', message.fileName);
                         try {
-                            const checkUrl = `${baseUrl}/api/ontology/check-duplicate?filename=${encodeURIComponent(message.fileName)}${resolvedOwnerEmail ? `&ownerEmail=${encodeURIComponent(resolvedOwnerEmail)}` : ''}`;
+                            const checkUrl = `${baseUrl}/api/ontology/check-duplicate?filename=${encodeURIComponent(message.fileName)}`;
                             const checkResp = await fetch(checkUrl, {
                                 headers: token ? { Authorization: `Bearer ${token}` } : {},
                             });
@@ -889,7 +874,6 @@ function handleBrowserMessage(message: any) {
                         const bytes = new Uint8Array(await blob.arrayBuffer());
                         const chunkedResult = await uploadBlobInChunks(uploadProjectId, bytes, message.fileName, baseUrl, {
                             headers: token ? { Authorization: `Bearer ${token}` } : {},
-                            ownerEmail: resolvedOwnerEmail,
                             workspaceId: resolvedWorkspaceId,
                             importMode: message.importMode,
                             partition: message.partition,
@@ -902,7 +886,6 @@ function handleBrowserMessage(message: any) {
                         formData.append('file', blob, message.fileName);
 
                         const query = new URLSearchParams();
-                        if (resolvedOwnerEmail) query.set('ownerEmail', resolvedOwnerEmail);
                         if (resolvedWorkspaceId) query.set('workspaceId', resolvedWorkspaceId);
                         if (message.importMode) query.set('importMode', message.importMode);
                         if (message.partition) query.set('partition', message.partition);

@@ -32,6 +32,7 @@ import { isAppOnline } from "../utils/connectivity";
 import { openFeedbackPage } from "../utils/feedback";
 import { PromptDialog } from "./dashboard-parts/DashboardDialogs";
 import InlineRenameInput from "./InlineRenameInput";
+import { isTrustedMessage } from '../utils/trustedMessage';
 
 interface ProjectLibraryProps {
   projectId: string;
@@ -223,7 +224,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
             params: {
               fileId: file.id,
               parentProjectId: projectId,
-              ownerEmail: user?.email || '',
               workspaceId: user?.workspaceId || '',
               action: 'replace',
             },
@@ -494,6 +494,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   // Listen for file import completion messages from extension
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
 
       // Refetch files when import completes or file is ready

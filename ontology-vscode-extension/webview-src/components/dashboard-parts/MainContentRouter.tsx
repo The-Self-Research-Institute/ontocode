@@ -27,6 +27,7 @@ import { PromptDialog } from "./DashboardDialogs";
 import type { DashboardState } from "./hooks/useDashboardState";
 import type { DashboardInit } from "./hooks/useDashboardInit";
 import type { DashboardHandlers } from "./hooks/useDashboardHandlers";
+import { safeHref } from "../../utils/safeUrl";
 
 interface MainContentRouterProps {
   state: DashboardState;
@@ -169,7 +170,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     return () => {
       if (projectId) {
         syncService.stopMonitoring(projectId);
-        console.log("[Dashboard] Stopped monitoring for project:", projectId);
       }
     };
   }, [projectId]);
@@ -518,7 +518,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                     <div className="flex items-center gap-2">
                       <Globe size={14} className="flex-shrink-0" style={{ color: "var(--accent)" }} />
                       <a
-                        href={(metadata as any)?.ontologyIRI || "#"}
+                        href={safeHref((metadata as any)?.ontologyIRI)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs break-all font-medium hover:underline"

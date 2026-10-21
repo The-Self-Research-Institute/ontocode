@@ -1,5 +1,6 @@
 package self.research.ontology.swrl.config;
 
+import self.research.ontology.common.logging.LogContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
@@ -43,10 +44,6 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
         try {
             byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
             JsonNode claims = MAPPER.readTree(decoded);
-
-            String email = textClaim(claims, "email");
-            if (email == null) email = textClaim(claims, "sub");
-            if (email != null) MDC.put("userEmail", email);
 
             String userId = textClaim(claims, "userId");
             if (userId != null) MDC.put("userId", userId);
@@ -109,17 +106,12 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
     }
 
     private String buildContext() {
-        String email = MDC.get("userEmail");
+        String userId = MDC.get("userId");
         String fileId = MDC.get("fileId");
         String projectId = MDC.get("projectId");
         String workspaceId = MDC.get("workspaceId");
 
-        StringBuilder sb = new StringBuilder();
-        if (email != null && !email.isBlank()) {
-            sb.append("email=").append(email);
-        } else {
-            sb.append("(anon)");
-        }
+        StringBuilder sb = new StringBuilder(LogContext.userLabel(userId));
         if (fileId != null && !fileId.isBlank()) {
             sb.append(" file=").append(fileId);
         } else if (projectId != null && !projectId.isBlank()) {

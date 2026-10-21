@@ -44,7 +44,7 @@ class ChangeTrackingControllerTest {
         ReflectionTestUtils.setField(controller, "rollbackAuditRepository", rollbackAuditRepository);
         ReflectionTestUtils.setField(controller, "changeFeedService",
                 new self.research.ontology.owlEditor.service.ChangeFeedService(historyRepository));
-        when(historySyncService.addComment(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
+        when(historySyncService.addComment(anyString(), anyString(), anyString(), anyString(), anyString())).thenReturn(true);
     }
 
     private MockHttpServletRequest requestWithEmail(String email) {
@@ -61,7 +61,7 @@ class ChangeTrackingControllerTest {
 
         controller.addComment("proj-1", "c1", Map.of("text", "Looks good"), httpRequest);
 
-        verify(historySyncService).addComment("c1", "real.user@example.com", "real.user@example.com", "Looks good");
+        verify(historySyncService).addComment("proj-1", "c1", "real.user@example.com", "real.user@example.com", "Looks good");
     }
 
     @Test
@@ -70,7 +70,7 @@ class ChangeTrackingControllerTest {
 
         controller.addComment("proj-1", "c1", Map.of("text", "Looks good"), httpRequest);
 
-        verify(historySyncService).addComment("c1", "system", "System", "Looks good");
+        verify(historySyncService).addComment("proj-1", "c1", "system", "System", "Looks good");
     }
 
     @SuppressWarnings("unchecked")

@@ -28,12 +28,15 @@ FROM nginx:alpine
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+RUN echo 'add_header X-Content-Type-Options "nosniff" always; add_header Referrer-Policy "no-referrer" always; add_header X-Frame-Options "DENY" always; add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' https://js.stripe.com; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; connect-src '"'"'self'"'"' https: wss: https://api.stripe.com; frame-src https://js.stripe.com https://hooks.stripe.com; object-src '"'"'none'"'"'; base-uri '"'"'self'"'"'; form-action '"'"'self'"'"'; frame-ancestors '"'"'none'"'"'" always;' > /etc/nginx/security-headers.conf
+
 # nginx config for SPA routing
 RUN echo 'server { \
     listen 3000; \
     listen [::]:3000; \
     root /usr/share/nginx/html; \
     index index.html; \
+    include /etc/nginx/security-headers.conf; \
     location /api/billing/ { \
         proxy_pass http://auth:8086/api/billing/; \
         proxy_http_version 1.1; \
@@ -43,7 +46,7 @@ RUN echo 'server { \
         proxy_set_header X-Forwarded-Proto $scheme; \
     } \
     location / { try_files $uri $uri/ /index.html; } \
-    location ~* \\.(js|css|png|ico|woff2?)$ { expires 1y; add_header Cache-Control "public, immutable"; } \
+    location ~* \\.(js|css|png|ico|woff2?)$ { expires 1y; include /etc/nginx/security-headers.conf; add_header Cache-Control "public, immutable"; } \
 }' > /etc/nginx/conf.d/default.conf
 
 EXPOSE 3000
