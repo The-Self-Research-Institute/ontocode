@@ -1066,6 +1066,11 @@ public class ProjectImportService {
     /**
      * Send WebSocket notification about import status
      */
+    public void notifyMetadataReady(String projectId) {
+        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                "METADATA_READY", "Metadata updated", null, Map.of());
+    }
+
     private void sendImportNotification(String projectId, ImportStatusMessage.ImportStatusType type,
                                        String status, String message, String filename, Object metadata) {
         try {

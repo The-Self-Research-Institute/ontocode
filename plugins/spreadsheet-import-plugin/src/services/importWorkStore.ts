@@ -4,17 +4,23 @@ const DB_NAME = "ontocode-spreadsheet-import";
 const STORE = "work";
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-export interface SavedImportWork {
+export interface SavedImportFile {
   fileName: string;
   fileType: string;
   file: Blob;
   workbook: ParsedSpreadsheet;
+  savedAt: number;
+}
+
+export interface SavedImportRules {
   activeSheet: string | null;
   rules: TransformationRule[];
   ruleSet: { id: string; name: string; description?: string | null } | null;
   ruleSetSnapshot: string | null;
   savedAt: number;
 }
+
+export type SavedImportWork = SavedImportFile & Omit<SavedImportRules, "savedAt">;
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -25,7 +31,14 @@ const openDb = (): Promise<IDBDatabase | null> => {
       if (typeof indexedDB === "undefined") return resolve(null);
       const req = indexedDB.open(DB_NAME, 1);
       req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        resolve(db);
+      };
       req.onerror = () => resolve(null);
       req.onblocked = () => resolve(null);
     } catch {
@@ -51,20 +64,38 @@ const run = async <T>(mode: IDBTransactionMode, op: (s: IDBObjectStore) => IDBRe
 
 export const workKey = (userId: string | undefined, projectId: string) => `${userId || "anonymous"}|${projectId}`;
 
-export const saveImportWork = async (key: string, work: SavedImportWork): Promise<void> => {
-  await run("readwrite", (s) => s.put(work, key));
+const fileKey = (key: string) => `${key}|file`;
+const rulesKey = (key: string) => `${key}|rules`;
+
+export const saveImportFile = async (key: string, file: SavedImportFile): Promise<void> => {
+  await run("readwrite", (s) => s.put(file, fileKey(key)));
+};
+
+export const saveImportRules = async (key: string, rules: SavedImportRules): Promise<void> => {
+  await run("readwrite", (s) => s.put(rules, rulesKey(key)));
 };
 
 export const clearImportWork = async (key: string): Promise<void> => {
+  await run("readwrite", (s) => s.delete(fileKey(key)));
+  await run("readwrite", (s) => s.delete(rulesKey(key)));
   await run("readwrite", (s) => s.delete(key));
 };
 
 export const loadImportWork = async (key: string): Promise<SavedImportWork | null> => {
-  const work = await run<SavedImportWork>("readonly", (s) => s.get(key));
-  if (!work || !work.file || !work.workbook) return null;
-  if (Date.now() - (work.savedAt || 0) > MAX_AGE_MS) {
+  const file = await run<SavedImportFile>("readonly", (s) => s.get(fileKey(key)));
+  if (!file || !file.file || !file.workbook) return null;
+  const rules = await run<SavedImportRules>("readonly", (s) => s.get(rulesKey(key)));
+  const savedAt = Math.max(file.savedAt || 0, rules?.savedAt || 0);
+  if (Date.now() - savedAt > MAX_AGE_MS) {
     await clearImportWork(key);
     return null;
   }
-  return work;
+  return {
+    ...file,
+    activeSheet: rules?.activeSheet ?? null,
+    rules: rules?.rules ?? [],
+    ruleSet: rules?.ruleSet ?? null,
+    ruleSetSnapshot: rules?.ruleSetSnapshot ?? null,
+    savedAt,
+  };
 };

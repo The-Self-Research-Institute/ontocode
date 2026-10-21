@@ -250,19 +250,49 @@ class SpreadsheetImportServiceTest {
     }
 
     @Test
-    void aPublicImportSavesAFreshSummaryBeforeReturning() {
+    void aPublicImportRefreshesTheSummaryInTheBackground() throws Exception {
         self.research.ontology.owlEditor.service.OntologyIndexService index =
             mock(self.research.ontology.owlEditor.service.OntologyIndexService.class);
         Map<String, Object> fresh = Map.of("individualCount", 2);
-        when(index.computeMetadata(PROJECT)).thenReturn(fresh);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        when(index.computeMetadata(PROJECT)).thenAnswer(inv -> {
+            release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            return fresh;
+        });
         service.setIndexService(index);
 
         SpreadsheetImportService.CommitResult result = service.commit(PROJECT, csv(), "readings.csv", rules(), false, "kay", "Kay");
 
-        verify(metadata, times(1)).writeMeta(PROJECT, fresh);
+        verify(metadata, never()).writeMeta(anyString(), any());
+        release.countDown();
+        verify(metadata, org.mockito.Mockito.timeout(5000).times(1)).writeMeta(PROJECT, fresh);
 
         service.rollback(PROJECT, SpreadsheetImportService.ENTITY_IRI_PREFIX + result.importId(), "Kay");
-        verify(metadata, times(2)).writeMeta(PROJECT, fresh);
+        verify(metadata, org.mockito.Mockito.timeout(5000).times(2)).writeMeta(PROJECT, fresh);
+    }
+
+    @Test
+    void theScreenIsToldWhenThePublicSummaryIsReady() {
+        self.research.ontology.owlEditor.service.OntologyIndexService index =
+            mock(self.research.ontology.owlEditor.service.OntologyIndexService.class);
+        when(index.computeMetadata(PROJECT)).thenReturn(Map.of("individualCount", 2));
+        service.setIndexService(index);
+        self.research.ontology.owlEditor.service.ProjectImportService notifier =
+            mock(self.research.ontology.owlEditor.service.ProjectImportService.class);
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<self.research.ontology.owlEditor.service.ProjectImportService> provider =
+            mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(notifier);
+        service.setProjectImports(provider);
+
+        SpreadsheetImportService.CommitResult result = service.commit(PROJECT, csv(), "readings.csv", rules(), false, "kay", "Kay");
+        verify(notifier, org.mockito.Mockito.timeout(5000).times(1)).notifyMetadataReady(PROJECT);
+
+        service.rollback(PROJECT, SpreadsheetImportService.ENTITY_IRI_PREFIX + result.importId(), "Kay");
+        verify(notifier, org.mockito.Mockito.timeout(5000).times(2)).notifyMetadataReady(PROJECT);
+
+        service.commit(PROJECT, csv(), "readings.csv", rules(), true, "kay", "Kay");
+        verify(notifier, org.mockito.Mockito.after(500).times(2)).notifyMetadataReady(PROJECT);
     }
 
     @Test
@@ -289,6 +319,43 @@ class SpreadsheetImportServiceTest {
         assertFalse(result.draft());
         assertTrue(ask("<" + NS + "S002> ?p ?o"), "the import itself went through");
         verify(metadata, never()).writeMeta(anyString(), any());
+    }
+
+    @Test
+    void aDraftImportIsShownOnlyToItsOwner() {
+        String id = service.commit(PROJECT, csv(), "readings.csv", rules(), true, "kay", "Kay").importId();
+
+        assertTrue(service.importedItems(PROJECT, id, "kay", 20).isPresent());
+        assertTrue(service.importedItems(PROJECT, id, "other", 20).isEmpty());
+        assertTrue(service.importedItems(PROJECT, id, null, 20).isEmpty(), "an unknown caller sees no drafts");
+        assertTrue(service.importedItemsPage(PROJECT, id, null, "individuals", 0, 20).isEmpty());
+        assertTrue(service.importedItemsPage(PROJECT, id, "kay", "individuals", 0, 20).isPresent());
+    }
+
+    @Test
+    void loadMoreReusesTheParsedImportInsteadOfParsingAgain() {
+        String id = service.commit(PROJECT, csv(), "readings.csv", rules(), false, "kay", "Kay").importId();
+        SpreadsheetImportRecord record = org.mockito.Mockito.spy(saved.get(id));
+        saved.put(id, record);
+
+        SpreadsheetImportService.ImportedItems first = service.importedItems(PROJECT, id, "kay", 1).orElseThrow();
+        ImportItemsSummary.Group second = service.importedItemsPage(PROJECT, id, "kay", "individuals", 1, 1).orElseThrow();
+        service.importedItemsPage(PROJECT, id, "kay", "individuals", 2, 1);
+
+        verify(record, times(1)).getAddedTriples();
+        assertEquals(2, first.groups().get("individuals").total());
+        assertEquals(1, second.items().size());
+        assertEquals(1, second.offset());
+        assertFalse(first.groups().get("individuals").items().get(0).iri()
+            .equals(second.items().get(0).iri()), "the next page continues where the first stopped");
+    }
+
+    @Test
+    void aPublicImportIsShownToEveryone() {
+        String id = service.commit(PROJECT, csv(), "readings.csv", rules(), false, "kay", "Kay").importId();
+
+        assertTrue(service.importedItems(PROJECT, id, "other", 20).isPresent());
+        assertTrue(service.importedItems(PROJECT, id, null, 20).isPresent());
     }
 
     private static ByteArrayInputStream csv() {
