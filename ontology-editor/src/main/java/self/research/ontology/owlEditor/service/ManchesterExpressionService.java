@@ -246,7 +246,9 @@ private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, bool
     mutationService.applyRawUpdateWithHistory(projectId, sparql, draft, userId, username);
 }
      OWLOntology loadOntology(String projectId) throws Exception {
-        return loadOntology(projectId, false, null);
+        String userId = SparqlQueryContext.getUserId();
+        boolean draft = userId != null && datasetService.hasActiveDraftSession(projectId, userId);
+        return loadOntology(projectId, draft, userId);
     }
 
     /**

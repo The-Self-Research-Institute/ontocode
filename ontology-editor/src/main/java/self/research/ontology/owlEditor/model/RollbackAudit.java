@@ -47,7 +47,10 @@ public class RollbackAudit {
     private String direction = "UNDO";
     private List<String> changeIds = new ArrayList<>();
     private int skippedCount;
+    private List<DraftChange> draftRecords = new ArrayList<>();
 
+    public List<DraftChange> getDraftRecords() { return draftRecords; }
+    public void setDraftRecords(List<DraftChange> draftRecords) { this.draftRecords = draftRecords != null ? draftRecords : new ArrayList<>(); }
     public String getChangeSetId() { return changeSetId; }
     public void setChangeSetId(String changeSetId) { this.changeSetId = changeSetId; }
     public String getDirection() { return direction; }

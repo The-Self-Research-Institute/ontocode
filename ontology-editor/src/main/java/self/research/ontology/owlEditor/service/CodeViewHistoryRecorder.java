@@ -59,7 +59,7 @@ final class CodeViewHistoryRecorder {
         record(projectId, userId, username, oldModel, newModel, draft, origin, true);
     }
 
-    void record(String projectId, String userId, String username, Model oldModel, Model newModel, boolean draft,
+    boolean record(String projectId, String userId, String username, Model oldModel, Model newModel, boolean draft,
                 ChangeOrigin origin, boolean diffPrefixes) {
         Actor actor = new Actor(projectId, userId, username, draft, origin != null ? origin : ChangeOrigin.manual());
         if (diffPrefixes) {
@@ -69,20 +69,26 @@ final class CodeViewHistoryRecorder {
         added.removeAll(oldModel);
         Set<Statement> removed = new LinkedHashSet<>(oldModel);
         removed.removeAll(newModel);
+        if (added.isEmpty() && removed.isEmpty()) {
+            return false;
+        }
 
         int namedChangeCount = (int) (added.stream().filter(this::isNamedTriple).count()
                 + removed.stream().filter(this::isNamedTriple).count());
         if (namedChangeCount > Limit.CODE_VIEW_BULK_DIFF_THRESHOLD.value()) {
+            String bulkDescription = "Code View save added/changed " + namedChangeCount
+                    + " statements — logged as a single bulk entry rather than one per statement";
             historyService.recordEdit(projectId, userId, username,
                     "bulkPopulation", null, null, null, null,
-                    "Code View save added/changed " + namedChangeCount
-                            + " statements — logged as a single bulk entry rather than one per statement",
+                    bulkDescription,
                     null, null, draft, actor.origin());
             log.info("[CODE-VIEW-SAVE] Skipped per-triple change logging for bulk save ({} named changes)", namedChangeCount);
-            return;
+            recordSummaryDraft(actor, "bulkGraphEdit", (added.size() + removed.size()) + " statements",
+                    added.size() + " added, " + removed.size() + " removed");
+            return true;
         }
 
-        List<OntologyMutationService.MutationOp> draftOps = draft ? new ArrayList<>() : null;
+        List<OntologyMutationService.MutationOp> draftOps = draft && draftTrackingService != null ? new ArrayList<>() : null;
         Map<Resource, SubjectDiff> bySubject = new LinkedHashMap<>();
         int structuralChanges = groupBySubject(added, removed, bySubject);
         for (Map.Entry<Resource, SubjectDiff> entry : bySubject.entrySet()) {
@@ -97,7 +103,27 @@ final class CodeViewHistoryRecorder {
         }
         if (draftOps != null && !draftOps.isEmpty()) {
             draftTrackingService.recordDrafts(projectId, userId, username, draftOps, UUID.randomUUID().toString());
+        } else if (structuralChanges > 0) {
+            recordSummaryDraft(actor, "structuralGraphEdit", structuralChanges + " structural statement"
+                    + (structuralChanges == 1 ? "" : "s"), "Restrictions, unions, rules or other axioms without a name");
         }
+        return true;
+    }
+
+    private void recordSummaryDraft(Actor actor, String opType, String label, String value) {
+        if (!actor.draft() || draftTrackingService == null) {
+            return;
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("label", label);
+        data.put("value", value);
+        draftTrackingService.recordDescribed(actor.projectId(), actor.userId(), actor.username(), opType, data,
+                changeSets(actor));
+    }
+
+    private static List<String> changeSets(Actor actor) {
+        String changeSetId = actor.origin().changeSetId();
+        return changeSetId == null ? List.of() : List.of(changeSetId);
     }
 
     void recordPrefixes(String projectId, String userId, String username, Map<String, String> oldPrefixes,
@@ -136,6 +162,7 @@ final class CodeViewHistoryRecorder {
         if (changes.isEmpty()) {
             return;
         }
+        changes.forEach(c -> recordPrefixDraft(actor, c));
         if (changes.size() == 1) {
             PrefixChange c = changes.get(0);
             historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), c.opType(),
@@ -163,6 +190,15 @@ final class CodeViewHistoryRecorder {
                 null, changes.size() + " prefixes", null, null,
                 "Code View save changed " + changes.size() + " prefixes (" + summary + ")",
                 null, parts, actor.draft(), actor.origin());
+    }
+
+    private void recordPrefixDraft(Actor actor, PrefixChange c) {
+        if (!actor.draft() || draftTrackingService == null) {
+            return;
+        }
+        draftTrackingService.recordDescribed(actor.projectId(), actor.userId(), actor.username(),
+                DraftRecords.prefixOperation(c.opType()), DraftRecords.prefix(c.prefix(), null, c.oldNamespace(),
+                        c.newNamespace()), changeSets(actor));
     }
 
     private String describePrefixChange(PrefixChange c) {

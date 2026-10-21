@@ -69,6 +69,8 @@ public class OntologyMergeService {
 
     private final RestTemplate restTemplate = new RestTemplate();
 
+    private final Map<OWLOntology, OWLOntologyID> headers = Collections.synchronizedMap(new WeakHashMap<>());
+
     public OntologyMergeService(SparqlDatasetService datasetService,
                                ProjectImportService importService,
                                StorageManager storageManager,
@@ -1741,13 +1743,83 @@ public class OntologyMergeService {
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
         OWLOntology loaded = manager.loadOntologyFromOntologyDocument(
                 new StringDocumentSource(rdfXml), config);
-        return cloneAsAnonymousOntology(manager, loaded);
+        OWLOntology clone = cloneAsAnonymousOntology(manager, loaded);
+        headers.put(clone, loaded.getOntologyID());
+        manager.removeOntology(loaded);
+        return clone;
+    }
+
+    public OWLOntologyID headerOf(OWLOntology ontology) {
+        OWLOntologyID remembered = headers.get(ontology);
+        return remembered != null ? remembered : ontology.getOntologyID();
+    }
+
+    public OntologyHeaderMerge.Header header(OWLOntology ontology) {
+        return OntologyHeaderMerge.Header.of(headerOf(ontology), ontology);
+    }
+
+    public Set<OWLAxiom> definingAxioms(OWLOntology ontology, IRI entityIRI) {
+        return getDefiningAxioms(ontology, entityIRI);
+    }
+
+    public void withholdFromOntology(OWLOntology ontology, Set<OWLAnnotation> annotations,
+                                     Set<OWLImportsDeclaration> imports, Set<OWLAxiom> axioms) {
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        annotations.forEach(annotation -> changes.add(new RemoveOntologyAnnotation(ontology, annotation)));
+        imports.forEach(declaration -> changes.add(new RemoveImport(ontology, declaration)));
+        axioms.forEach(axiom -> changes.add(new RemoveAxiom(ontology, axiom)));
+        if (!changes.isEmpty()) {
+            ontology.getOWLOntologyManager().applyChanges(changes);
+        }
     }
 
     public String saveOntologyToRdfXml(OWLOntology ontology) throws OWLOntologyStorageException {
+        OWLOntologyID header = headerOf(ontology);
+        if (OntologyHeaderMerge.isScratch(header.getOntologyIRI().orElse(null))) {
+            header = new OWLOntologyID();
+        }
+        OWLOntologyID working = ontology.getOntologyID();
+        if (header.equals(working)) {
+            return renderRdfXml(ontology);
+        }
+        OWLOntologyManager manager = ontology.getOWLOntologyManager();
+        manager.applyChange(new SetOntologyID(ontology, header));
+        try {
+            String rdf = renderRdfXml(ontology);
+            return header.isAnonymous() ? withoutBareHeader(rdf) : rdf;
+        } finally {
+            manager.applyChange(new SetOntologyID(ontology, working));
+        }
+    }
+
+    private static String renderRdfXml(OWLOntology ontology) throws OWLOntologyStorageException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ontology.getOWLOntologyManager().saveOntology(ontology, new RDFXMLDocumentFormat(), out);
         return out.toString(StandardCharsets.UTF_8);
+    }
+
+    private static String withoutBareHeader(String rdfXml) {
+        try {
+            org.eclipse.rdf4j.model.Model model = org.eclipse.rdf4j.rio.Rio.parse(
+                    new java.io.StringReader(rdfXml), "", org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
+            List<org.eclipse.rdf4j.model.Resource> bare = model
+                    .filter(null, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE,
+                            org.eclipse.rdf4j.model.vocabulary.OWL.ONTOLOGY)
+                    .subjects().stream()
+                    .filter(subject -> subject instanceof org.eclipse.rdf4j.model.BNode)
+                    .filter(subject -> model.filter(subject, null, null).size() == 1)
+                    .toList();
+            if (bare.isEmpty()) {
+                return rdfXml;
+            }
+            bare.forEach(subject -> model.remove(subject, null, null));
+            java.io.StringWriter out = new java.io.StringWriter();
+            org.eclipse.rdf4j.rio.Rio.write(model, out, org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
+            return out.toString();
+        } catch (Exception e) {
+            log.warn("[DRAFT-MERGE] Could not tidy the unnamed ontology header: {}", e.getMessage());
+            return rdfXml;
+        }
     }
 
     public void removeEntityFromOntology(OWLOntology ontology, IRI entityIRI) {
@@ -1764,6 +1836,16 @@ public class OntologyMergeService {
                                                  OWLOntology theirs,
                                                  Set<String> conflictEntityIris,
                                                  Map<String, ConflictResolution> resolutions)
+            throws OWLOntologyCreationException {
+        return mergeDraftPublishThreeWay(baseline, ours, theirs, conflictEntityIris, resolutions, header(baseline));
+    }
+
+    public OWLOntology mergeDraftPublishThreeWay(OWLOntology baseline,
+                                                 OWLOntology ours,
+                                                 OWLOntology theirs,
+                                                 Set<String> conflictEntityIris,
+                                                 Map<String, ConflictResolution> resolutions,
+                                                 OntologyHeaderMerge.Header headerBaseline)
             throws OWLOntologyCreationException {
         OWLOntologyManager manager = theirs.getOWLOntologyManager();
         Set<String> touchedIris = collectTouchedIris(baseline, ours);
@@ -1796,7 +1878,7 @@ public class OntologyMergeService {
 
         if (conflictEntityIris != null) {
             for (String iriStr : conflictEntityIris) {
-                if (touchedIris.contains(iriStr)) {
+                if (touchedIris.contains(iriStr) || OntologyHeaderMerge.isSectionKey(iriStr)) {
                     continue;
                 }
                 IRI iri = IRI.create(iriStr);
@@ -1808,6 +1890,10 @@ public class OntologyMergeService {
                 applyDraftConflictResolution(ours, theirs, iri, resolution, manager);
             }
         }
+
+        OntologyHeaderMerge.Header oursHeader = header(ours);
+        OntologyHeaderMerge.Header theirsHeader = header(theirs);
+        headers.put(theirs, OntologyHeaderMerge.apply(headerBaseline, oursHeader, theirsHeader, theirs, safeResolutions));
         return theirs;
     }
 
