@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.config;
 
+import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -7,65 +8,92 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.service.SparqlQueryContext;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
+import javax.crypto.SecretKey;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SparqlQueryContextInterceptorTest {
 
-    private final SparqlQueryContextInterceptor interceptor = new SparqlQueryContextInterceptor();
+    private final SecretKey key = Jwts.SIG.HS256.key().build();
 
     @AfterEach
     void clear() {
         SparqlQueryContext.clear();
     }
 
-    private static MockHttpServletRequest withToken(String userId) {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/ontology/p1/classes");
-        String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                ("{\"email\":\"owner@x.org\",\"userId\":\"" + userId + "\"}").getBytes(StandardCharsets.UTF_8));
-        request.addHeader("Authorization", "Bearer h." + payload + ".s");
+    private SparqlQueryContextInterceptor interceptor(boolean desktopMode) {
+        SparqlQueryContextInterceptor interceptor = new SparqlQueryContextInterceptor();
+        ReflectionTestUtils.setField(interceptor, "desktopMode", desktopMode);
+        return interceptor;
+    }
+
+    private String token(Map<String, Object> claims) {
+        return "Bearer " + Jwts.builder().claims(claims).signWith(key).compact();
+    }
+
+    private MockHttpServletRequest draftRequest() {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/sparql/query/p1");
+        request.addParameter("draft", "true");
         return request;
     }
 
     @Test
-    void theTokensUserIdWinsOverAUserIdInTheQuery() {
-        MockHttpServletRequest request = withToken("u-owner");
-        request.setParameter("userId", "u-victim");
+    void webIgnoresAnotherUsersIdInParameterAndHeader() {
+        MockHttpServletRequest request = draftRequest();
+        request.addHeader("Authorization", token(Map.of("userId", "user-b")));
+        request.addParameter("userId", "user-a");
+        request.addHeader("X-Ontocode-User-Id", "user-a");
 
-        interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
+        interceptor(false).preHandle(request, new MockHttpServletResponse(), null);
 
-        assertEquals("u-owner", SparqlQueryContext.getUserId());
+        assertEquals("user-b", SparqlQueryContext.getUserId());
+        assertTrue(SparqlQueryContext.wantsDraft());
     }
 
     @Test
-    void theTokensUserIdWinsOverTheHeader() {
-        MockHttpServletRequest request = withToken("u-owner");
-        request.addHeader("X-Ontocode-User-Id", "u-victim");
+    void webWithoutTokenGetsNoDraftUser() {
+        MockHttpServletRequest request = draftRequest();
+        request.addParameter("userId", "user-a");
+        request.addHeader("X-Ontocode-User-Id", "user-a");
 
-        interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
+        interceptor(false).preHandle(request, new MockHttpServletResponse(), null);
 
-        assertEquals("u-owner", SparqlQueryContext.getUserId());
+        assertNull(SparqlQueryContext.getUserId());
     }
 
     @Test
-    void withoutATokenTheQueryParameterIsStillUsed() {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/ontology/p1/classes");
-        request.setParameter("userId", "u-claimed");
+    void webFallsBackToTokenEmailWhenUserIdClaimIsMissing() {
+        MockHttpServletRequest request = draftRequest();
+        request.addHeader("Authorization", token(Map.of("email", "b@example.com")));
+        request.addParameter("userId", "user-a");
 
-        interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
+        interceptor(false).preHandle(request, new MockHttpServletResponse(), null);
 
-        assertEquals("u-claimed", SparqlQueryContext.getUserId());
+        assertEquals("b@example.com", SparqlQueryContext.getUserId());
     }
 
     @Test
-    void theDesktopAppFallsBackToItsLocalUser() {
-        ReflectionTestUtils.setField(interceptor, "desktopMode", true);
+    void desktopPrefersTheTokenOverNothingButNotOverTheParameter() {
+        MockHttpServletRequest request = draftRequest();
+        request.addHeader("Authorization", token(Map.of("userId", "user-b")));
 
-        interceptor.preHandle(new MockHttpServletRequest("GET", "/api/ontology/p1/classes"),
-                new MockHttpServletResponse(), new Object());
+        interceptor(true).preHandle(request, new MockHttpServletResponse(), null);
 
+        assertEquals("user-b", SparqlQueryContext.getUserId());
+    }
+
+    @Test
+    void desktopUsesParameterThenDefaultUser() {
+        MockHttpServletRequest withParam = draftRequest();
+        withParam.addParameter("userId", "desktop-user-local");
+        interceptor(true).preHandle(withParam, new MockHttpServletResponse(), null);
+        assertEquals("desktop-user-local", SparqlQueryContext.getUserId());
+
+        SparqlQueryContext.clear();
+        interceptor(true).preHandle(draftRequest(), new MockHttpServletResponse(), null);
         assertEquals("desktop-user-local", SparqlQueryContext.getUserId());
     }
 }

@@ -82,7 +82,9 @@ final class RollbackRecorder {
         String reverts = req.changeSetId() != null ? req.changeSetId() : first.getChangeSetId();
         String label = entries.size() == 1 ? first.getEntityLabel() : null;
         String description = RollbackDescriptions.describe(req.direction(), req.level(), applied, entries);
-        history.recordEdit(req.projectId(), req.actor().userId(), req.actor().username(), opType,
+        boolean draftOwned = first.isDraft() && first.getUserId() != null && !first.getUserId().isBlank();
+        String userId = draftOwned ? first.getUserId() : req.actor().userId();
+        history.recordEdit(req.projectId(), userId, req.actor().username(), opType,
                 entries.size() == 1 ? first.getEntityIRI() : null, label, null, null, description,
                 null, null, first.isDraft(), ChangeOrigin.rollback(reverts, auditId));
         return description;

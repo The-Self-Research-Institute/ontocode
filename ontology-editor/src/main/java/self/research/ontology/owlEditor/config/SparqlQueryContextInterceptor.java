@@ -17,19 +17,22 @@ public class SparqlQueryContextInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        String userId = CallerIdentity.of(request).userId();
-        if (userId == null || userId.isBlank()) {
-            userId = request.getParameter("userId");
-        }
+        CallerIdentity caller = CallerIdentity.of(request);
+        String tokenUserId = caller.userIdOr(caller.email());
+        SparqlQueryContext.setUserId(desktopMode ? desktopUserId(request, tokenUserId) : tokenUserId);
+        SparqlQueryContext.setWantsDraft("true".equalsIgnoreCase(request.getParameter("draft")));
+        return true;
+    }
+
+    private static String desktopUserId(HttpServletRequest request, String tokenUserId) {
+        String userId = request.getParameter("userId");
         if (userId == null || userId.isBlank()) {
             userId = request.getHeader("X-Ontocode-User-Id");
         }
-        if ((userId == null || userId.isBlank()) && desktopMode) {
-            userId = DESKTOP_USER_ID;
+        if (userId == null || userId.isBlank()) {
+            userId = tokenUserId;
         }
-        SparqlQueryContext.setUserId(userId);
-        SparqlQueryContext.setWantsDraft("true".equalsIgnoreCase(request.getParameter("draft")));
-        return true;
+        return userId == null || userId.isBlank() ? DESKTOP_USER_ID : userId;
     }
 
     @Override

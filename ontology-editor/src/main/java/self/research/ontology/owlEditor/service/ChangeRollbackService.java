@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.UndoIntentDocument;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.RollbackAudit;
+import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.delta.ExactReversal;
 import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Kind;
@@ -29,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -402,9 +404,6 @@ public class ChangeRollbackService {
         if (!work.plan().mutations().isEmpty()) {
             if (draft) {
                 mutations.applyDraftForRollback(req.projectId(), entry.getUserId(), work.plan().mutations());
-                if (entry.getEntityIRI() != null) {
-                    draftTracking.discardDraftsByIris(req.projectId(), entry.getUserId(), Set.of(entry.getEntityIRI()));
-                }
             } else {
                 mutations.applyForRollback(req.projectId(), work.plan().mutations());
             }
@@ -423,6 +422,9 @@ public class ChangeRollbackService {
         }
         UndoOperationContext.stage(UndoIntentDocument.Stage.DOCUMENTS_APPLIED);
         boolean undo = UNDO.equals(req.direction());
+        if (draft) {
+            trackDraftChange(req.projectId(), work, undo);
+        }
         if (isSpreadsheetImport(entry)) {
             spreadsheetImports.markUndone(req.projectId(), entry, undo, req.actor().username());
         }
@@ -432,6 +434,34 @@ public class ChangeRollbackService {
             historySync.setEntryReverted(entry.getId(), undo, undo ? auditId : null);
         }
         UndoOperationContext.stage(UndoIntentDocument.Stage.HISTORY_MARKED);
+    }
+
+    private void trackDraftChange(String projectId, Work work, boolean undo) {
+        HistoryChange entry = work.entry();
+        if (!tracksDraftChange(entry) || work.plan().mutations().isEmpty() && !work.completesEntry()) {
+            return;
+        }
+        if (undo) {
+            draftTracking.discardDraftsByIris(projectId, entry.getUserId(), Set.of(entry.getEntityIRI()));
+        } else if (OntologyMergeService.MERGE_OPERATION.equals(entry.getOperationType())) {
+            DraftMergeApplier.recordMarker(draftTracking, projectId, entry.getUserId(), entry.getUsername(),
+                    entry.getEntityIRI());
+        } else {
+            List<MutationOp> ops = work.plan().mutations().isEmpty() ? List.of(redoneOp(entry)) : work.plan().mutations();
+            draftTracking.recordDrafts(projectId, entry.getUserId(), entry.getUsername(), ops, UUID.randomUUID().toString());
+        }
+    }
+
+    private static boolean tracksDraftChange(HistoryChange entry) {
+        return entry.getEntityIRI() != null && !entry.getEntityIRI().isBlank() && entry.getOperationType() != null
+                && !SpreadsheetImportService.isImportEntry(entry.getOperationType())
+                && RollbackMutationPlanner.kindOf(entry) != Kind.PREFIX;
+    }
+
+    private static MutationOp redoneOp(HistoryChange entry) {
+        return new MutationOp(entry.getOperationType(), entry.getEntityIRI(), entry.getEntityLabel(), null,
+                entry.getAnnotationProperty(), entry.getNewValue(), null, null, null, null, null, entry.getOldValue(),
+                null, null, null);
     }
 
     private boolean actionsHold(Request req, HistoryChange entry, Plan plan) {

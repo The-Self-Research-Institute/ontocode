@@ -64,7 +64,7 @@ class MergeKeepsLiveEditsTest {
         when(storageManager.projectDir("proj")).thenReturn(dir);
         when(metadataService.readMeta(anyString())).thenReturn(Optional.empty());
         doNothing().when(metadataService).writeMeta(anyString(), any());
-        doNothing().when(importService).submitImport(anyString(), any());
+        when(importService.trySubmitImport(anyString(), any())).thenReturn(true);
     }
 
     private static void write(Path path, String ontologyName, String className, boolean turtleSafeName) throws Exception {
