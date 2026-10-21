@@ -20,6 +20,10 @@ public final class DeltaSparql {
 
     private static final int MAX_PAIRING = 2_000;
 
+    private static final java.util.Set<IRI> NUMERIC = java.util.Set.of(XSD.DECIMAL, XSD.INTEGER, XSD.LONG, XSD.INT,
+            XSD.SHORT, XSD.BYTE, XSD.NON_NEGATIVE_INTEGER, XSD.POSITIVE_INTEGER, XSD.NEGATIVE_INTEGER,
+            XSD.NON_POSITIVE_INTEGER, XSD.UNSIGNED_LONG, XSD.UNSIGNED_INT, XSD.UNSIGNED_SHORT, XSD.UNSIGNED_BYTE);
+
     private static final String FORBIDDEN_IRI_CHARS = "<>\"{}|\\^`";
 
     private DeltaSparql() {
@@ -57,14 +61,43 @@ public final class DeltaSparql {
             }
             queries.add("ASK FROM <" + graphUri + "> WHERE { " + body + " }");
         }
-        if (!ground(absent).isEmpty()) {
+        Model mustBeAbsent = new LinkedHashModel();
+        for (Statement statement : ground(absent)) {
+            if (!hasSameValueIn(present, statement)) {
+                mustBeAbsent.add(statement);
+            }
+        }
+        if (!mustBeAbsent.isEmpty()) {
             StringBuilder body = new StringBuilder();
-            for (Statement statement : ground(absent)) {
+            for (Statement statement : mustBeAbsent) {
                 body.append("FILTER NOT EXISTS { ").append(triple(statement, true)).append(" } ");
             }
             queries.add("ASK FROM <" + graphUri + "> WHERE { " + body + "}");
         }
         return queries;
+    }
+
+    private static boolean hasSameValueIn(Model model, Statement statement) {
+        if (!(statement.getObject() instanceof Literal literal) || literal.getLanguage().isPresent()) {
+            return false;
+        }
+        for (Statement other : model.filter(statement.getSubject(), statement.getPredicate(), null)) {
+            if (other.getObject() instanceof Literal candidate && sameNumber(literal, candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean sameNumber(Literal a, Literal b) {
+        if (a.getDatatype() == null || !a.getDatatype().equals(b.getDatatype()) || !NUMERIC.contains(a.getDatatype())) {
+            return false;
+        }
+        try {
+            return new java.math.BigDecimal(a.getLabel().trim()).compareTo(new java.math.BigDecimal(b.getLabel().trim())) == 0;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     private static String join(List<String> deletes, String insert) {
