@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
+import self.research.ontology.owlEditor.util.StandardVocabulary;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.io.FileDocumentSource;
@@ -132,46 +133,8 @@ public class OntologyMergeService {
         // Pre-build label index from source (IRI → label) in ONE pass
         Map<IRI, String> sourceLabelIndex = buildLabelIndex(sourceOntology);
         
-        // PERFORMANCE OPTIMIZATION: Run conflict detection in parallel (2-4x faster for large ontologies)
-        long analysisStart = System.nanoTime();
-        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(4);
-        try {
-            java.util.concurrent.Future<?> classFuture = executor.submit(() -> 
-                detectClassConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result)
-            );
-            java.util.concurrent.Future<?> propertyFuture = executor.submit(() -> 
-                detectPropertyConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result)
-            );
-            java.util.concurrent.Future<?> annotPropFuture = executor.submit(() -> 
-                detectAnnotationPropertyConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result)
-            );
-            java.util.concurrent.Future<?> individualFuture = executor.submit(() -> 
-                detectIndividualConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result)
-            );
-            
-            // Wait for all parallel tasks to complete
-            classFuture.get();
-            propertyFuture.get();
-            annotPropFuture.get();
-            individualFuture.get();
-            
-            long parallelDuration = (System.nanoTime() - analysisStart) / 1_000_000;
-            log.info("⚡ PERFORMANCE: Parallel conflict detection completed in {} ms", parallelDuration);
-            
-            // Axiom detection cannot be easily parallelized (shared result modification)
-            detectAxiomConflicts(sourceOntology, targetOntology, result);
-            
-        } catch (Exception e) {
-            log.error("[MERGE] Parallel conflict detection failed, falling back to sequential", e);
-            // Fallback to sequential if parallel fails
-            detectClassConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
-            detectPropertyConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
-            detectAnnotationPropertyConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
-            detectIndividualConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
-            detectAxiomConflicts(sourceOntology, targetOntology, result);
-        } finally {
-            executor.shutdown();
-        }
+        detectEntityConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
+        detectAxiomConflicts(sourceOntology, targetOntology, result);
         
         // Calculate statistics
         result.setSourceClassCount((int) sourceOntology.getClassesInSignature().stream().filter(c -> !c.isBuiltIn()).count());
@@ -949,18 +912,23 @@ public class OntologyMergeService {
         
         String renameSuffix = options.getRenameSuffix() != null ? options.getRenameSuffix() : "_imported";
         
+        MergeAnalysisResult analysis = new MergeAnalysisResult();
+        detectEntityConflicts(source, target, buildAnnotationIndex(source), buildAnnotationIndex(target), analysis);
+        Set<String> conflictingIris = analysis.getConflicts().stream()
+                .map(MergeConflict::getEntityIRI)
+                .collect(Collectors.toSet());
+
         Map<OWLEntity, IRI> renameMap = new HashMap<>();
-        Set<OWLEntity> sourceEntities = source.getSignature();
-        
-        // Create rename map for conflicting entities
-        for (OWLEntity entity : sourceEntities) {
-            if (target.containsEntityInSignature(entity)) {
+        for (OWLEntity entity : source.getSignature()) {
+            if (conflictingIris.contains(entity.getIRI().toString())
+                    && !StandardVocabulary.contains(entity)
+                    && target.containsEntityInSignature(entity)) {
                 IRI newIRI = IRI.create(entity.getIRI().toString() + renameSuffix);
                 renameMap.put(entity, newIRI);
                 log.debug("[MERGE] Will rename {} to {}", entity.getIRI(), newIRI);
             }
         }
-        
+
         // Use OWLEntityRenamer to properly rename entities in all axioms
         OWLEntityRenamer renamer = new OWLEntityRenamer(manager, Collections.singleton(source));
         List<OWLOntologyChange> changes = renamer.changeIRI(renameMap);
@@ -991,8 +959,9 @@ public class OntologyMergeService {
         }
         
         result.setEntitiesRenamed(renameMap.size());
+        result.setConflictsResolved(renameMap.size());
         result.setAxiomsAdded(addedCount);
-        log.info("[MERGE] Renamed {} entities, added {} axioms", renameMap.size(), addedCount);
+        log.info("[MERGE] Renamed {} conflicting entities, added {} axioms", renameMap.size(), addedCount);
     }
 
     /**
@@ -1101,12 +1070,51 @@ public class OntologyMergeService {
 
     // ========== Conflict Detection Methods ==========
 
+    private void detectEntityConflicts(OWLOntology source, OWLOntology target,
+                                       Map<IRI, Set<OWLAnnotationAssertionAxiom>> srcAnnot,
+                                       Map<IRI, Set<OWLAnnotationAssertionAxiom>> tgtAnnot,
+                                       MergeAnalysisResult result) {
+        long analysisStart = System.nanoTime();
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(4);
+        try {
+            java.util.concurrent.Future<?> classFuture = executor.submit(() ->
+                detectClassConflicts(source, target, srcAnnot, tgtAnnot, result)
+            );
+            java.util.concurrent.Future<?> propertyFuture = executor.submit(() ->
+                detectPropertyConflicts(source, target, srcAnnot, tgtAnnot, result)
+            );
+            java.util.concurrent.Future<?> annotPropFuture = executor.submit(() ->
+                detectAnnotationPropertyConflicts(source, target, srcAnnot, tgtAnnot, result)
+            );
+            java.util.concurrent.Future<?> individualFuture = executor.submit(() ->
+                detectIndividualConflicts(source, target, srcAnnot, tgtAnnot, result)
+            );
+
+            classFuture.get();
+            propertyFuture.get();
+            annotPropFuture.get();
+            individualFuture.get();
+
+            long parallelDuration = (System.nanoTime() - analysisStart) / 1_000_000;
+            log.info("PERFORMANCE: Parallel conflict detection completed in {} ms", parallelDuration);
+        } catch (Exception e) {
+            log.error("[MERGE] Parallel conflict detection failed, falling back to sequential", e);
+            result.getConflicts().clear();
+            detectClassConflicts(source, target, srcAnnot, tgtAnnot, result);
+            detectPropertyConflicts(source, target, srcAnnot, tgtAnnot, result);
+            detectAnnotationPropertyConflicts(source, target, srcAnnot, tgtAnnot, result);
+            detectIndividualConflicts(source, target, srcAnnot, tgtAnnot, result);
+        } finally {
+            executor.shutdown();
+        }
+    }
+
     private void detectClassConflicts(OWLOntology source, OWLOntology target,
                                      Map<IRI, Set<OWLAnnotationAssertionAxiom>> srcAnnot,
                                      Map<IRI, Set<OWLAnnotationAssertionAxiom>> tgtAnnot,
                                      MergeAnalysisResult result) {
         Set<OWLClass> sourceClasses = source.getClassesInSignature().stream()
-                                            .filter(c -> !c.isBuiltIn())
+                                            .filter(c -> !StandardVocabulary.contains(c))
                                             .collect(Collectors.toSet());
         Set<OWLClass> targetClasses = target.getClassesInSignature();
         
@@ -1143,7 +1151,7 @@ public class OntologyMergeService {
         Set<OWLObjectProperty> targetObjProps = target.getObjectPropertiesInSignature();
         
         for (OWLObjectProperty prop : sourceObjProps) {
-            if (targetObjProps.contains(prop)) {
+            if (!StandardVocabulary.contains(prop) && targetObjProps.contains(prop)) {
                 Set<OWLObjectPropertyAxiom> sourceAxioms = source.getAxioms(prop);
                 Set<OWLObjectPropertyAxiom> targetAxioms = target.getAxioms(prop);
                 Set<OWLAnnotationAssertionAxiom> sourceAnnotations = srcAnnot.getOrDefault(prop.getIRI(), Collections.emptySet());
@@ -1170,7 +1178,7 @@ public class OntologyMergeService {
         Set<OWLDataProperty> targetDataProps = target.getDataPropertiesInSignature();
         
         for (OWLDataProperty prop : sourceDataProps) {
-            if (targetDataProps.contains(prop)) {
+            if (!StandardVocabulary.contains(prop) && targetDataProps.contains(prop)) {
                 Set<OWLDataPropertyAxiom> sourceAxioms = source.getAxioms(prop);
                 Set<OWLDataPropertyAxiom> targetAxioms = target.getAxioms(prop);
                 Set<OWLAnnotationAssertionAxiom> sourceAnnotations = srcAnnot.getOrDefault(prop.getIRI(), Collections.emptySet());
@@ -1201,7 +1209,7 @@ public class OntologyMergeService {
         Set<OWLNamedIndividual> targetIndividuals = target.getIndividualsInSignature();
         
         for (OWLNamedIndividual individual : sourceIndividuals) {
-            if (targetIndividuals.contains(individual)) {
+            if (!StandardVocabulary.contains(individual) && targetIndividuals.contains(individual)) {
                 Set<OWLIndividualAxiom> sourceAxioms = source.getAxioms(individual);
                 Set<OWLIndividualAxiom> targetAxioms = target.getAxioms(individual);
                 Set<OWLAnnotationAssertionAxiom> sourceAnnotations = srcAnnot.getOrDefault(individual.getIRI(), Collections.emptySet());
@@ -1232,7 +1240,7 @@ public class OntologyMergeService {
         Set<OWLAnnotationProperty> targetAnnotProps = target.getAnnotationPropertiesInSignature();
 
         for (OWLAnnotationProperty prop : sourceAnnotProps) {
-            if (targetAnnotProps.contains(prop)) {
+            if (!StandardVocabulary.contains(prop) && targetAnnotProps.contains(prop)) {
                 Set<OWLAnnotationAxiom> sourceAxioms = source.getAxioms(prop);
                 Set<OWLAnnotationAxiom> targetAxioms = target.getAxioms(prop);
                 Set<OWLAnnotationAssertionAxiom> sourceAnnotations = srcAnnot.getOrDefault(prop.getIRI(), Collections.emptySet());
