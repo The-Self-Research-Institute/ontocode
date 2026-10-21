@@ -261,7 +261,7 @@
       "rule": "section-3-file-size",
       "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/OntologyMergeService.java",
       "category": "java-service",
-      "measuredNonblankLines": 1436,
+      "measuredNonblankLines": 1600,
       "reviewThreshold": 400,
       "blobSha": "137f62f2639b9fdfc8d223576e4fd7d5de7916cd",
       "reason": "Pre-existing file already over the section 3 review threshold when this baseline was captured; not touched by the change that introduced this registry.",

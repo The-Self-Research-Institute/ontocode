@@ -50,10 +50,14 @@ public class DraftMergeApplier {
             }
             history.recordEdit(projectId, userId, username, OntologyMergeService.MERGE_OPERATION, entity,
                     "Ontology merge", null, null, summary, null, null, true, origin);
-            draftTracking.recordDrafts(projectId, userId, username, List.of(marker(entity)),
-                    SESSION_PREFIX + UUID.randomUUID());
+            recordMarker(draftTracking, projectId, userId, username, entity);
             return origin.changeSetId();
         });
+    }
+
+    static void recordMarker(DraftTrackingService draftTracking, String projectId, String userId, String username,
+                             String entity) {
+        draftTracking.recordDrafts(projectId, userId, username, List.of(marker(entity)), SESSION_PREFIX + UUID.randomUUID());
     }
 
     private static MutationOp marker(String entity) {

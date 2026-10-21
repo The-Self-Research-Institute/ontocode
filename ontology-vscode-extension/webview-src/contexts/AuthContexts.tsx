@@ -162,6 +162,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         clearLastOpenedProjectState();
         ignoringWorkspaceRef.current = false;
         try { localStorage.removeItem('enterpriseDomainBypass'); } catch {}
+        try { indexedDB.deleteDatabase('ontocode-spreadsheet-import'); } catch {}
 
         setUser(null);
         setNeedsWorkspaceSelection(false);

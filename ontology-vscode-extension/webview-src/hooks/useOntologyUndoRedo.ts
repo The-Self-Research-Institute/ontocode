@@ -10,8 +10,11 @@ import { useCommittedChangeRefresh } from './useCommittedChangeRefresh';
 
 interface Options {
   projectId: string | null | undefined;
+  draft?: boolean;
   onOpenHistory?: () => void;
 }
+
+const PUBLISH_OPS = ['draftPublish', 'draftPrApproved'];
 
 export interface UndoMenu {
   undo: () => void;
@@ -33,7 +36,7 @@ function redoHintFor(phase: string): string | undefined {
   return undefined;
 }
 
-export function useOntologyUndoRedo({ projectId, onOpenHistory }: Options) {
+export function useOntologyUndoRedo({ projectId, draft, onOpenHistory }: Options) {
   const snap = useSyncExternalStore(undoQueue.subscribe, undoQueue.getSnapshot);
   const [state, setState] = useState<UndoState | undefined>(undefined);
   const stateRef = useRef<UndoState | undefined>(undefined);
@@ -84,7 +87,23 @@ export function useOntologyUndoRedo({ projectId, onOpenHistory }: Options) {
       window.removeEventListener('focus', refresh);
       window.removeEventListener('ontologyChangesSaved', refresh);
     };
-  }, [projectId, apply, refresh]);
+  }, [projectId, draft, apply, refresh]);
+
+  useEffect(() => {
+    if (!projectId) {
+      return undefined;
+    }
+    const onMutated = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; ops?: string[] }>).detail;
+      if (detail?.projectId !== projectId || !detail.ops?.some((op) => PUBLISH_OPS.includes(op))) {
+        return;
+      }
+      undoQueue.reset();
+      void refresh();
+    };
+    window.addEventListener('ontology:mutated', onMutated);
+    return () => window.removeEventListener('ontology:mutated', onMutated);
+  }, [projectId, refresh]);
 
   useCommittedChangeRefresh(projectId ?? undefined, () => void refresh(), ['APPLY', 'UNDO', 'REDO']);
 

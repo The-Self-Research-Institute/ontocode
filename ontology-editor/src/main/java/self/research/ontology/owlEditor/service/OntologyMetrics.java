@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.ToLongBiFunction;
 
 @Slf4j
 final class OntologyMetrics {
@@ -26,11 +27,16 @@ final class OntologyMetrics {
     private final ManchesterExpressionService manchesterExpressionService;
     private final OntologyCountQueries queries;
     private final Function<String, String> ontologyIri;
+    private final ToLongBiFunction<String, String> draftVersion;
+    private final DraftAxiomCounter draftCounter;
     private final StampedComputeCache<OwlApiAxiomCounts> owlCounts = new StampedComputeCache<>();
 
     OntologyMetrics(SparqlDatasetService datasetService, ProjectMetadataService projectMetadataService,
                     ProjectImportService importService, ManchesterExpressionService manchesterExpressionService,
-                    OntologyCountQueries queries, Function<String, String> ontologyIri) {
+                    OntologyCountQueries queries, Function<String, String> ontologyIri,
+                    ToLongBiFunction<String, String> draftVersion) {
+        this.draftVersion = draftVersion;
+        this.draftCounter = new DraftAxiomCounter(datasetService);
         this.datasetService = datasetService;
         this.projectMetadataService = projectMetadataService;
         this.importService = importService;
@@ -344,6 +350,13 @@ final class OntologyMetrics {
     }
 
     OwlApiAxiomCounts getOwlApiAxiomCounts(String projectId) {
+        String draftUserId = SparqlQueryContext.getUserId();
+        if (draftUserId != null && !draftUserId.isBlank() && datasetService.hasActiveDraftOverlay(projectId, draftUserId)) {
+            String stamp = projectMetadataService.versionStamp(projectId) + "|"
+                    + draftVersion.applyAsLong(projectId, draftUserId);
+            return owlCounts.get(projectId + "|draft|" + draftUserId, stamp,
+                    () -> draftCounter.count(projectId, draftUserId), new OwlApiAxiomCounts(0, 0, 0));
+        }
         return owlCounts.get(projectId, projectMetadataService.versionStamp(projectId),
                 () -> computeOwlApiAxiomCounts(projectId), new OwlApiAxiomCounts(0, 0, 0));
     }
@@ -351,16 +364,14 @@ final class OntologyMetrics {
     private OwlApiAxiomCounts computeOwlApiAxiomCounts(String projectId) {
         long started = System.nanoTime();
         try {
-            OWLOntology ont = manchesterExpressionService.loadFreshOntology(projectId);
-            int total = ont.getAxiomCount(Imports.INCLUDED);
-            int logical = ont.getLogicalAxiomCount(Imports.INCLUDED);
-            int declarations = ont.getAxiomCount(AxiomType.DECLARATION, Imports.INCLUDED);
+            OwlApiAxiomCounts counts = DraftAxiomCounter.countsOf(manchesterExpressionService.loadFreshOntology(projectId));
             log.info("[PERF] OWLAPI axiom counts for project {} computed in {}ms", projectId,
                     (System.nanoTime() - started) / 1_000_000);
-            return new OwlApiAxiomCounts(total, logical, declarations);
+            return counts;
         } catch (Exception e) {
             log.error("Error computing OWLAPI axiom counts for project {}", projectId, e);
             return null;
         }
     }
+
 }

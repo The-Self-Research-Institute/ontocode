@@ -101,6 +101,16 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
     setLiveDraftCount(draftCount);
   }, [draftCount]);
 
+  const refreshDraftCount = useCallback(() => {
+    apiClient.get<any>(`/api/ontology/${projectId}/drafts/stats`, { userId })
+      .then((res: any) => {
+        const data = res?.data || res;
+        const count = data?.unappliedDrafts ?? data?.totalDrafts;
+        if (typeof count === 'number') setLiveDraftCount(count);
+      })
+      .catch(() => {});
+  }, [projectId, userId]);
+
   const loadPRDetails = async (pr: DraftPR) => {
     if (fetchedConflictsRef.current.has(pr.id)) return;
     fetchedConflictsRef.current.add(pr.id);
@@ -137,16 +147,10 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
       setPrChangesMap({});
       setPrExpandedCategories({});
       if (canRaisePR) {
-        apiClient.get<any>(`/api/ontology/${projectId}/drafts/stats`, { userId })
-          .then((res: any) => {
-            const data = res?.data || res;
-            const count = data?.unappliedDrafts ?? data?.totalDrafts;
-            if (typeof count === 'number') setLiveDraftCount(count);
-          })
-          .catch(() => {});
+        refreshDraftCount();
       }
     }
-  }, [isOpen, fetchPRs, canRaisePR, projectId, userId]);
+  }, [isOpen, fetchPRs, canRaisePR, refreshDraftCount]);
 
   const handleRaisePR = async () => {
     setRaising(true);
@@ -180,6 +184,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
       setReviewingPrId(null);
       setReviewNote("");
       await fetchPRs();
+      refreshDraftCount();
       window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: ["draftPrApproved"] } }));
       onPRApproved?.();
     } catch (e: any) {

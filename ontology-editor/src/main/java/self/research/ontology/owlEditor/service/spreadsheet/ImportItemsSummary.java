@@ -58,20 +58,14 @@ public final class ImportItemsSummary {
     }
 
     public static Map<String, Group> of(List<String> addedTriples, int limit) {
-        Parsed parsed = parse(addedTriples);
-        Map<String, Group> summary = new LinkedHashMap<>();
-        for (String group : parsed.groups.keySet()) {
-            summary.put(group, parsed.page(group, 0, limit));
-        }
-        return summary;
+        return parse(addedTriples).summary(limit);
     }
 
     public static Group page(List<String> addedTriples, String group, int offset, int limit) {
-        Parsed parsed = parse(addedTriples);
-        return parsed.groups.containsKey(group) ? parsed.page(group, offset, limit) : null;
+        return parse(addedTriples).pageOf(group, offset, limit);
     }
 
-    private static Parsed parse(List<String> addedTriples) {
+    public static Parsed parse(List<String> addedTriples) {
         List<Triple> triples = new ArrayList<>();
         for (String line : addedTriples == null ? List.<String>of() : addedTriples) {
             Triple t = parseTriple(line);
@@ -150,10 +144,22 @@ public final class ImportItemsSummary {
         return p;
     }
 
-    private static final class Parsed {
+    public static final class Parsed {
         final Map<String, Set<String>> groups = new LinkedHashMap<>();
         final Map<String, String> labels = new HashMap<>();
         final Map<String, Assertions> assertions = new LinkedHashMap<>();
+
+        public Map<String, Group> summary(int limit) {
+            Map<String, Group> summary = new LinkedHashMap<>();
+            for (String group : groups.keySet()) {
+                summary.put(group, page(group, 0, limit));
+            }
+            return summary;
+        }
+
+        public Group pageOf(String group, int offset, int limit) {
+            return groups.containsKey(group) ? page(group, offset, limit) : null;
+        }
 
         Assertions assertionsOf(String subject) {
             return assertions.computeIfAbsent(subject, s -> new Assertions(

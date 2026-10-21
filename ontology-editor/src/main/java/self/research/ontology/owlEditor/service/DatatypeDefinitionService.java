@@ -22,7 +22,7 @@ public class DatatypeDefinitionService {
     }
 
     public List<DatatypeDefinitionEntity> listDefinitions(String projectId, String datatypeIri) {
-        return repository.findByProjectIdAndDatatypeIriOrderByCreatedAtDesc(projectId, datatypeIri);
+        return repository.findByProjectIdAndDatatypeIriAndDraftNotOrderByCreatedAtDesc(projectId, datatypeIri, true);
     }
 
     public DatatypeDefinitionEntity createDefinition(String projectId, String datatypeIri, String expression, String definitionType) {
@@ -42,7 +42,7 @@ public class DatatypeDefinitionService {
     }
 
     public Optional<DatatypeDefinitionEntity> updateDefinition(String projectId, String id, String expression, String definitionType) {
-        Optional<DatatypeDefinitionEntity> existing = repository.findByIdAndProjectId(id, projectId);
+        Optional<DatatypeDefinitionEntity> existing = findById(projectId, id);
         existing.ifPresent(def -> {
             mutationService.apply(projectId, List.of(
                     new OntologyMutationService.MutationOp(
@@ -67,11 +67,11 @@ public class DatatypeDefinitionService {
     }
 
     public Optional<DatatypeDefinitionEntity> findById(String projectId, String id) {
-        return repository.findByIdAndProjectId(id, projectId);
+        return repository.findByIdAndProjectId(id, projectId).filter(row -> !row.isDraft());
     }
 
     public boolean deleteDefinition(String projectId, String id) {
-        Optional<DatatypeDefinitionEntity> existing = repository.findByIdAndProjectId(id, projectId);
+        Optional<DatatypeDefinitionEntity> existing = findById(projectId, id);
         if (existing.isEmpty()) {
             return false;
         }

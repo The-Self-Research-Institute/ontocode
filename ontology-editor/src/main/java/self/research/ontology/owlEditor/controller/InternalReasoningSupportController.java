@@ -9,6 +9,7 @@ import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.lang.Nullable;
@@ -49,7 +50,13 @@ public class InternalReasoningSupportController {
 
     private static final String INSTANCE_ID = UUID.randomUUID().toString();
 
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
     private boolean draftAccessDenied(String projectId, HttpServletRequest request) {
+        if (internalToken != null && internalToken.equals(request.getHeader("X-Ontocode-Internal-Token"))) {
+            return false;
+        }
         return JwtIdentityExtractor.extractEmail(request)
                 .map(email -> !projectAccessService.hasProjectAccess(projectId, email))
                 .orElse(true);
@@ -123,7 +130,16 @@ public class InternalReasoningSupportController {
         if (!ensureFusekiReady(projectId)) {
             return ResponseEntity.status(503).build();
         }
-        StreamingResponseBody body = out -> datasetService.exportDatasetToStream(projectId, userId, RDFFormat.NTRIPLES, out);
+        boolean draft = userId != null && !userId.isBlank();
+        StreamingResponseBody body = out -> {
+            SparqlQueryContext.setUserId(userId);
+            SparqlQueryContext.setWantsDraft(draft);
+            try {
+                datasetService.exportDatasetToStream(projectId, userId, RDFFormat.NTRIPLES, out);
+            } finally {
+                SparqlQueryContext.clear();
+            }
+        };
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/n-triples"))
                 .body(body);

@@ -82,7 +82,8 @@ public class OntologyMetadataService {
         this.storageManager = storageManager;
         this.countQueries = new OntologyCountQueries(datasetService);
         this.metrics = new OntologyMetrics(datasetService, projectMetadataService, importService,
-                manchesterExpressionService, countQueries, this::getOntologyIri);
+                manchesterExpressionService, countQueries, this::getOntologyIri,
+                (project, user) -> storageManager == null ? 0L : storageManager.getDraftGraphVersion(project, user));
     }
 
     /**

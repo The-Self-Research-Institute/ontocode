@@ -17,6 +17,8 @@ import java.util.function.Supplier;
 @Service
 public class UndoOperations {
 
+    private static final String DIFFERENT_REQUEST = "This operation id was already used for a different request";
+
     private final UndoIntentService intents;
     private final UndoReconciler reconciler;
 
@@ -71,24 +73,35 @@ public class UndoOperations {
         }
     }
 
+    public Optional<Result> repeat(String projectId, String opId, String direction, String actor) {
+        return intents.existing(projectId, opId).map(earlier -> direction.equals(earlier.getDirection())
+                && actor != null && actor.equalsIgnoreCase(earlier.getActor())
+                ? outcome(earlier, direction)
+                : refused(direction, DIFFERENT_REQUEST));
+    }
+
     private Result replay(Request req, String opId, String key) {
         UndoIntentDocument earlier = intents.existing(req.projectId(), opId).orElse(null);
         if (earlier == null) {
-            return refused(req, "This request was already received");
+            return refused(req.direction(), "This request was already received");
         }
         if (earlier.getScopeKey() != null && !earlier.getScopeKey().equals(key)) {
-            return refused(req, "This operation id was already used for a different request");
+            return refused(req.direction(), DIFFERENT_REQUEST);
         }
+        return outcome(earlier, req.direction());
+    }
+
+    private static Result outcome(UndoIntentDocument earlier, String direction) {
         return switch (earlier.getStatus()) {
-            case COMMITTED -> new Result(200, true, false, req.direction(), earlier.getOpId(), List.of(), List.of(),
+            case COMMITTED -> new Result(200, true, false, direction, earlier.getOpId(), List.of(), List.of(),
                     earlier.getAuditId(), "This request was already completed");
-            case PENDING -> refused(req, "This request is still running");
-            default -> refused(req, earlier.getFailureReason() != null ? earlier.getFailureReason()
+            case PENDING -> refused(direction, "This request is still running");
+            default -> refused(direction, earlier.getFailureReason() != null ? earlier.getFailureReason()
                     : "This request did not finish");
         };
     }
 
-    private static Result refused(Request req, String message) {
-        return new Result(409, false, false, req.direction(), null, List.of(), List.of(), null, message);
+    private static Result refused(String direction, String message) {
+        return new Result(409, false, false, direction, null, List.of(), List.of(), null, message);
     }
 }

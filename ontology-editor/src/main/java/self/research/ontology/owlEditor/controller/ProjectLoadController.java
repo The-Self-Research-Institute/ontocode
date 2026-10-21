@@ -1670,10 +1670,13 @@ public class ProjectLoadController {
                         .body(Map.of("success", false, "error", "Content is required"));
             }
             
-            log.info("Storing code view cache for project: {} in format: {}, size: {} bytes", 
-                     projectId, format, content.length());
-            
-            storageManager.storeCodeViewCache(projectId, content, format);
+            boolean draft = Boolean.parseBoolean(String.valueOf(request.get("draft")));
+            log.info("Storing code view cache for project: {} in format: {}, size: {} bytes, draft: {}",
+                     projectId, format, content.length(), draft);
+
+            if (!draft) {
+                storageManager.storeCodeViewCache(projectId, content, format);
+            }
             
             String citationUrn = (String) request.get("citationUrn");
             String referencedEntity = (String) request.get("referencedEntity");
@@ -1691,7 +1694,8 @@ public class ProjectLoadController {
                     "success", true,
                     "projectId", projectId,
                     "format", format,
-                    "message", "Code view cache stored successfully"
+                    "stored", !draft,
+                    "message", draft ? "Draft content is not cached" : "Code view cache stored successfully"
             ));
         } catch (Exception e) {
             log.error("Failed to store code view cache for project: {}", projectId, e);
@@ -1706,10 +1710,19 @@ public class ProjectLoadController {
     @DeleteMapping("/{projectId:.+}/code-view-cache")
     public ResponseEntity<Map<String, Object>> clearCodeViewCache(
             @PathVariable String projectId,
-            @RequestParam(required = false) String format) {
+            @RequestParam(required = false) String format,
+            @RequestParam(defaultValue = "false") boolean draft) {
         try {
-            log.info("Clearing code view cache for project: {}, format: {}", projectId, format);
-            
+            log.info("Clearing code view cache for project: {}, format: {}, draft: {}", projectId, format, draft);
+
+            if (draft) {
+                return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "projectId", projectId,
+                        "message", "Draft requests leave the shared code view cache alone"
+                ));
+            }
+
             if (format != null && !format.isEmpty()) {
                 storageManager.clearCodeViewCacheFormat(projectId, format);
             } else {

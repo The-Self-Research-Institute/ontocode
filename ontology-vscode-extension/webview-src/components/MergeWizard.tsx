@@ -77,6 +77,20 @@ interface MergeAnalysisResult {
   propertyHierarchy?: Record<string, string[]>;
 }
 
+interface MergeCopy {
+  originalIri: string;
+  newIri: string;
+  label?: string;
+  kind: string;
+}
+
+const COPY_KIND_LABELS: Record<string, string> = {
+  Class: "class",
+  ObjectProperty: "object property",
+  DataProperty: "data property",
+  Individual: "individual",
+};
+
 interface MergeWizardProps {
   isOpen: boolean;
   onClose: () => void;
@@ -865,7 +879,8 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                   />
                   <span className="font-semibold">Keep Both (Rename)</span>
                   <p className="text-sm text-gray-600 ml-6">
-                    Rename conflicting entities in source ontology before merging.
+                    Every class, property and individual that is in both files gets a renamed copy from the source
+                    ontology.
                   </p>
 
                   {mergeStrategy === "KEEP_BOTH" && (
@@ -1136,6 +1151,38 @@ const MergeWizard: React.FC<MergeWizardProps> = ({
                     <span className="ml-2 font-medium">{(mergeResult.durationMs / 1000).toFixed(2)}s</span>
                   </div>
                 </div>
+                {Array.isArray(mergeResult.copies) && mergeResult.copies.length > 0 && (
+                  <div className="mt-4">
+                    <h5 className="text-sm font-medium text-gray-700 mb-2">Copies added from the merged file</h5>
+                    <ul data-testid="merge-copies" className="max-h-48 overflow-y-auto space-y-1 text-sm">
+                      {mergeResult.copies.map((copy: MergeCopy) => {
+                        const shortName = toShortName(copy.newIri);
+                        return (
+                          <li key={`${copy.kind}:${copy.newIri}`} title={copy.newIri}>
+                            <span className="font-medium">
+                              {copy.label && copy.label !== shortName ? `${copy.label} (${shortName})` : shortName}
+                            </span>
+                            <span className="ml-2 text-xs text-gray-500">{COPY_KIND_LABELS[copy.kind] || copy.kind}</span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {mergeResult.entitiesRenamed > mergeResult.copies.length && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        and {mergeResult.entitiesRenamed - mergeResult.copies.length} more
+                      </p>
+                    )}
+                  </div>
+                )}
+                {mergeResult.reimportSkipped && (
+                  <div className="mt-4 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span>
+                      Another import of this file was already running, so the class tree will not show this merge until
+                      the file is imported again.
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-center gap-3 mt-6">

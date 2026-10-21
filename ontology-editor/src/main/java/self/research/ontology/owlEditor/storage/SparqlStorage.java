@@ -12,6 +12,7 @@ import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import self.research.ontology.owlEditor.util.SparqlText;
 
 import java.io.*;
 import java.util.*;
@@ -234,11 +235,11 @@ public class SparqlStorage implements OntologyStorage {
             String graphUri = getGraphUri(ontologyId);
 
             if (!query.toUpperCase().contains("FROM")) {
-                query = query.replaceFirst("(?i)WHERE", "FROM <" + graphUri + "> WHERE");
+                query = SparqlText.replaceFirstKeyword(query, "WHERE", "FROM <" + graphUri + "> WHERE");
             }
 
             try (RepositoryConnection conn = repository.getConnection()) {
-                if (query.toUpperCase().contains("SELECT")) {
+                if (SparqlText.hasKeyword(query, "SELECT")) {
                     TupleQuery tupleQuery = conn.prepareTupleQuery(query);
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     SPARQLResultsTSVWriter writer = new SPARQLResultsTSVWriter(baos);
@@ -253,7 +254,7 @@ public class SparqlStorage implements OntologyStorage {
 
                     return baos.toString();
 
-                } else if (query.toUpperCase().contains("CONSTRUCT") || query.toUpperCase().contains("DESCRIBE")) {
+                } else if (SparqlText.hasKeyword(query, "CONSTRUCT") || SparqlText.hasKeyword(query, "DESCRIBE")) {
                     GraphQuery graphQuery = conn.prepareGraphQuery(query);
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     RDFWriter writer = Rio.createWriter(RDFFormat.TURTLE, baos);
@@ -268,7 +269,7 @@ public class SparqlStorage implements OntologyStorage {
 
                     return baos.toString();
 
-                } else if (query.toUpperCase().contains("ASK")) {
+                } else if (SparqlText.hasKeyword(query, "ASK")) {
                     BooleanQuery booleanQuery = conn.prepareBooleanQuery(query);
                     boolean result = booleanQuery.evaluate();
                     return Boolean.toString(result);

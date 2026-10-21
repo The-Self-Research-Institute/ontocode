@@ -115,6 +115,8 @@ import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
+import codeViewCacheService from "../services/codeViewCacheService";
+import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { toFriendlyErrorMessage } from "./codeAssistantPanelHelpers";
@@ -1514,6 +1516,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const codeViewDirtyRef = useRef(false);
   const codeViewFetchTokenRef = useRef(0);
   const metadataRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const metadataBackupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const silentRefreshMetadataRef = useRef<() => Promise<void>>(async () => {});
+  const metadataRequestSeqRef = useRef(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -6861,15 +6866,17 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           console.log(`[Dashboard] 🎯 Status: ${message.status.status} | Progress: ${message.status.progress}%`);
 
           if (message.status.projectId) {
-            setProjectImportStatuses((prev) => ({
-              ...prev,
-              [message.status.projectId]: {
-                type: message.status.type,
-                status: message.status.status,
-                progress: message.status.progress,
-                metadata: message.status.metadata,
-              },
-            }));
+            if (!isPostCompletionProgress(message.status)) {
+              setProjectImportStatuses((prev) => ({
+                ...prev,
+                [message.status.projectId]: {
+                  type: message.status.type,
+                  status: message.status.status,
+                  progress: message.status.progress,
+                  metadata: message.status.metadata,
+                },
+              }));
+            }
 
             if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
               setLoadingStatusMessage(sanitizeImportMessage(message.status.metadata.message as string));
@@ -6887,37 +6894,11 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
               message.status.status === "METADATA_READY" &&
               message.status.projectId === projectId
             ) {
-              const meta = message.status.metadata || {};
-              const classCount = Number(meta.classCount);
-              if (Number.isFinite(classCount) && classCount > 0) {
-                setMetadata((prev) =>
-                  ({
-                    ...(prev || {}),
-                    classCount,
-                    tripleCount: meta.tripleCount ?? (prev as any)?.tripleCount,
-                  }) as OntologyMetadata,
-                );
-              } else {
-                void apiClient
-                  .get<any>(`/api/ontology/metadata/${encodeProjectId(message.status.projectId)}?_t=${Date.now()}`)
-                  .then((res) => {
-                    const data = res?.data || res;
-                    if (!data || typeof data !== "object") return;
-                    setMetadata((prev) =>
-                      ({
-                        ...(prev || {}),
-                        ...data,
-                        classCount:
-                          data.classCount > 0
-                            ? data.classCount
-                            : data.counts?.classes > 0
-                              ? data.counts.classes
-                              : (prev as any)?.classCount ?? 0,
-                      }) as OntologyMetadata,
-                    );
-                  })
-                  .catch((err) => console.warn("[Dashboard] METADATA_READY refresh failed:", err));
+              if (metadataBackupTimerRef.current) {
+                clearTimeout(metadataBackupTimerRef.current);
+                metadataBackupTimerRef.current = null;
               }
+              void silentRefreshMetadataRef.current();
             }
           }
 
@@ -7092,6 +7073,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           if (
             message.status.type === "IMPORT_PROGRESS" &&
             message.status.projectId === projectId &&
+            !isPostCompletionProgress(message.status) &&
             !showLoadingChoice && !showQueueStatus && !backgroundImportActive
           ) {
             setBackgroundImportActive(true);
@@ -7271,17 +7253,40 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
 
   useEffect(() => {
     const activeProjectId = pendingImportProjectId || projectId;
-    if (!activeProjectId || (!showLoadingChoice && !isExpectingFileReady)) {
+    if (!activeProjectId || (!showLoadingChoice && !isExpectingFileReady && !backgroundImportActive)) {
       return;
     }
+
+    let settledPolls = 0;
+
+    const settleImportWait = () => {
+      userLoadingChoice.current = null;
+      pendingImportProjectIdRef.current = null;
+      setPendingImportProjectId(null);
+      setShowLoadingChoice(false);
+      setIsExpectingFileReady(false);
+      setBackgroundImportActive(false);
+      setBackgroundImportProgress(undefined);
+      setShowQueueStatus(false);
+      setInImportQueue(false);
+      setQueuePosition(undefined);
+      setTotalInQueue(undefined);
+      setEstimatedWaitTimeMs(undefined);
+    };
 
     const pollQueue = async () => {
       try {
         const positionData: any = await apiClient.get(`/api/import-queue/position/${activeProjectId}`);
         if (!positionData?.inQueue) {
           setInImportQueue(false);
+          const statusRes = await apiClient.get<any>(`/api/ontology/status/${encodeProjectId(activeProjectId)}`);
+          settledPolls = isProjectStatusCompleted(statusRes) ? settledPolls + 1 : 0;
+          if (settledPolls >= IMPORT_SETTLE_POLLS) {
+            settleImportWait();
+          }
           return;
         }
+        settledPolls = 0;
         setInImportQueue(true);
         setQueuePosition(positionData.position ?? 0);
         setTotalInQueue(positionData.totalInQueue ?? 0);
@@ -7297,7 +7302,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
     pollQueue();
     const intervalId = setInterval(pollQueue, 3000);
     return () => clearInterval(intervalId);
-  }, [showLoadingChoice, isExpectingFileReady, projectId, pendingImportProjectId]);
+  }, [showLoadingChoice, isExpectingFileReady, backgroundImportActive, projectId, pendingImportProjectId]);
 
   const loadChildren = useCallback(
     async (nodeId: string, pendingChildren?: TreeNode[]) => {
@@ -8808,11 +8813,13 @@ const updateItemInState = useCallback(
 
   const silentRefreshMetadata = useCallback(async () => {
     if (!projectId) return;
+    const requestId = ++metadataRequestSeqRef.current;
     try {
       const metaUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       const metaDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}?userId=${encodeURIComponent(metaUserId)}${metaDraftScopeParam}`);
       void refreshPrefixes();
+      if (requestId !== metadataRequestSeqRef.current) return;
       const data = res?.data || res;
       if (data) {
         setMetadata((prev) => prev ? {
@@ -8829,6 +8836,7 @@ const updateItemInState = useCallback(
       console.debug("[Dashboard] Silent metadata refresh failed:", err);
     }
   }, [projectId, user]);
+  silentRefreshMetadataRef.current = silentRefreshMetadata;
 
   const markAsUnsaved = useCallback(() => {
     console.log("[DEBUG] markAsUnsaved called");
@@ -11620,6 +11628,7 @@ const updateItemInState = useCallback(
 
   const ontologyUndoRedo = useOntologyUndoRedo({
     projectId,
+    draft: !isDesktop() && syncMode === "private",
     onOpenHistory: () => {
       requestChangeAssistantTab("changes");
       setMainTab("Changes");
@@ -11676,7 +11685,7 @@ const updateItemInState = useCallback(
       if (forceRefresh) {
         console.log("[Dashboard] Force refresh - clearing code view cache");
         try {
-          await apiClient.delete(`/api/ontology/${projectId}/code-view-cache`);
+          await codeViewCacheService.clear(projectId);
           console.log("[Dashboard] Code view cache cleared");
         } catch (cacheError) {
           console.warn("[Dashboard] Failed to clear code view cache:", cacheError);
@@ -11812,6 +11821,13 @@ const updateItemInState = useCallback(
     handleRefreshIndividuals();
     handleRefreshDatatypes();
     silentRefreshMetadata();
+    if (metadataBackupTimerRef.current) clearTimeout(metadataBackupTimerRef.current);
+    metadataBackupTimerRef.current = !isDesktop() && syncMode !== "private"
+      ? setTimeout(() => {
+          metadataBackupTimerRef.current = null;
+          void silentRefreshMetadata();
+        }, 20000)
+      : null;
     try {
       window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: [op] } }));
     } catch {
@@ -13098,7 +13114,7 @@ const updateItemInState = useCallback(
 
         const citationUrn = `urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}`;
         try {
-          await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+          await codeViewCacheService.store(projectId, {
             content: modifiedContent,
             format: codeViewFormat,
             citationUrn: citationUrn,
@@ -13395,7 +13411,7 @@ const updateItemInState = useCallback(
               });
               const jsonLdBase = fmtContent || JSON.stringify({ "@context": DEFAULT_JSONLD_CONTEXT, "@graph": [] });
               const fmtModifiedContent = insertCitationNodeIntoJsonLd(jsonLdBase, jsonLdCitationNode);
-              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              await codeViewCacheService.store(projectId, {
                 content: fmtModifiedContent,
                 format: fmt,
                 citationUrn: citationUrn,
@@ -13517,7 +13533,7 @@ const updateItemInState = useCallback(
               fmtLines.splice(fmtInsertIndex, 0, ...fmtCitationLines);
 
               const fmtModifiedContent = fmtLines.join("\n");
-              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              await codeViewCacheService.store(projectId, {
                 content: fmtModifiedContent,
                 format: fmt,
                 citationUrn: citationUrn,
@@ -13598,7 +13614,7 @@ const updateItemInState = useCallback(
           if (fmt === "jsonld") {
             const result = removeCitationNodeFromJsonLd(response.content, citationUri);
             if (result.removed) {
-              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              await codeViewCacheService.store(projectId, {
                 content: result.content,
                 format: fmt,
               });
@@ -13706,7 +13722,7 @@ const updateItemInState = useCallback(
           }
 
           const fmtModifiedContent = newFmtLines.join("\n");
-          await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+          await codeViewCacheService.store(projectId, {
             content: fmtModifiedContent,
             format: fmt,
           });
@@ -13797,7 +13813,7 @@ const updateItemInState = useCallback(
               setHasLocalCodeViewChanges(true);
 
               try {
-                await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+                await codeViewCacheService.store(projectId, {
                   content: modifiedContent,
                   format: "jsonld",
                 });
@@ -14019,7 +14035,7 @@ const updateItemInState = useCallback(
             console.log("[Dashboard] hasLocalCodeViewChanges set to true");
 
             try {
-              await apiClient.post(`/api/ontology/${projectId}/code-view-cache`, {
+              await codeViewCacheService.store(projectId, {
                 content: modifiedContent,
                 format: codeViewFormat,
               });
@@ -18508,6 +18524,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           draftCount={draftCount}
           onPRApproved={() => {
             refreshOpenPRCount();
+            void updateDraftCount();
             if (projectId) fetchData(projectId, false, undefined, true);
             window.dispatchEvent(new CustomEvent("ontologyChangesSaved", { detail: { projectId } }));
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");

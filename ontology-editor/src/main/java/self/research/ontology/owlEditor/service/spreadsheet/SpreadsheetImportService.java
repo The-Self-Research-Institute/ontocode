@@ -1,8 +1,11 @@
 package self.research.ontology.owlEditor.service.spreadsheet;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.SpreadsheetImportRecord;
@@ -12,11 +15,13 @@ import self.research.ontology.owlEditor.service.OntologyHistoryService;
 import self.research.ontology.owlEditor.service.OntologyIndexService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
+import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.spreadsheet.rule.RuleSpec;
 
 import java.io.InputStream;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -26,6 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 public class SpreadsheetImportService {
@@ -83,25 +89,44 @@ public class SpreadsheetImportService {
 
     private OntologyIndexService indexService;
 
+    private final Cache<String, ImportItemsSummary.Parsed> parsedItems = Caffeine.newBuilder()
+        .maximumSize(50)
+        .expireAfterAccess(Duration.ofMinutes(15))
+        .build();
+
+    private ObjectProvider<ProjectImportService> projectImports;
+
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setIndexService(OntologyIndexService indexService) {
         this.indexService = indexService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setProjectImports(ObjectProvider<ProjectImportService> projectImports) {
+        this.projectImports = projectImports;
     }
 
     private void refreshPublicSummary(String projectId) {
         if (desktopMode || indexService == null) {
             return;
         }
-        long start = System.nanoTime();
-        try {
-            Map<String, Object> meta = indexService.computeMetadata(projectId);
-            metadataService.writeMeta(projectId, meta);
-            log.info("[SpreadsheetImport] Refreshed the ontology summary for project {} in {} ms",
-                projectId, (System.nanoTime() - start) / 1_000_000);
-        } catch (RuntimeException e) {
-            log.warn("[SpreadsheetImport] Could not refresh the ontology summary for project {}; "
-                + "the background update will correct it: {}", projectId, e.getMessage());
-        }
+        OntologyIndexService index = indexService;
+        CompletableFuture.runAsync(() -> {
+            long start = System.nanoTime();
+            try {
+                Map<String, Object> meta = index.computeMetadata(projectId);
+                metadataService.writeMeta(projectId, meta);
+                log.info("[SpreadsheetImport] Refreshed the ontology summary for project {} in {} ms",
+                    projectId, (System.nanoTime() - start) / 1_000_000);
+                ProjectImportService notifier = projectImports == null ? null : projectImports.getIfAvailable();
+                if (notifier != null) {
+                    notifier.notifyMetadataReady(projectId);
+                }
+            } catch (RuntimeException e) {
+                log.warn("[SpreadsheetImport] Could not refresh the ontology summary for project {}: {}",
+                    projectId, e.getMessage());
+            }
+        });
     }
 
     public boolean applyOnDesktop(String projectId, List<String> updates) {
@@ -350,16 +375,20 @@ public class SpreadsheetImportService {
 
     public Optional<ImportedItems> importedItems(String projectId, String importId, String callerUserId, int limit) {
         return findRecord(projectId, ENTITY_IRI_PREFIX + importId)
-            .filter(r -> !r.isDraft() || callerUserId == null || callerUserId.equals(r.getUserId()))
+            .filter(r -> !r.isDraft() || (callerUserId != null && callerUserId.equals(r.getUserId())))
             .map(r -> new ImportedItems(r.getFileName(), r.getAxiomCount(), r.isDraft(), r.isRolledBack(),
-                ImportItemsSummary.of(r.getAddedTriples(), limit)));
+                parsedItems(r).summary(limit)));
     }
 
     public Optional<ImportItemsSummary.Group> importedItemsPage(String projectId, String importId, String callerUserId,
                                                                  String group, int offset, int limit) {
         return findRecord(projectId, ENTITY_IRI_PREFIX + importId)
-            .filter(r -> !r.isDraft() || callerUserId == null || callerUserId.equals(r.getUserId()))
-            .map(r -> ImportItemsSummary.page(r.getAddedTriples(), group, offset, limit));
+            .filter(r -> !r.isDraft() || (callerUserId != null && callerUserId.equals(r.getUserId())))
+            .map(r -> parsedItems(r).pageOf(group, offset, limit));
+    }
+
+    private ImportItemsSummary.Parsed parsedItems(SpreadsheetImportRecord record) {
+        return parsedItems.get(record.getId(), id -> ImportItemsSummary.parse(record.getAddedTriples()));
     }
 
     private Optional<SpreadsheetImportRecord> findRecord(String projectId, String entityIri) {

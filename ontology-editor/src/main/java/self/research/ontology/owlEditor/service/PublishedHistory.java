@@ -67,7 +67,8 @@ public class PublishedHistory {
                 .and("userId").is(userId).and("draft").is(true)), HistoryChange.class);
         List<HistoryChange> carriers = new ArrayList<>();
         for (HistoryChange row : rows) {
-            if (row.getDocumentStore() != null || row.getCoveredBy() != null) {
+            if (row.getDocumentStore() != null || row.getCoveredBy() != null || row.isReverted()
+                    || RollbackWorkSupport.isRollbackEntry(row)) {
                 continue;
             }
             if (!row.carriesExactDelta()) {

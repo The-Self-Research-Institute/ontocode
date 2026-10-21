@@ -8,7 +8,9 @@ import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.repository.TopLevelClassCacheRepository;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class TopLevelClassCacheService {
@@ -16,6 +18,7 @@ public class TopLevelClassCacheService {
     private static final Logger log = LoggerFactory.getLogger(TopLevelClassCacheService.class);
 
     private final TopLevelClassCacheRepository repository;
+    private final Map<String, Long> orphanScanNeeded = new ConcurrentHashMap<>();
 
     public TopLevelClassCacheService(TopLevelClassCacheRepository repository) {
         this.repository = repository;
@@ -58,7 +61,22 @@ public class TopLevelClassCacheService {
         }
     }
 
+    public boolean needsOrphanScan(String projectId) {
+        return orphanScanNeeded.containsKey(projectId);
+    }
+
+    public Long orphanScanStarted(String projectId) {
+        return orphanScanNeeded.get(projectId);
+    }
+
+    public void orphanScanFinished(String projectId, Long startedAt) {
+        if (startedAt != null) {
+            orphanScanNeeded.remove(projectId, startedAt);
+        }
+    }
+
     public void evict(String projectId) {
+        orphanScanNeeded.merge(projectId, 1L, Long::sum);
         try {
             repository.deleteById(projectId);
             log.info("[TLCACHE] Evicted project={}", projectId);
