@@ -11646,6 +11646,7 @@ const updateItemInState = useCallback(
 
   const ontologyUndoRedo = useOntologyUndoRedo({
     projectId,
+    draft: !isDesktop() && syncMode === "private",
     onOpenHistory: () => {
       requestChangeAssistantTab("changes");
       setMainTab("Changes");
@@ -18534,6 +18535,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           draftCount={draftCount}
           onPRApproved={() => {
             refreshOpenPRCount();
+            void updateDraftCount();
             if (projectId) fetchData(projectId, false, undefined, true);
             window.dispatchEvent(new CustomEvent("ontologyChangesSaved", { detail: { projectId } }));
             notificationService.success("PR Approved", "The draft changes have been merged into the public ontology.");
