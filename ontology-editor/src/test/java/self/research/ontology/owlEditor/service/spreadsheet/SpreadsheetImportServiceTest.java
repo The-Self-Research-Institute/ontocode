@@ -249,6 +249,48 @@ class SpreadsheetImportServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.rollback(PROJECT, "http://example.org/x", "Kay"));
     }
 
+    @Test
+    void aPublicImportSavesAFreshSummaryBeforeReturning() {
+        self.research.ontology.owlEditor.service.OntologyIndexService index =
+            mock(self.research.ontology.owlEditor.service.OntologyIndexService.class);
+        Map<String, Object> fresh = Map.of("individualCount", 2);
+        when(index.computeMetadata(PROJECT)).thenReturn(fresh);
+        service.setIndexService(index);
+
+        SpreadsheetImportService.CommitResult result = service.commit(PROJECT, csv(), "readings.csv", rules(), false, "kay", "Kay");
+
+        verify(metadata, times(1)).writeMeta(PROJECT, fresh);
+
+        service.rollback(PROJECT, SpreadsheetImportService.ENTITY_IRI_PREFIX + result.importId(), "Kay");
+        verify(metadata, times(2)).writeMeta(PROJECT, fresh);
+    }
+
+    @Test
+    void aDraftImportDoesNotTouchTheSharedSummary() {
+        self.research.ontology.owlEditor.service.OntologyIndexService index =
+            mock(self.research.ontology.owlEditor.service.OntologyIndexService.class);
+        service.setIndexService(index);
+
+        service.commit(PROJECT, csv(), "readings.csv", rules(), true, "kay", "Kay");
+
+        verify(index, never()).computeMetadata(anyString());
+        verify(metadata, never()).writeMeta(anyString(), any());
+    }
+
+    @Test
+    void aFailedSummaryRefreshDoesNotFailTheImport() {
+        self.research.ontology.owlEditor.service.OntologyIndexService index =
+            mock(self.research.ontology.owlEditor.service.OntologyIndexService.class);
+        when(index.computeMetadata(PROJECT)).thenThrow(new RuntimeException("fuseki busy"));
+        service.setIndexService(index);
+
+        SpreadsheetImportService.CommitResult result = service.commit(PROJECT, csv(), "readings.csv", rules(), false, "kay", "Kay");
+
+        assertFalse(result.draft());
+        assertTrue(ask("<" + NS + "S002> ?p ?o"), "the import itself went through");
+        verify(metadata, never()).writeMeta(anyString(), any());
+    }
+
     private static ByteArrayInputStream csv() {
         return new ByteArrayInputStream("""
             Id,Value,Location,Label

@@ -29,6 +29,7 @@ public class DLQueryJob {
     private Map<String, Object> result;
     private String error;
     private String ownerEmail;
+    private String draftUserId;
 
     private long tripleCount;
 

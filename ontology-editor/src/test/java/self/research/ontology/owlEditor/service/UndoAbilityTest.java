@@ -32,6 +32,20 @@ class UndoAbilityTest {
     }
 
     @Test
+    void aSpreadsheetImportIsUndoable() {
+        UndoAbility.Result result = UndoAbility.of(change("SPREADSHEET_IMPORT", "import-1"));
+        assertTrue(result.undoable());
+        assertNull(result.reason());
+    }
+
+    @Test
+    void anUndoneSpreadsheetImportIsNotUndoableAgain() {
+        HistoryChange change = change("SPREADSHEET_IMPORT", "import-1");
+        change.setReverted(true);
+        assertFalse(UndoAbility.of(change).undoable());
+    }
+
+    @Test
     void anUndoOrRedoRowCannotBeUndone() {
         HistoryChange change = change("ROLLBACK_CHANGESET", "http://ex/A");
         change.setSource(ChangeOrigin.ROLLBACK);

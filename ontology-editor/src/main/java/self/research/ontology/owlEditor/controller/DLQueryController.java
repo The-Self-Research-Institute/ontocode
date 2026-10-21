@@ -19,6 +19,7 @@ import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
+import self.research.ontology.owlEditor.service.SparqlQueryContext;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -76,7 +77,14 @@ public class DLQueryController {
             log.info("DL Query enqueue for project {}: expression='{}', types={}",
                     projectId, request.getExpression(), request.getQueryTypes());
 
-            if (reasonerWorkerEnabled && reasonerWorkerClient != null && reasoningJobRelayService != null) {
+            String draftUserId = SparqlQueryContext.wantsDraft() ? SparqlQueryContext.getUserId() : null;
+            if (draftUserId != null && !draftUserId.isBlank() && dlQueryQueueProcessor == null) {
+                Map<String, Object> result = dlQueryService.executeQuery(
+                        projectId, request.getExpression().trim(), request.getQueryTypes(), draftUserId);
+                return ResponseEntity.ok(result);
+            }
+
+            if (draftUserId == null && reasonerWorkerEnabled && reasonerWorkerClient != null && reasoningJobRelayService != null) {
                 Map<String, Object> worker = reasonerWorkerClient.submitJob(
                         "DL_QUERY",
                         projectId,
@@ -110,7 +118,8 @@ public class DLQueryController {
                     projectId,
                     request.getExpression().trim(),
                     request.getQueryTypes(),
-                    request.getUserEmail());
+                    request.getUserEmail(),
+                    draftUserId);
             if (dlQueryQueueProcessor != null) {
                 dlQueryQueueProcessor.processNext();
             }

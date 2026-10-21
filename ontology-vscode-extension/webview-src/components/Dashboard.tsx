@@ -14778,6 +14778,8 @@ const updateItemInState = useCallback(
               onImported={() => {
                 codeViewDirtyRef.current = true;
                 refreshAfterBulkWriteRef.current("spreadsheetImport");
+                if (metadataRefreshTimerRef.current) clearTimeout(metadataRefreshTimerRef.current);
+                metadataRefreshTimerRef.current = setTimeout(() => silentRefreshMetadata(), 1500);
               }}
             />
           );
