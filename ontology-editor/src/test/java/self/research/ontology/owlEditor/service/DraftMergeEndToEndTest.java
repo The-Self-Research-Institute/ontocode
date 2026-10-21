@@ -203,7 +203,7 @@ class DraftMergeEndToEndTest {
         merge("one", "OneOnly");
         assertTrue(hasClass("OneOnly"));
         assertEquals(before, Files.readString(storedFile));
-        verify(importService, never()).submitImport(anyString(), any());
+        verify(importService, never()).trySubmitImport(anyString(), any());
     }
 
     @Test

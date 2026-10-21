@@ -15,6 +15,7 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.vocab.OWL2Datatype;
 import self.research.ontology.owlEditor.model.merge.MergeAnalysisResult;
 import self.research.ontology.owlEditor.model.merge.MergeConflict;
+import self.research.ontology.owlEditor.model.merge.MergeCopy;
 import self.research.ontology.owlEditor.model.merge.MergeOptions;
 import self.research.ontology.owlEditor.model.merge.MergeResult;
 import self.research.ontology.owlEditor.model.merge.MergeStrategy;
@@ -34,7 +35,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.when;
 
-class KeepBothRenamesOnlyConflictsTest {
+class KeepBothCopiesEverySharedEntityTest {
 
     private static final String NS = "http://ex.org/";
     private static final String SUFFIX = "_imported";
@@ -68,7 +69,7 @@ class KeepBothRenamesOnlyConflictsTest {
         when(storageManager.findCurrentOntology("proj")).thenReturn(Optional.of(targetFile));
         when(metadataService.readMeta(anyString())).thenReturn(Optional.empty());
         doNothing().when(metadataService).writeMeta(anyString(), any());
-        doNothing().when(importService).submitImport(anyString(), any());
+        when(importService.trySubmitImport(anyString(), any())).thenReturn(true);
     }
 
     private static IRI iri(String local) {
@@ -96,9 +97,13 @@ class KeepBothRenamesOnlyConflictsTest {
     }
 
     private MergeResult mergeKeepingBoth() throws Exception {
+        return mergeKeepingBoth(SUFFIX);
+    }
+
+    private MergeResult mergeKeepingBoth(String suffix) throws Exception {
         MergeOptions options = new MergeOptions();
         options.setStrategy(MergeStrategy.KEEP_BOTH);
-        options.setRenameSuffix(SUFFIX);
+        options.setRenameSuffix(suffix);
         return service.mergeOntologies("src", sourceFile, "proj", null, null, options, "u1", "User");
     }
 
@@ -109,13 +114,13 @@ class KeepBothRenamesOnlyConflictsTest {
     }
 
     @Test
-    void anEntityWithTheSameDefinitionInBothIsKeptOnceAndNotRenamed() throws Exception {
+    void anEntityThatIsTheSameInBothOntologiesStillGetsACopy() throws Exception {
         mergeKeepingBoth();
 
         Set<String> classes = merged(OWLOntology::getClassesInSignature);
 
         assertTrue(classes.contains(NS + "Same"));
-        assertFalse(classes.contains(NS + "Same" + SUFFIX));
+        assertTrue(classes.contains(NS + "Same" + SUFFIX));
     }
 
     @Test
@@ -152,6 +157,7 @@ class KeepBothRenamesOnlyConflictsTest {
         assertTrue(datatypes.contains("http://www.w3.org/2001/XMLSchema#string"));
         assertTrue(annotationProperties.stream().noneMatch(iri -> iri.startsWith("http://www.w3.org/") && iri.endsWith(SUFFIX)));
         assertTrue(datatypes.stream().noneMatch(iri -> iri.endsWith(SUFFIX)));
+        assertTrue(merged(OWLOntology::getDataPropertiesInSignature).contains(NS + "hasCode" + SUFFIX));
     }
 
     @Test
@@ -163,29 +169,38 @@ class KeepBothRenamesOnlyConflictsTest {
     }
 
     @Test
-    void theEntitiesRenamedAreExactlyTheConflictsTheWizardListed() throws Exception {
+    void everyEntityInBothOntologiesIsCopiedNotOnlyTheConflictsTheWizardListed() throws Exception {
         MergeAnalysisResult analysis = service.analyzeOntologies("src", sourceFile, "proj");
         Set<String> listed = analysis.getConflicts().stream().map(MergeConflict::getEntityIRI)
                 .collect(Collectors.toCollection(TreeSet::new));
 
         MergeResult result = mergeKeepingBoth();
-        Set<String> renamed = merged(OWLOntology::getClassesInSignature).stream()
-                .filter(iri -> iri.endsWith(SUFFIX)).map(iri -> iri.substring(0, iri.length() - SUFFIX.length()))
+        Set<String> copied = result.getCopies().stream().map(MergeCopy::originalIri)
                 .collect(Collectors.toCollection(TreeSet::new));
 
         assertEquals(Set.of(NS + "Diff"), listed);
-        assertEquals(listed, renamed);
-        assertEquals(listed.size(), result.getEntitiesRenamed());
-        assertEquals(listed.size(), result.getConflictsResolved());
+        assertEquals(Set.of(NS + "Same", NS + "Diff", NS + "hasCode"), copied);
+        assertEquals(3, result.getEntitiesRenamed());
+        assertEquals(3, result.getConflictsResolved());
     }
 
     @Test
-    void mergingTwoOntologiesWithNothingInConflictRenamesNothing() throws Exception {
+    void aBlankSuffixFallsBackToTheDefaultSoBothVersionsAreStillKept() throws Exception {
+        MergeResult result = mergeKeepingBoth(" ");
+
+        assertTrue(result.getCopies().stream().allMatch(copy -> copy.newIri().equals(copy.originalIri() + SUFFIX)));
+        assertTrue(merged(OWLOntology::getClassesInSignature).containsAll(Set.of(NS + "Same", NS + "Same" + SUFFIX)));
+    }
+
+    @Test
+    void mergingAnIdenticalOntologyCopiesEveryEntityInIt() throws Exception {
         write(sourceFile, "target", "Diff target", "target note");
 
         MergeResult result = mergeKeepingBoth();
 
-        assertEquals(0, result.getEntitiesRenamed());
-        assertTrue(merged(OWLOntology::getClassesInSignature).stream().noneMatch(iri -> iri.endsWith(SUFFIX)));
+        assertEquals(4, result.getEntitiesRenamed());
+        assertEquals(Set.of(NS + "Same" + SUFFIX, NS + "Diff" + SUFFIX, NS + "targetOnly" + SUFFIX),
+                merged(OWLOntology::getClassesInSignature).stream().filter(iri -> iri.endsWith(SUFFIX))
+                        .collect(Collectors.toSet()));
     }
 }

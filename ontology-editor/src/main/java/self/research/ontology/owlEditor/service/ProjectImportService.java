@@ -274,6 +274,14 @@ public class ProjectImportService {
     }
 
     public void submitImport(String projectId, Path owlFile, String ownerEmail, ImportOptions options) {
+        trySubmitImport(projectId, owlFile, ownerEmail, options);
+    }
+
+    public boolean trySubmitImport(String projectId, Path owlFile) {
+        return trySubmitImport(projectId, owlFile, null, ImportOptions.defaults());
+    }
+
+    private boolean trySubmitImport(String projectId, Path owlFile, String ownerEmail, ImportOptions options) {
         String filename = owlFile.getFileName().toString();
 
         importLog.info("[SUBMIT] project={} file={} size={}", projectId, filename, owlFile.toFile().length());
@@ -281,7 +289,7 @@ public class ProjectImportService {
 
         if (!reserveImport(projectId)) {
             log.info("[Import] Import already active or queued for project {}, ignoring duplicate submit", projectId);
-            return;
+            return false;
         }
 
         boolean submitted = false;
@@ -320,7 +328,7 @@ public class ProjectImportService {
             queueManager.enqueue(projectId, filename, ownerEmail, owlFile, options);
             processNextInQueue();
             submitted = true;
-            return;
+            return true;
         }
 
         // Add to queue
@@ -335,6 +343,7 @@ public class ProjectImportService {
                 releaseImport(projectId);
             }
         }
+        return true;
     }
 
     public boolean isImportActiveOrQueued(String projectId) {

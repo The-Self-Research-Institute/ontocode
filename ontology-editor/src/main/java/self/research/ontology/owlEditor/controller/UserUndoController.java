@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,6 +15,7 @@ import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.HistorySyncService;
 import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
+import self.research.ontology.owlEditor.service.UndoOperations;
 import self.research.ontology.owlEditor.service.UndoPreconditions;
 import self.research.ontology.owlEditor.service.UndoRefusalLog;
 import self.research.ontology.owlEditor.service.UserUndoService;
@@ -36,6 +38,7 @@ public class UserUndoController {
     private final RollbackRequestSupport support;
     private final UndoPreconditions preconditions;
     private final ProjectWriteLockRegistry locks;
+    private UndoOperations operations;
 
     public UserUndoController(UserUndoService undoService, ChangeRollbackService rollbackService,
                               HistorySyncService historySync, RollbackRequestSupport support,
@@ -46,6 +49,11 @@ public class UserUndoController {
         this.support = support;
         this.preconditions = preconditions;
         this.locks = locks;
+    }
+
+    @Autowired(required = false)
+    void setOperations(UndoOperations operations) {
+        this.operations = operations;
     }
 
     @GetMapping("/{projectId}/undo/next")
@@ -70,26 +78,34 @@ public class UserUndoController {
         if (who == null) {
             return unauthorized();
         }
-        Next next = undoService.nextUndo(projectId, draft, who);
-        if (!next.available()) {
-            return refused(projectId, draft, who, next);
-        }
-        if (expectedChangeId != null && !expectedChangeId.equals(next.changeId())) {
-            return changed(projectId, draft, who, ChangeRollbackService.UNDO, next.changeId());
-        }
-        HistoryChange target = historySync.getHistoryChange(next.changeId());
-        if (target == null) {
-            return changed(projectId, draft, who, ChangeRollbackService.UNDO, next.changeId());
-        }
-        List<HistoryChange> scope = next.changeSetId() == null
-                ? List.of(target) : historySync.getChangeSet(projectId, next.changeSetId());
-        ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(scope, projectId, request);
-        if (denied != null) {
-            return denied;
+        Optional<ChangeRollbackService.Result> repeat = repeatOf(projectId, opId, ChangeRollbackService.UNDO, who);
+        if (repeat.isPresent()) {
+            return finish(projectId, draft, who, repeat.get());
         }
         ChangeRollbackService.Actor actor = new ChangeRollbackService.Actor(who.primary(), who.primary(), opId);
         try {
             return locks.runExclusive(projectId, () -> {
+                Optional<ChangeRollbackService.Result> earlier = repeatOf(projectId, opId, ChangeRollbackService.UNDO, who);
+                if (earlier.isPresent()) {
+                    return finish(projectId, draft, who, earlier.get());
+                }
+                Next next = undoService.nextUndo(projectId, draft, who);
+                if (!next.available()) {
+                    return refused(projectId, draft, who, next);
+                }
+                if (expectedChangeId != null && !expectedChangeId.equals(next.changeId())) {
+                    return changed(projectId, draft, who, ChangeRollbackService.UNDO, next.changeId());
+                }
+                HistoryChange target = historySync.getHistoryChange(next.changeId());
+                if (target == null) {
+                    return changed(projectId, draft, who, ChangeRollbackService.UNDO, next.changeId());
+                }
+                List<HistoryChange> scope = next.changeSetId() == null
+                        ? List.of(target) : historySync.getChangeSet(projectId, next.changeSetId());
+                ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(scope, projectId, request);
+                if (denied != null) {
+                    return denied;
+                }
                 Optional<String> violation = preconditions.violation(projectId, scope);
                 if (violation.isPresent()) {
                     return changedUnderneath(projectId, draft, who, violation.get(), next.changeId());
@@ -115,27 +131,39 @@ public class UserUndoController {
         if (who == null) {
             return unauthorized();
         }
-        Next next = undoService.nextRedo(projectId, draft, who);
-        if (!next.available()) {
-            return refused(projectId, draft, who, next);
-        }
-        if (expectedAuditId != null && !expectedAuditId.equals(next.auditId())) {
-            return changed(projectId, draft, who, ChangeRollbackService.REDO, next.auditId());
-        }
-        ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(
-                rollbackService.entriesForUndo(projectId, next.auditId()), projectId, request);
-        if (denied != null) {
-            return denied;
+        Optional<ChangeRollbackService.Result> repeat = repeatOf(projectId, opId, ChangeRollbackService.REDO, who);
+        if (repeat.isPresent()) {
+            return finish(projectId, draft, who, repeat.get());
         }
         ChangeRollbackService.Actor actor = new ChangeRollbackService.Actor(who.primary(), who.primary(), opId);
         try {
             return locks.runExclusive(projectId, () -> {
+                Optional<ChangeRollbackService.Result> earlier = repeatOf(projectId, opId, ChangeRollbackService.REDO, who);
+                if (earlier.isPresent()) {
+                    return finish(projectId, draft, who, earlier.get());
+                }
+                Next next = undoService.nextRedo(projectId, draft, who);
+                if (!next.available()) {
+                    return refused(projectId, draft, who, next);
+                }
+                if (expectedAuditId != null && !expectedAuditId.equals(next.auditId())) {
+                    return changed(projectId, draft, who, ChangeRollbackService.REDO, next.auditId());
+                }
+                ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(
+                        rollbackService.entriesForUndo(projectId, next.auditId()), projectId, request);
+                if (denied != null) {
+                    return denied;
+                }
                 ChangeRollbackService.Result result = rollbackService.redoUndo(projectId, next.auditId(), actor, false);
                 return finish(projectId, draft, who, result);
             });
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("success", false, "error", "Couldn't redo: " + e.getMessage()));
         }
+    }
+
+    private Optional<ChangeRollbackService.Result> repeatOf(String projectId, String opId, String direction, Identity who) {
+        return operations == null ? Optional.empty() : operations.repeat(projectId, opId, direction, who.primary());
     }
 
     private ResponseEntity<Map<String, Object>> finish(String projectId, boolean draft, Identity who,

@@ -56,7 +56,7 @@ class OntologyMergeServiceTest {
         when(storageManager.findCurrentOntology("proj-1")).thenReturn(Optional.of(targetFile));
         when(metadataService.readMeta(anyString())).thenReturn(Optional.empty());
         doNothing().when(metadataService).writeMeta(anyString(), any());
-        doNothing().when(importService).submitImport(anyString(), any());
+        when(importService.trySubmitImport(anyString(), any())).thenReturn(true);
     }
 
     private static void writeOntologyWithClass(Path path, String classIri) throws Exception {
