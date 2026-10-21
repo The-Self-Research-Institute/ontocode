@@ -61,6 +61,15 @@ public class ReasonerService {
     // executor, and the controller's LRU-eviction path concurrently.
     private final Map<String, CompletableFuture<OWLReasoner>> reasonerCache = new ConcurrentHashMap<>();
 
+    private final Map<OWLOntology, Long> ontologyIdentitySequence = new IdentityHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong nextOntologyIdentitySequence = new java.util.concurrent.atomic.AtomicLong(1);
+
+    private long identityKeyFor(OWLOntology ontology) {
+        synchronized (ontologyIdentitySequence) {
+            return ontologyIdentitySequence.computeIfAbsent(ontology, o -> nextOntologyIdentitySequence.getAndIncrement());
+        }
+    }
+
     // HermiT's InstanceManager.getTypes() does O(n) LinkedList scans internally,
     // which blows up to O(n^2) against the class count on large ontologies (e.g.
     // FoodOn's 39k+ classes) and can run for hours on a single individual. That
@@ -89,15 +98,19 @@ public class ReasonerService {
 
     @jakarta.annotation.PostConstruct
     private void initJustificationExecutor() {
-        justificationExecutor = Executors.newFixedThreadPool(justificationPoolSize, r -> {
-            Thread t = new Thread(r, "reasoner-justification-worker");
-            t.setDaemon(true);
-            return t;
-        });
+        justificationExecutor = new java.util.concurrent.ThreadPoolExecutor(
+                justificationPoolSize, justificationPoolSize, 60, TimeUnit.SECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(20), r -> {
+                    Thread t = new Thread(r, "reasoner-justification-worker");
+                    t.setDaemon(true);
+                    return t;
+                }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
     }
 
     @Value("${ontocode.reasoner.justification-timeout-ms:55000}")
     private long JUSTIFICATION_TIMEOUT_MS;
+    @Value("${ontocode.reasoner.justification-queue-wait-ms:30000}")
+    private long JUSTIFICATION_QUEUE_WAIT_MS;
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int MAX_JUSTIFICATIONS;
     @Value("${ontocode.reasoner.operation-timeout-ms:45000}")
@@ -113,7 +126,7 @@ public class ReasonerService {
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
-        String cacheKey = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
+        String cacheKey = identityKeyFor(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
         CompletableFuture<OWLReasoner> future = reasonerCache.computeIfAbsent(cacheKey, k -> submitReasonerBuild(ontology, type));
         try {
             return future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
@@ -175,7 +188,7 @@ public class ReasonerService {
 
         try {
             return getReasonerFactory(type).createReasoner(ontology, config);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.error("Failed to create {} reasoner", type, e);
             throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
         }
@@ -256,8 +269,11 @@ public class ReasonerService {
      * Classify the ontology (compute class hierarchy)
      */
     public void classify(OWLOntology ontology, ReasonerType type) {
-        OWLReasoner reasoner = getReasoner(ontology, type);
-        
+        classify(getReasoner(ontology, type), ontology, type);
+    }
+
+
+    public void classify(OWLReasoner reasoner, OWLOntology ontology, ReasonerType type) {
         try {
             log.info("Starting classification with {}", type.getDisplayName());
             long startTime = System.currentTimeMillis();
@@ -348,11 +364,16 @@ public class ReasonerService {
             
             // Find equivalent classes
             List<Map<String, Object>> equivalentClasses = new ArrayList<>();
+            Set<OWLClass> processedEquivalents = new HashSet<>();
             try {
                 for (OWLClass cls : ontology.getClassesInSignature()) {
                     try {
+                        if (processedEquivalents.contains(cls)) {
+                            continue;
+                        }
                         Set<OWLClass> equivalents = reasoner.getEquivalentClasses(cls).getEntities();
                         if (equivalents.size() > 1) {
+                            processedEquivalents.addAll(equivalents);
                             Map<String, Object> eqGroup = new HashMap<>();
                             eqGroup.put("classes", equivalents.stream()
                                 .map(c -> Map.of(
@@ -901,8 +922,30 @@ public class ReasonerService {
             Supplier<Set<Explanation<OWLAxiom>>> search,
             CancellableExplanationProgressMonitor<OWLAxiom> monitor,
             long timeoutMs) {
-        java.util.concurrent.Future<Set<Explanation<OWLAxiom>>> future =
-            justificationExecutor.submit(search::get);
+        CompletableFuture<Void> started = new CompletableFuture<>();
+        java.util.concurrent.Future<Set<Explanation<OWLAxiom>>> future;
+        try {
+            future = justificationExecutor.submit(() -> {
+                started.complete(null);
+                return search.get();
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            throw new RuntimeException("Too many reasoning requests in progress — please try again shortly.");
+        }
+        try {
+            started.get(JUSTIFICATION_QUEUE_WAIT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            future.cancel(true);
+            throw new RuntimeException("Too many reasoning requests in progress — please try again shortly.");
+        } catch (InterruptedException ie) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Justification search was interrupted", ie);
+        } catch (Exception e) {
+            future.cancel(true);
+            throw new RuntimeException("Justification search failed to start: "
+                + (e.getMessage() != null ? e.getMessage() : e.toString()), e);
+        }
         try {
             return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException te) {
@@ -980,137 +1023,8 @@ public class ReasonerService {
 
     public OWLAxiom buildEntailmentAxiom(String entailmentType, String subjectIri, String targetIri,
             String propertyIri, String literalValue) {
-        switch (entailmentType) {
-            case "SUBCLASS_OF": {
-                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
-                OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, target);
-            }
-            case "INTERSECTION_SUBCLASS_OF": {
-                OWLClass memberA = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
-                OWLClass memberB = DATA_FACTORY.getOWLClass(IRI.create(propertyIri));
-                OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                OWLClassExpression intersection = DATA_FACTORY.getOWLObjectIntersectionOf(memberA, memberB);
-                return DATA_FACTORY.getOWLSubClassOfAxiom(intersection, target);
-            }
-            case "SUBCLASS_OF_OBJECT_RESTRICTION": {
-                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
-                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
-                OWLClass filler = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                OWLClassExpression restriction = "only".equals(literalValue)
-                    ? DATA_FACTORY.getOWLObjectAllValuesFrom(property, filler)
-                    : DATA_FACTORY.getOWLObjectSomeValuesFrom(property, filler);
-                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction);
-            }
-            case "SUBCLASS_OF_OBJECT_CARDINALITY": {
-                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
-                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
-                OWLClass filler = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, buildObjectCardinalityRestriction(property, filler, literalValue));
-            }
-            case "SUBCLASS_OF_DATA_RESTRICTION": {
-                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
-                OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri));
-                OWLDatatype filler = DATA_FACTORY.getOWLDatatype(IRI.create(targetIri));
-                OWLClassExpression restriction = "only".equals(literalValue)
-                    ? DATA_FACTORY.getOWLDataAllValuesFrom(property, filler)
-                    : DATA_FACTORY.getOWLDataSomeValuesFrom(property, filler);
-                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, restriction);
-            }
-            case "UNSATISFIABLE_CLASS": {
-                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
-                return DATA_FACTORY.getOWLSubClassOfAxiom(subject, DATA_FACTORY.getOWLNothing());
-            }
-            case "CLASS_ASSERTION": {
-                OWLNamedIndividual individual = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
-                OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLClassAssertionAxiom(target, individual);
-            }
-            case "OBJECT_PROPERTY_ASSERTION": {
-                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
-                OWLNamedIndividual object = DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
-                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(propertyIri));
-                return DATA_FACTORY.getOWLObjectPropertyAssertionAxiom(property, subject, object);
-            }
-            case "DATA_PROPERTY_ASSERTION": {
-                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
-                OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(propertyIri));
-                OWLLiteral literal = DATA_FACTORY.getOWLLiteral(literalValue);
-                return DATA_FACTORY.getOWLDataPropertyAssertionAxiom(property, subject, literal);
-            }
-            case "DISJOINT_CLASSES": {
-                OWLClass subject = DATA_FACTORY.getOWLClass(IRI.create(subjectIri));
-                OWLClass target = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLDisjointClassesAxiom(subject, target);
-            }
-            case "SUB_OBJECT_PROPERTY_OF": {
-                OWLObjectProperty sub = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
-                OWLObjectProperty sup = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLSubObjectPropertyOfAxiom(sub, sup);
-            }
-            case "SUB_DATA_PROPERTY_OF": {
-                OWLDataProperty sub = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
-                OWLDataProperty sup = DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLSubDataPropertyOfAxiom(sub, sup);
-            }
-            case "INVERSE_OBJECT_PROPERTIES": {
-                OWLObjectProperty propA = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
-                OWLObjectProperty propB = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLInverseObjectPropertiesAxiom(propA, propB);
-            }
-            case "OBJECT_PROPERTY_DOMAIN": {
-                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
-                OWLClass domain = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLObjectPropertyDomainAxiom(property, domain);
-            }
-            case "OBJECT_PROPERTY_RANGE": {
-                OWLObjectProperty property = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
-                OWLClass range = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLObjectPropertyRangeAxiom(property, range);
-            }
-            case "DATA_PROPERTY_DOMAIN": {
-                OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
-                OWLClass domain = DATA_FACTORY.getOWLClass(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLDataPropertyDomainAxiom(property, domain);
-            }
-            case "DATA_PROPERTY_RANGE": {
-                OWLDataProperty property = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
-                OWLDatatype range = DATA_FACTORY.getOWLDatatype(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLDataPropertyRangeAxiom(property, range);
-            }
-            case "SAME_INDIVIDUAL": {
-                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
-                OWLNamedIndividual target = DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLSameIndividualAxiom(subject, target);
-            }
-            case "DIFFERENT_INDIVIDUALS": {
-                OWLNamedIndividual subject = DATA_FACTORY.getOWLNamedIndividual(IRI.create(subjectIri));
-                OWLNamedIndividual target = DATA_FACTORY.getOWLNamedIndividual(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLDifferentIndividualsAxiom(subject, target);
-            }
-            case "EQUIVALENT_OBJECT_PROPERTIES": {
-                OWLObjectProperty subject = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
-                OWLObjectProperty target = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLEquivalentObjectPropertiesAxiom(subject, target);
-            }
-            case "EQUIVALENT_DATA_PROPERTIES": {
-                OWLDataProperty subject = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
-                OWLDataProperty target = DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLEquivalentDataPropertiesAxiom(subject, target);
-            }
-            case "DISJOINT_OBJECT_PROPERTIES": {
-                OWLObjectProperty subject = DATA_FACTORY.getOWLObjectProperty(IRI.create(subjectIri));
-                OWLObjectProperty target = DATA_FACTORY.getOWLObjectProperty(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLDisjointObjectPropertiesAxiom(subject, target);
-            }
-            case "DISJOINT_DATA_PROPERTIES": {
-                OWLDataProperty subject = DATA_FACTORY.getOWLDataProperty(IRI.create(subjectIri));
-                OWLDataProperty target = DATA_FACTORY.getOWLDataProperty(IRI.create(targetIri));
-                return DATA_FACTORY.getOWLDisjointDataPropertiesAxiom(subject, target);
-            }
-            default:
-                throw new IllegalArgumentException("Unsupported entailment type: " + entailmentType);
-        }
+        return self.research.ontology.common.EntailmentAxiomBuilder.buildEntailmentAxiom(
+                entailmentType, subjectIri, targetIri, propertyIri, literalValue);
     }
 
     public Map<String, Object> describeEntailment(OWLAxiom axiom) {
@@ -2008,7 +1922,14 @@ public class ReasonerService {
      * reload cannot be served a reasoner built on the evicted ontology.
      */
     public void disposeReasoners(OWLOntology ontology) {
-        String keyPrefix = System.identityHashCode(ontology) + "-" + ontology.getOntologyID() + "-";
+        Long identity;
+        synchronized (ontologyIdentitySequence) {
+            identity = ontologyIdentitySequence.remove(ontology);
+        }
+        if (identity == null) {
+            return;
+        }
+        String keyPrefix = identity + "-" + ontology.getOntologyID() + "-";
         Iterator<Map.Entry<String, CompletableFuture<OWLReasoner>>> it = reasonerCache.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<String, CompletableFuture<OWLReasoner>> entry = it.next();

@@ -94,6 +94,7 @@ import {
   snapshotDataPropertyTree,
   snapshotInconsistencyMessage,
   snapshotInferredAxioms,
+  snapshotInferredAxiomsTotal,
   snapshotObjectPropertyTree,
   snapshotToConsistencyResult,
   snapshotToReasonerResults,
@@ -2062,6 +2063,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   isReasonerSyncedRef.current = isReasonerSynced;
   const [reasonerResults, setReasonerResults] = useState<any>(null);
   const [inferredAxioms, setInferredAxioms] = useState<any[]>([]);
+  const [inferredAxiomsTotal, setInferredAxiomsTotal] = useState(0);
   const [isReasonerLoading, setIsReasonerLoading] = useState(false);
   const [isConsistencyLoading, setIsConsistencyLoading] = useState(false);
   const [consistencyResult, setConsistencyResult] = useState<any | null>(null);
@@ -2568,7 +2570,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               maxWaitMs: MAX_POLL_TIME,
               push: startData?.async === true,
               signal: anySignal(reasonerJobAbortRef.current.signal, signal),
-              cancelUrl: startData?.async === true ? dlQueryJobUrl(taskId) : undefined,
+              cancelUrl: startData?.cancelUrl
+                ? `/plugin-service${startData.cancelUrl}`
+                : startData?.async === true
+                  ? dlQueryJobUrl(taskId)
+                  : undefined,
               isStale: () =>
                 shouldStop?.() === true || !isMountedRef.current || currentProjectIdRef.current !== startedProjectId,
               fetchJob: async () => {
@@ -3154,6 +3160,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     setInferredIndividuals([]);
     setInferredDatatypes([]);
     setInferredAxioms([]);
+    setInferredAxiomsTotal(0);
   }, []);
 
   const markReasonerResultInconsistent = useCallback(
@@ -3239,6 +3246,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       if (snapshot) {
         setInferredAxioms(snapshotInferredAxioms(snapshot));
+        setInferredAxiomsTotal(snapshotInferredAxiomsTotal(snapshot));
       } else {
         try {
           const axiomsResponse = await apiClient.get<any>(
@@ -3248,11 +3256,16 @@ const Dashboard: React.FC<DashboardProps> = ({
           const rawAxiomsPayload = axiomsResponse?.data || axiomsResponse;
           const axiomsPayload = await resolveHierarchyPayload(projectId, rawAxiomsPayload, isStaleRun);
           if (isStaleRun()) return;
-          setInferredAxioms(Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : []);
+          const axiomsList = Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : [];
+          setInferredAxioms(axiomsList);
+          setInferredAxiomsTotal(
+            typeof axiomsPayload?.totalInferredAxioms === "number" ? axiomsPayload.totalInferredAxioms : axiomsList.length,
+          );
         } catch (axiomsError) {
           console.warn("[Dashboard] Inferred axioms fetch failed (non-fatal):", axiomsError);
           if (isStaleRun()) return;
           setInferredAxioms([]);
+          setInferredAxiomsTotal(0);
         }
       }
 
@@ -3291,7 +3304,17 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
     } catch (error: any) {
       if (isReasoningJobCancelled(error)) {
+        // A deliberate Stop click already shows its own "Reasoner Stopped" toast from
+        // stopReasoner() before this rejection lands here. But this same branch also
+        // catches an incidental abort racing with a genuine backend timeout (e.g. a
+        // project-switch effect firing mid-request) — that case got no toast at all
+        // and just silently reverted to "No Reasoner Running" with no explanation, so
+        // always surface something here rather than staying silent for that case.
         if (!isStaleRun()) {
+          notificationService.info(
+            "Reasoner Stopped",
+            "The reasoning run was interrupted before it finished.",
+          );
           setIsReasonerRunning(false);
         }
         return;
@@ -3471,6 +3494,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       if (snapshot) {
         setInferredAxioms(snapshotInferredAxioms(snapshot));
+        setInferredAxiomsTotal(snapshotInferredAxiomsTotal(snapshot));
       }
       console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
     } catch (error: any) {
@@ -14853,6 +14877,7 @@ const updateItemInState = useCallback(
                   inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
                   inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
                   inferredAxioms={inferredAxioms}
+                  inferredAxiomsTotal={inferredAxiomsTotal}
                   onStartReasoner={startReasoner}
                   onStopReasoner={stopReasoner}
                   onSelectReasoner={handleSelectReasoner}
