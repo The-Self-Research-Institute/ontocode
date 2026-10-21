@@ -1516,6 +1516,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const codeViewDirtyRef = useRef(false);
   const codeViewFetchTokenRef = useRef(0);
   const metadataRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const metadataBackupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const silentRefreshMetadataRef = useRef<() => Promise<void>>(async () => {});
+  const metadataRequestSeqRef = useRef(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -6863,15 +6866,17 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           console.log(`[Dashboard] 🎯 Status: ${message.status.status} | Progress: ${message.status.progress}%`);
 
           if (message.status.projectId) {
-            setProjectImportStatuses((prev) => ({
-              ...prev,
-              [message.status.projectId]: {
-                type: message.status.type,
-                status: message.status.status,
-                progress: message.status.progress,
-                metadata: message.status.metadata,
-              },
-            }));
+            if (!isPostCompletionProgress(message.status)) {
+              setProjectImportStatuses((prev) => ({
+                ...prev,
+                [message.status.projectId]: {
+                  type: message.status.type,
+                  status: message.status.status,
+                  progress: message.status.progress,
+                  metadata: message.status.metadata,
+                },
+              }));
+            }
 
             if (message.status.type === "IMPORT_PROGRESS" && message.status.metadata?.message) {
               setLoadingStatusMessage(sanitizeImportMessage(message.status.metadata.message as string));
@@ -6889,37 +6894,11 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
               message.status.status === "METADATA_READY" &&
               message.status.projectId === projectId
             ) {
-              const meta = message.status.metadata || {};
-              const classCount = Number(meta.classCount);
-              if (Number.isFinite(classCount) && classCount > 0) {
-                setMetadata((prev) =>
-                  ({
-                    ...(prev || {}),
-                    classCount,
-                    tripleCount: meta.tripleCount ?? (prev as any)?.tripleCount,
-                  }) as OntologyMetadata,
-                );
-              } else {
-                void apiClient
-                  .get<any>(`/api/ontology/metadata/${encodeProjectId(message.status.projectId)}?_t=${Date.now()}`)
-                  .then((res) => {
-                    const data = res?.data || res;
-                    if (!data || typeof data !== "object") return;
-                    setMetadata((prev) =>
-                      ({
-                        ...(prev || {}),
-                        ...data,
-                        classCount:
-                          data.classCount > 0
-                            ? data.classCount
-                            : data.counts?.classes > 0
-                              ? data.counts.classes
-                              : (prev as any)?.classCount ?? 0,
-                      }) as OntologyMetadata,
-                    );
-                  })
-                  .catch((err) => console.warn("[Dashboard] METADATA_READY refresh failed:", err));
+              if (metadataBackupTimerRef.current) {
+                clearTimeout(metadataBackupTimerRef.current);
+                metadataBackupTimerRef.current = null;
               }
+              void silentRefreshMetadataRef.current();
             }
           }
 
@@ -8834,11 +8813,13 @@ const updateItemInState = useCallback(
 
   const silentRefreshMetadata = useCallback(async () => {
     if (!projectId) return;
+    const requestId = ++metadataRequestSeqRef.current;
     try {
       const metaUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
       const metaDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}?userId=${encodeURIComponent(metaUserId)}${metaDraftScopeParam}`);
       void refreshPrefixes();
+      if (requestId !== metadataRequestSeqRef.current) return;
       const data = res?.data || res;
       if (data) {
         setMetadata((prev) => prev ? {
@@ -8855,6 +8836,7 @@ const updateItemInState = useCallback(
       console.debug("[Dashboard] Silent metadata refresh failed:", err);
     }
   }, [projectId, user]);
+  silentRefreshMetadataRef.current = silentRefreshMetadata;
 
   const markAsUnsaved = useCallback(() => {
     console.log("[DEBUG] markAsUnsaved called");
@@ -11839,6 +11821,13 @@ const updateItemInState = useCallback(
     handleRefreshIndividuals();
     handleRefreshDatatypes();
     silentRefreshMetadata();
+    if (metadataBackupTimerRef.current) clearTimeout(metadataBackupTimerRef.current);
+    metadataBackupTimerRef.current = !isDesktop() && syncMode !== "private"
+      ? setTimeout(() => {
+          metadataBackupTimerRef.current = null;
+          void silentRefreshMetadata();
+        }, 20000)
+      : null;
     try {
       window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: [op] } }));
     } catch {

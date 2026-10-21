@@ -77,21 +77,17 @@ public class DLQueryController {
             log.info("DL Query enqueue for project {}: expression='{}', types={}",
                     projectId, request.getExpression(), request.getQueryTypes());
 
-            String draftUserId = SparqlQueryContext.wantsDraft() ? SparqlQueryContext.getUserId() : null;
-            if (draftUserId != null && !draftUserId.isBlank() && dlQueryQueueProcessor == null) {
-                Map<String, Object> result = dlQueryService.executeQuery(
-                        projectId, request.getExpression().trim(), request.getQueryTypes(), draftUserId);
-                return ResponseEntity.ok(result);
-            }
+            String contextUserId = SparqlQueryContext.wantsDraft() ? SparqlQueryContext.getUserId() : null;
+            String draftUserId = contextUserId != null && !contextUserId.isBlank() ? contextUserId : null;
 
-            if (draftUserId == null && reasonerWorkerEnabled && reasonerWorkerClient != null && reasoningJobRelayService != null) {
+            if (reasonerWorkerEnabled && reasonerWorkerClient != null && reasoningJobRelayService != null) {
                 Map<String, Object> worker = reasonerWorkerClient.submitJob(
                         "DL_QUERY",
                         projectId,
                         request.getExpression().trim(),
                         request.getQueryTypes(),
                         null,
-                        request.getUserEmail());
+                        draftUserId != null ? draftUserId : request.getUserEmail());
                 if (Boolean.FALSE.equals(worker.get("success"))) {
                     return ResponseEntity.status(500).body(Map.of(
                             "success", false,
@@ -112,6 +108,12 @@ public class DLQueryController {
                 response.put("estimatedWaitTimeMs", worker.getOrDefault("estimatedWaitTimeMs", 0));
                 response.put("query", request.getExpression());
                 return ResponseEntity.accepted().body(response);
+            }
+
+            if (draftUserId != null && dlQueryQueueProcessor == null) {
+                Map<String, Object> result = dlQueryService.executeQuery(
+                        projectId, request.getExpression().trim(), request.getQueryTypes(), draftUserId);
+                return ResponseEntity.ok(result);
             }
 
             DLQueryJob job = dlQueryQueueManager.enqueue(
