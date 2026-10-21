@@ -3,6 +3,7 @@ package self.research.ontology.plugins.controller;
 import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
+import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +35,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -205,6 +207,16 @@ public class ReasonerController {
     private final ConcurrentHashMap<String, Map<String, Object>> classifyTasks = new ConcurrentHashMap<>();
     private final Set<String> cleanupScheduledTaskIds = ConcurrentHashMap.newKeySet();
     private final ExecutorService classifyExecutor = Executors.newFixedThreadPool(2);
+
+    private record ClassifyRun(Future<?> future, OWLReasoner reasoner) {}
+
+    // Holds the live reasoner + Future for each in-flight classify task, so a user-initiated
+    // stop (or the timeout below) can call reasoner.interrupt() — the real OWLAPI cancellation
+    // hook — instead of just abandoning the thread to run to completion unseen.
+    private final ConcurrentHashMap<String, ClassifyRun> classifyRuns = new ConcurrentHashMap<>();
+
+    @Value("${ontocode.reasoner.classify-timeout-ms:600000}")
+    private long classifyTimeoutMs;
     // Delayed task-entry removal runs on its own scheduler: parking a
     // Thread.sleep on classifyExecutor would occupy one of its two worker
     // threads for the full delay and starve real classification jobs.
@@ -881,6 +893,12 @@ public class ReasonerController {
             // Pre-load ontology on the request thread so errors surface immediately
             OWLOntology ontology = loadOntology(projectId, userId);
 
+            // Obtain the reasoner here (not inside the async task) so this thread can hold
+            // onto the same instance and call reasoner.interrupt() on it later — either from
+            // a user-initiated stop or the timeout below — to actually cancel work in progress
+            // instead of just abandoning an orphaned thread to run to completion unseen.
+            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
+
             String taskId = UUID.randomUUID().toString();
 
             Map<String, Object> taskInfo = new ConcurrentHashMap<>();
@@ -889,44 +907,91 @@ public class ReasonerController {
             taskInfo.put("reasonerType", type.getDisplayName());
             classifyTasks.put(taskId, taskInfo);
 
-            classifyExecutor.submit(() -> {
+            Future<?> future = classifyExecutor.submit(() -> {
                 try {
                     long startTime = System.currentTimeMillis();
-                    reasonerService.classify(ontology, type);
+                    reasonerService.classify(reasoner, ontology, type);
                     long duration = System.currentTimeMillis() - startTime;
 
                     Map<String, Object> classificationData = reasonerService.getClassificationResults(ontology, type);
 
-                    taskInfo.put("status", "COMPLETED");
-                    taskInfo.put("success", true);
-                    taskInfo.put("durationMs", duration);
-                    taskInfo.put("message", "Classification completed successfully");
-                    for (String key : List.of("classHierarchy", "objectPropertyHierarchy", "dataPropertyHierarchy",
-                            "equivalentClasses", "unsatisfiableClasses", "totalClasses", "stats")) {
-                        Object value = classificationData.get(key);
-                        if (value != null) {
-                            taskInfo.put(key, value);
+                    if (taskInfo.replace("status", "RUNNING", "COMPLETED")) {
+                        taskInfo.put("success", true);
+                        taskInfo.put("durationMs", duration);
+                        taskInfo.put("message", "Classification completed successfully");
+                        for (String key : List.of("classHierarchy", "objectPropertyHierarchy", "dataPropertyHierarchy",
+                                "equivalentClasses", "unsatisfiableClasses", "totalClasses", "stats")) {
+                            Object value = classificationData.get(key);
+                            if (value != null) {
+                                taskInfo.put(key, value);
+                            }
                         }
                     }
                 } catch (Throwable e) {
                     log.error("Async classification failed for project: {}", projectId, e);
-                    taskInfo.put("status", "FAILED");
-                    taskInfo.put("success", false);
-                    taskInfo.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                    if (taskInfo.replace("status", "RUNNING", "FAILED")) {
+                        taskInfo.put("success", false);
+                        taskInfo.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                    }
                 } finally {
+                    classifyRuns.remove(taskId);
                     endDraftUse(ontology);
                 }
             });
 
+            classifyRuns.put(taskId, new ClassifyRun(future, reasoner));
+            taskCleanupScheduler.schedule(() -> {
+                ClassifyRun run = classifyRuns.remove(taskId);
+                if (run != null && !run.future().isDone() && taskInfo.replace("status", "RUNNING", "FAILED")) {
+                    log.warn("Classification for project {} exceeded {}ms, interrupting", projectId, classifyTimeoutMs);
+                    run.reasoner().interrupt();
+                    run.future().cancel(true);
+                    taskInfo.put("success", false);
+                    taskInfo.put("error", "Classification timed out after " + (classifyTimeoutMs / 1000)
+                            + "s — the ontology may be too large or complex for this reasoner. Try a different reasoner or stop and retry.");
+                }
+            }, classifyTimeoutMs, TimeUnit.MILLISECONDS);
+
             Map<String, Object> accepted = new HashMap<>();
             accepted.put("taskId", taskId);
             accepted.put("status", "RUNNING");
+            accepted.put("async", true);
             accepted.put("pollUrl", "/api/reasoner/" + projectId + "/classify/status/" + taskId);
+            accepted.put("cancelUrl", "/api/reasoner/" + projectId + "/classify/" + taskId);
             return ResponseEntity.accepted().body(accepted);
 
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "starting classification");
         }
+    }
+
+    /**
+     * Cancel an in-progress classification — interrupts the actual reasoner computation
+     * (not just the HTTP/polling side), so a stuck run can genuinely be stopped.
+     * DELETE /api/reasoner/{projectId}/classify/{taskId}
+     */
+    @DeleteMapping("/{projectId}/classify/{taskId}")
+    public ResponseEntity<Map<String, Object>> cancelClassify(
+            @PathVariable String projectId,
+            @PathVariable String taskId
+    ) {
+        ClassifyRun run = classifyRuns.remove(taskId);
+        Map<String, Object> taskInfo = classifyTasks.get(taskId);
+        if (run == null) {
+            boolean alreadyTerminal = taskInfo != null
+                    && ("COMPLETED".equals(taskInfo.get("status")) || "FAILED".equals(taskInfo.get("status")));
+            return ResponseEntity.ok(Map.of("success", true, "cancelled", false,
+                    "message", alreadyTerminal ? "Classification already finished" : "No running classification found for this task"));
+        }
+        run.reasoner().interrupt();
+        run.future().cancel(true);
+        if (taskInfo != null) {
+            taskInfo.replace("status", "RUNNING", "FAILED");
+            taskInfo.putIfAbsent("success", false);
+            taskInfo.putIfAbsent("error", "Stopped by user");
+        }
+        log.info("Classification for project {} (task {}) cancelled by user", projectId, taskId);
+        return ResponseEntity.ok(Map.of("success", true, "cancelled", true));
     }
 
     /**
@@ -1112,11 +1177,15 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
                 || "EQUIVALENT_DATA_RESTRICTION".equals(entailmentType);
 
             // This search is an unbounded black-box justification search — the single
-            // heaviest operation on this controller — and must always run on the isolated
-            // reasoner worker when one is available, draft or not, instead of in this
-            // service's own memory-constrained process (unlike the other worker-backed
-            // endpoints above, a blank userId is not required to offload it).
-            if (!isEquivalentVariant && workerAvailable()) {
+            // heaviest operation on this controller — and should run on the isolated
+            // reasoner worker when one is available, same worker-offload gate as
+            // consistency/classify/realize/inferred-axioms. Drafts still run in-process:
+            // the worker's EditorClient has no way to prove the caller's draft access to
+            // the editor (it only carries ownerEmail, not a verifiable bearer token), so
+            // editor's /internal/reasoning/.../export.nt correctly 403s a draft fetch from
+            // the worker. Offloading drafts needs that token forwarded through the job
+            // first — tracked separately, not done here.
+            if (!isEquivalentVariant && workerAvailable() && (userId == null || userId.isBlank())) {
                 return submitExplainEntailmentToWorker(projectId, requestedReasonerType, userId, maxJustifications, mode,
                     entailmentType, subjectIri, targetIri, propertyIri, literalValue);
             }
@@ -1210,6 +1279,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
                 long duration = System.currentTimeMillis() - startTime;
 
                 List<Map<String, Object>> axiomsList = inferredAxioms.stream()
+                    .limit(self.research.ontology.common.ReasoningSnapshot.DEFAULT_INFERRED_AXIOM_LIMIT)
                     .map(axiom -> {
                         Map<String, Object> entry = new HashMap<>();
                         entry.put("axiomType", axiom.getAxiomType().getName());

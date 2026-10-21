@@ -18,6 +18,14 @@ import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigati
 import { normalizeReasonerType } from '../dashboard-parts/dashboardUtils';
 import { cachedUnsatisfiable } from '../../services/reasonerSnapshotScope';
 
+
+const conflictIrisCache = new Map<string, Set<string> | undefined>();
+let conflictIrisCacheProjectId: string | undefined;
+
+function conflictIrisCacheKey(reasonerLabel: string, classIri: string, draft: boolean, userId?: string): string {
+  return `${reasonerLabel}::${draft ? `draft:${userId || ''}` : 'published'}::${classIri}`;
+}
+
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 
 interface UsageItem {
@@ -304,6 +312,10 @@ const ClassEditor: React.FC<{
       setConflictIris(undefined);
       return;
     }
+    if (conflictIrisCacheProjectId !== projectId) {
+      conflictIrisCache.clear();
+      conflictIrisCacheProjectId = projectId;
+    }
     let cancelled = false;
 
     const loadConflictIris = async () => {
@@ -328,13 +340,20 @@ const ClassEditor: React.FC<{
         return;
       }
 
+      const draftFields = draftBodyFields();
+      const cacheKey = conflictIrisCacheKey(selectedReasoner, item.id, draftFields.draft === 'true', draftFields.userId);
+      if (conflictIrisCache.has(cacheKey)) {
+        setConflictIris(conflictIrisCache.get(cacheKey));
+        return;
+      }
+
       try {
         const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
           entailmentType: 'UNSATISFIABLE_CLASS',
           subjectIri: item.id,
           mode: 'regular',
           maxJustifications: 10,
-          ...draftBodyFields(),
+          ...draftFields,
         });
         if (cancelled) return;
         const data = (res as any)?.data ?? res;
@@ -348,6 +367,7 @@ const ClassEditor: React.FC<{
             }
           }
         }
+        conflictIrisCache.set(cacheKey, iris);
         setConflictIris(iris);
       } catch (e) {
         console.warn('[ClassEditor] conflictIris: explain-entailment failed', e);

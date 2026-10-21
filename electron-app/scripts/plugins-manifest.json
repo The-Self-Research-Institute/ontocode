@@ -54,7 +54,7 @@
     "name": "OWL Reasoner",
     "shortDescription": "OWL 2 reasoning with HermiT, ELK, and Pellet",
     "description": "OWL 2 reasoning with consistency checking and classification.",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "category": "Reasoning",
     "keywords": ["reasoner", "owl", "inference"],
     "featured": true
