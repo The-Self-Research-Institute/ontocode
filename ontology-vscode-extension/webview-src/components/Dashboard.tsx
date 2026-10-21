@@ -5022,7 +5022,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Adding annotation with payload:", payload);
-      await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, { ...payload, ...draftBodyFields() });
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`), { ...payload, ...draftBodyFields() });
 
       const newAnnotation: any = {
         propertyIri,
@@ -5071,7 +5071,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Updating annotation with payload:", payload);
-      await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, { ...payload, ...draftBodyFields() });
+      await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`), { ...payload, ...draftBodyFields() });
 
       setOntologyAnnotations((prev) =>
         prev.map((ann) =>
@@ -5139,7 +5139,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddImport = async () => {
     if (!projectId || !importDraft.trim()) return;
     try {
-      await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), {
         importIri: importDraft.trim(),
         ...draftBodyFields(),
       });
@@ -5217,7 +5217,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         console.log("[Dashboard] ⚡ Optimistically added import to UI");
 
-        const addImportRes = await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
+        const addImportRes = await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), {
           importIri: importIriForBackend,
           ...draftBodyFields(),
         });
@@ -5292,7 +5292,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId || !importDraft.trim()) return;
     try {
       await apiClient.delete(withDraftAndUser(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(oldIri)}`));
-      await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), {
         importIri: importDraft.trim(),
         ...draftBodyFields(),
       });
@@ -5354,7 +5354,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       console.log("[Dashboard] Saving prefix:", payload);
       const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
-      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, {
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/prefixes`), {
         ...payload,
         ...draftBodyFields(),
         actorUserId: actor.userId,
@@ -5435,7 +5435,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         subClass: axiomDefinition,
         superClass: axiomSuperClass,
       });
-      await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/gci`), {
         subClass: axiomDefinition,
         superClass: axiomSuperClass || "",
         draft: ontologyMutationService.resolveUseDraft(),
@@ -5515,7 +5515,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         newAxiom: { subClass, superClass },
       });
 
-      await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
+      await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`), {
         oldValue,
         subClass,
         superClass: superClass || "",
@@ -7656,7 +7656,7 @@ const updateItemInState = useCallback(
     if (!projectId || !propertyIri || iris.length === 0) return;
     try {
       const res = await apiClient.post<any>(
-        `/api/ontology/annotations/batch/${encodeProjectId(projectId)}`,
+        withDraftAndUser(`/api/ontology/annotations/batch/${encodeProjectId(projectId)}`),
         { iris, propertyIri }
       );
       const data: Record<string, string> = res?.data ?? res ?? {};
@@ -9432,7 +9432,7 @@ const updateItemInState = useCallback(
             },
           ]);
 
-          await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, {
+          await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`), {
             propertyIri,
             value,
             language: lang,
@@ -9549,7 +9549,7 @@ const updateItemInState = useCallback(
             return current;
           });
 
-          await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, {
+          await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`), {
             propertyIri,
             originalPropertyIri: originalPropertyIri || propertyIri,
             oldValue,
@@ -9601,7 +9601,7 @@ const updateItemInState = useCallback(
 
       try {
         const response = await apiClient.put<{ success?: boolean; error?: string; updatedImports?: UpdatedImport[]; skippedImports?: SkippedImport[] }>(
-          `/api/ontology/metadata/${projectId}/iri`,
+          withDraftScope(`/api/ontology/metadata/${projectId}/iri`),
           { ontologyIri: normalizedOntologyIri, versionIri: normalizedVersionIri, ...draftBodyFields() },
         );
         if (response?.success === false) {
@@ -9641,7 +9641,7 @@ const updateItemInState = useCallback(
         const gciActorId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
         const gciDraft = ontologyMutationService.resolveUseDraft();
         if (editGCIData) {
-          await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, {
+          await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`), {
             subClass,
             superClass,
             oldValue: editGCIData.value,
@@ -9649,7 +9649,7 @@ const updateItemInState = useCallback(
             userId: gciActorId,
           });
         } else {
-          await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
+          await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/gci`), {
             subClass, superClass, draft: gciDraft, userId: gciActorId,
           });
         }
@@ -16854,7 +16854,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         onClose={() => setShowImportDialog(false)}
         onAdd={async (importIri) => {
           if (!projectId) return;
-          await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri, ...draftBodyFields() });
+          await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), { importIri, ...draftBodyFields() });
           const importsRes = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${projectId}/imports`));
           const importsPayload = importsRes?.data?.data ?? importsRes?.data ?? importsRes;
           const importsData = Array.isArray(importsPayload) ? importsPayload : [];
@@ -18082,7 +18082,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                 if (!projectId || !importIRI) return;
 
                 try {
-                  await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI, ...draftBodyFields() });
+                  await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), { importIri: importIRI, ...draftBodyFields() });
 
                   const metadataRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}`));
                   const annotationsRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`));

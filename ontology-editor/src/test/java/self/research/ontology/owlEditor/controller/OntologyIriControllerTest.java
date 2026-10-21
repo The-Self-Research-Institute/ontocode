@@ -81,6 +81,21 @@ class OntologyIriControllerTest {
         verify(imports, never()).update(anyString(), any(), any(), any(), any());
     }
 
+    @Test
+    void theDraftFlagInTheUrlKeepsTheChangeInTheDraftEvenWithoutABodyFlag() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setParameter("draft", "true");
+
+        ResponseEntity<?> response = controller.updateOntologyIRIs("p1",
+                Map.of("ontologyIri", "http://x.org/new", "versionIri", "", "userId", "me@x.org", "username", "Me"), request);
+
+        assertEquals(200, response.getStatusCode().value());
+        verify(metadata).updateOntologyIRIs("p1", "http://x.org/new", "", true, "me@x.org", "Me");
+        verify(metadata, never()).updateOntologyIRIs(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.eq(false), any(), any());
+        verify(imports, never()).update(anyString(), any(), any(), any(), any());
+    }
+
     @SuppressWarnings("unchecked")
     @Test
     void aFailureIsReportedWithoutTouchingOtherProjects() {

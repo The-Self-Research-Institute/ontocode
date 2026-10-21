@@ -17,6 +17,7 @@ import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
+import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.HashMap;
 import java.util.List;
@@ -169,6 +170,21 @@ public class DraftController {
         }
     }
 
+    @GetMapping("/{projectId}/drafts/full-diff")
+    public ResponseEntity<Map<String, Object>> fullDiff(
+            @PathVariable String projectId,
+            @RequestParam String userId) {
+        try {
+            return ResponseEntity.ok(draftPublishMergeService.analyzePublish(projectId, userId));
+        } catch (Exception e) {
+            log.error("[DRAFT API] Error comparing draft with public for project {}", projectId, e);
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "error", e.getMessage() != null ? e.getMessage() : "Could not compare the draft with Public"
+            ));
+        }
+    }
+
     /**
      * Apply drafts to GraphDB (called during save)
      * POST /api/ontology/{projectId}/drafts/apply?userId=...&force=false
@@ -176,13 +192,28 @@ public class DraftController {
     @PostMapping("/{projectId}/drafts/apply")
     public ResponseEntity<Map<String, Object>> applyDrafts(
             @PathVariable String projectId,
-            @RequestParam String userId,
+            @RequestParam(required = false) String userId,
             @RequestParam(required = false, defaultValue = "false") boolean force,
             @RequestParam(required = false, defaultValue = "false") boolean merge,
-            @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody) {
+            @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
         try {
+            String publisher = JwtIdentityExtractor.extractUserId(httpRequest).orElse(null);
+            if (publisher == null || publisher.isBlank()) {
+                return ResponseEntity.status(401).body(Map.of(
+                        "success", false,
+                        "error", "Sign in again to publish your draft"
+                ));
+            }
+            if (!ownershipService.canPublishToProject(publisher, projectId)) {
+                return ResponseEntity.status(403).body(Map.of(
+                        "success", false,
+                        "error", "Only project owners, admins, or editors can publish drafts. Raise a pull request instead.",
+                        "pullRequestRequired", true
+                ));
+            }
             log.info("[DRAFT API] Applying drafts for project {} user {} (force={}, merge={})",
-                    projectId, userId, force, merge);
+                    projectId, publisher, force, merge);
 
             Map<String, ConflictResolution> resolutions = null;
             if (merge && resolutionsBody != null && !resolutionsBody.isEmpty()) {
@@ -200,7 +231,7 @@ public class DraftController {
             }
 
             DraftTrackingService.ApplyDraftsResult result =
-                draftTrackingService.applyDrafts(projectId, userId, force, merge, resolutions);
+                draftTrackingService.applyDrafts(projectId, publisher, force, merge, resolutions);
 
             if (result.isConflictBlocked()) {
                 Map<String, Object> body = new HashMap<>();
@@ -566,15 +597,17 @@ public class DraftController {
                 return ResponseEntity.status(409).body(Map.of("success", false, "error", "Pull request is already " + pr.getStatus().name().toLowerCase()));
             }
 
-            DraftTrackingService.ApplyDraftsResult result =
-                    draftTrackingService.applyDrafts(projectId, pr.getAuthorId(), false, false, null);
+            DraftTrackingService.ApplyDraftsResult result = draftTrackingService.applyDrafts(
+                    projectId, pr.getAuthorId(), false, false, reviewResolutions(request.resolutions()));
 
             if (!result.isSuccess() && result.isConflictBlocked()) {
-                return ResponseEntity.status(409).body(Map.of(
-                        "success", false,
-                        "error", "Merge conflicts detected. Resolve conflicts before approving.",
-                        "conflictBlocked", true
-                ));
+                Map<String, Object> body = new HashMap<>();
+                body.put("success", false);
+                body.put("error", "Merge conflicts detected. Resolve conflicts before approving.");
+                body.put("message", result.getMessage());
+                body.put("conflictBlocked", true);
+                body.put("conflicts", conflictsFor(projectId, pr.getAuthorId()));
+                return ResponseEntity.status(409).body(body);
             }
             if (!result.isSuccess()) {
                 log.error("[DRAFT PR] Approval did not actually apply for prId={} project={} author={}: {}",
@@ -649,6 +682,36 @@ public class DraftController {
         }
     }
 
+    private static Map<String, ConflictResolution> reviewResolutions(Map<String, String> choices) {
+        Map<String, ConflictResolution> resolutions = new HashMap<>();
+        if (choices == null) {
+            return resolutions;
+        }
+        for (Map.Entry<String, String> entry : choices.entrySet()) {
+            ResolutionAction action = entry.getValue() == null ? null : switch (entry.getValue()) {
+                case "keep_draft" -> ResolutionAction.KEEP_SOURCE;
+                case "take_public" -> ResolutionAction.KEEP_TARGET;
+                case "merge" -> ResolutionAction.MERGE;
+                default -> null;
+            };
+            if (action != null) {
+                ConflictResolution resolution = new ConflictResolution();
+                resolution.setAction(action);
+                resolutions.put(entry.getKey(), resolution);
+            }
+        }
+        return resolutions;
+    }
+
+    private Map<String, Object> conflictsFor(String projectId, String authorId) {
+        try {
+            return draftPublishMergeService.analyzePublish(projectId, authorId);
+        } catch (Exception e) {
+            log.warn("[DRAFT PR] Could not list the conflicts for project {}: {}", projectId, e.getMessage());
+            return null;
+        }
+    }
+
     // Request DTOs
 
     public record DraftCopyRequest(String userId) {}
@@ -664,5 +727,5 @@ public class DraftController {
 
     public record RaisePRRequest(String userId, String username, String title, String description) {}
 
-    public record ReviewPRRequest(String reviewerId, String reviewNote) {}
+    public record ReviewPRRequest(String reviewerId, String reviewNote, Map<String, String> resolutions) {}
 }

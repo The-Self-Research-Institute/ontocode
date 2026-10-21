@@ -24,7 +24,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.merge.MergeOptions;
 import self.research.ontology.owlEditor.model.merge.MergeStrategy;
-import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Plan;
 
 import java.io.FileOutputStream;
@@ -209,11 +208,14 @@ class DraftMergeEndToEndTest {
     @Test
     void aDraftMergeIsRecordedInTheDraftAndTrackedForSave() throws Exception {
         merge("one", "OneOnly");
-        ArgumentCaptor<List<MutationOp>> ops = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<java.util.Map<String, Object>> data = ArgumentCaptor.forClass(java.util.Map.class);
         ArgumentCaptor<String> session = ArgumentCaptor.forClass(String.class);
-        verify(draftTracking).recordDrafts(eq("proj"), eq(USER), eq("real@x.org"), ops.capture(), session.capture());
+        verify(draftTracking).recordDraft(eq("proj"), eq(USER), eq("real@x.org"), eq(OntologyMergeService.MERGE_OPERATION),
+                data.capture(), session.capture());
         assertTrue(session.getValue().startsWith(DraftMergeApplier.SESSION_PREFIX));
-        assertTrue(ops.getValue().get(0).iri().startsWith(OntologyMergeService.MERGE_IRI_PREFIX));
+        assertTrue(((String) data.getValue().get("iri")).startsWith(OntologyMergeService.MERGE_IRI_PREFIX));
+        java.util.Map<?, ?> summary = (java.util.Map<?, ?>) data.getValue().get(DraftMergeApplier.SUMMARY);
+        assertTrue(summary.get("kinds").toString().contains("OneOnly"), String.valueOf(summary));
     }
 
     @Test

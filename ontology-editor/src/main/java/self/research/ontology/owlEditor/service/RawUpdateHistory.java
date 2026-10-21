@@ -63,8 +63,10 @@ public class RawUpdateHistory {
         boolean stable = before.size() <= Limit.WHOLE_GRAPH_MAX_TRIPLES.value() && after.size() <= Limit.WHOLE_GRAPH_MAX_TRIPLES.value();
         Model oldSide = stable ? CanonicalGraph.canonicalise(before) : before;
         Model newSide = stable ? CanonicalGraph.canonicalise(after) : after;
-        new CodeViewHistoryRecorder(historyService, draft ? draftTrackingService : null)
-                .record(projectId, userId, username, oldSide, newSide, draft, ExactOrigins.manualWithDelta(before, after), false);
+        ChangeOrigin origin = ExactOrigins.manualWithDelta(before, after);
+        boolean changed = new CodeViewHistoryRecorder(historyService, draft && !DraftRecordScope.active() ? draftTrackingService : null)
+                .record(projectId, userId, username, oldSide, newSide, draft, origin, false);
+        DraftRecordScope.observed(origin.changeSetId(), changed || !stable);
     }
 
     private Model readPublic(String projectId) {

@@ -121,7 +121,7 @@ public class OntologyMetadataController {
             String value = request.get("value");
             String language = request.get("language");
             String datatype = request.get("datatype");
-            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.addOntologyAnnotation(projectId, propertyIri, value, language, datatype, draft, userId, username);
@@ -146,7 +146,7 @@ public class OntologyMetadataController {
             String newValue = request.get("newValue");
             String language = request.get("language");
             String datatype = request.get("datatype");
-            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype,
@@ -222,12 +222,11 @@ public class OntologyMetadataController {
                                        HttpServletRequest httpRequest) {
         try {
             String importIri = request.get("importIri");
-            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
-            metadataService.addOntologyImport(projectId, importIri, draft, userId, username);
-
-            Map<String, Object> resolution = resolveManualImportContent(projectId, importIri, draft, userId, username);
+            Map<String, Object> resolution = metadataService.addOntologyImport(projectId, importIri, draft, userId, username,
+                    () -> resolveManualImportContent(projectId, importIri, draft, userId, username));
 
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.IMPORT_ADDED, importIri, httpRequest);
@@ -310,7 +309,7 @@ public class OntologyMetadataController {
         try {
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
-            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.addGCI(projectId, subClass, superClass, draft, userId, username);
@@ -333,14 +332,11 @@ public class OntologyMetadataController {
             String oldValue = request.get("oldValue");
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
-            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
 
-            if (oldValue != null) {
-                metadataService.deleteGCI(projectId, oldValue, draft, userId, username);
-            }
-            metadataService.addGCI(projectId, subClass, superClass, draft, userId, username);
+            metadataService.updateGCI(projectId, oldValue, subClass, superClass, draft, userId, username);
             if (!draft) {
                 broadcastMetadataChange(projectId, EditOperation.OperationType.GCI_ADDED, subClass, httpRequest);
             }
@@ -389,7 +385,7 @@ public class OntologyMetadataController {
             String prefix = request.get("prefix");
             String iri = request.get("iri");
             String oldPrefix = request.get("oldPrefix");
-            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
             String userId = request.get("userId");
             String actorId = RequestActor.recordedId(httpRequest, request.getOrDefault("actorUserId", userId), draft);
             metadataService.updatePrefix(projectId, prefix, iri, oldPrefix, draft, userId, actorId,
